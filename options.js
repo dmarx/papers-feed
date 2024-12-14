@@ -1,4 +1,3 @@
-
 // options.js
 document.addEventListener('DOMContentLoaded', () => {
   // Load saved settings
