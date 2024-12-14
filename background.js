@@ -1,9 +1,26 @@
-// manifest.json remains the same
-
 // background.js
-let GITHUB_TOKEN = ''; // Will need to be set by user
-const GITHUB_REPO = ''; // Format: 'username/repo'
-const GITHUB_API = 'https://api.github.com';
+let githubToken = '';
+let githubRepo = '';
+
+// Load credentials when extension starts
+async function loadCredentials() {
+  const items = await chrome.storage.sync.get(['githubToken', 'githubRepo']);
+  githubToken = items.githubToken || '';
+  githubRepo = items.githubRepo || '';
+}
+
+// Listen for credential changes
+chrome.storage.onChanged.addListener((changes) => {
+  if (changes.githubToken) {
+    githubToken = changes.githubToken.newValue;
+  }
+  if (changes.githubRepo) {
+    githubRepo = changes.githubRepo.newValue;
+  }
+});
+
+// Initialize credentials
+loadCredentials();
 
 // Listen for URL changes
 chrome.webNavigation.onCompleted.addListener(async (details) => {
@@ -49,6 +66,11 @@ async function processArxivUrl(url) {
 }
 
 async function createGithubIssue(paperData) {
+  if (!githubToken || !githubRepo) {
+    console.error('GitHub credentials not set. Please configure extension options.');
+    return;
+  }
+
   try {
     const issueBody = `
 ## Paper Details
@@ -70,10 +92,10 @@ ${JSON.stringify(paperData, null, 2)}
 \`\`\`
 `;
 
-    const response = await fetch(`${GITHUB_API}/repos/${GITHUB_REPO}/issues`, {
+    const response = await fetch(`https://api.github.com/repos/${githubRepo}/issues`, {
       method: 'POST',
       headers: {
-        'Authorization': `token ${GITHUB_TOKEN}`,
+        'Authorization': `token ${githubToken}`,
         'Accept': 'application/vnd.github.v3+json'
       },
       body: JSON.stringify({
@@ -83,6 +105,10 @@ ${JSON.stringify(paperData, null, 2)}
       })
     });
 
+    if (!response.ok) {
+      throw new Error(`GitHub API error: ${response.status}`);
+    }
+
     const issueData = await response.json();
     return issueData;
   } catch (error) {
@@ -90,14 +116,18 @@ ${JSON.stringify(paperData, null, 2)}
   }
 }
 
-// Function to update paper rating
 async function updatePaperRating(issueNumber, rating) {
+  if (!githubToken || !githubRepo) {
+    console.error('GitHub credentials not set. Please configure extension options.');
+    return;
+  }
+
   try {
     // Update issue labels
-    await fetch(`${GITHUB_API}/repos/${GITHUB_REPO}/issues/${issueNumber}/labels`, {
+    await fetch(`https://api.github.com/repos/${githubRepo}/issues/${issueNumber}/labels`, {
       method: 'PUT',
       headers: {
-        'Authorization': `token ${GITHUB_TOKEN}`,
+        'Authorization': `token ${githubToken}`,
         'Accept': 'application/vnd.github.v3+json'
       },
       body: JSON.stringify([
@@ -107,10 +137,10 @@ async function updatePaperRating(issueNumber, rating) {
     });
 
     // Add comment about rating change
-    await fetch(`${GITHUB_API}/repos/${GITHUB_REPO}/issues/${issueNumber}/comments`, {
+    await fetch(`https://api.github.com/repos/${githubRepo}/issues/${issueNumber}/comments`, {
       method: 'POST',
       headers: {
-        'Authorization': `token ${GITHUB_TOKEN}`,
+        'Authorization': `token ${githubToken}`,
         'Accept': 'application/vnd.github.v3+json'
       },
       body: JSON.stringify({
@@ -120,17 +150,4 @@ async function updatePaperRating(issueNumber, rating) {
   } catch (error) {
     console.error('Error updating rating:', error);
   }
-}
-
-async function dispatchWorkflow(workflow) {
-  await fetch(`${GITHUB_API}/repos/${GITHUB_REPO}/dispatches`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `token ${GITHUB_TOKEN}`,
-      'Accept': 'application/vnd.github.v3+json'
-    },
-    body: JSON.stringify({
-      event_type: workflow
-    })
-  });
 }
