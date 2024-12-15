@@ -6,7 +6,6 @@ import asyncio
 import aiohttp
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional, Set
 from pydantic import BaseModel, Field
 from loguru import logger
 from llamero.utils import commit_and_push
@@ -22,12 +21,12 @@ class Paper(BaseModel):
     issue_url: str
     created_at: str
     state: str
-    labels: List[str]
+    labels: list[str]
     total_reading_time_minutes: int = 0
-    last_read: Optional[str] = None
+    last_read: str | None = None
 
     class Config:
-        allow_population_by_field_name = True
+        populate_by_name = True
 
 class ReadingSession(BaseModel):
     """Schema for reading session events"""
@@ -54,10 +53,10 @@ class EventProcessor:
         }
         self.papers_dir = Path("data/papers")
         self.papers_dir.mkdir(parents=True, exist_ok=True)
-        self.modified_files: Set[str] = set()
-        self.processed_issues: List[int] = []
+        self.modified_files: set[str] = set()
+        self.processed_issues: list[int] = []
 
-    async def get_open_issues(self, session):
+    async def get_open_issues(self, session) -> list[dict]:
         """Fetch all open issues with paper or reading-session labels."""
         url = f"https://api.github.com/repos/{self.repo}/issues"
         params = {
@@ -98,13 +97,13 @@ class EventProcessor:
         paper_dir.mkdir(parents=True, exist_ok=True)
         return paper_dir
 
-    def load_paper_metadata(self, arxiv_id: str) -> Optional[Paper]:
+    def load_paper_metadata(self, arxiv_id: str) -> Paper | None:
         """Load paper metadata from file."""
         metadata_file = self.papers_dir / arxiv_id / "metadata.json"
         if metadata_file.exists():
             with metadata_file.open('r') as f:
                 data = json.load(f)
-                return Paper.parse_obj(data)
+                return Paper.model_validate(data)
         return None
 
     def save_paper_metadata(self, paper: Paper):
@@ -112,14 +111,14 @@ class EventProcessor:
         arxiv_id = paper.arxiv_id
         metadata_file = self.papers_dir / arxiv_id / "metadata.json"
         with metadata_file.open('w') as f:
-            json.dump(paper.dict(by_alias=True), f, indent=2)
+            json.dump(paper.model_dump(by_alias=True), f, indent=2)
         self.modified_files.add(str(metadata_file))
 
     def append_event(self, arxiv_id: str, event: BaseModel):
         """Append an event to the paper's event log."""
         events_file = self.papers_dir / arxiv_id / "events.log"
         with events_file.open('a') as f:
-            f.write(f"{event.json()}\n")
+            f.write(f"{event.model_dump_json()}\n")
         self.modified_files.add(str(events_file))
 
     def process_new_paper(self, issue_data: dict) -> bool:
@@ -230,7 +229,7 @@ class EventProcessor:
         for arxiv_id in modified_papers:
             paper = self.load_paper_metadata(arxiv_id)
             if paper:
-                registry[arxiv_id] = paper.dict(by_alias=True)
+                registry[arxiv_id] = paper.model_dump(by_alias=True)
         
         # Only save and track if we made changes
         if modified_papers:
