@@ -6,8 +6,42 @@ import asyncio
 import aiohttp
 from datetime import datetime
 from pathlib import Path
+from pydantic import BaseModel, Field
 from loguru import logger
 from llamero.utils import commit_and_push
+
+class Paper(BaseModel):
+    """Schema for paper metadata"""
+    arxiv_id: str = Field(..., alias="arxivId")
+    title: str
+    authors: str
+    abstract: str
+    url: str
+    issue_number: int
+    issue_url: str
+    created_at: str
+    state: str
+    labels: list[str]
+    total_reading_time_minutes: int = 0
+    last_read: str | None = None
+
+    class Config:
+        populate_by_name = True
+
+class ReadingSession(BaseModel):
+    """Schema for reading session events"""
+    type: str = "reading_session"
+    arxiv_id: str = Field(..., alias="arxivId")
+    timestamp: str
+    duration_minutes: int
+    issue_url: str
+
+class PaperRegistrationEvent(BaseModel):
+    """Schema for paper registration events"""
+    type: str = "paper_registered"
+    timestamp: str
+    issue_url: str
+    arxiv_id: str
 
 class EventProcessor:
     def __init__(self):
@@ -19,10 +53,10 @@ class EventProcessor:
         }
         self.papers_dir = Path("data/papers")
         self.papers_dir.mkdir(parents=True, exist_ok=True)
-        self.modified_files = set()  # Track modified files
-        self.processed_issues = []  # Track successfully processed issues
+        self.modified_files: set[str] = set()
+        self.processed_issues: list[int] = []
 
-    async def get_open_issues(self, session):
+    async def get_open_issues(self, session) -> list[dict]:
         """Fetch all open issues with paper or reading-session labels."""
         url = f"https://api.github.com/repos/{self.repo}/issues"
         params = {
@@ -33,7 +67,6 @@ class EventProcessor:
         async with session.get(url, headers=self.base_headers, params=params) as response:
             if response.status == 200:
                 all_issues = await response.json()
-                # Filter for issues with either 'paper' or 'reading-session' labels
                 return [
                     issue for issue in all_issues
                     if any(label['name'] in ['paper', 'reading-session'] 
@@ -41,70 +74,75 @@ class EventProcessor:
                 ]
             return []
 
-    def create_paper_metadata(self, issue_data, arxiv_id):
-        """Create initial metadata for a new paper."""
-        metadata = json.loads(issue_data["body"])
-        metadata.update({
-            "arxivId": arxiv_id,  # Ensure arxivId is set
-            "issue_number": issue_data["number"],
-            "issue_url": issue_data["html_url"],
-            "created_at": issue_data["created_at"],
-            "state": issue_data["state"],
-            "labels": [label["name"] for label in issue_data["labels"]],
-            "total_reading_time_minutes": 0,
-            "last_read": None
-        })
-        return metadata
+    def create_paper_from_issue(self, issue_data: dict, paper_data: dict) -> Paper:
+        """Create a Paper model from issue and paper data."""
+        return Paper(
+            arxivId=paper_data["arxivId"],
+            title=paper_data.get("title", "Untitled"),
+            authors=paper_data.get("authors", "Unknown"),
+            abstract=paper_data.get("abstract", ""),
+            url=paper_data.get("url", ""),
+            issue_number=issue_data["number"],
+            issue_url=issue_data["html_url"],
+            created_at=issue_data["created_at"],
+            state=issue_data["state"],
+            labels=[label["name"] for label in issue_data["labels"]],
+            total_reading_time_minutes=0,
+            last_read=None
+        )
 
-    def ensure_paper_directory(self, arxiv_id):
+    def ensure_paper_directory(self, arxiv_id: str) -> Path:
         """Create paper directory if it doesn't exist."""
         paper_dir = self.papers_dir / arxiv_id
         paper_dir.mkdir(parents=True, exist_ok=True)
         return paper_dir
 
-    def load_paper_metadata(self, arxiv_id):
+    def load_paper_metadata(self, arxiv_id: str) -> Paper | None:
         """Load paper metadata from file."""
         metadata_file = self.papers_dir / arxiv_id / "metadata.json"
         if metadata_file.exists():
             with metadata_file.open('r') as f:
-                return json.load(f)
+                data = json.load(f)
+                return Paper.model_validate(data)
         return None
 
-    def save_paper_metadata(self, arxiv_id, metadata):
+    def save_paper_metadata(self, paper: Paper):
         """Save paper metadata to file."""
+        arxiv_id = paper.arxiv_id
         metadata_file = self.papers_dir / arxiv_id / "metadata.json"
         with metadata_file.open('w') as f:
-            json.dump(metadata, f, indent=2)
+            json.dump(paper.model_dump(by_alias=True), f, indent=2)
         self.modified_files.add(str(metadata_file))
 
-    def append_event(self, arxiv_id, event_data):
+    def append_event(self, arxiv_id: str, event: BaseModel):
         """Append an event to the paper's event log."""
         events_file = self.papers_dir / arxiv_id / "events.log"
-        event_line = json.dumps(event_data)
         with events_file.open('a') as f:
-            f.write(f"{event_line}\n")
+            f.write(f"{event.model_dump_json()}\n")
         self.modified_files.add(str(events_file))
 
-    def process_new_paper(self, issue_data):
+    def process_new_paper(self, issue_data: dict) -> bool:
         """Process a new paper registration."""
         try:
-            metadata = json.loads(issue_data["body"])
-            arxiv_id = metadata.get("arxivId")
+            paper_data = json.loads(issue_data["body"])
+            arxiv_id = paper_data.get("arxivId")
             if not arxiv_id:
                 raise ValueError("No arXiv ID found in metadata")
 
+            # Create paper model
+            paper = self.create_paper_from_issue(issue_data, paper_data)
+            
+            # Save paper metadata
             self.ensure_paper_directory(arxiv_id)
-            metadata = self.create_paper_metadata(issue_data, arxiv_id)
-            self.save_paper_metadata(arxiv_id, metadata)
+            self.save_paper_metadata(paper)
 
             # Log paper creation event
-            event_data = {
-                "type": "paper_registered",
-                "timestamp": datetime.utcnow().isoformat(),
-                "issue_url": issue_data["html_url"],
-                "arxiv_id": arxiv_id
-            }
-            self.append_event(arxiv_id, event_data)
+            event = PaperRegistrationEvent(
+                timestamp=datetime.utcnow().isoformat(),
+                issue_url=issue_data["html_url"],
+                arxiv_id=arxiv_id
+            )
+            self.append_event(arxiv_id, event)
             self.processed_issues.append(issue_data["number"])
             return True
 
@@ -112,7 +150,7 @@ class EventProcessor:
             logger.error(f"Error processing new paper: {e}")
             return False
 
-    def process_reading_session(self, issue_data):
+    def process_reading_session(self, issue_data: dict) -> bool:
         """Process a reading session event."""
         try:
             session_data = json.loads(issue_data["body"])
@@ -121,32 +159,29 @@ class EventProcessor:
             if not arxiv_id:
                 raise ValueError("No arXiv ID found in session data")
 
-            # Ensure paper exists - create if it doesn't
-            metadata = self.load_paper_metadata(arxiv_id)
-            if not metadata:
+            # Load or create paper
+            paper = self.load_paper_metadata(arxiv_id)
+            if not paper:
                 # Create new paper entry if it doesn't exist
-                metadata = self.create_paper_metadata(issue_data, arxiv_id)
+                paper = self.create_paper_from_issue(issue_data, session_data)
                 self.ensure_paper_directory(arxiv_id)
-                self.save_paper_metadata(arxiv_id, metadata)
 
             # Update reading time stats
             duration_minutes = session_data["duration_minutes"]
-            metadata["total_reading_time_minutes"] = (
-                metadata.get("total_reading_time_minutes", 0) + duration_minutes
-            )
-            metadata["last_read"] = session_data["timestamp"]
+            paper.total_reading_time_minutes += duration_minutes
+            paper.last_read = session_data["timestamp"]
             
             # Save updated metadata
-            self.save_paper_metadata(arxiv_id, metadata)
+            self.save_paper_metadata(paper)
 
             # Log reading session event
-            event_data = {
-                "type": "reading_session",
-                "timestamp": session_data["timestamp"],
-                "duration_minutes": duration_minutes,
-                "issue_url": issue_data["html_url"]
-            }
-            self.append_event(arxiv_id, event_data)
+            event = ReadingSession(
+                arxivId=arxiv_id,
+                timestamp=session_data["timestamp"],
+                duration_minutes=duration_minutes,
+                issue_url=issue_data["html_url"]
+            )
+            self.append_event(arxiv_id, event)
             self.processed_issues.append(issue_data["number"])
             return True
 
@@ -192,10 +227,9 @@ class EventProcessor:
         }
         
         for arxiv_id in modified_papers:
-            metadata_file = self.papers_dir / arxiv_id / "metadata.json"
-            if metadata_file.exists():
-                with metadata_file.open('r') as f:
-                    registry[arxiv_id] = json.load(f)
+            paper = self.load_paper_metadata(arxiv_id)
+            if paper:
+                registry[arxiv_id] = paper.model_dump(by_alias=True)
         
         # Only save and track if we made changes
         if modified_papers:
