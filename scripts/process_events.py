@@ -34,7 +34,6 @@ class EventProcessor:
         url = f"https://api.github.com/repos/{self.repo}/issues"
         params = {
             "state": "open",
-            "labels": "paper,reading-session",
             "per_page": 100
         }
         
@@ -43,11 +42,20 @@ class EventProcessor:
         
         async with session.get(url, headers=self.base_headers, params=params) as response:
             if response.status == 200:
-                issues = await response.json()
-                logger.info(f"Found {len(issues)} open issues")
-                for issue in issues:
+                all_issues = await response.json()
+                logger.info(f"Found {len(all_issues)} total open issues")
+                
+                # Filter for issues with either 'paper' or 'reading-session' labels
+                relevant_issues = [
+                    issue for issue in all_issues
+                    if any(label['name'] in ['paper', 'reading-session'] 
+                          for label in issue['labels'])
+                ]
+                
+                logger.info(f"Found {len(relevant_issues)} issues with relevant labels")
+                for issue in relevant_issues:
                     logger.debug(f"Issue #{issue['number']}: {issue['title']} - Labels: {[l['name'] for l in issue['labels']]}")
-                return issues
+                return relevant_issues
             else:
                 logger.error(f"Failed to fetch issues. Status: {response.status}")
                 logger.debug(f"Response: {await response.text()}")
