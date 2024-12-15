@@ -2,6 +2,7 @@
 let githubToken = '';
 let githubRepo = '';
 let currentPaperData = null;
+let currentSession = null;
 
 // Load credentials when extension starts
 async function loadCredentials() {
@@ -21,6 +22,39 @@ chrome.storage.onChanged.addListener((changes) => {
     githubRepo = changes.githubRepo.newValue;
   }
 });
+
+// Reading Session class to track individual reading sessions
+class ReadingSession {
+    constructor(arxivId) {
+        this.arxivId = arxivId;
+        this.startTime = Date.now();
+        this.activeTime = 0;
+        this.lastActiveTime = Date.now();
+        this.isTracking = true;
+        this.idleThreshold = 5 * 60 * 1000; // 5 minute idle threshold for academic reading
+        this.MIN_SESSION_DURATION = 30 * 1000; // Minimum 30 seconds to count as a session
+    }
+
+    update() {
+        if (this.isTracking) {
+            const now = Date.now();
+            const timeSinceLastActive = now - this.lastActiveTime;
+            
+            // For academic reading, we count all time up to the idle threshold
+            if (timeSinceLastActive < this.idleThreshold) {
+                this.activeTime += timeSinceLastActive;
+            }
+            
+            this.lastActiveTime = now;
+        }
+    }
+
+    end() {
+        this.isTracking = false;
+        this.update();
+        return this.activeTime >= this.MIN_SESSION_DURATION ? this.activeTime : 0;
+    }
+}
 
 // Initialize credentials
 loadCredentials();
@@ -71,6 +105,118 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
   return true;
 });
+
+// Reading time tracking
+async function createReadingEvent(paperData, sessionDuration) {
+    if (!githubToken || !githubRepo || !paperData) {
+        console.error('Missing required data for creating reading event');
+        return;
+    }
+
+    const minutes = Math.round(sessionDuration / 1000 / 60);
+    if (minutes < 1) return; // Don't log sessions shorter than a minute
+
+    const eventData = {
+        type: 'reading_session',
+        arxivId: paperData.arxivId,
+        timestamp: new Date().toISOString(),
+        duration_ms: sessionDuration,
+        duration_minutes: minutes,
+        paper_url: paperData.url,
+        paper_title: paperData.title
+    };
+
+    const issueBody = JSON.stringify(eventData, null, 2);
+
+    try {
+        const response = await fetch(`https://api.github.com/repos/${githubRepo}/issues`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `token ${githubToken}`,
+                'Accept': 'application/vnd.github.v3+json'
+            },
+            body: JSON.stringify({
+                title: `[Reading] ${paperData.title || paperData.arxivId} (${minutes}min)`,
+                body: issueBody,
+                labels: ['reading-session', `paper:${paperData.arxivId}`]
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error(`GitHub API error: ${response.status}`);
+        }
+
+        console.log(`Logged reading session: ${minutes} minutes for ${paperData.arxivId}`);
+        return await response.json();
+    } catch (error) {
+        console.error('Error logging reading session:', error);
+    }
+}
+
+// Tab and window management
+chrome.tabs.onActivated.addListener(async (activeInfo) => {
+    const tab = await chrome.tabs.get(activeInfo.tabId);
+    handleTabChange(tab);
+});
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+    if (changeInfo.status === 'complete') {
+        handleTabChange(tab);
+    }
+});
+
+chrome.windows.onFocusChanged.addListener((windowId) => {
+    if (windowId === chrome.windows.WINDOW_ID_NONE) {
+        endCurrentSession();
+    }
+});
+
+async function handleTabChange(tab) {
+    const isArxiv = tab.url?.includes('arxiv.org/');
+    
+    if (!isArxiv) {
+        endCurrentSession();
+        return;
+    }
+
+    if (!currentSession) {
+        const paperData = await processArxivUrl(tab.url);
+        if (paperData) {
+            currentSession = new ReadingSession(paperData.arxivId);
+            startActivityTracking();
+        }
+    }
+}
+
+function endCurrentSession() {
+    if (currentSession) {
+        const duration = currentSession.end();
+        if (duration > 0) {
+            createReadingEvent(currentPaperData, duration);
+        }
+        currentSession = null;
+        stopActivityTracking();
+    }
+}
+
+let activityInterval = null;
+
+function startActivityTracking() {
+    if (!activityInterval) {
+        activityInterval = setInterval(() => {
+            if (currentSession) {
+                currentSession.update();
+            }
+        }, 1000);
+    }
+}
+
+function stopActivityTracking() {
+    if (activityInterval) {
+        clearInterval(activityInterval);
+        activityInterval = null;
+    }
+}
 
 async function parseXMLText(xmlText) {
   console.log('Parsing XML response...');
