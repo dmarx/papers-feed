@@ -6,20 +6,9 @@ from pathlib import Path
 from loguru import logger
 from llamero.utils import commit_and_push
 
-def extract_metadata_block(issue_body):
+def read_metadata(issue_body):
     """Extract the metadata JSON block from issue body."""
-    try:
-        # Split the body into sections
-        sections = issue_body.split('```')
-        # Find the json section
-        for i, section in enumerate(sections):
-            if section.strip().startswith('json'):
-                # Get the JSON content
-                json_content = sections[i + 1]
-                return json.loads(json_content)
-    except (IndexError, json.JSONDecodeError) as e:
-        logger.error(f"Failed to parse metadata: {e}")
-        return None
+    return json.loads(issue_body)
 
 def update_papers_registry(issue_data, registry_file='papers.yaml'):
     """Update the papers registry with new issue data."""
