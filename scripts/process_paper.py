@@ -19,6 +19,7 @@ def update_papers_registry(issue_data, registry_file='data/papers.yaml'):
         with registry_path.open('r') as f:
             registry = yaml.safe_load(f) or {}
     else:
+        registry_path.parent.mkdir(exists_ok=True, parents=True)
         registry = {}
     
     # Extract metadata from issue body
