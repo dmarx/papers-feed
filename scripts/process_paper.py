@@ -8,7 +8,10 @@ from llamero.utils import commit_and_push
 
 def read_metadata(issue_body):
     """Extract the metadata JSON block from issue body."""
-    return json.loads(issue_body)
+    data = json.loads(issue_body)
+    if 'abstract' in data:
+        data['abstract'] = data['abstract'].replace('\n','')
+    return data
 
 def update_papers_registry(issue_data, registry_file='data/papers.yaml'):
     """Update the papers registry with new issue data."""
