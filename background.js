@@ -186,25 +186,26 @@ async function createGithubIssue(paperData) {
   try {
     console.log('Creating GitHub issue for paper:', paperData.arxivId);
     
-    const issueBody = `
-## Paper Details
-- **arXiv ID**: ${paperData.arxivId}
-- **URL**: ${paperData.url}
-- **Authors**: ${paperData.authors}
-- **First Read**: ${paperData.timestamp}
-- **Initial Rating**: ${paperData.rating}
+//     const issueBody = `
+// ## Paper Details
+// - **arXiv ID**: ${paperData.arxivId}
+// - **URL**: ${paperData.url}
+// - **Authors**: ${paperData.authors}
+// - **First Read**: ${paperData.timestamp}
+// - **Initial Rating**: ${paperData.rating}
 
-## Abstract
-${paperData.abstract}
+// ## Abstract
+// ${paperData.abstract}
 
-## Notes
-<!-- Add your notes about the paper here -->
+// ## Notes
+// <!-- Add your notes about the paper here -->
 
-## Metadata
-\`\`\`json
-${JSON.stringify(paperData, null, 2)}
-\`\`\`
-`;
+// ## Metadata
+// \`\`\`json
+// ${JSON.stringify(paperData, null, 2)}
+// \`\`\`
+// `;
+    const issueBody = `${JSON.stringify(paperData, null, 2)}`
 
     const response = await fetch(`https://api.github.com/repos/${githubRepo}/issues`, {
       method: 'POST',
