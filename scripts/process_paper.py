@@ -10,7 +10,7 @@ def read_metadata(issue_body):
     """Extract the metadata JSON block from issue body."""
     return json.loads(issue_body)
 
-def update_papers_registry(issue_data, registry_file='papers.yaml'):
+def update_papers_registry(issue_data, registry_file='data/papers.yaml'):
     """Update the papers registry with new issue data."""
     registry_path = Path(registry_file)
     
