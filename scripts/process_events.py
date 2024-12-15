@@ -20,18 +20,41 @@ class EventProcessor:
         self.papers_dir = Path("data/papers")
         self.papers_dir.mkdir(parents=True, exist_ok=True)
         self.modified_files = set()  # Track modified files
+        self.processed_issues = []  # Track successfully processed issues
 
     async def get_open_issues(self, session):
         """Fetch all open issues with paper or reading-session labels."""
         url = f"https://api.github.com/repos/{self.repo}/issues"
         params = {
             "state": "open",
-            "labels": "paper,reading-session",
             "per_page": 100
         }
         
         async with session.get(url, headers=self.base_headers, params=params) as response:
-            return await response.json() if response.status == 200 else []
+            if response.status == 200:
+                all_issues = await response.json()
+                # Filter for issues with either 'paper' or 'reading-session' labels
+                return [
+                    issue for issue in all_issues
+                    if any(label['name'] in ['paper', 'reading-session'] 
+                          for label in issue['labels'])
+                ]
+            return []
+
+    def create_paper_metadata(self, issue_data, arxiv_id):
+        """Create initial metadata for a new paper."""
+        metadata = json.loads(issue_data["body"])
+        metadata.update({
+            "arxivId": arxiv_id,  # Ensure arxivId is set
+            "issue_number": issue_data["number"],
+            "issue_url": issue_data["html_url"],
+            "created_at": issue_data["created_at"],
+            "state": issue_data["state"],
+            "labels": [label["name"] for label in issue_data["labels"]],
+            "total_reading_time_minutes": 0,
+            "last_read": None
+        })
+        return metadata
 
     def ensure_paper_directory(self, arxiv_id):
         """Create paper directory if it doesn't exist."""
@@ -70,21 +93,8 @@ class EventProcessor:
             if not arxiv_id:
                 raise ValueError("No arXiv ID found in metadata")
 
-            # Ensure paper directory exists
-            paper_dir = self.ensure_paper_directory(arxiv_id)
-
-            # Add issue metadata
-            metadata.update({
-                "issue_number": issue_data["number"],
-                "issue_url": issue_data["html_url"],
-                "created_at": issue_data["created_at"],
-                "state": issue_data["state"],
-                "labels": [label["name"] for label in issue_data["labels"]],
-                "total_reading_time_minutes": 0,
-                "last_read": None
-            })
-
-            # Save metadata
+            self.ensure_paper_directory(arxiv_id)
+            metadata = self.create_paper_metadata(issue_data, arxiv_id)
             self.save_paper_metadata(arxiv_id, metadata)
 
             # Log paper creation event
@@ -95,7 +105,7 @@ class EventProcessor:
                 "arxiv_id": arxiv_id
             }
             self.append_event(arxiv_id, event_data)
-
+            self.processed_issues.append(issue_data["number"])
             return True
 
         except Exception as e:
@@ -111,10 +121,13 @@ class EventProcessor:
             if not arxiv_id:
                 raise ValueError("No arXiv ID found in session data")
 
-            # Ensure paper exists
+            # Ensure paper exists - create if it doesn't
             metadata = self.load_paper_metadata(arxiv_id)
             if not metadata:
-                raise ValueError(f"Paper {arxiv_id} not found in registry")
+                # Create new paper entry if it doesn't exist
+                metadata = self.create_paper_metadata(issue_data, arxiv_id)
+                self.ensure_paper_directory(arxiv_id)
+                self.save_paper_metadata(arxiv_id, metadata)
 
             # Update reading time stats
             duration_minutes = session_data["duration_minutes"]
@@ -134,31 +147,33 @@ class EventProcessor:
                 "issue_url": issue_data["html_url"]
             }
             self.append_event(arxiv_id, event_data)
-
+            self.processed_issues.append(issue_data["number"])
             return True
 
         except Exception as e:
             logger.error(f"Error processing reading session: {e}")
             return False
 
-    async def close_issue(self, session, issue_number):
-        """Close a processed issue."""
-        url = f"https://api.github.com/repos/{self.repo}/issues/{issue_number}"
-        
-        # Add comment
-        comment_url = f"{url}/comments"
-        comment_data = {
-            "body": "✅ Event processed and recorded. Closing this issue."
-        }
-        async with session.post(comment_url, headers=self.base_headers, json=comment_data) as response:
-            if response.status != 201:
-                logger.error(f"Failed to add comment to issue {issue_number}")
-                return False
+    async def close_issues(self, session):
+        """Close all successfully processed issues."""
+        for issue_number in self.processed_issues:
+            url = f"https://api.github.com/repos/{self.repo}/issues/{issue_number}"
+            
+            # Add comment
+            comment_url = f"{url}/comments"
+            comment_data = {
+                "body": "✅ Event processed and recorded. Closing this issue."
+            }
+            async with session.post(comment_url, headers=self.base_headers, json=comment_data) as response:
+                if response.status != 201:
+                    logger.error(f"Failed to add comment to issue {issue_number}")
+                    continue
 
-        # Close issue
-        close_data = {"state": "closed"}
-        async with session.patch(url, headers=self.base_headers, json=close_data) as response:
-            return response.status == 200
+            # Close issue
+            close_data = {"state": "closed"}
+            async with session.patch(url, headers=self.base_headers, json=close_data) as response:
+                if response.status != 200:
+                    logger.error(f"Failed to close issue {issue_number}")
 
     def update_registry(self):
         """Update the centralized registry file with any modified papers."""
@@ -195,22 +210,22 @@ class EventProcessor:
             
             for issue in issues:
                 labels = [label["name"] for label in issue["labels"]]
-                success = False
                 
                 if "reading-session" in labels:
-                    success = self.process_reading_session(issue)
+                    self.process_reading_session(issue)
                 elif "paper" in labels:
-                    success = self.process_new_paper(issue)
-                
-                if success:
-                    if not await self.close_issue(session, issue["number"]):
-                        logger.error(f"Failed to close issue {issue['number']}")
+                    self.process_new_paper(issue)
 
             # Update centralized registry if we have any changes
             if self.modified_files:
                 self.update_registry()
-                # Commit all modified files
-                commit_and_push(list(self.modified_files))
+                try:
+                    # Commit all modified files
+                    commit_and_push(list(self.modified_files))
+                    # Only close issues if commit was successful
+                    await self.close_issues(session)
+                except Exception as e:
+                    logger.error(f"Failed to commit changes: {e}")
 
 def main():
     """Main entry point for processing paper events."""
