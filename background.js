@@ -46,9 +46,28 @@ chrome.webNavigation.onCompleted.addListener(async (details) => {
 
 // Message passing between background and popup
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  console.log('Message received:', request);
+  
   if (request.type === 'getCurrentPaper') {
     console.log('Popup requested current paper:', currentPaperData);
     sendResponse(currentPaperData);
+  }
+  else if (request.type === 'updateRating') {
+    console.log('Rating update requested:', request.rating);
+    if (currentPaperData && currentPaperData.issueNumber) {
+      updatePaperRating(currentPaperData.issueNumber, request.rating)
+        .then(() => {
+          currentPaperData.rating = request.rating;
+          sendResponse({success: true});
+        })
+        .catch(error => {
+          console.error('Error updating rating:', error);
+          sendResponse({success: false, error: error.message});
+        });
+      return true; // Will respond asynchronously
+    } else {
+      sendResponse({success: false, error: 'No current paper or issue number'});
+    }
   }
   return true;
 });
@@ -58,9 +77,17 @@ async function parseXMLText(xmlText) {
   try {
     // Parse using regex since we're in a service worker
     const getTagContent = (tag, text) => {
-      const regex = new RegExp(`<${tag}[^>]*>(.*?)</${tag}>`, 's');
-      const match = text.match(regex);
-      return match ? match[1].trim() : '';
+      // Look for the tag within an entry element to avoid getting query metadata
+      const entryRegex = /<entry>([\s\S]*?)<\/entry>/;
+      const entryMatch = text.match(entryRegex);
+      
+      if (entryMatch) {
+        const entryContent = entryMatch[1];
+        const regex = new RegExp(`<${tag}[^>]*>(.*?)</${tag}>`, 's');
+        const match = entryContent.match(regex);
+        return match ? match[1].trim() : '';
+      }
+      return '';
     };
     
     const getAuthors = (text) => {
