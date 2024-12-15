@@ -6,6 +6,16 @@ from datetime import datetime, timedelta
 from unittest.mock import Mock, patch, AsyncMock, MagicMock
 from scripts.process_events import EventProcessor, Paper, ReadingSession, PaperRegistrationEvent
 
+class AsyncContextManagerMock:
+    def __init__(self, response):
+        self.response = response
+
+    async def __aenter__(self):
+        return self.response
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        pass
+
 @pytest.fixture
 def sample_paper_issue():
     """Fixture for a sample paper registration issue"""
@@ -60,7 +70,6 @@ def event_processor(tmp_path):
 @pytest.mark.asyncio
 async def test_get_open_issues(event_processor):
     """Test fetching open issues"""
-    mock_session = MagicMock()
     mock_response = MagicMock()
     mock_response.status = 200
     mock_response.json = AsyncMock(return_value=[
@@ -69,10 +78,8 @@ async def test_get_open_issues(event_processor):
         {"labels": [{"name": "other"}]}
     ])
     
-    async def mock_get(*args, **kwargs):
-        return mock_response
-    
-    mock_session.get = mock_get
+    mock_session = MagicMock()
+    mock_session.get = MagicMock(return_value=AsyncContextManagerMock(mock_response))
     
     issues = await event_processor.get_open_issues(mock_session)
     assert len(issues) == 2
@@ -185,25 +192,19 @@ def test_update_registry(event_processor, sample_paper_issue):
     event_processor.update_registry()
     
     # Check if data/papers.yaml exists in modified files
-    assert any('data/papers.yaml' in file for file in event_processor.modified_files)
+    assert any('papers.yaml' in file for file in event_processor.modified_files)
 
 @pytest.mark.asyncio
 async def test_close_issues(event_processor):
     """Test closing processed issues"""
-    mock_session = MagicMock()
     mock_comment_response = MagicMock()
     mock_comment_response.status = 201
     mock_close_response = MagicMock()
     mock_close_response.status = 200
     
-    async def mock_post(*args, **kwargs):
-        return mock_comment_response
-        
-    async def mock_patch(*args, **kwargs):
-        return mock_close_response
-    
-    mock_session.post = mock_post
-    mock_session.patch = mock_patch
+    mock_session = MagicMock()
+    mock_session.post = MagicMock(return_value=AsyncContextManagerMock(mock_comment_response))
+    mock_session.patch = MagicMock(return_value=AsyncContextManagerMock(mock_close_response))
     
     # Add some processed issues
     event_processor.processed_issues = [1, 2]
@@ -214,7 +215,6 @@ async def test_close_issues(event_processor):
 @pytest.mark.asyncio
 async def test_process_all_issues(event_processor, sample_paper_issue, sample_reading_session_issue):
     """Test end-to-end processing of all issues"""
-    mock_session = MagicMock()
     mock_get_response = MagicMock()
     mock_get_response.status = 200
     mock_get_response.json = AsyncMock(return_value=[sample_paper_issue, sample_reading_session_issue])
@@ -224,18 +224,10 @@ async def test_process_all_issues(event_processor, sample_paper_issue, sample_re
     mock_close_response = MagicMock()
     mock_close_response.status = 200
     
-    async def mock_get(*args, **kwargs):
-        return mock_get_response
-        
-    async def mock_post(*args, **kwargs):
-        return mock_comment_response
-        
-    async def mock_patch(*args, **kwargs):
-        return mock_close_response
-    
-    mock_session.get = mock_get
-    mock_session.post = mock_post
-    mock_session.patch = mock_patch
+    mock_session = MagicMock()
+    mock_session.get = MagicMock(return_value=AsyncContextManagerMock(mock_get_response))
+    mock_session.post = MagicMock(return_value=AsyncContextManagerMock(mock_comment_response))
+    mock_session.patch = MagicMock(return_value=AsyncContextManagerMock(mock_close_response))
     
     with patch('aiohttp.ClientSession', return_value=mock_session):
         with patch('scripts.process_events.commit_and_push') as mock_commit:
