@@ -22,7 +22,7 @@ def update_papers_registry(issue_data, registry_file='papers.yaml'):
         registry = {}
     
     # Extract metadata from issue body
-    metadata = extract_metadata_block(issue_data['body'])
+    metadata = read_metadata(issue_data['body'])
     if not metadata:
         logger.error("No valid metadata found in issue")
         return False
