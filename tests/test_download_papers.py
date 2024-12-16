@@ -6,13 +6,11 @@ from unittest.mock import AsyncMock, patch
 from scripts.download_papers import PDFDownloader
 
 class AsyncContextManagerMock:
-    def __init__(self, response):
-        self.response = response
+    def __init__(self, return_value):
+        self.return_value = return_value
         
     async def __aenter__(self):
-        if asyncio.iscoroutine(self.response):
-            self.response = await self.response
-        return self.response
+        return self.return_value
         
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         pass
@@ -56,10 +54,10 @@ async def test_download_pdf(downloader):
     # Mock successful PDF download
     mock_response = AsyncMock()
     mock_response.status = 200
-    mock_response.read = AsyncMock(return_value=b"fake pdf content")
+    mock_response.read.return_value = b"fake pdf content"
     
     mock_session = AsyncMock()
-    mock_session.get = AsyncMock(return_value=AsyncContextManagerMock(mock_response))
+    mock_session.get.return_value = AsyncContextManagerMock(mock_response)
     
     # Create paper directory
     arxiv_id = "2401.00001"
@@ -81,7 +79,7 @@ async def test_download_pdf_failure(downloader):
     mock_response.status = 404
     
     mock_session = AsyncMock()
-    mock_session.get = AsyncMock(return_value=AsyncContextManagerMock(mock_response))
+    mock_session.get.return_value = AsyncContextManagerMock(mock_response)
     
     # Create paper directory
     arxiv_id = "2401.00001"
@@ -105,12 +103,17 @@ async def test_download_all_missing(downloader):
     # Mock successful PDF download
     mock_response = AsyncMock()
     mock_response.status = 200
-    mock_response.read = AsyncMock(return_value=b"fake pdf content")
+    mock_response.read.return_value = b"fake pdf content"
     
     mock_session = AsyncMock()
-    mock_session.get = AsyncMock(return_value=AsyncContextManagerMock(mock_response))
+    mock_session.get.return_value = AsyncContextManagerMock(mock_response)
     
-    with patch('aiohttp.ClientSession', return_value=mock_session):
+    # Need to mock ClientSession to return our mock session
+    mock_client_session = AsyncMock()
+    mock_client_session.__aenter__.return_value = mock_session
+    mock_client_session.__aexit__.return_value = None
+    
+    with patch('aiohttp.ClientSession', return_value=mock_client_session):
         await downloader.download_all_missing()
     
     # Verify PDF was downloaded
