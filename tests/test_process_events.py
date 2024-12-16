@@ -1,18 +1,19 @@
+# tests/test_process_events.py
 import pytest
 import json
 import yaml
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime
 from unittest.mock import Mock, patch, AsyncMock, MagicMock
 from scripts.process_events import EventProcessor, Paper, ReadingSession, PaperRegistrationEvent
 
 class AsyncContextManagerMock:
-    def __init__(self, response):
-        self.response = response
-
+    def __init__(self, return_value):
+        self.return_value = return_value
+        
     async def __aenter__(self):
-        return self.response
-
+        return self.return_value
+        
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         pass
 
@@ -215,25 +216,33 @@ async def test_close_issues(event_processor):
 @pytest.mark.asyncio
 async def test_process_all_issues(event_processor, sample_paper_issue, sample_reading_session_issue):
     """Test end-to-end processing of all issues"""
-    mock_get_response = MagicMock()
+    # Mock response for get_open_issues
+    mock_get_response = AsyncMock()
     mock_get_response.status = 200
-    mock_get_response.json = AsyncMock(return_value=[sample_paper_issue, sample_reading_session_issue])
+    mock_get_response.json.return_value = [sample_paper_issue, sample_reading_session_issue]
     
-    mock_comment_response = MagicMock()
+    # Mock responses for closing issues
+    mock_comment_response = AsyncMock()
     mock_comment_response.status = 201
-    mock_close_response = MagicMock()
+    mock_close_response = AsyncMock()
     mock_close_response.status = 200
     
-    mock_session = MagicMock()
-    mock_session.get = MagicMock(return_value=AsyncContextManagerMock(mock_get_response))
-    mock_session.post = MagicMock(return_value=AsyncContextManagerMock(mock_comment_response))
-    mock_session.patch = MagicMock(return_value=AsyncContextManagerMock(mock_close_response))
+    # Create session mock
+    mock_session = AsyncMock()
+    mock_session.get.return_value = AsyncContextManagerMock(mock_get_response)
+    mock_session.post.return_value = AsyncContextManagerMock(mock_comment_response)
+    mock_session.patch.return_value = AsyncContextManagerMock(mock_close_response)
     
-    with patch('aiohttp.ClientSession', return_value=mock_session):
+    # Create client session mock
+    mock_client_session = AsyncMock()
+    mock_client_session.__aenter__.return_value = mock_session
+    mock_client_session.__aexit__.return_value = None
+    
+    with patch('aiohttp.ClientSession', return_value=mock_client_session):
         with patch('scripts.process_events.commit_and_push') as mock_commit:
             await event_processor.process_all_issues()
     
-    # Verify processing occurred
+    # Verify both issues were processed
     paper = event_processor.load_paper_metadata("2401.00001")
     assert paper is not None
     assert paper.total_reading_time_minutes == 30
