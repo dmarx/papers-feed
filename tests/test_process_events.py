@@ -211,10 +211,24 @@ def test_update_registry(event_processor, sample_paper_issue):
 @pytest.mark.asyncio
 async def test_close_issues(event_processor, mock_session):
     """Test closing processed issues"""
+    # Create mock responses with correct status codes
+    mock_comment_response = AsyncMock()
+    mock_comment_response.status = 201  # Success status for creating comments
+    
+    mock_close_response = AsyncMock()
+    mock_close_response.status = 200  # Success status for closing issues
+    
+    # Set up session mock with correct responses
+    mock_session.post = Mock(return_value=AsyncContextManagerMock(mock_comment_response))
+    mock_session.patch = Mock(return_value=AsyncContextManagerMock(mock_close_response))
+    
     # Add some processed issues
     event_processor.processed_issues = [1, 2]
     
+    # Execute close_issues
     await event_processor.close_issues(mock_session)
+    
+    # Verify both issues were processed
     assert mock_session.post.call_count == 2
     assert mock_session.patch.call_count == 2
 
