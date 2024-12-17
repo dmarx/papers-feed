@@ -80,7 +80,7 @@ class EventProcessor:
             arxivId=paper_data["arxivId"],
             title=paper_data.get("title", "Untitled"),
             authors=paper_data.get("authors", "Unknown"),
-            abstract=paper_data.get("abstract", ""),
+            abstract=paper_data.get("abstract", "").replace('\n', ' '),
             url=paper_data.get("url", ""),
             issue_number=issue_data["number"],
             issue_url=issue_data["html_url"],
