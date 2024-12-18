@@ -192,14 +192,15 @@ class ArxivDownloader:
             # Run pandoc with timeout
             cmd = [
                 'pandoc',
+                '+RTS', '-K3G', '-RTS', # worker has 7G memory, requesting 3G here
                 '-f', 'latex',
                 '-t', 'markdown',
                 '--wrap=none',
                 '--atx-headers',
                 '--verbose',
-                '--trace',  # Add detailed tracing
+                '--trace',
                 tex_file_relative,
-                '-o', markdown_file_relative
+                '-o', markdown_file_relative,
             ]
             
             logger.debug(f"Running pandoc command: {' '.join(cmd)}")
@@ -211,7 +212,7 @@ class ArxivDownloader:
                     capture_output=True, 
                     text=True,
                     cwd=str(source_dir),
-                    timeout=60  # 1 minute timeout
+                    timeout=180,
                 )
                 
                 if result.returncode != 0:
