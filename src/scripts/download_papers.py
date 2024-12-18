@@ -141,80 +141,80 @@ class ArxivDownloader:
                 return False
 
     def convert_to_markdown(self, arxiv_id: str) -> bool:
-    """Convert LaTeX source to Markdown using pandoc."""
-    try:
-        paper_dir = self.papers_dir / arxiv_id
-        source_dir = paper_dir / "source"
-        markdown_file = paper_dir / f"{arxiv_id}.md"
-        
-        if not source_dir.exists():
-            logger.error(f"Source directory not found for {arxiv_id}")
-            return False
-        
-        # Find main tex file
-        tex_files = list(source_dir.rglob('*.tex'))
-        if not tex_files:
-            logger.error(f"No .tex files found for {arxiv_id}")
-            return False
-        
-        main_tex = find_main_tex_file(tex_files, arxiv_id)
-        logger.info(f"Converting {main_tex.name} to Markdown for {arxiv_id}")
-        
-        # Run pandoc with more detailed error handling
-        cmd = [
-            'pandoc',
-            '-f', 'latex',
-            '-t', 'markdown',
-            '--verbose',
-            '--wrap=none',
-            '--atx-headers',
-            str(main_tex),
-            '-o', str(markdown_file)
-        ]
-        
-        result = subprocess.run(
-            cmd, 
-            capture_output=True, 
-            text=True,
-            cwd=str(source_dir)  # Run in source directory to handle relative paths
-        )
-        
-        if result.returncode != 0:
-            logger.error(f"Pandoc conversion failed for {arxiv_id}: {result.stderr}")
-            return False
+        """Convert LaTeX source to Markdown using pandoc."""
+        try:
+            paper_dir = self.papers_dir / arxiv_id
+            source_dir = paper_dir / "source"
+            markdown_file = paper_dir / f"{arxiv_id}.md"
             
-        # Verify the output file has content
-        if markdown_file.stat().st_size == 0:
-            logger.error(f"Generated markdown file is empty for {arxiv_id}")
-            # Try running pandoc with different options
-            fallback_cmd = [
+            if not source_dir.exists():
+                logger.error(f"Source directory not found for {arxiv_id}")
+                return False
+            
+            # Find main tex file
+            tex_files = list(source_dir.rglob('*.tex'))
+            if not tex_files:
+                logger.error(f"No .tex files found for {arxiv_id}")
+                return False
+            
+            main_tex = find_main_tex_file(tex_files, arxiv_id)
+            logger.info(f"Converting {main_tex.name} to Markdown for {arxiv_id}")
+            
+            # Run pandoc with more detailed error handling
+            cmd = [
                 'pandoc',
                 '-f', 'latex',
                 '-t', 'markdown',
                 '--verbose',
-                '--wrap=preserve',  # Try different wrap mode
+                '--wrap=none',
                 '--atx-headers',
                 str(main_tex),
                 '-o', str(markdown_file)
             ]
             
             result = subprocess.run(
-                fallback_cmd,
-                capture_output=True,
+                cmd, 
+                capture_output=True, 
                 text=True,
-                cwd=str(source_dir)
+                cwd=str(source_dir)  # Run in source directory to handle relative paths
             )
             
-            if result.returncode != 0 or markdown_file.stat().st_size == 0:
-                logger.error(f"Fallback conversion also failed for {arxiv_id}: {result.stderr}")
+            if result.returncode != 0:
+                logger.error(f"Pandoc conversion failed for {arxiv_id}: {result.stderr}")
                 return False
-        
-        logger.success(f"Successfully converted {arxiv_id} to Markdown (size: {markdown_file.stat().st_size} bytes)")
-        return True
-        
-    except Exception as e:
-        logger.error(f"Error converting {arxiv_id} to Markdown: {e}")
-        return False
+                
+            # Verify the output file has content
+            if markdown_file.stat().st_size == 0:
+                logger.error(f"Generated markdown file is empty for {arxiv_id}")
+                # Try running pandoc with different options
+                fallback_cmd = [
+                    'pandoc',
+                    '-f', 'latex',
+                    '-t', 'markdown',
+                    '--verbose',
+                    '--wrap=preserve',  # Try different wrap mode
+                    '--atx-headers',
+                    str(main_tex),
+                    '-o', str(markdown_file)
+                ]
+                
+                result = subprocess.run(
+                    fallback_cmd,
+                    capture_output=True,
+                    text=True,
+                    cwd=str(source_dir)
+                )
+                
+                if result.returncode != 0 or markdown_file.stat().st_size == 0:
+                    logger.error(f"Fallback conversion also failed for {arxiv_id}: {result.stderr}")
+                    return False
+            
+            logger.success(f"Successfully converted {arxiv_id} to Markdown (size: {markdown_file.stat().st_size} bytes)")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error converting {arxiv_id} to Markdown: {e}")
+            return False
 
     async def process_paper(self, session: aiohttp.ClientSession, paper_info: dict) -> bool:
         """Process a single paper's downloads and conversions."""
