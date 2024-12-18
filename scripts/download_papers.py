@@ -54,7 +54,7 @@ class ArxivDownloader:
                 paper_dir = self.papers_dir / arxiv_id
                 pdf_path = paper_dir / f"{arxiv_id}.pdf"
                 
-                logger.info(f"Downloading PDF for {arxiv_id}")
+                logger.info(f"Downloading {pdf_path}")
                 
                 async with session.get(pdf_url, headers=self.headers) as response:
                     if response.status != 200:
@@ -64,7 +64,6 @@ class ArxivDownloader:
                     content = await response.read()
                     pdf_path.write_bytes(content)
                     
-                logger.success(f"Successfully downloaded PDF for {arxiv_id}")
                 await asyncio.sleep(self.delay)  # Rate limiting delay
                 return True
                 
@@ -80,7 +79,7 @@ class ArxivDownloader:
                 paper_dir = self.papers_dir / arxiv_id
                 source_dir = paper_dir / "source"
                 
-                logger.info(f"Downloading source files for {arxiv_id}")
+                logger.info(f"Downloading {source_dir}")
                 
                 async with session.get(source_url, headers=self.headers) as response:
                     if response.status != 200:
@@ -95,17 +94,17 @@ class ArxivDownloader:
                         tmp_file_path = tmp_file.name
                     
                     try:
-                        # Ensure source directory exists and is empty
-                        if source_dir.exists():
-                            for item in source_dir.iterdir():
-                                if item.is_file():
-                                    item.unlink()
-                                elif item.is_dir():
-                                    for subitem in item.rglob('*'):
-                                        if subitem.is_file():
-                                            subitem.unlink()
-                                    item.rmdir()
-                            source_dir.rmdir()
+                        # # Ensure source directory exists and is empty
+                        # if source_dir.exists():
+                        #     for item in source_dir.iterdir():
+                        #         if item.is_file():
+                        #             item.unlink()
+                        #         elif item.is_dir():
+                        #             for subitem in item.rglob('*'):
+                        #                 if subitem.is_file():
+                        #                     subitem.unlink()
+                        #             item.rmdir()
+                        #     source_dir.rmdir()
                         source_dir.mkdir()
                         
                         # Extract tar file
