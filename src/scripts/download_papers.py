@@ -48,51 +48,53 @@ class ArxivDownloader:
                 f.write(f"{arxiv_id}\n")
     
     def get_papers_missing_files(self) -> list[dict]:
-        """Find all paper directories missing PDF, source, or markdown files."""
-        missing_files = []
+        """Report current file status for each paper directory."""
+        papers_status = []
         
         for paper_dir in self.papers_dir.iterdir():
             if not paper_dir.is_dir():
                 continue
 
             arxiv_id = paper_dir.name
-            source_exists = (paper_dir / "source").exists()
+            source_dir = paper_dir / "source"
             
-            missing = {
+            status = {
                 'arxiv_id': arxiv_id,
-                'needs_pdf': not (paper_dir / f"{arxiv_id}.pdf").exists(),
-                'needs_source': not source_exists,
-                'needs_markdown': (
-                    source_exists and  # Only attempt markdown if source exists
-                    not (paper_dir / f"{arxiv_id}.md").exists() and
-                    arxiv_id not in self.failed_markdown_ids  # Skip if previously failed
-                )
+                'has_pdf': (paper_dir / f"{arxiv_id}.pdf").exists(),
+                'has_source': source_dir.exists(),
+                'has_markdown': (paper_dir / f"{arxiv_id}.md").exists(),
+                'failed_markdown': arxiv_id in self.failed_markdown_ids
             }
             
-            if any(missing.values()):
-                missing_files.append(missing)
+            # Only include papers missing any files
+            if not all([status['has_pdf'], status['has_source'], 
+                       status['has_markdown'] or status['failed_markdown']]):
+                papers_status.append(status)
                 
-        return missing_files
+        return papers_status
 
-    async def process_paper(self, session: aiohttp.ClientSession, paper_info: dict) -> bool:
+    async def process_paper(self, session: aiohttp.ClientSession, paper_status: dict) -> bool:
         """Process a single paper's downloads and conversions."""
-        arxiv_id = paper_info['arxiv_id']
+        arxiv_id = paper_status['arxiv_id']
         success = True
         
         try:
-            if paper_info['needs_pdf']:
+            if not paper_status['has_pdf']:
                 pdf_success = await self.download_pdf(session, arxiv_id)
                 success = success and pdf_success
                 
-            if paper_info['needs_source']:
+            if not paper_status['has_source']:
                 source_success = await self.download_source(session, arxiv_id)
                 success = success and source_success
+            
+            # Try markdown conversion if:
+            # 1. Paper doesn't have markdown
+            # 2. Hasn't previously failed conversion
+            # 3. Has source files (either pre-existing or just downloaded successfully)
+            if (not paper_status['has_markdown'] and 
+                not paper_status['failed_markdown'] and
+                (paper_status['has_source'] or success)):
                 
-            # Only attempt markdown conversion if:
-            # 1. We have source files (either pre-existing or just downloaded successfully)
-            # 2. Markdown file is missing
-            # 3. Not previously failed
-            if paper_info['needs_markdown']:
                 source_dir = self.papers_dir / arxiv_id / "source"
                 if source_dir.exists():
                     md_success = self.convert_to_markdown(arxiv_id)
