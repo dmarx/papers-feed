@@ -8,6 +8,9 @@ import subprocess
 from pathlib import Path
 from loguru import logger
 
+from scripts.tex_utils import find_main_tex_file
+
+
 class ArxivDownloader:
     def __init__(self):
         self.papers_dir = Path("data/papers")
@@ -158,18 +161,7 @@ class ArxivDownloader:
                 logger.error(f"No .tex files found for {arxiv_id}")
                 return False
             
-            # Try to find the main tex file, or use the first one found
-            main_tex = None
-            for tex_file in tex_files:
-                with tex_file.open('r', encoding='utf-8', errors='ignore') as f:
-                    content = f.read()
-                    if r'\documentclass' in content:
-                        main_tex = tex_file
-                        break
-            
-            if not main_tex:
-                main_tex = tex_files[0]
-            
+            main_tex = find_main_tex_file(tex_files, arxiv_id)
             logger.info(f"Converting {main_tex.name} to Markdown for {arxiv_id}")
             
             result = subprocess.run([
