@@ -47,7 +47,7 @@ class ArxivDownloader:
         return f"https://arxiv.org/e-print/{arxiv_id}"
 
     async def download_pdf(self, session: aiohttp.ClientSession, arxiv_id: str) -> bool:
-        """Download PDF for a single paper with rate limiting."""
+        """Download PDF for a single paper."""
         async with self.rate_limit:
             try:
                 pdf_url = self.get_pdf_url(arxiv_id)
@@ -56,7 +56,7 @@ class ArxivDownloader:
                 
                 logger.info(f"Downloading PDF for {arxiv_id}")
                 
-                async with await session.get(pdf_url, headers=self.headers) as response:
+                async with session.get(pdf_url, headers=self.headers) as response:
                     if response.status != 200:
                         logger.error(f"Failed to download PDF for {arxiv_id}: {response.status}")
                         return False
@@ -82,7 +82,7 @@ class ArxivDownloader:
                 
                 logger.info(f"Downloading source files for {arxiv_id}")
                 
-                async with await session.get(source_url, headers=self.headers) as response:
+                async with session.get(source_url, headers=self.headers) as response:
                     if response.status != 200:
                         logger.error(f"Failed to download source for {arxiv_id}: {response.status}")
                         return False
@@ -90,10 +90,11 @@ class ArxivDownloader:
                     content = await response.read()
                     
                     # Create temporary file for the tar content
-                    with tempfile.NamedTemporaryFile(suffix='.tar') as tmp_file:
+                    with tempfile.NamedTemporaryFile(suffix='.tar', delete=False) as tmp_file:
                         tmp_file.write(content)
-                        tmp_file.flush()
-                        
+                        tmp_file_path = tmp_file.name
+                    
+                    try:
                         # Ensure source directory exists and is empty
                         if source_dir.exists():
                             for item in source_dir.iterdir():
@@ -105,16 +106,33 @@ class ArxivDownloader:
                                             subitem.unlink()
                                     item.rmdir()
                             source_dir.rmdir()
-                        source_dir.mkdir(parents=True)
+                        source_dir.mkdir()
                         
                         # Extract tar file
                         try:
-                            with tarfile.open(tmp_file.name) as tar:
-                                tar.extractall(path=source_dir)
+                            with tarfile.open(tmp_file_path) as tar:
+                                def is_within_directory(directory, target):
+                                    abs_directory = os.path.abspath(directory)
+                                    abs_target = os.path.abspath(target)
+                                    prefix = os.path.commonprefix([abs_directory, abs_target])
+                                    return prefix == abs_directory
+
+                                def safe_extract(tar, path=".", members=None):
+                                    for member in tar.getmembers():
+                                        member_path = os.path.join(path, member.name)
+                                        if not is_within_directory(path, member_path):
+                                            raise Exception("Attempted path traversal in tar file")
+                                    tar.extractall(path=path, members=members)
+
+                                safe_extract(tar, path=source_dir)
                         except tarfile.ReadError:
                             # If not a tar file, just copy it as a single file
                             main_tex = source_dir / "main.tex"
                             main_tex.write_bytes(content)
+                    finally:
+                        # Clean up temporary file
+                        if os.path.exists(tmp_file_path):
+                            os.unlink(tmp_file_path)
                     
                 logger.success(f"Successfully downloaded and extracted source for {arxiv_id}")
                 await asyncio.sleep(self.delay)
@@ -155,7 +173,6 @@ class ArxivDownloader:
             
             logger.info(f"Converting {main_tex.name} to Markdown for {arxiv_id}")
             
-            # Run pandoc conversion
             result = subprocess.run([
                 'pandoc',
                 '-f', 'latex',
@@ -183,15 +200,17 @@ class ArxivDownloader:
         success = True
         
         if paper_info['needs_pdf']:
-            success &= await self.download_pdf(session, arxiv_id)
+            pdf_success = await self.download_pdf(session, arxiv_id)
+            success = success and pdf_success
             
         if paper_info['needs_source']:
             source_success = await self.download_source(session, arxiv_id)
-            success &= source_success
+            success = success and source_success
             
             # Only attempt markdown conversion if we got the source
             if source_success and paper_info['needs_markdown']:
-                success &= self.convert_to_markdown(arxiv_id)
+                md_success = self.convert_to_markdown(arxiv_id)
+                success = success and md_success
         
         return success
 
