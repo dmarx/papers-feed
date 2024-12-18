@@ -1,4 +1,4 @@
-# scripts/download_papers.py
+# src/scripts/download_papers.py
 import os
 import asyncio
 import aiohttp
@@ -7,13 +7,20 @@ import tempfile
 import subprocess
 from pathlib import Path
 from loguru import logger
+from fire import Fire
 
 from scripts.tex_utils import find_main_tex_file
 
 
 class ArxivDownloader:
-    def __init__(self):
-        self.papers_dir = Path("data/papers")
+    def __init__(self, papers_dir: str | Path = "data/papers"):
+        """
+        Initialize the ArXiv paper downloader.
+        
+        Args:
+            papers_dir: Path to store paper files, default "data/papers"
+        """
+        self.papers_dir = Path(papers_dir)
         self.rate_limit = asyncio.Semaphore(1)  # Only 1 concurrent download
         self.delay = 3  # 3 second delay between downloads
         self.headers = {
@@ -97,17 +104,6 @@ class ArxivDownloader:
                         tmp_file_path = tmp_file.name
                     
                     try:
-                        # # Ensure source directory exists and is empty
-                        # if source_dir.exists():
-                        #     for item in source_dir.iterdir():
-                        #         if item.is_file():
-                        #             item.unlink()
-                        #         elif item.is_dir():
-                        #             for subitem in item.rglob('*'):
-                        #                 if subitem.is_file():
-                        #                     subitem.unlink()
-                        #             item.rmdir()
-                        #     source_dir.rmdir()
                         source_dir.mkdir()
                         
                         # Extract tar file
@@ -220,10 +216,21 @@ class ArxivDownloader:
             success_count = sum(1 for r in results if r)
             logger.info(f"Successfully processed {success_count}/{len(papers)} papers")
 
-def main():
-    """Main entry point for downloading missing files."""
-    downloader = ArxivDownloader()
+def download_papers(papers_dir: str | Path = "data/papers"):
+    """
+    CLI entry point for downloading missing paper files.
+    
+    Args:
+        papers_dir: Path to store paper files, default "data/papers"
+    """
+    downloader = ArxivDownloader(papers_dir=papers_dir)
     asyncio.run(downloader.download_all_missing())
+
+def main():
+    """CLI entry point using Fire."""
+    Fire({
+        'download': download_papers
+    })
 
 if __name__ == "__main__":
     main()
