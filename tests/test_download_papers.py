@@ -43,18 +43,20 @@ def test_get_papers_missing_files(downloader):
     (paper2_dir / f"{paper2_id}.pdf").touch()
     (paper2_dir / "source").mkdir()
     
-    missing = downloader.get_papers_missing_files()
-    assert len(missing) == 2
+    papers_status = downloader.get_papers_missing_files()
+    assert len(papers_status) == 2
     
-    paper1_missing = next(p for p in missing if p['arxiv_id'] == paper1_id)
-    assert paper1_missing['needs_pdf']
-    assert paper1_missing['needs_source']
-    assert paper1_missing['needs_markdown']
+    paper1_status = next(p for p in papers_status if p['arxiv_id'] == paper1_id)
+    assert not paper1_status['has_pdf']
+    assert not paper1_status['has_source']
+    assert not paper1_status['has_markdown']
+    assert not paper1_status['failed_markdown']
     
-    paper2_missing = next(p for p in missing if p['arxiv_id'] == paper2_id)
-    assert not paper2_missing['needs_pdf']
-    assert not paper2_missing['needs_source']
-    assert paper2_missing['needs_markdown']
+    paper2_status = next(p for p in papers_status if p['arxiv_id'] == paper2_id)
+    assert paper2_status['has_pdf']
+    assert paper2_status['has_source']
+    assert not paper2_status['has_markdown']
+    assert not paper2_status['failed_markdown']
 
 def test_get_urls():
     downloader = ArxivDownloader()
