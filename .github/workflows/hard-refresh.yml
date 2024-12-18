@@ -1,0 +1,62 @@
+# .github/workflows/hard-refresh.yml
+name: Hard Refresh Papers
+
+on:
+  workflow_dispatch:  # Manual trigger only
+  
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+      
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install PyGithub
+    
+    - name: Clear data directory and reopen issues
+      run: |
+        python - <<EOF
+        import os
+        import shutil
+        from github import Github
+        
+        # Clear data directory
+        data_dir = "data"
+        if os.path.exists(data_dir):
+            print(f"Removing {data_dir} directory...")
+            shutil.rmtree(data_dir)
+            os.makedirs(data_dir)
+        
+        # Reopen closed paper/reading issues
+        g = Github(os.environ["GITHUB_TOKEN"])
+        repo = g.get_repo(os.environ["GITHUB_REPOSITORY"])
+        
+        for issue in repo.get_issues(state="closed"):
+            labels = [label.name for label in issue.labels]
+            if "paper" in labels or "reading-session" in labels:
+                print(f"Reopening issue #{issue.number}")
+                issue.edit(state="open")
+        EOF
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Run event processing
+      uses: ./.github/workflows/process-events.yml
+    
+    - name: Run file downloads
+      uses: ./.github/workflows/download-papers.yml
