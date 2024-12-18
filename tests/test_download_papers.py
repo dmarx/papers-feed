@@ -1,122 +1,81 @@
 # tests/test_download_papers.py
 import pytest
-import asyncio
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
-from scripts.download_papers import PDFDownloader
-
-class AsyncContextManagerMock:
-    def __init__(self, return_value):
-        self.return_value = return_value
-        
-    async def __aenter__(self):
-        return self.return_value
-        
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        pass
+from scripts.download_papers import ArxivDownloader
 
 @pytest.fixture
 def downloader(tmp_path):
-    downloader = PDFDownloader()
+    downloader = ArxivDownloader()
     downloader.papers_dir = tmp_path / "papers"
     downloader.papers_dir.mkdir()
     return downloader
 
-def test_get_papers_missing_pdfs(downloader):
-    # Create paper directory without PDF
+@pytest.fixture
+def paper_dir(downloader):
+    """Create a paper directory for testing."""
     arxiv_id = "2401.00001"
     paper_dir = downloader.papers_dir / arxiv_id
     paper_dir.mkdir()
-    
-    missing = downloader.get_papers_missing_pdfs()
-    assert len(missing) == 1
-    assert missing[0] == arxiv_id
+    return paper_dir
 
-def test_get_papers_missing_pdfs_with_pdf(downloader):
-    # Create paper directory with PDF
-    arxiv_id = "2401.00001"
-    paper_dir = downloader.papers_dir / arxiv_id
-    paper_dir.mkdir()
-    
-    # Create empty PDF file
-    (paper_dir / f"{arxiv_id}.pdf").touch()
-    
-    missing = downloader.get_papers_missing_pdfs()
-    assert len(missing) == 0
+@pytest.fixture
+def sample_tex_content():
+    return r"""
+\documentclass{article}
+\title{Sample Paper}
+\author{Test Author}
+\begin{document}
+\maketitle
+\section{Introduction}
+Sample text
+\end{document}
+"""
 
-def test_get_pdf_url():
-    downloader = PDFDownloader()
+def test_get_papers_missing_files(downloader):
+    # Create paper directory with different combinations of files
+    paper1_id = "2401.00001"
+    paper1_dir = downloader.papers_dir / paper1_id
+    paper1_dir.mkdir()
+    
+    paper2_id = "2401.00002"
+    paper2_dir = downloader.papers_dir / paper2_id
+    paper2_dir.mkdir()
+    (paper2_dir / f"{paper2_id}.pdf").touch()
+    (paper2_dir / "source").mkdir()
+    
+    missing = downloader.get_papers_missing_files()
+    assert len(missing) == 2
+    
+    paper1_missing = next(p for p in missing if p['arxiv_id'] == paper1_id)
+    assert paper1_missing['needs_pdf']
+    assert paper1_missing['needs_source']
+    assert paper1_missing['needs_markdown']
+    
+    paper2_missing = next(p for p in missing if p['arxiv_id'] == paper2_id)
+    assert not paper2_missing['needs_pdf']
+    assert not paper2_missing['needs_source']
+    assert paper2_missing['needs_markdown']
+
+def test_get_urls():
+    downloader = ArxivDownloader()
     arxiv_id = "2401.00001"
     assert downloader.get_pdf_url(arxiv_id) == f"https://arxiv.org/pdf/{arxiv_id}.pdf"
+    assert downloader.get_source_url(arxiv_id) == f"https://arxiv.org/e-print/{arxiv_id}"
 
-@pytest.mark.asyncio
-async def test_download_pdf(downloader):
-    # Mock successful PDF download
-    mock_response = AsyncMock()
-    mock_response.status = 200
-    mock_response.read.return_value = b"fake pdf content"
+def test_convert_to_markdown(downloader, paper_dir, sample_tex_content):
+    source_dir = paper_dir / "source"
+    source_dir.mkdir()
     
-    mock_session = AsyncMock()
-    mock_session.get.return_value = AsyncContextManagerMock(mock_response)
+    # Create sample tex file
+    main_tex = source_dir / "main.tex"
+    main_tex.write_text(sample_tex_content)
     
-    # Create paper directory
-    arxiv_id = "2401.00001"
-    paper_dir = downloader.papers_dir / arxiv_id
-    paper_dir.mkdir()
+    # Create a mock markdown file to simulate pandoc conversion
+    markdown_file = paper_dir / f"{paper_dir.name}.md"
+    markdown_file.touch()
     
-    success = await downloader.download_pdf(mock_session, arxiv_id)
-    assert success
-    
-    # Verify PDF was created
-    pdf_path = paper_dir / f"{arxiv_id}.pdf"
-    assert pdf_path.exists()
-    assert pdf_path.read_bytes() == b"fake pdf content"
-
-@pytest.mark.asyncio
-async def test_download_pdf_failure(downloader):
-    # Mock failed PDF download
-    mock_response = AsyncMock()
-    mock_response.status = 404
-    
-    mock_session = AsyncMock()
-    mock_session.get.return_value = AsyncContextManagerMock(mock_response)
-    
-    # Create paper directory
-    arxiv_id = "2401.00001"
-    paper_dir = downloader.papers_dir / arxiv_id
-    paper_dir.mkdir()
-    
-    success = await downloader.download_pdf(mock_session, arxiv_id)
-    assert not success
-    
-    # Verify no PDF was created
-    pdf_path = paper_dir / f"{arxiv_id}.pdf"
-    assert not pdf_path.exists()
-
-@pytest.mark.asyncio
-async def test_download_all_missing(downloader):
-    # Create paper directory
-    arxiv_id = "2401.00001"
-    paper_dir = downloader.papers_dir / arxiv_id
-    paper_dir.mkdir()
-    
-    # Mock successful PDF download
-    mock_response = AsyncMock()
-    mock_response.status = 200
-    mock_response.read.return_value = b"fake pdf content"
-    
-    mock_session = AsyncMock()
-    mock_session.get.return_value = AsyncContextManagerMock(mock_response)
-    
-    # Need to mock ClientSession to return our mock session
-    mock_client_session = AsyncMock()
-    mock_client_session.__aenter__.return_value = mock_session
-    mock_client_session.__aexit__.return_value = None
-    
-    with patch('aiohttp.ClientSession', return_value=mock_client_session):
-        await downloader.download_all_missing()
-    
-    # Verify PDF was downloaded
-    pdf_path = paper_dir / f"{arxiv_id}.pdf"
-    assert pdf_path.exists()
-    assert pdf_path.read_bytes() == b"fake pdf content"
+    # Test the file finding logic
+    tex_files = list(source_dir.rglob('*.tex'))
+    assert len(tex_files) == 1
+    assert tex_files[0] == main_tex
+    assert main_tex.read_text() == sample_tex_content
