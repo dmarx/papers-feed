@@ -81,10 +81,10 @@ def test_get_urls():
 async def test_download_pdf(downloader, paper_dir):
     mock_response = AsyncMock()
     mock_response.status = 200
-    mock_response.read.return_value = b"fake pdf content"
+    mock_response.read = AsyncMock(return_value=b"fake pdf content")
     
     mock_session = AsyncMock()
-    mock_session.get.return_value = AsyncContextManagerMock(mock_response)
+    mock_session.get = AsyncMock(return_value=mock_response)
     
     arxiv_id = paper_dir.name
     success = await downloader.download_pdf(mock_session, arxiv_id)
@@ -106,10 +106,10 @@ async def test_download_source_tar(downloader, paper_dir, sample_tex_content):
     
     mock_response = AsyncMock()
     mock_response.status = 200
-    mock_response.read.return_value = tar_bytes.getvalue()
+    mock_response.read = AsyncMock(return_value=tar_bytes.getvalue())
     
     mock_session = AsyncMock()
-    mock_session.get.return_value = AsyncContextManagerMock(mock_response)
+    mock_session.get = AsyncMock(return_value=mock_response)
     
     success = await downloader.download_source(mock_session, paper_dir.name)
     assert success
@@ -123,10 +123,10 @@ async def test_download_source_tar(downloader, paper_dir, sample_tex_content):
 async def test_download_source_single_file(downloader, paper_dir, sample_tex_content):
     mock_response = AsyncMock()
     mock_response.status = 200
-    mock_response.read.return_value = sample_tex_content.encode('utf-8')
+    mock_response.read = AsyncMock(return_value=sample_tex_content.encode('utf-8'))
     
     mock_session = AsyncMock()
-    mock_session.get.return_value = AsyncContextManagerMock(mock_response)
+    mock_session.get = AsyncMock(return_value=mock_response)
     
     success = await downloader.download_source(mock_session, paper_dir.name)
     assert success
@@ -140,20 +140,20 @@ async def test_download_source_single_file(downloader, paper_dir, sample_tex_con
 def test_convert_to_markdown(downloader, paper_dir, sample_tex_content):
     source_dir = paper_dir / "source"
     source_dir.mkdir()
-    
+
     # Create sample tex file
     main_tex = source_dir / "main.tex"
     main_tex.write_text(sample_tex_content)
-    
+
     # Mock pandoc subprocess call
     mock_result = Mock()
     mock_result.returncode = 0
     mock_result.stderr = ""
-    
+
     with patch('subprocess.run', return_value=mock_result) as mock_run:
         success = downloader.convert_to_markdown(paper_dir.name)
         assert success
-        
+
         # Verify pandoc was called with correct arguments
         mock_run.assert_called_once()
         args = mock_run.call_args[0][0]
@@ -175,18 +175,15 @@ async def test_process_paper(downloader, paper_dir):
     # Mock successful PDF download
     mock_pdf_response = AsyncMock()
     mock_pdf_response.status = 200
-    mock_pdf_response.read.return_value = b"fake pdf content"
+    mock_pdf_response.read = AsyncMock(return_value=b"fake pdf content")
     
     # Mock successful source download
     mock_source_response = AsyncMock()
     mock_source_response.status = 200
-    mock_source_response.read.return_value = b"fake tex content"
+    mock_source_response.read = AsyncMock(return_value=b"fake tex content")
     
     mock_session = AsyncMock()
-    mock_session.get = AsyncMock(side_effect=[
-        AsyncContextManagerMock(mock_pdf_response),
-        AsyncContextManagerMock(mock_source_response)
-    ])
+    mock_session.get = AsyncMock(side_effect=[mock_pdf_response, mock_source_response])
     
     # Mock pandoc conversion
     mock_result = Mock()
@@ -212,17 +209,14 @@ async def test_download_all_missing(downloader):
     # Mock successful responses
     mock_pdf_response = AsyncMock()
     mock_pdf_response.status = 200
-    mock_pdf_response.read.return_value = b"fake pdf content"
+    mock_pdf_response.read = AsyncMock(return_value=b"fake pdf content")
     
     mock_source_response = AsyncMock()
     mock_source_response.status = 200
-    mock_source_response.read.return_value = b"fake tex content"
+    mock_source_response.read = AsyncMock(return_value=b"fake tex content")
     
     mock_session = AsyncMock()
-    mock_session.get = AsyncMock(side_effect=[
-        AsyncContextManagerMock(mock_pdf_response),
-        AsyncContextManagerMock(mock_source_response)
-    ])
+    mock_session.get = AsyncMock(side_effect=[mock_pdf_response, mock_source_response])
     
     # Mock ClientSession context manager
     mock_client_session = AsyncMock()
