@@ -26,6 +26,14 @@ def downloader(tmp_path):
     return downloader
 
 @pytest.fixture
+def paper_dir(downloader):
+    """Create a paper directory for testing."""
+    arxiv_id = "2401.00001"
+    paper_dir = downloader.papers_dir / arxiv_id
+    paper_dir.mkdir()
+    return paper_dir
+
+@pytest.fixture
 def sample_tex_content():
     return r"""
 \documentclass{article}
@@ -70,7 +78,7 @@ def test_get_urls():
     assert downloader.get_source_url(arxiv_id) == f"https://arxiv.org/e-print/{arxiv_id}"
 
 @pytest.mark.asyncio
-async def test_download_pdf(downloader):
+async def test_download_pdf(downloader, paper_dir):
     mock_response = AsyncMock()
     mock_response.status = 200
     mock_response.read.return_value = b"fake pdf content"
@@ -78,9 +86,7 @@ async def test_download_pdf(downloader):
     mock_session = AsyncMock()
     mock_session.get.return_value = AsyncContextManagerMock(mock_response)
     
-    arxiv_id = "2401.00001"
-    paper_dir = downloader.papers_dir / arxiv_id
-    
+    arxiv_id = paper_dir.name
     success = await downloader.download_pdf(mock_session, arxiv_id)
     assert success
     
@@ -89,7 +95,7 @@ async def test_download_pdf(downloader):
     assert pdf_path.read_bytes() == b"fake pdf content"
 
 @pytest.mark.asyncio
-async def test_download_source_tar(downloader, sample_tex_content):
+async def test_download_source_tar(downloader, paper_dir, sample_tex_content):
     # Create a temporary tar file with a tex file
     tar_bytes = io.BytesIO()
     with tarfile.open(fileobj=tar_bytes, mode='w') as tar:
@@ -105,10 +111,7 @@ async def test_download_source_tar(downloader, sample_tex_content):
     mock_session = AsyncMock()
     mock_session.get.return_value = AsyncContextManagerMock(mock_response)
     
-    arxiv_id = "2401.00001"
-    paper_dir = downloader.papers_dir / arxiv_id
-    
-    success = await downloader.download_source(mock_session, arxiv_id)
+    success = await downloader.download_source(mock_session, paper_dir.name)
     assert success
     
     source_dir = paper_dir / "source"
@@ -117,7 +120,7 @@ async def test_download_source_tar(downloader, sample_tex_content):
     assert (source_dir / "main.tex").read_text() == sample_tex_content
 
 @pytest.mark.asyncio
-async def test_download_source_single_file(downloader, sample_tex_content):
+async def test_download_source_single_file(downloader, paper_dir, sample_tex_content):
     mock_response = AsyncMock()
     mock_response.status = 200
     mock_response.read.return_value = sample_tex_content.encode('utf-8')
@@ -125,10 +128,7 @@ async def test_download_source_single_file(downloader, sample_tex_content):
     mock_session = AsyncMock()
     mock_session.get.return_value = AsyncContextManagerMock(mock_response)
     
-    arxiv_id = "2401.00001"
-    paper_dir = downloader.papers_dir / arxiv_id
-    
-    success = await downloader.download_source(mock_session, arxiv_id)
+    success = await downloader.download_source(mock_session, paper_dir.name)
     assert success
     
     source_dir = paper_dir / "source"
