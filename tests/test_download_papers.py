@@ -137,11 +137,9 @@ async def test_download_source_single_file(downloader, paper_dir, sample_tex_con
     assert main_tex.exists()
     assert main_tex.read_text() == sample_tex_content
 
-def test_convert_to_markdown(downloader, sample_tex_content):
-    arxiv_id = "2401.00001"
-    paper_dir = downloader.papers_dir / arxiv_id
+def test_convert_to_markdown(downloader, paper_dir, sample_tex_content):
     source_dir = paper_dir / "source"
-    source_dir.mkdir(parents=True)
+    source_dir.mkdir()
     
     # Create sample tex file
     main_tex = source_dir / "main.tex"
@@ -153,7 +151,7 @@ def test_convert_to_markdown(downloader, sample_tex_content):
     mock_result.stderr = ""
     
     with patch('subprocess.run', return_value=mock_result) as mock_run:
-        success = downloader.convert_to_markdown(arxiv_id)
+        success = downloader.convert_to_markdown(paper_dir.name)
         assert success
         
         # Verify pandoc was called with correct arguments
@@ -163,13 +161,12 @@ def test_convert_to_markdown(downloader, sample_tex_content):
         assert args[1:3] == ['-f', 'latex']
         assert args[3:5] == ['-t', 'markdown']
         assert str(main_tex) in args
-        assert str(paper_dir / f"{arxiv_id}.md") in args
+        assert str(paper_dir / f"{paper_dir.name}.md") in args
 
 @pytest.mark.asyncio
-async def test_process_paper(downloader):
-    arxiv_id = "2401.00001"
+async def test_process_paper(downloader, paper_dir):
     paper_info = {
-        'arxiv_id': arxiv_id,
+        'arxiv_id': paper_dir.name,
         'needs_pdf': True,
         'needs_source': True,
         'needs_markdown': True
@@ -201,10 +198,9 @@ async def test_process_paper(downloader):
         assert success
         
         # Verify files were created
-        paper_dir = downloader.papers_dir / arxiv_id
-        assert (paper_dir / f"{arxiv_id}.pdf").exists()
+        assert (paper_dir / f"{paper_dir.name}.pdf").exists()
         assert (paper_dir / "source").exists()
-        assert (paper_dir / f"{arxiv_id}.md").exists()
+        assert (paper_dir / f"{paper_dir.name}.md").exists()
 
 @pytest.mark.asyncio
 async def test_download_all_missing(downloader):
