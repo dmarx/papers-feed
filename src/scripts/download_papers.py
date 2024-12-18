@@ -160,23 +160,27 @@ class ArxivDownloader:
             main_tex = find_main_tex_file(tex_files, arxiv_id)
             logger.info(f"Converting {main_tex.name} to Markdown for {arxiv_id}")
             
+            # Get relative paths for running pandoc in source directory
+            tex_file_relative = main_tex.name  # Just the filename since we'll be in source_dir
+            markdown_file_relative = '../' + f"{arxiv_id}.md"  # Need to go up one level
+            
             # Run pandoc with more detailed error handling
             cmd = [
                 'pandoc',
                 '-f', 'latex',
                 '-t', 'markdown',
-                '--verbose',
                 '--wrap=none',
                 '--atx-headers',
-                str(main_tex),
-                '-o', str(markdown_file)
+                '--verbose',
+                tex_file_relative,  # Use relative path
+                '-o', markdown_file_relative  # Use relative path
             ]
             
             result = subprocess.run(
                 cmd, 
                 capture_output=True, 
                 text=True,
-                cwd=str(source_dir)  # Run in source directory to handle relative paths
+                cwd=str(source_dir)  # Run in source directory
             )
             
             if result.returncode != 0:
@@ -186,28 +190,7 @@ class ArxivDownloader:
             # Verify the output file has content
             if markdown_file.stat().st_size == 0:
                 logger.error(f"Generated markdown file is empty for {arxiv_id}")
-                # Try running pandoc with different options
-                fallback_cmd = [
-                    'pandoc',
-                    '-f', 'latex',
-                    '-t', 'markdown',
-                    '--verbose',
-                    '--wrap=preserve',  # Try different wrap mode
-                    '--atx-headers',
-                    str(main_tex),
-                    '-o', str(markdown_file)
-                ]
-                
-                result = subprocess.run(
-                    fallback_cmd,
-                    capture_output=True,
-                    text=True,
-                    cwd=str(source_dir)
-                )
-                
-                if result.returncode != 0 or markdown_file.stat().st_size == 0:
-                    logger.error(f"Fallback conversion also failed for {arxiv_id}: {result.stderr}")
-                    return False
+                return False
             
             logger.success(f"Successfully converted {arxiv_id} to Markdown (size: {markdown_file.stat().st_size} bytes)")
             return True
