@@ -137,13 +137,13 @@ header-includes:
             logger.debug(f"Verified file exists: {file_path}")
         
         return True
-    
+        
     def build_pandoc_command(self, input_file: Path, output_file: Path) -> list[str]:
         """Build Pandoc command with all necessary arguments."""
         cmd = [
             'pandoc',
             # Input/output formats
-            '-f', 'latex+raw_tex',  # Enable raw_tex extension
+            '-f', 'latex+raw_tex',
             '-t', 'gfm',
             
             # Math handling
@@ -155,37 +155,37 @@ header-includes:
             '--atx-headers',
             
             # Figure handling
-            f'--extract-media={self.config.extract_media_dir}',
+            f'--extract-media={self.config.extract_media_dir.resolve()}',
             '--standalone',
             
             # Debug info
             '--verbose',
         ]
         
-        # Add optional components if configured and files exist
+        # Add optional components with absolute paths
         if self.config.metadata_file and self.config.metadata_file.exists():
-            cmd.extend(['--metadata-file', str(self.config.metadata_file)])
-            logger.debug(f"Adding metadata file: {self.config.metadata_file}")
+            cmd.extend(['--metadata-file', str(self.config.metadata_file.resolve())])
+            logger.debug(f"Adding metadata file: {self.config.metadata_file.resolve()}")
         
         if self.config.css_file and self.config.css_file.exists():
-            cmd.extend(['--css', str(self.config.css_file)])
-            logger.debug(f"Adding CSS file: {self.config.css_file}")
+            cmd.extend(['--css', str(self.config.css_file.resolve())])
+            logger.debug(f"Adding CSS file: {self.config.css_file.resolve()}")
             
         if self.config.bib_file and self.config.bib_file.exists():
             cmd.extend([
                 '--citeproc',
-                '--bibliography', str(self.config.bib_file)
+                '--bibliography', str(self.config.bib_file.resolve())
             ])
-            logger.debug(f"Adding bibliography file: {self.config.bib_file}")
+            logger.debug(f"Adding bibliography file: {self.config.bib_file.resolve()}")
             
         if self.config.lua_filter and self.config.lua_filter.exists():
-            cmd.extend(['--lua-filter', str(self.config.lua_filter)])
-            logger.debug(f"Adding Lua filter: {self.config.lua_filter}")
+            cmd.extend(['--lua-filter', str(self.config.lua_filter.resolve())])
+            logger.debug(f"Adding Lua filter: {self.config.lua_filter.resolve()}")
             
-        # Add input/output files
+        # Add input/output files with absolute paths
         cmd.extend([
-            str(input_file),
-            '-o', str(output_file)
+            str(input_file.resolve()),
+            '-o', str(output_file.resolve())
         ])
         
         return cmd
