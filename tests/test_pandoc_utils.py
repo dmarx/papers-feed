@@ -218,5 +218,55 @@ def test_temporary_directory_cleanup(paper_dir, source_dir, converter):
     temp_dirs_after = set(Path(tempfile.gettempdir()).iterdir())
     assert temp_dirs_before == temp_dirs_after, "Temporary directory not cleaned up"
 
+@pytest.mark.integration
+def test_minimal_pandoc_conversion(tmp_path):
+    """Test bare minimum pandoc conversion with real pandoc."""
+    try:
+        # Verify pandoc is installed
+        result = subprocess.run(["pandoc", "--version"], 
+                              capture_output=True, text=True)
+        if result.returncode != 0:
+            pytest.skip("Pandoc not installed")
+            
+        # Create test directory structure
+        paper_dir = tmp_path / "test_paper"
+        paper_dir.mkdir()
+        
+        # Create test LaTeX file
+        tex_file = paper_dir / "test.tex"
+        tex_file.write_text(r"""
+\documentclass{article}
+\begin{document}
+Test content
+\end{document}
+""")
+        
+        # Create output path
+        output_file = paper_dir / "test.md"
+        
+        # Run minimal pandoc command
+        cmd = [
+            'pandoc',
+            '-f', 'latex',
+            '-t', 'gfm',
+            '--standalone',
+            str(tex_file.resolve()),
+            '-o', str(output_file.resolve())
+        ]
+        
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        print(f"\nCommand: {' '.join(cmd)}")
+        print(f"Return code: {result.returncode}")
+        print(f"Stdout: {result.stdout}")
+        print(f"Stderr: {result.stderr}")
+        
+        assert result.returncode == 0, f"Pandoc failed: {result.stderr}"
+        assert output_file.exists(), "Output file not created"
+        content = output_file.read_text()
+        assert "Test content" in content, "Expected content not found"
+        
+    except FileNotFoundError:
+        pytest.skip("Pandoc not installed")
+
 if __name__ == "__main__":
     pytest.main(["-v", "-s", __file__])
