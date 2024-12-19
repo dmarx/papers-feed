@@ -29,19 +29,35 @@ class PandocConverter:
         self._create_default_files()
     
     def _ensure_directories(self):
-        """Ensure required directories exist."""
+        """Ensure all required directories exist."""
+        # Create main media directory
         self.config.extract_media_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Create parent directories for all configured paths
+        paths_to_check = [
+            self.config.metadata_file,
+            self.config.css_file,
+            self.config.bib_file,
+            self.config.lua_filter
+        ]
+        
+        for path in paths_to_check:
+            if path is not None:
+                path.parent.mkdir(parents=True, exist_ok=True)
     
     def _create_default_files(self):
         """Create default supporting files if not provided."""
+        # Create and assign paths relative to media directory if not provided
         if not self.config.lua_filter:
-            self.config.lua_filter = self._create_lua_filter()
+            self.config.lua_filter = self.config.extract_media_dir / 'crossref.lua'
         
         if not self.config.metadata_file:
-            self.config.metadata_file = self._create_metadata_file()
-    
-    def _create_lua_filter(self) -> Path:
-        """Create the default Lua filter for cross-references."""
+            self.config.metadata_file = self.config.extract_media_dir / 'metadata.yaml'
+        
+        # Ensure parent directories exist again (in case paths were just assigned)
+        self._ensure_directories()
+        
+        # Create Lua filter
         lua_content = '''
 function Math(elem)
     -- Preserve math content
@@ -63,12 +79,9 @@ function Table(elem)
     return elem
 end
 '''
-        filter_path = self.config.extract_media_dir / 'crossref.lua'
-        filter_path.write_text(lua_content)
-        return filter_path
-    
-    def _create_metadata_file(self) -> Path:
-        """Create default metadata YAML file."""
+        self.config.lua_filter.write_text(lua_content)
+        
+        # Create metadata file
         metadata_content = '''---
 reference-section-title: "References"
 link-citations: true
@@ -77,9 +90,9 @@ header-includes:
   - \\usepackage{amsmath}
   - \\usepackage{amsthm}
 ---'''
-        metadata_path = self.config.extract_media_dir / 'metadata.yaml'
-        metadata_path.write_text(metadata_content)
-        return metadata_path
+        self.config.metadata_file.write_text(metadata_content)
+        
+        logger.debug(f"Created supporting files in {self.config.extract_media_dir}")
     
     def build_pandoc_command(self, input_file: Path, output_file: Path) -> list[str]:
         """Build Pandoc command with all necessary arguments."""
@@ -95,7 +108,7 @@ header-includes:
             # Table and formatting
             '--columns=1000',
             '--wrap=none',
-            '--atx-headers',  # Replace --markdown-headings
+            '--atx-headers',
             
             # Figure handling
             f'--extract-media={self.config.extract_media_dir}',
@@ -106,19 +119,19 @@ header-includes:
         ]
         
         # Add optional components if configured
-        if self.config.metadata_file:
+        if self.config.metadata_file and self.config.metadata_file.exists():
             cmd.extend(['--metadata-file', str(self.config.metadata_file)])
         
-        if self.config.css_file:
+        if self.config.css_file and self.config.css_file.exists():
             cmd.extend(['--css', str(self.config.css_file)])
             
-        if self.config.bib_file:
+        if self.config.bib_file and self.config.bib_file.exists():
             cmd.extend([
                 '--citeproc',
                 '--bibliography', str(self.config.bib_file)
             ])
             
-        if self.config.lua_filter:
+        if self.config.lua_filter and self.config.lua_filter.exists():
             cmd.extend(['--lua-filter', str(self.config.lua_filter)])
             
         # Add input/output files
