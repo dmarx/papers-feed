@@ -102,8 +102,46 @@ def test_full_conversion_process(paper_dir, source_dir, converter, mock_subproce
         # Verify input exists
         assert input_file.exists(), "Test TeX file not created"
         
+        # Mock should create the output file to simulate pandoc behavior
+        def mock_pandoc_effect(*args, **kwargs):
+            mock_result = Mock()
+            mock_result.returncode = 0
+            mock_result.stdout = "Success"
+            mock_result.stderr = ""
+            # Simulate pandoc creating the output file
+            output_file.write_text("# Test Output\nConverted content")
+            return mock_result
+        
+        mock_subprocess_run.side_effect = mock_pandoc_effect
+        
         # Run conversion
         success = converter.convert_tex_to_markdown(input_file, output_file)
+        
+        # Print debug info if conversion fails
+        if not success:
+            print("\nDebug information:")
+            print(f"Input file exists: {input_file.exists()}")
+            if input_file.exists():
+                print(f"Input file content:\n{input_file.read_text()}")
+            print(f"Output file exists: {output_file.exists()}")
+            if output_file.exists():
+                print(f"Output file content:\n{output_file.read_text()}")
+            print(f"Output file size: {output_file.stat().st_size if output_file.exists() else 'N/A'}")
+            print(f"Media dir exists: {converter.config.extract_media_dir.exists()}")
+            print(f"Metadata file exists: {converter.config.metadata_file.exists()}")
+            if converter.config.metadata_file.exists():
+                print(f"Metadata content:\n{converter.config.metadata_file.read_text()}")
+            print(f"Lua filter exists: {converter.config.lua_filter.exists()}")
+            if converter.config.lua_filter.exists():
+                print(f"Lua filter content:\n{converter.config.lua_filter.read_text()}")
+            
+            # Print mock call information
+            print("\nMock call information:")
+            print(f"Mock called: {mock_subprocess_run.called}")
+            if mock_subprocess_run.called:
+                print(f"Mock call args: {mock_subprocess_run.call_args}")
+                print(f"Mock call count: {mock_subprocess_run.call_count}")
+        
         assert success, "Conversion failed"
         
         # Verify subprocess call
@@ -111,6 +149,10 @@ def test_full_conversion_process(paper_dir, source_dir, converter, mock_subproce
         cmd = mock_subprocess_run.call_args[0][0]
         assert isinstance(cmd, list), "Command should be a list"
         assert cmd[0] == "pandoc", "Should call pandoc"
+        
+        # Verify output
+        assert output_file.exists(), "Output file not created"
+        assert output_file.stat().st_size > 0, "Output file is empty"
 
 @pytest.mark.integration
 def test_real_pandoc_execution(paper_dir, source_dir, converter, test_tex_content):
