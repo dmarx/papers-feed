@@ -10,6 +10,8 @@ from loguru import logger
 from fire import Fire
 
 from scripts.tex_utils import find_main_tex_file
+from scripts.pandoc_utils import PandocConverter, create_default_config
+
 
 class ArxivDownloader:
     def __init__(self, papers_dir: str | Path = "data/papers"):
@@ -107,9 +109,9 @@ class ArxivDownloader:
             success = False
             
         return success
-
+    
     def convert_to_markdown(self, arxiv_id: str) -> bool:
-        """Convert LaTeX source to Markdown using pandoc."""
+        """Convert LaTeX source to Markdown using enhanced Pandoc conversion."""
         try:
             paper_dir = self.papers_dir / arxiv_id
             source_dir = paper_dir / "source"
@@ -132,41 +134,17 @@ class ArxivDownloader:
                 
             logger.info(f"Converting {main_tex.name} to Markdown for {arxiv_id}")
             
-            # Get relative paths for running pandoc
-            tex_file_relative = main_tex.name
-            markdown_file_relative = '../' + f"{arxiv_id}.md"
+            # Set up Pandoc conversion
+            config = create_default_config(paper_dir)
+            converter = PandocConverter(config)
             
-            # Run pandoc with timeout and larger memory allocation
-            cmd = [
-                'pandoc',
-                '+RTS', '-K3G', '-RTS',  # Increase memory limit
-                '-f', 'latex',
-                '-t', 'markdown',
-                '--wrap=none',
-                '--atx-headers',
-                '--verbose',
-                '--trace',
-                tex_file_relative,
-                '-o', markdown_file_relative,
-            ]
+            # Convert the file
+            success = converter.convert_tex_to_markdown(main_tex, markdown_file)
             
-            logger.debug(f"Running pandoc command: {' '.join(cmd)}")
-            
-            result = subprocess.run(
-                cmd, 
-                capture_output=True, 
-                text=True,
-                cwd=str(source_dir),
-                timeout=180,  # 3 minute timeout
-            )
-            
-            if result.returncode != 0:
+            if not success:
                 logger.error(f"Pandoc conversion failed for {arxiv_id}")
-                logger.error(f"Return code: {result.returncode}")
-                logger.error(f"Stderr: {result.stderr}")
                 return False
                 
-            # Verify the output file exists and has content
             if not markdown_file.exists() or markdown_file.stat().st_size == 0:
                 logger.error(f"Generated markdown file is empty for {arxiv_id}")
                 return False
@@ -174,13 +152,10 @@ class ArxivDownloader:
             logger.success(f"Successfully converted {arxiv_id} to Markdown")
             return True
             
-        except subprocess.TimeoutExpired:
-            logger.error(f"Pandoc conversion timed out for {arxiv_id}")
-            return False
         except Exception as e:
             logger.error(f"Error converting {arxiv_id} to Markdown: {e}")
             return False
-
+            
     def get_pdf_url(self, arxiv_id: str) -> str:
         """Get PDF URL from arXiv ID."""
         return f"https://arxiv.org/pdf/{arxiv_id}.pdf"
