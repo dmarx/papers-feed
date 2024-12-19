@@ -10,6 +10,7 @@ from loguru import logger
 from fire import Fire
 
 from scripts.tex_utils import find_main_tex_file
+from scripts.pandoc_utils import PandocConverter
 
 class ArxivDownloader:
     def __init__(self, papers_dir: str | Path = "data/papers"):
@@ -108,79 +109,52 @@ class ArxivDownloader:
             
         return success
 
-    def convert_to_markdown(self, arxiv_id: str) -> bool:
-        """Convert LaTeX source to Markdown using pandoc."""
-        try:
-            paper_dir = self.papers_dir / arxiv_id
-            source_dir = paper_dir / "source"
-            markdown_file = paper_dir / f"{arxiv_id}.md"
-            
-            if not source_dir.exists():
-                logger.error(f"Source directory not found for {arxiv_id}")
-                return False
-            
-            # Find main tex file
-            tex_files = list(source_dir.rglob('*.tex'))
-            if not tex_files:
-                logger.error(f"No .tex files found for {arxiv_id}")
-                return False
-            
-            main_tex = find_main_tex_file(tex_files, arxiv_id)
-            if not main_tex:
-                logger.error(f"Could not identify main tex file for {arxiv_id}")
-                return False
-                
-            logger.info(f"Converting {main_tex.name} to Markdown for {arxiv_id}")
-            
-            # Get relative paths for running pandoc
-            tex_file_relative = main_tex.name
-            markdown_file_relative = '../' + f"{arxiv_id}.md"
-            
-            # Run pandoc with timeout and larger memory allocation
-            cmd = [
-                'pandoc',
-                '+RTS', '-K3G', '-RTS',  # Increase memory limit
-                '-f', 'latex',
-                '-t', 'markdown',
-                '--wrap=none',
-                '--atx-headers',
-                '--verbose',
-                '--trace',
-                tex_file_relative,
-                '-o', markdown_file_relative,
-            ]
-            
-            logger.debug(f"Running pandoc command: {' '.join(cmd)}")
-            
-            result = subprocess.run(
-                cmd, 
-                capture_output=True, 
-                text=True,
-                cwd=str(source_dir),
-                timeout=180,  # 3 minute timeout
-            )
-            
-            if result.returncode != 0:
-                logger.error(f"Pandoc conversion failed for {arxiv_id}")
-                logger.error(f"Return code: {result.returncode}")
-                logger.error(f"Stderr: {result.stderr}")
-                return False
-                
-            # Verify the output file exists and has content
-            if not markdown_file.exists() or markdown_file.stat().st_size == 0:
-                logger.error(f"Generated markdown file is empty for {arxiv_id}")
-                return False
-            
-            logger.success(f"Successfully converted {arxiv_id} to Markdown")
-            return True
-            
-        except subprocess.TimeoutExpired:
-            logger.error(f"Pandoc conversion timed out for {arxiv_id}")
+def convert_to_markdown(self, arxiv_id: str) -> bool:
+    """Convert LaTeX source to Markdown using enhanced Pandoc conversion."""
+    try:
+        paper_dir = self.papers_dir / arxiv_id
+        source_dir = paper_dir / "source"
+        markdown_file = paper_dir / f"{arxiv_id}.md"
+        
+        if not source_dir.exists():
+            logger.error(f"Source directory not found for {arxiv_id}")
             return False
-        except Exception as e:
-            logger.error(f"Error converting {arxiv_id} to Markdown: {e}")
+        
+        # Find main tex file
+        tex_files = list(source_dir.rglob('*.tex'))
+        if not tex_files:
+            logger.error(f"No .tex files found for {arxiv_id}")
             return False
-
+        
+        main_tex = find_main_tex_file(tex_files, arxiv_id)
+        if not main_tex:
+            logger.error(f"Could not identify main tex file for {arxiv_id}")
+            return False
+            
+        logger.info(f"Converting {main_tex.name} to Markdown for {arxiv_id}")
+        
+        # Set up Pandoc conversion
+        config = create_default_config(paper_dir)
+        converter = PandocConverter(config)
+        
+        # Convert the file
+        success = converter.convert_tex_to_markdown(main_tex, markdown_file)
+        
+        if not success:
+            logger.error(f"Pandoc conversion failed for {arxiv_id}")
+            return False
+            
+        if not markdown_file.exists() or markdown_file.stat().st_size == 0:
+            logger.error(f"Generated markdown file is empty for {arxiv_id}")
+            return False
+        
+        logger.success(f"Successfully converted {arxiv_id} to Markdown")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error converting {arxiv_id} to Markdown: {e}")
+        return False
+        
     def get_pdf_url(self, arxiv_id: str) -> str:
         """Get PDF URL from arXiv ID."""
         return f"https://arxiv.org/pdf/{arxiv_id}.pdf"
