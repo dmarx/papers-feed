@@ -12,6 +12,7 @@ from fire import Fire
 from scripts.tex_utils import find_main_tex_file
 from scripts.pandoc_utils import PandocConverter
 
+
 class ArxivDownloader:
     def __init__(self, papers_dir: str | Path = "data/papers"):
         """
