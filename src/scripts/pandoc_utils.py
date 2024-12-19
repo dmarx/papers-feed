@@ -86,30 +86,23 @@ header-includes:
         cmd = [
             'pandoc',
             # Input/output formats
-            '-f', 'latex',
+            '-f', 'latex+raw_tex',  # Enable raw_tex extension
             '-t', 'gfm',
             
             # Math handling
             '--mathjax',
-            '--webtex',
             
-            # Table handling
+            # Table and formatting
             '--columns=1000',
             '--wrap=none',
-            '--parse-raw',
+            '--atx-headers',  # Replace --markdown-headings
             
             # Figure handling
             f'--extract-media={self.config.extract_media_dir}',
             '--standalone',
             
-            # Additional features
-            '--markdown-headings=atx',
-            '--preserve-tabs',
-            '--eol=lf',
-            
             # Debug info
             '--verbose',
-            '--trace',
         ]
         
         # Add optional components if configured
