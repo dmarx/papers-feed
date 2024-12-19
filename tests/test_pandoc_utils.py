@@ -1,4 +1,3 @@
-# tests/test_pandoc_utils.py
 """Tests for pandoc utilities and conversion process."""
 import os
 import subprocess
@@ -7,6 +6,9 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 import pytest
 from scripts.pandoc_utils import PandocConverter, PandocConfig, create_default_config
+
+# Register the integration mark to remove warnings
+pytest.mark.integration = pytest.mark.integration
 
 @pytest.fixture
 def mock_subprocess_run():
@@ -38,12 +40,12 @@ def paper_dir(tmp_path):
     return paper_dir
 
 @pytest.fixture
-def source_dir(paper_dir):
+def source_dir(paper_dir, test_tex_content):  # Note: now properly using the fixture
     """Create source directory with test TeX file."""
     source_dir = paper_dir / "source"
     source_dir.mkdir()
     tex_file = source_dir / "main.tex"
-    tex_file.write_text(test_tex_content)
+    tex_file.write_text(test_tex_content)  # Using the fixture value
     return source_dir
 
 @pytest.fixture
@@ -111,7 +113,7 @@ def test_full_conversion_process(paper_dir, source_dir, converter, mock_subproce
         assert cmd[0] == "pandoc", "Should call pandoc"
 
 @pytest.mark.integration
-def test_real_pandoc_execution(paper_dir, source_dir, converter):
+def test_real_pandoc_execution(paper_dir, source_dir, converter, test_tex_content):
     """Test with actual pandoc execution."""
     try:
         # Verify pandoc is installed
@@ -122,14 +124,8 @@ def test_real_pandoc_execution(paper_dir, source_dir, converter):
         input_file = source_dir / "main.tex"
         output_file = paper_dir / "2203.15556.md"
         
-        # Create minimal test file
-        minimal_tex = r"""
-\documentclass{article}
-\begin{document}
-Test
-\end{document}
-"""
-        input_file.write_text(minimal_tex)
+        # Write minimal test content
+        input_file.write_text(test_tex_content)
         
         # Run conversion
         success = converter.convert_tex_to_markdown(input_file, output_file)
