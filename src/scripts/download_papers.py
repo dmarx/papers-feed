@@ -10,7 +10,7 @@ from loguru import logger
 from fire import Fire
 
 from scripts.tex_utils import find_main_tex_file
-from scripts.pandoc_utils import PandocConverter
+from scripts.pandoc_utils import PandocConverter, create_default_config
 
 
 class ArxivDownloader:
