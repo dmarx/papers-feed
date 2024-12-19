@@ -31,19 +31,40 @@ class PandocConverter:
     def _ensure_directories(self):
         """Ensure all required directories exist."""
         # Create main media directory
-        self.config.extract_media_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Create parent directories for all configured paths
-        paths_to_check = [
-            self.config.metadata_file,
-            self.config.css_file,
-            self.config.bib_file,
-            self.config.lua_filter
-        ]
-        
-        for path in paths_to_check:
-            if path is not None:
-                path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            self.config.extract_media_dir.mkdir(parents=True, exist_ok=True)
+            logger.debug(f"Created media directory: {self.config.extract_media_dir}")
+            
+            # Create parent directories for all configured paths
+            paths_to_check = [
+                self.config.metadata_file,
+                self.config.css_file,
+                self.config.bib_file,
+                self.config.lua_filter
+            ]
+            
+            for path in paths_to_check:
+                if path is not None:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    logger.debug(f"Created directory for: {path}")
+                    
+        except Exception as e:
+            logger.error(f"Error creating directories: {e}")
+            raise
+    
+    def _write_file(self, path: Path, content: str) -> bool:
+        """Write content to file and verify it exists."""
+        try:
+            path.write_text(content)
+            # Verify file was written
+            if not path.exists():
+                logger.error(f"Failed to create file: {path}")
+                return False
+            logger.debug(f"Successfully wrote file: {path}")
+            return True
+        except Exception as e:
+            logger.error(f"Error writing file {path}: {e}")
+            return False
     
     def _create_default_files(self):
         """Create default supporting files if not provided."""
@@ -79,7 +100,8 @@ function Table(elem)
     return elem
 end
 '''
-        self.config.lua_filter.write_text(lua_content)
+        if not self._write_file(self.config.lua_filter, lua_content):
+            raise RuntimeError(f"Failed to create Lua filter: {self.config.lua_filter}")
         
         # Create metadata file
         metadata_content = '''---
@@ -90,9 +112,31 @@ header-includes:
   - \\usepackage{amsmath}
   - \\usepackage{amsthm}
 ---'''
-        self.config.metadata_file.write_text(metadata_content)
+        if not self._write_file(self.config.metadata_file, metadata_content):
+            raise RuntimeError(f"Failed to create metadata file: {self.config.metadata_file}")
         
-        logger.debug(f"Created supporting files in {self.config.extract_media_dir}")
+        logger.debug("Successfully created all supporting files")
+    
+    def _verify_files_exist(self) -> bool:
+        """Verify that all required files exist before running pandoc."""
+        files_to_check = []
+        
+        if self.config.metadata_file:
+            files_to_check.append(self.config.metadata_file)
+        if self.config.lua_filter:
+            files_to_check.append(self.config.lua_filter)
+        if self.config.css_file:
+            files_to_check.append(self.config.css_file)
+        if self.config.bib_file:
+            files_to_check.append(self.config.bib_file)
+            
+        for file_path in files_to_check:
+            if not file_path.exists():
+                logger.error(f"Required file does not exist: {file_path}")
+                return False
+            logger.debug(f"Verified file exists: {file_path}")
+        
+        return True
     
     def build_pandoc_command(self, input_file: Path, output_file: Path) -> list[str]:
         """Build Pandoc command with all necessary arguments."""
@@ -118,21 +162,25 @@ header-includes:
             '--verbose',
         ]
         
-        # Add optional components if configured
+        # Add optional components if configured and files exist
         if self.config.metadata_file and self.config.metadata_file.exists():
             cmd.extend(['--metadata-file', str(self.config.metadata_file)])
+            logger.debug(f"Adding metadata file: {self.config.metadata_file}")
         
         if self.config.css_file and self.config.css_file.exists():
             cmd.extend(['--css', str(self.config.css_file)])
+            logger.debug(f"Adding CSS file: {self.config.css_file}")
             
         if self.config.bib_file and self.config.bib_file.exists():
             cmd.extend([
                 '--citeproc',
                 '--bibliography', str(self.config.bib_file)
             ])
+            logger.debug(f"Adding bibliography file: {self.config.bib_file}")
             
         if self.config.lua_filter and self.config.lua_filter.exists():
             cmd.extend(['--lua-filter', str(self.config.lua_filter)])
+            logger.debug(f"Adding Lua filter: {self.config.lua_filter}")
             
         # Add input/output files
         cmd.extend([
@@ -161,6 +209,11 @@ header-includes:
             if not output_file:
                 output_file = tex_file.with_suffix('.md')
                 
+            # Verify all required files exist
+            if not self._verify_files_exist():
+                logger.error("Missing required files for pandoc conversion")
+                return False
+                
             # Create temporary directory for conversion
             with tempfile.TemporaryDirectory() as temp_dir:
                 temp_dir = Path(temp_dir)
@@ -168,6 +221,9 @@ header-includes:
                 # Copy LaTeX file to temp directory
                 temp_tex = temp_dir / tex_file.name
                 shutil.copy2(tex_file, temp_tex)
+                if not temp_tex.exists():
+                    logger.error(f"Failed to copy LaTeX file to temp directory: {temp_tex}")
+                    return False
                 
                 # Build and run Pandoc command
                 cmd = self.build_pandoc_command(temp_tex, output_file)
@@ -182,6 +238,11 @@ header-includes:
                 
                 if result.returncode != 0:
                     logger.error(f"Pandoc conversion failed: {result.stderr}")
+                    return False
+                
+                # Verify output file was created
+                if not output_file.exists() or output_file.stat().st_size == 0:
+                    logger.error(f"Output file not created or empty: {output_file}")
                     return False
                     
                 logger.success(f"Successfully converted {tex_file} to {output_file}")
