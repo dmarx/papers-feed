@@ -257,3 +257,162 @@ async def test_process_all_issues(event_processor, sample_paper_issue, sample_re
     assert paper is not None
     assert paper.total_reading_time_minutes == 30
     assert mock_commit.call_count == 1
+
+### Reading Event Processing
+
+def test_accumulate_reading_time(event_processor, sample_paper_issue):
+    """Test that reading time accumulates correctly across multiple sessions."""
+    arxiv_id = "2401.00001"
+    
+    # First create the paper
+    event_processor.process_new_paper(sample_paper_issue)
+    
+    # Create three reading sessions
+    reading_sessions = [
+        {
+            "number": i + 10,  # Unique issue numbers
+            "html_url": f"https://github.com/user/repo/issues/{i+10}",
+            "state": "open",
+            "created_at": f"2024-01-01T0{i}:00:00Z",
+            "labels": [{"name": "reading-session"}],
+            "body": json.dumps({
+                "type": "reading_session",
+                "arxivId": arxiv_id,
+                "timestamp": f"2024-01-01T0{i}:00:00Z",
+                "duration_minutes": (i + 1) * 15,  # 15, 30, 45 minutes
+                "title": "Test Paper"
+            })
+        }
+        for i in range(3)
+    ]
+    
+    # Process each session
+    for session in reading_sessions:
+        success = event_processor.process_reading_session(session)
+        assert success, f"Failed to process reading session {session['number']}"
+    
+    # Verify final reading time
+    paper = event_processor.load_paper_metadata(arxiv_id)
+    assert paper is not None
+    expected_total = sum((i + 1) * 15 for i in range(3))  # 15 + 30 + 45 = 90
+    assert paper.total_reading_time_minutes == expected_total
+    assert paper.last_read == "2024-01-02T00:00:00Z"  # Last session timestamp
+
+def test_event_log_creation(event_processor, sample_reading_session_issue):
+    """Test that events are properly logged to events.log."""
+    arxiv_id = "2401.00001"
+    
+    # Process a reading session
+    success = event_processor.process_reading_session(sample_reading_session_issue)
+    assert success
+    
+    # Check events.log exists and contains the event
+    events_file = event_processor.papers_dir / arxiv_id / "events.log"
+    assert events_file.exists(), "Events log file was not created"
+    
+    # Read and parse the event
+    with events_file.open('r') as f:
+        event_lines = f.readlines()
+    
+    assert len(event_lines) == 1, "Expected exactly one event"
+    event_data = json.loads(event_lines[0])
+    assert event_data["arxiv_id"] == arxiv_id
+    assert event_data["duration_minutes"] == 30
+    assert event_data["type"] == "reading_session"
+
+def test_multiple_event_logging(event_processor):
+    """Test that multiple events are correctly appended to events.log."""
+    arxiv_id = "2401.00001"
+    
+    # Create multiple events
+    events = [
+        ReadingSession(
+            arxivId=arxiv_id,
+            timestamp=f"2024-01-01T0{i}:00:00Z",
+            duration_minutes=(i + 1) * 10,
+            issue_url=f"https://github.com/user/repo/issues/{i+1}"
+        )
+        for i in range(3)
+    ]
+    
+    # Append each event
+    for event in events:
+        event_processor.append_event(arxiv_id, event)
+    
+    # Verify events.log
+    events_file = event_processor.papers_dir / arxiv_id / "events.log"
+    assert events_file.exists()
+    
+    with events_file.open('r') as f:
+        logged_events = [json.loads(line) for line in f]
+    
+    assert len(logged_events) == 3, "Expected three events"
+    
+    # Verify event contents and order
+    for i, event in enumerate(logged_events):
+        assert event["duration_minutes"] == (i + 1) * 10
+        assert event["timestamp"] == f"2024-01-01T0{i}:00:00Z"
+
+def test_reading_time_validation(event_processor, sample_paper_issue):
+    """Test validation of reading time values."""
+    arxiv_id = "2401.00001"
+    
+    # First create the paper
+    event_processor.process_new_paper(sample_paper_issue)
+    
+    # Test invalid duration values
+    invalid_sessions = [
+        {"duration_minutes": -10},  # Negative time
+        {"duration_minutes": "invalid"},  # Non-numeric
+        {"duration_minutes": None},  # None value
+        {}  # Missing duration
+    ]
+    
+    base_session = {
+        "number": 1,
+        "html_url": "https://github.com/user/repo/issues/1",
+        "state": "open",
+        "created_at": "2024-01-01T00:00:00Z",
+        "labels": [{"name": "reading-session"}]
+    }
+    
+    for i, invalid_data in enumerate(invalid_sessions):
+        session = base_session.copy()
+        session["number"] = i + 1
+        session["body"] = json.dumps({
+            "type": "reading_session",
+            "arxivId": arxiv_id,
+            "timestamp": "2024-01-01T00:00:00Z",
+            **invalid_data
+        })
+        
+        # Should handle invalid data gracefully
+        success = event_processor.process_reading_session(session)
+        assert not success, f"Should fail for invalid data: {invalid_data}"
+    
+    # Verify paper metadata wasn't corrupted
+    paper = event_processor.load_paper_metadata(arxiv_id)
+    assert paper.total_reading_time_minutes == 0
+    assert paper.last_read is None
+
+def test_registry_update_after_reading(event_processor, sample_paper_issue, sample_reading_session_issue):
+    """Test that papers.yaml is properly updated after reading sessions."""
+    arxiv_id = "2401.00001"
+    
+    # Create paper and process reading
+    event_processor.process_new_paper(sample_paper_issue)
+    event_processor.process_reading_session(sample_reading_session_issue)
+    
+    # Update registry
+    event_processor.update_registry()
+    
+    # Check papers.yaml
+    registry_file = Path("data/papers.yaml")
+    assert registry_file.exists()
+    
+    with registry_file.open('r') as f:
+        registry = yaml.safe_load(f)
+    
+    assert arxiv_id in registry
+    assert registry[arxiv_id]["total_reading_time_minutes"] == 30
+    assert registry[arxiv_id]["last_read"] == sample_reading_session_issue["body"]["timestamp"]
