@@ -1,0 +1,273 @@
+\section{Justifying the \umup\ hyperparameter scheme} \label{sec:umup_hparams}
+
+Here we justify our particular choice of \umup\ HP, as given in \Cref{table:hp_sets} (with their placement defined in \Cref{tab:ops_compendium}). We discuss this topic briefly in \Cref{sec:umup:principled_hps}, stating that all our HPs (excepting the LR) are $\alpha$ HPs, and under \umup\ they are now associated with operations instead of weights. All operations have an $\alpha$ HPs, unless they are unary and $k$-homogeneous for $k \ge 0$.
+
+We begin this section by explaining why we apply this rule to the model and how it results in three of our \umup\ HPs. We then consider how best to hyperparametrize our residual layers, building on our criteria for HPs given in \Cref{sec:umup:principled_hps} and the unit-scaled pre-norm residual scheme in \Cref{sec:us_residuals}.
+
+
+
+
+
+
+\subsection{Multipliers for non-homogeneous ops: $\alpha_{\mathrm{attn{\text -}softmax}},\; \alpha_{\mathrm{ffn{\text -}act}},\; \alpha_{\mathrm{loss{\text -}softmax}}$} \label{app:non-homogeneous}
+
+In this section we derive the rest of our \umup\ multipliers. We want to identify the minimal set that can still express all different choices of pre-op scales in the model. The crucial observation is that every pre-scale multiplier $\alpha$ of a unary operation $h \mapsto f(\alpha h)$ can be propagated through the network if $f$ is $k$-homogeneous for some $k>0$, i.e. $f(\alpha x) = \alpha^k f(x)$, leaving the model and its optimization unchanged. We can iterate this along the computational path until either the next operation is non-homogeneous, non-unary (we are at the end of a residual path), or the next operation is 0-homogeneous (e.g. a norm).
+
+In the first case the accumulated scales are absorbed in the pre-op scale of the non-homogeneous operation (where we introduce a multiplier), in the second case they are absorbed in the residual addition for that branch (where we again introduce a multiplier), and in the final case the scale disappears (so we start over). We now go through the Llama forward computation and follow this paradigm to identify our multipliers in \Cref{tab:scale_prop}.
+
+\begin{table*}[ht]
+\caption{A walkthrough of the Llama architecture, showing how our $\alpha_{\mathrm{attn{\text -}softmax}}$, $\alpha_{\mathrm{ffn{\text -}act}}$ and $\alpha_{\mathrm{loss{\text -}softmax}}$ multipliers are derived via an analysis of scale-propagation.}
+\label{tab:scale_prop}
+\centering
+\vspace{0.6em}
+\renewcommand{\arraystretch}{1.25}
+\begin{tabular}{p{3.5cm}p{9.75cm}}
+    \toprule
+    \textbf{Op} & \textbf{Scale propagation behavior} \\
+    \midrule
+    Embedding & We show in \Cref{subsubsec:improved_residual_HPs} that the embedding multiplier can be absorbed in the residual multipliers, meaning one is not required here.
+    \\\midrule
+    Attention RMSNorm & This operation is $0$-homogeneous and thus we start over.
+    \\
+    Query \& key projection & Both are linear, meaning their scale is propagated. Multipliers are therefore not required.
+    \\
+    Query-key matmul & Again linear. As query \& key are both generated from the same input, this operation is $2$-homogeneous wrt. that input. Hence it also propagates scale.
+    \\
+    Softmax & The softmax operation is non-homogeneous. Thus the pre-op scale of the softmax becomes our first multiplier: $\alpha_{\mathrm{attn{\text -}softmax}}$.
+    \\
+    Value & The value layer is linear and hence propagates scale.
+    \\
+    Softmax-value matmul & Again linear and hence propagates scale.
+    \\
+    Attention projection & This operation is linear and lies at the end of the attention residual path. Hence there are no more multipliers in the attention block.
+    \\
+    Residual add & This operation is non-unary and hence receives our second (and third) multipliers: $\alpha_{\mathrm{res}}, \; \alpha_{\mathrm{res{\text -}attn{\text -}ratio}}$. The manner and motivation for using two multipliers here is justified in the next section.
+    \\\midrule
+    FFN RMSNorm & This operation is $0$-homogeneous and thus we start over.
+    \\
+    FFN input scale & The input layer is linear, hence it propagates scale.
+    \\
+    Sigmoid input & This function is non-homogeneous and thus we have our fourth multiplier: $\alpha_{\mathrm{ffn{\text -}act}}$.
+    \\
+    SiLU weight & This layer is also linear and propagates scale.
+    \\
+    Product & The entry-wise multiplication of the outputs of sigmoid, input layer and SiLU weight is homogeneous and thus propagates scale.
+    \\
+    FFN output & This layer is linear and at the end of the residual path. Hence there are no more multipliers in the FFN residual block.
+    \\
+    Residual add & See above.
+    \\\midrule
+    Output RMSNorm & This operation is $0$-homogeneous and thus we start over.
+    \\
+    Output head & This layer is linear, hence it propagates scale.
+    \\
+    Loss & The cross-entropy loss is non-homogeneous and leads to our final multiplier: $\alpha_{\mathrm{loss{\text -}softmax}}$.
+    \\
+    \bottomrule
+\end{tabular}
+\end{table*}
+
+% \begin{enumerate}
+%     \item \textbf{Embedding (input to transformer block) scale}. We already saw in the previous section that the embedding multiplier can be absorbed in the residual multipliers.
+%     \item \textbf{Query and key scale}. Query and key itself are linear, hence their multipliers $\alpha_q, \alpha_k$ get propagated.
+%     \item \textbf{Query-Key matmul scale}. The query-key matrix multiplication is $2$-homogeneous when viewed as function of the concatenated query-key vector. Hence it propagates the scale.
+%     \item \textbf{Softmax scale}. The softmax operation is non-homogeneous. Thus the pre-op scale of the softmax becomes our first multiplier $\alpha_{\mathrm{attn{\text -}softmax}}$.
+%     %applied via $f_{\mathrm{softmax}}(q,k) = \mathrm{softmax}(\alpha_{\mathrm{attn{\text -}softmax}} \cdot d_{\mathrm{head}}^{-1} \cdot (q \cdot k^t))$ which becomes our first multiplier. 
+%     \item \textbf{Value scale}. The value layer is linear and hence propagates its scale.
+%     \item \textbf{Softmax-value matmul scale}. This operation is linear in all arguments and hence propagates the scale.
+%     \item \textbf{Attention projection scale}. This operation is linear and lies at the end of the attention residual path. Hence there are no more multipliers in the attention block.
+%     \item \textbf{FFN input scale}. The input layer is linear and propagates the scale.
+%     \item \textbf{Sigmoid input scale}. This function is non-homogeneous and thus we have another multiplier $\alpha_{\mathrm{ffn{\text -}act}}$.
+%     \item \textbf{SiLU weight scale}. This layer is also linear and propagates the scale.
+%     \item \textbf{Product scale}. The entry-wise multiplication of the outputs of sigmoid, input layer and SiLU weight is homogeneous and thus propagates the scale.
+%     \item \textbf{FFN output scale}. This layer is linear and at the end of the residual path. Hence there are no more multipliers in the FFN residual block.
+%     \item \textbf{Final layernorm scale}. This operation is $0$-homogeneous and thus propagates the scale.
+%     \item \textbf{Output head scale}. This layer is linear and propagates the scale.
+%     \item \textbf{Loss scale}. The cross-entropy loss is non-homogeneous and leads to our final multiplier $\alpha_{\mathrm{loss{\text -}softmax}}$.
+% \end{enumerate}
+% In summary, we have three multipliers here, $\alpha_{\mathrm{attn{\text -}softmax}},\; \alpha_{\mathrm{ffn{\text -}act}},\; \alpha_{\mathrm{loss{\text -}softmax}}$, that are applied in the softmax, sigmoid and loss function via:
+% \begin{align*}
+%     f_{\mathrm{softmax}}(q,k) &= \mathrm{softmax}(\alpha_{\mathrm{attn{\text -}softmax}} \cdot d_{\mathrm{head}}^{-1} \cdot (q \cdot k^t)), \\
+%     f_{\mathrm{act}}(h) &= \mathrm{sigmoid}(\alpha_{\mathrm{ffn{\text -}act}} \cdot h), \\
+%     f_{\mathrm{loss{\text -}softmax}}(h,x_{\mathrm{targets}}) &= \mathrm{CE}(\alpha_{\mathrm{loss{\text -}softmax}}\cdot h, x_{\mathrm{targets}})
+% \end{align*}
+% We leave $\alpha_{\mathrm{res}}$ and $\alpha_{\mathrm{res{\text -}attn{\text -}ratio}}$ to the next section.
+
+% \subsection{Expressiveness of \umup} \label{subsec:umup_hps_expressiveness}
+
+% In this last section go into detail on how expressive our \umup\ with our proposed HPs is. A natural candidate to compare to would be the original \mup\ scheme from Table~\ref{table:mup_umup_schemes}. However, because of our embedding lr change and the fact that weights have different initial variances for $\basefanin > 1$ in original \mup, the two schemes generate a different set of training dynamics. Instead let us define two new schemes:
+% \begin{enumerate}
+%     \item \umup\ +: This is our proposed \umup\ scheme with HPs as above and the addition of a dedicated learning rate multiplier $\hat{\eta}_{\mathrm{hidden}}$ for hidden weights as new HP.
+%     \item \mup-mod ++: This is \mup\ with all HPs as depicted in Table~\ref{table:mup_umup_schemes} but using the \umup\ rule for scaling the embedding learning rate and also adding $\hat{\eta}_{\mathrm{hidden}}$ and all possible ops multipliers as new HPs.
+% \end{enumerate}
+% Then \umup\ + generates the same set of training dynamics as \mup-mod ++. What we mean by this is that for every choice of HPs for \umup\ + there exists a choice of HPs in \mup-mod ++ so that the training dynamics of the resulting models are the same up to random initialization for every width and depth.
+
+% To see why this statement is indeed true, we follow a similar logic as in the derivation of \mup\ from \mup\ in Section~\ref{sec:improving_mup_through_unit_scaling} and Appendix~\ref{sec:from_mup_us_to_umup}. We first consider the initial variances for model weights in \mup-mod ++. By abc-symmetry these can be all replaced by $1$ by changing weight multipliers and learning rates accordingly. Now the initial variance for embedding and output weight is $\sigma_{\mathrm{init}}^2$, but for the hidden weights it is $\sigma_{\mathrm{init}}^2 \nicefrac{\basefanin}{\fanin}$. Because of the factor $\basefanin$ we need the additional learning rate multiplier $\hat{\eta}_{\mathrm{hidden}}$ to represent this. On the other hand, the additional weight multipliers can all be expressed in our existing HPs following the analysis of the previous sections. Then because of the learning rate embedding change in \mup-mod ++, the quantities that scale with width or depth already line up.
+
+
+
+
+
+
+\subsection{Residual branch multipliers: $\alpha_{\mathrm{res}}, \; \alpha_{\mathrm{res{\text -}attn{\text -}ratio}}$}
+\label{subsec:residual_branch_multipliers}
+
+In this section we derive our two \umup\ residual HPs. We start with the basic, non-unit scaled model we began with in the previous section, outlined in \Cref{eq:resnet_a,eq:resnet_b,eq:resnet_c}. We described a set of $\alpha_{\mathrm{emb}}, \alpha_{\mathrm{attn{\text -}residual}}, \alpha_{\mathrm{ffn{\text -}residual}}$ HPs associated with this model in \Cref{subsec:unit_scaled_transformer_residuals}. However these HPs poorly satisfy our cardinality, independence and interpretability criteria from \Cref{sec:umup:principled_hps}, so in the \Cref{subsubsec:improved_residual_HPs} we present a re-parametrization of these HPs designed to better satisfy these points. In \Cref{subsubsec:umup_residual_in_full} we then combine these HPs with the final unit-scaled pre-norm residual scheme we derived in \Cref{sec:us_residuals}, resulting in our complete \umup\ residual scheme.
+
+\subsubsection{Improved hyperparameters for transformer residuals} \label{subsubsec:improved_residual_HPs}
+
+%In Section~\ref{subsec:u_multipliers} we refer to a new pair of \umup\ HPs, $\alpha_{\mathrm{res}}$ and $\alpha_{\mathrm{res{\text -}attn{\text -}ratio}}$, which we use for residual layers. Here we define them and make the case for including them as part of our \umup\ scheme.
+
+To avoid cluttered notation, in this section we rename
+\begin{align*}
+    &\alpha_{\mathrm{res}} = \alpha_r, \quad
+    \alpha_{\mathrm{res{\text -}attn{\text -}ratio}} = \alpha_\rho\\
+    \alpha_{\mathrm{emb}} = \alpha_e&, \quad
+    \alpha_{\mathrm{attn{\text -}residual}} = \alpha_a \quad
+    \alpha_{\mathrm{ffn{\text -}residual}} = \alpha_f.
+\end{align*}
+To make the presentation more clear, we derive our new HPs using the standard residual scheme from \Cref{eq:resnet_a,eq:resnet_b,eq:resnet_c}. For the actual unit scaled implementation one needs to transform the multipliers following \Cref{eq:umup_resnet_a,eq:umup_resnet_b,eq:umup_resnet_c,eq:umup_resnet_d}, which we do in Section~\ref{subsubsec:umup_residual_in_full}.
+
+% Our new multipliers satisfy the following properties that $(\alpha_e, \alpha_a, \alpha_f)$ do not:
+% \begin{enumerate}
+%     \item They have an intuitive interpretation for the multiplier values in the context of the residual output $R_L(x)$, such that each controls a dynamic in the model that we consider important.
+%     \item The number of multipliers is minimized, under the constraint that expressivity is maintained.
+%     \item The most effective choice of one multiplier depends as little as possible on the choice of the other multiplier(s).
+% \end{enumerate}
+
+To facilitate our analysis, we can view the transformer residual output as the sum of three terms:
+\begin{align*}
+    R_L &= R_L^{(e)} + R_L^{(a)} + R_L^{(f)},
+    \\
+    R_L^{(e)} &:= \alpha_e x,
+    \\
+    R_L^{(a)} &:= \sum_{l=1}^{L/2} \frac{\alpha_a}{\sqrt{L/2}} f_{2l-1}(R_{2l-1}(x)),
+    \\
+    R_L^{(f)} &:= \sum_{l=1}^{L/2} \frac{\alpha_f}{\sqrt{L/2}} f_{2l}(R_{2l}(x)),
+\end{align*}
+and define the average residual scale,
+\begin{equation*}
+    \sigma(R_L^{(a,f)})^2 := \frac{\sigma(R_L^{(a)})^2 + \sigma(R_L^{(f)})^2}{2}.
+\end{equation*}
+Note that we have added in the \depthmup\ multipliers here, though a similar analysis can be performed for non-\depthmup\ models. As above, $f_l$ functions alternate between self-attention layers and feed-forward layers.
+
+With respect to our interpretability criterion, we propose two new multipliers that correspond to dynamics in the network which we suggest are important to control at initialization. The first is the ratio of the average scale of the residuals' contributions to those of the embedding, $\alpha_r = \sigma(R_L^{(a,f)}) / \sigma(R_L^{(e)})$. The second is the ratio of the scale of the attention-residuals' contributions to those of the feed-forward-residuals, $\alpha_{\rho} = \sigma(R_L^{(a)}) / \sigma(R_L^{(f)})$. Not only do these two ratios control key dynamics of our model, but we can use them to replace our existing $(\alpha_e, \alpha_a, \alpha_f)$ multipliers. 
+
+Let us first examine these two quantities for a standard (non-unit-scaled model). Residual functions of the same kind have the same expected output scale at initialization in pre-norm networks, meaning we can denote the output scale $\sigma(f_l(R_l))$ of all self-attention functions as $\sigma_a$, and of all feed-forward functions as $\sigma_f$. We thus have the following scales at the output:
+\begin{align*}
+    \sigma(R_L^{(e)}) &= \alpha_e \sigma(x),
+    \\
+    \sigma(R_L^{(a)}) &= \frac{\alpha_a}{\sqrt{L/2}}\, \sigma\!\left(\sum_{i=1}^{L/2} f_{2l-1}(R_{2l-1})\right) = \alpha_a \sigma_a,
+    \\
+    \sigma(R_L^{(f)}) &= \frac{\alpha_f}{\sqrt{L/2}}\, \sigma\!\left(\sum_{i=1}^{L/2} f_{2l}(R_{2l})\right) = \alpha_f \sigma_f,
+    \\
+    \sigma(R_L^{(a,f)}) &= \sqrt{\frac{(\alpha_a \sigma_a)^2 + (\alpha_f \sigma_f)^2}{2}}.
+    \\
+\end{align*}
+Recalling our definitions of $\alpha_r, \alpha_{\rho}$ above, this gives us:
+\begin{align*}
+    \alpha_\rho &= \frac{\alpha_a}{\alpha_f} \frac{\sigma_a}{\sigma_f},
+    \\
+    \alpha_r &= \sqrt{\frac{(\alpha_a \sigma_a)^2 + (\alpha_f \sigma_f)^2}{2\,(\alpha_e \sigma(x))^2}},
+    \\
+    &= \sqrt{\frac{\alpha_\rho^2 + 1}{2}} \frac{\sigma_f}{\sigma(x)} \frac{\alpha_f}{\alpha_e}.
+\end{align*}
+The original $\alpha_a, \alpha_f$ multipliers can then be written in terms of $\alpha_r, \alpha_\rho$:
+\begin{align*}
+    \alpha_a &= \alpha_\rho \alpha_f \frac{\sigma_f}{\sigma_a}
+    \\
+    \alpha_f &= \alpha_r \alpha_e \frac{\sigma(x)}{\sigma_f} \sqrt{\frac{2}{\alpha_\rho^2 + 1}}
+\end{align*}
+We have replaced two of the three original multipliers, but still have a dependence on $\alpha_e$ here in our expressions for $\alpha_f$ and $R_L^{(e)}$, which we now remove by dividing it out of our residual branches and embedding. We use the hat ($\hat{\cdot}$) symbol to denote terms that have been divided-through by $\alpha_e$. This new system of equations is equivalent to our old one thanks to the zero-homogeneity of the final post-residual layer:
+%
+\begin{align*}
+    R_{L+1}(x) &= f_{L+1}(R_L^{(e)} + R_L^{(a)} + R_L^{(f)})
+    \\
+    &= f_{L+1}((R_L^{(e)} + R_L^{(a)} + R_L^{(f)})/\alpha_e)
+    \\
+    &= f_{L+1}(\hat{R}_L^{(e)} + \hat{R}_L^{(a)} + \hat{R}_L^{(f)})
+\end{align*}
+%
+This gives $\hat{R}_L^{(e)} = \alpha_e x / \alpha_e = x$, removing our first occurrence of $\alpha_e$. Following the division through $\hat{R}_L^{(a)}$ and $\hat{R}_L^{(f)}$, we obtain:
+\begin{align*}
+    \hat{R}_L^{(a)} &:= \sum_{l=1}^{L/2} \frac{\hat{\alpha}_a}{\sqrt{L/2}} f_{2l-1}(R_{2l-1}),
+    \\
+    \hat{R}_L^{(f)} &:= \sum_{l=1}^{L/2} \frac{\hat{\alpha}_f}{\sqrt{L/2}} f_{2l}(R_{2l}),
+    \\
+    \hat{\alpha}_a &= \alpha_\rho \hat{\alpha}_f \frac{\sigma_f}{\sigma_a},
+    \\
+    \hat{\alpha}_f &= \alpha_r \frac{\sigma(x)}{\sigma_f} \sqrt{\frac{2}{\alpha_\rho^2 + 1}}.
+\end{align*}
+
+This system of equations is the same as the original, but with the two $\alpha_e$ terms dropped, meaning our model's multipliers can be expressed in terms of only $\alpha_r$ and $\alpha_\rho$. Using the above equations, any pair of values for $(\alpha_r, \alpha_\rho)$ can be translated back into an equivalent set of values for $(\alpha_e, \alpha_a, \alpha_f)$ such that the output $R_{L+1}(x)$ is the same, meaning that our multipliers are no less expressive than the original set. This satisfies our desired criteria of minimizing the number of multipliers while maintaining expressivity.
+
+We can simplify further in the case of unit-scaled models, which are designed such that $\sigma(x), \sigma_a, \sigma_f$ are all $1$ at initialization. In this case our re-parametrization becomes:
+\begin{align}
+    \hat{\alpha}_a &= \alpha_\rho \hat{\alpha}_f,
+    \label{eq:us_residual_eqs_a} \\
+    \hat{\alpha}_f &= \alpha_r \sqrt{\frac{2}{\alpha_\rho^2 + 1}},
+    \label{eq:us_residual_eqs_b} \\
+    \hat{\alpha}_e &= 1.
+    \label{eq:us_residual_eqs_c}
+\end{align}
+
+This is the basis of our claim that Unit Scaling is what enables a more intuitive set of multipliers. Not only do the multipliers $\alpha_r$ and $\alpha_\rho$ represent important dynamics in the network at initialization (the ratio of residual-to-embedding scales, and the ratio of attention-to-feed-forward scales), but it's only via unit scaling that these equations become simple enough to implement in practice. Using equations \Cref{eq:us_residual_eqs_a,eq:us_residual_eqs_b,eq:us_residual_eqs_c} for a non-unit scaled network may still be effective, but the interpretation we've given to $\alpha_r$ and $\alpha_\rho$ no longer hold.
+
+Our final desired property is an empirical one: that the most effective choice of one multiplier depends as little as possible on the choice of the other multiplier(s). We demonstrate that our multipliers satisfy this property better than the standard set of residual multipliers in \Cref{sec:experiments:hp_independence}.
+
+\subsubsection{The full \umup\ residual scheme} \label{subsubsec:umup_residual_in_full}
+
+Here we give the full definition of our \umup\ residual scheme, summarizing the results of previous sections. A general pre-norm transformer is implemented as:
+
+\begin{align} \label{eq:final_full_residual_eq}
+    R_0(x) &= c\,x,
+    \\
+    R_{l}(x) &= a_{l}f_l(R_{l-1}(x)) + b_lR_{l-1}(x), \quad l=1,..,L
+    \\
+    R_{L+1}(x) &= f_{L+1}(R_L(x)),
+\end{align}
+where $a_l, b_l$ and $c$ are scalar multipliers, and the $f_l$ alternate between self-attention and feed-forward layers. We consider our baseline set of \mup\ residual HPs here to be $(\alpha_{\mathrm{emb}}, \alpha_{\mathrm{attn{\text -}residual}}, \alpha_{\mathrm{ffn{\text -}residual}})$, which we implement (assuming \depthmup\ branch scaling) as:
+\begin{align*}
+    a_l &= \begin{dcases}
+        \frac{\alpha_{\mathrm{attn{\text -}residual}}}{\sqrt{L/2}} & l \textrm{ is odd (self-attention)}
+        \\
+        \frac{\alpha_{\mathrm{ffn{\text -}residual}}}{\sqrt{L/2}} & l \textrm{ is even (feed-forward)}
+    \end{dcases}
+    \\
+    b_l &= 1
+    \\
+    c &= \alpha_{\mathrm{emb}}.
+\end{align*}
+The corresponding \umup\ set of residual HPs is $(\alpha_{\mathrm{res}}, \alpha_{\mathrm{res{\text -}attn{\text -}ratio}})$, which we implement as:
+\begin{align} \label{eq:final_full_residual_multipliers}
+    a^2_l &= \frac{\tau^2_l}{\tau^2_l + 1}
+    \\
+    b^2_l &= \frac{1}{\tau^2_l + 1}
+    \\
+    c &= 1, \\
+    % \textcolor{red}{\tau^2_l} &\textcolor{red}{= \frac{1}{L} \cdot \begin{dcases}
+    %     \frac{\hat{\alpha}^2_a}{1 + \ell \hat{\alpha}^2_a + \ell \hat{\alpha}^2_f} & l \textrm{ is odd}
+    %     \\
+    %     \frac{\hat{\alpha}^2_f}{1 + (\ell + 1) \hat{\alpha}^2_a + \ell \hat{\alpha}^2_f} & l \textrm{ is even}
+    % \end{dcases}, \quad \ell = \left\lfloor{\frac{l-1}{2}}\right\rfloor}
+    \\
+    \tau^2_l &= \begin{dcases}
+        \frac{\hat{\alpha}^2_a}{\frac{L}{2} + \ell \hat{\alpha}^2_a + \ell \hat{\alpha}^2_f} & l \textrm{ is odd}
+        \\
+        \frac{\hat{\alpha}^2_f}{\frac{L}{2} + (\ell + 1) \hat{\alpha}^2_a + \ell \hat{\alpha}^2_f} & l \textrm{ is even}
+    \end{dcases}, \quad \ell = \left\lfloor{\frac{l-1}{2}}\right\rfloor
+    \\
+    \hat{\alpha}^2_a &= \alpha^2_{\mathrm{res{\text -}attn{\text -}ratio}}\,\hat{\alpha}^2_f\
+    \\
+    \hat{\alpha}^2_f &= \frac{2}{\alpha_{\mathrm{res{\text -}attn{\text -}ratio}}^2 + 1}\,\alpha^2_{\mathrm{res}}\,.
+\end{align}
+This is the \umup\ residual scheme. It satisfies the three properties that we initially set out to achieve: the variance at initialization of our $R_l(x)$ is always 1, our HPs have a clear and useful interpretation, and our scheme is as expressive as the baseline (which is neither unit-scaled or has interpretable HPs).
+
+
+% \begin{figure}
+%     \centering
+%     \includegraphics[width=\linewidth]{shared/figures/WIP-residual-scheme.pdf}
+%     \caption{Provisional schematic comparing standard and unit-scaled \mup}
+%     \label{fig:enter-label}
+% \end{figure}
+
