@@ -417,5 +417,5 @@ def test_registry_update_after_reading(event_processor, sample_paper_issue, samp
     
     assert arxiv_id in registry
     assert registry[arxiv_id]["total_reading_time_minutes"] == 30
-            session_data = json.loads(sample_reading_session_issue["body"])
-        assert registry[arxiv_id]["last_read"] == session_data["timestamp"]
+    session_data = json.loads(sample_reading_session_issue["body"])
+    assert registry[arxiv_id]["last_read"] == session_data["timestamp"]
