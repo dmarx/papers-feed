@@ -157,23 +157,34 @@ class EventProcessor:
             arxiv_id = session_data.get("arxivId")
             
             if not arxiv_id:
-                raise ValueError("No arXiv ID found in session data")
-
-            # Load or create paper
+                logger.error("No arXiv ID found in session data")
+                return False
+    
+            # Validate duration_minutes
+            try:
+                duration_minutes = int(session_data.get("duration_minutes", 0))
+                if duration_minutes <= 0:
+                    logger.error(f"Invalid duration_minutes: {duration_minutes}")
+                    return False
+            except (TypeError, ValueError) as e:
+                logger.error(f"Invalid duration_minutes format: {e}")
+                return False
+                
+            # Load existing paper or create new one
             paper = self.load_paper_metadata(arxiv_id)
             if not paper:
-                # Create new paper entry if it doesn't exist
                 paper = self.create_paper_from_issue(issue_data, session_data)
-                self.ensure_paper_directory(arxiv_id)
-
+                
+            # Ensure paper directory exists
+            self.ensure_paper_directory(arxiv_id)
+                
             # Update reading time stats
-            duration_minutes = session_data["duration_minutes"]
             paper.total_reading_time_minutes += duration_minutes
             paper.last_read = session_data["timestamp"]
             
             # Save updated metadata
             self.save_paper_metadata(paper)
-
+    
             # Log reading session event
             event = ReadingSession(
                 arxivId=arxiv_id,
@@ -184,7 +195,7 @@ class EventProcessor:
             self.append_event(arxiv_id, event)
             self.processed_issues.append(issue_data["number"])
             return True
-
+    
         except Exception as e:
             logger.error(f"Error processing reading session: {e}")
             return False
