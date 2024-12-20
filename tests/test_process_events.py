@@ -320,11 +320,12 @@ def test_event_log_creation(event_processor, sample_reading_session_issue):
     assert event_data["duration_minutes"] == 30
     assert event_data["type"] == "reading_session"
 
-    def test_multiple_event_logging(event_processor):
-        # First ensure the paper directory exists
-        event_processor.ensure_paper_directory("2401.00001")
+def test_multiple_event_logging(event_processor):
     """Test that multiple events are correctly appended to events.log."""
     arxiv_id = "2401.00001"
+    
+    # First ensure the paper directory exists
+    event_processor.ensure_paper_directory(arxiv_id)
     
     # Create multiple events
     events = [
@@ -408,8 +409,8 @@ def test_registry_update_after_reading(event_processor, sample_paper_issue, samp
     # Update registry
     event_processor.update_registry()
     
-    # Check papers.yaml
-    registry_file = Path("data/papers.yaml")
+    # Check papers.yaml - use the papers_dir from event_processor
+    registry_file = event_processor.papers_dir.parent / "papers.yaml"
     assert registry_file.exists()
     
     with registry_file.open('r') as f:
