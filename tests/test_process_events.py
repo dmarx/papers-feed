@@ -320,7 +320,9 @@ def test_event_log_creation(event_processor, sample_reading_session_issue):
     assert event_data["duration_minutes"] == 30
     assert event_data["type"] == "reading_session"
 
-def test_multiple_event_logging(event_processor):
+    def test_multiple_event_logging(event_processor):
+        # First ensure the paper directory exists
+        event_processor.ensure_paper_directory("2401.00001")
     """Test that multiple events are correctly appended to events.log."""
     arxiv_id = "2401.00001"
     
@@ -415,4 +417,5 @@ def test_registry_update_after_reading(event_processor, sample_paper_issue, samp
     
     assert arxiv_id in registry
     assert registry[arxiv_id]["total_reading_time_minutes"] == 30
-    assert registry[arxiv_id]["last_read"] == sample_reading_session_issue["body"]["timestamp"]
+            session_data = json.loads(sample_reading_session_issue["body"])
+        assert registry[arxiv_id]["last_read"] == session_data["timestamp"]
