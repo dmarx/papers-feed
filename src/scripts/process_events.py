@@ -149,7 +149,7 @@ class EventProcessor:
         except Exception as e:
             logger.error(f"Error processing new paper: {e}")
             return False
-
+    
     def process_reading_session(self, issue_data: dict) -> bool:
         """Process a reading session event."""
         try:
@@ -170,13 +170,13 @@ class EventProcessor:
                 logger.error(f"Invalid duration_minutes format: {e}")
                 return False
                 
+            # Ensure paper directory exists
+            self.ensure_paper_directory(arxiv_id)
+                
             # Load existing paper or create new one
             paper = self.load_paper_metadata(arxiv_id)
             if not paper:
                 paper = self.create_paper_from_issue(issue_data, session_data)
-                
-            # Ensure paper directory exists
-            self.ensure_paper_directory(arxiv_id)
                 
             # Update reading time stats
             paper.total_reading_time_minutes += duration_minutes
@@ -220,11 +220,11 @@ class EventProcessor:
             async with session.patch(url, headers=self.base_headers, json=close_data) as response:
                 if response.status != 200:
                     logger.error(f"Failed to close issue {issue_number}")
-
+    
     def update_registry(self):
         """Update the centralized registry file with any modified papers."""
         registry = {}
-        registry_file = Path("data/papers.yaml")
+        registry_file = self.papers_dir.parent / "papers.yaml"
         
         # Load existing registry if it exists
         if registry_file.exists():
@@ -244,6 +244,8 @@ class EventProcessor:
         
         # Only save and track if we made changes
         if modified_papers:
+            # Ensure parent directory exists
+            registry_file.parent.mkdir(parents=True, exist_ok=True)
             with registry_file.open('w') as f:
                 yaml.safe_dump(registry, f, sort_keys=True, indent=2, allow_unicode=True)
             self.modified_files.add(str(registry_file))
