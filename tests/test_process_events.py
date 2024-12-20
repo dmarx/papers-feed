@@ -296,7 +296,7 @@ def test_accumulate_reading_time(event_processor, sample_paper_issue):
     assert paper is not None
     expected_total = sum((i + 1) * 15 for i in range(3))  # 15 + 30 + 45 = 90
     assert paper.total_reading_time_minutes == expected_total
-    assert paper.last_read == "2024-01-02T00:00:00Z"  # Last session timestamp
+    assert paper.last_read == "2024-01-01T02:00:00Z"  # Last session timestamp (i=2)
 
 def test_event_log_creation(event_processor, sample_reading_session_issue):
     """Test that events are properly logged to events.log."""
