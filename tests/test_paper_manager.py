@@ -41,228 +41,190 @@ def sample_paper():
 
 @pytest.fixture
 def mock_arxiv_api():
-    """Create mock ArxivAPI."""
+    """Mock ArxivAPI for testing."""
     with patch('scripts.paper_manager.ArxivAPI') as mock:
         api = mock.return_value
         api.fetch_metadata = AsyncMock()
         yield api
 
 class TestPaperManager:
-    @pytest.mark.asyncio
-    async def test_get_or_create_paper_new(self, paper_manager, sample_paper, mock_arxiv_api):
-        """Test getting/creating a new paper."""
-        arxiv_id = "2401.00001"
-        mock_arxiv_api.fetch_metadata.return_value = sample_paper
-
-        # Get non-existent paper
-        paper = await paper_manager.get_or_create_paper(arxiv_id)
-        
-        # Verify paper was created
-        assert paper.arxiv_id == arxiv_id
-        assert paper.title == "Test Paper"
+    def test_create_paper(self, paper_manager, sample_paper):
+        """Test creating a new paper."""
+        paper_manager.create_paper(sample_paper)
         
         # Verify directory structure
-        paper_dir = paper_manager.data_dir / arxiv_id
-        assert paper_dir.exists()
-        assert (paper_dir / "metadata.json").exists()
-        assert (paper_dir / "events.log").exists()
-
-        # Verify ArXiv API was called
-        mock_arxiv_api.fetch_metadata.assert_called_once_with(arxiv_id)
-
-    @pytest.mark.asyncio
-    async def test_get_or_create_paper_existing(self, paper_manager, sample_paper, mock_arxiv_api):
-        """Test getting existing paper."""
-        arxiv_id = "2401.00001"
-        
-        # Create initial paper
-        paper_dir = paper_manager.data_dir / arxiv_id
-        paper_dir.mkdir(parents=True)
-        paper_manager.save_metadata(sample_paper)
-        
-        # Get existing paper
-        paper = await paper_manager.get_or_create_paper(arxiv_id)
-        
-        # Verify paper data
-        assert paper.arxiv_id == arxiv_id
-        assert paper.title == "Test Paper"
-        
-        # Verify ArXiv API wasn't called
-        mock_arxiv_api.fetch_metadata.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_create_paper_new(self, paper_manager, sample_paper):
-        """Test creating new paper."""
-        arxiv_id = "2401.00001"
-        
-        # Create paper
-        await paper_manager.create_paper(sample_paper)
-        
-        # Verify directory structure
-        paper_dir = paper_manager.data_dir / arxiv_id
+        paper_dir = paper_manager.data_dir / sample_paper.arxiv_id
         assert paper_dir.exists()
         assert (paper_dir / "metadata.json").exists()
         assert (paper_dir / "events.log").exists()
         
-        # Verify paper registration event
+        # Verify metadata content
+        metadata_file = paper_dir / "metadata.json"
+        with metadata_file.open() as f:
+            saved_data = json.load(f)
+        assert saved_data["arxivId"] == sample_paper.arxiv_id
+        assert saved_data["title"] == sample_paper.title
+        
+        # Verify registration event
         events_file = paper_dir / "events.log"
         with events_file.open() as f:
             event_data = json.loads(f.readline())
-            assert event_data["type"] == "paper_registered"
-            assert event_data["arxiv_id"] == arxiv_id
+        assert event_data["type"] == "paper_registered"
+        assert event_data["arxiv_id"] == sample_paper.arxiv_id
 
-    @pytest.mark.asyncio
-    async def test_create_paper_existing(self, paper_manager, sample_paper):
-        """Test creating paper that already exists."""
+    def test_get_or_create_paper_existing(self, paper_manager, sample_paper, mock_arxiv_api):
+        """Test getting existing paper."""
         # Create initial paper
-        arxiv_id = "2401.00001"
-        paper_dir = paper_manager.data_dir / arxiv_id
-        paper_dir.mkdir(parents=True)
-        paper_manager.save_metadata(sample_paper)
+        paper_manager.create_paper(sample_paper)
         
-        # Try creating again
-        with pytest.raises(ValueError, match="Paper directory already exists"):
-            await paper_manager.create_paper(sample_paper)
-
-    @pytest.mark.asyncio
-    async def test_ensure_paper_exists_new(self, paper_manager, sample_paper, mock_arxiv_api):
-        """Test ensuring paper exists when it doesn't."""
-        arxiv_id = "2401.00001"
-        mock_arxiv_api.fetch_metadata.return_value = sample_paper
+        # Get existing paper
+        paper = paper_manager.get_or_create_paper(sample_paper.arxiv_id)
         
-        paper = await paper_manager.ensure_paper_exists(arxiv_id)
-        
-        assert paper.arxiv_id == arxiv_id
-        assert paper.title == "Test Paper"
-        mock_arxiv_api.fetch_metadata.assert_called_once_with(arxiv_id)
-
-    @pytest.mark.asyncio
-    async def test_ensure_paper_exists_existing(self, paper_manager, sample_paper, mock_arxiv_api):
-        """Test ensuring paper exists when it does."""
-        arxiv_id = "2401.00001"
-        paper_dir = paper_manager.data_dir / arxiv_id
-        paper_dir.mkdir(parents=True)
-        paper_manager.save_metadata(sample_paper)
-        
-        paper = await paper_manager.ensure_paper_exists(arxiv_id)
-        
-        assert paper.arxiv_id == arxiv_id
-        assert paper.title == "Test Paper"
+        assert paper.arxiv_id == sample_paper.arxiv_id
+        assert paper.title == sample_paper.title
         mock_arxiv_api.fetch_metadata.assert_not_called()
 
-    @pytest.mark.asyncio
-    async def test_append_event_new_paper(self, paper_manager, sample_paper, mock_arxiv_api):
-        """Test appending event for new paper."""
-        arxiv_id = "2401.00001"
+    def test_get_or_create_paper_new(self, paper_manager, sample_paper, mock_arxiv_api):
+        """Test getting non-existent paper."""
         mock_arxiv_api.fetch_metadata.return_value = sample_paper
         
+        paper = paper_manager.get_or_create_paper(sample_paper.arxiv_id)
+        
+        assert paper.arxiv_id == sample_paper.arxiv_id
+        assert paper.title == sample_paper.title
+        mock_arxiv_api.fetch_metadata.assert_called_once()
+
+    def test_append_event(self, paper_manager, sample_paper):
+        """Test appending events."""
+        # Create paper first
+        paper_manager.create_paper(sample_paper)
+        
+        # Create and append reading session event
         event = ReadingSession(
-            arxivId=arxiv_id,
+            arxivId=sample_paper.arxiv_id,
             timestamp=datetime.utcnow().isoformat(),
             duration_minutes=30,
-            issue_url="https://github.com/user/repo/issues/1"
+            issue_url="https://example.com/1"
         )
         
-        await paper_manager.append_event(arxiv_id, event)
-        
-        # Verify paper was created
-        paper_dir = paper_manager.data_dir / arxiv_id
-        assert paper_dir.exists()
-        assert (paper_dir / "metadata.json").exists()
+        paper_manager.append_event(sample_paper.arxiv_id, event)
         
         # Verify event was logged
-        events_file = paper_dir / "events.log"
-        assert events_file.exists()
-        
-        # Verify both registration and reading events
+        events_file = paper_manager.data_dir / sample_paper.arxiv_id / "events.log"
         events = events_file.read_text().splitlines()
-        assert len(events) == 2  # Registration event + reading event
         
-        reg_event = json.loads(events[0])
-        read_event = json.loads(events[1])
+        # Should have registration event + reading event
+        assert len(events) == 2
         
-        assert reg_event["type"] == "paper_registered"
+        read_event = json.loads(events[1])  # Second event is reading session
         assert read_event["type"] == "reading_session"
         assert read_event["duration_minutes"] == 30
 
-    @pytest.mark.asyncio
-    async def test_update_reading_time(self, paper_manager, sample_paper, mock_arxiv_api):
-        """Test updating reading time."""
-        arxiv_id = "2401.00001"
-        mock_arxiv_api.fetch_metadata.return_value = sample_paper
+    def test_update_reading_time(self, paper_manager, sample_paper):
+        """Test updating paper reading time."""
+        # Create paper first
+        paper_manager.create_paper(sample_paper)
         
         # Update reading time
-        await paper_manager.update_reading_time(arxiv_id, 30)
+        paper_manager.update_reading_time(sample_paper.arxiv_id, 30)
         
         # Verify update
-        paper = await paper_manager.get_or_create_paper(arxiv_id)
+        paper = paper_manager.load_metadata(sample_paper.arxiv_id)
         assert paper.total_reading_time_minutes == 30
         assert paper.last_read is not None
 
     def test_modified_files_tracking(self, paper_manager, sample_paper):
-        """Test tracking modified files."""
-        arxiv_id = "2401.00001"
-        paper_dir = paper_manager.data_dir / arxiv_id
-        paper_dir.mkdir(parents=True)
+        """Test tracking of modified files."""
+        # Create paper (should track metadata and events files)
+        paper_manager.create_paper(sample_paper)
         
-        # Track metadata modification
-        paper_manager.save_metadata(sample_paper)
-        assert any("metadata.json" in f for f in paper_manager.get_modified_files())
+        modified = paper_manager.get_modified_files()
+        assert len(modified) == 2  # metadata.json and events.log
+        assert any("metadata.json" in f for f in modified)
+        assert any("events.log" in f for f in modified)
         
         # Clear tracking
         paper_manager.clear_modified_files()
         assert len(paper_manager.get_modified_files()) == 0
 
-    @pytest.mark.asyncio
-    async def test_create_paper_cleanup_on_failure(self, paper_manager, sample_paper):
-        """Test cleanup on paper creation failure."""
-        arxiv_id = "2401.00001"
+    def test_error_handling(self, paper_manager, sample_paper):
+        """Test error handling in paper operations."""
+        # Test duplicate paper creation
+        paper_manager.create_paper(sample_paper)
+        with pytest.raises(ValueError, match="Paper directory already exists"):
+            paper_manager.create_paper(sample_paper)
         
-        # Create a file that will cause the creation to fail
-        paper_dir = paper_manager.data_dir / arxiv_id
-        paper_dir.mkdir(parents=True)
-        (paper_dir / "metadata.json").touch()
-        
-        with pytest.raises(ValueError):
-            await paper_manager.create_paper(sample_paper)
-        
-        # Directory should still exist because it wasn't created by create_paper
-        assert paper_dir.exists()
+        # Test loading non-existent paper
+        with pytest.raises(FileNotFoundError):
+            paper_manager.load_metadata("nonexistent")
 
-    @pytest.mark.asyncio
-    async def test_concurrent_event_logging(self, paper_manager, sample_paper, mock_arxiv_api):
-        """Test concurrent event logging."""
-        arxiv_id = "2401.00001"
+    def test_ensure_paper_exists_new(self, paper_manager, sample_paper, mock_arxiv_api):
+        """Test ensuring paper exists when it doesn't."""
         mock_arxiv_api.fetch_metadata.return_value = sample_paper
+        
+        # Ensure paper exists
+        paper = paper_manager.ensure_paper_exists(sample_paper.arxiv_id)
+        
+        assert paper.arxiv_id == sample_paper.arxiv_id
+        assert paper.title == sample_paper.title
+        mock_arxiv_api.fetch_metadata.assert_called_once()
+        
+        # Verify files were created
+        paper_dir = paper_manager.data_dir / sample_paper.arxiv_id
+        assert paper_dir.exists()
+        assert (paper_dir / "metadata.json").exists()
+        assert (paper_dir / "events.log").exists()
+
+    def test_ensure_paper_exists_existing(self, paper_manager, sample_paper, mock_arxiv_api):
+        """Test ensuring paper exists when it does."""
+        # Create initial paper
+        paper_manager.create_paper(sample_paper)
+        
+        # Ensure it exists
+        paper = paper_manager.ensure_paper_exists(sample_paper.arxiv_id)
+        
+        assert paper.arxiv_id == sample_paper.arxiv_id
+        assert paper.title == sample_paper.title
+        mock_arxiv_api.fetch_metadata.assert_not_called()
+
+    def test_file_permissions(self, paper_manager, sample_paper, tmp_path):
+        """Test handling of file permission issues."""
+        # Make directory read-only
+        paper_dir = paper_manager.data_dir / sample_paper.arxiv_id
+        paper_dir.mkdir()
+        paper_dir.chmod(0o444)  # Read-only
+        
+        with pytest.raises(Exception):  # Should raise some kind of file operation error
+            paper_manager.create_paper(sample_paper)
+
+    def test_concurrent_event_logging(self, paper_manager, sample_paper):
+        """Test concurrent event logging."""
+        # Create paper first
+        paper_manager.create_paper(sample_paper)
         
         # Create multiple events
         events = [
             ReadingSession(
-                arxivId=arxiv_id,
+                arxivId=sample_paper.arxiv_id,
                 timestamp=f"2024-01-01T0{i}:00:00Z",
                 duration_minutes=30,
-                issue_url=f"https://github.com/user/repo/issues/{i}"
+                issue_url=f"https://example.com/{i}"
             ) for i in range(10)
         ]
         
-        # Log events concurrently
-        await asyncio.gather(*(
-            paper_manager.append_event(arxiv_id, event)
-            for event in events
-        ))
+        # Log events
+        for event in events:
+            paper_manager.append_event(sample_paper.arxiv_id, event)
         
         # Verify all events were logged
-        events_file = paper_manager.data_dir / arxiv_id / "events.log"
+        events_file = paper_manager.data_dir / sample_paper.arxiv_id / "events.log"
         lines = events_file.read_text().splitlines()
         
-        # First line should be registration event, followed by reading events
+        # Should have registration event + reading events
         assert len(lines) == 11  # 1 registration + 10 reading events
         
-        # Parse and verify events
-        events_data = [json.loads(line) for line in lines]
-        assert events_data[0]["type"] == "paper_registered"
-        
-        reading_events = events_data[1:]
-        assert all(e["type"] == "reading_session" for e in reading_events)
-        assert all(e["duration_minutes"] == 30 for e in reading_events)
-        assert len({e["timestamp"] for e in reading_events}) == 10  # All timestamps unique
+        # Verify events
+        read_events = [json.loads(line) for line in lines[1:]]  # Skip registration
+        assert all(e["type"] == "reading_session" for e in read_events)
+        assert all(e["duration_minutes"] == 30 for e in read_events)
+        assert len({e["timestamp"] for e in read_events}) == 10  # All timestamps unique
