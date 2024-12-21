@@ -5,7 +5,8 @@ import yaml
 from pathlib import Path
 from datetime import datetime
 from unittest.mock import Mock, patch, AsyncMock, MagicMock
-from scripts.process_events import EventProcessor, Paper, ReadingSession, PaperRegistrationEvent
+from scripts.process_events import EventProcessor
+from scripts.models import Paper, ReadingSession, PaperRegistrationEvent
 
 class AsyncContextManagerMock:
     def __init__(self, return_value):
