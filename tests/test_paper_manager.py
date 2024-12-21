@@ -4,6 +4,7 @@ import pytest
 from pathlib import Path
 from datetime import datetime
 from unittest.mock import Mock, patch, AsyncMock
+import asyncio
 
 from scripts.paper_manager import PaperManager
 from scripts.models import Paper, ReadingSession, PaperRegistrationEvent
