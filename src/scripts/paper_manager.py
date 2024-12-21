@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 from loguru import logger
 from datetime import datetime
+import asyncio
 from typing import Optional
 from pydantic import BaseModel
 
@@ -27,7 +28,6 @@ class PaperManager:
         try:
             return self.ensure_paper_exists(arxiv_id)
         except FileNotFoundError:
-            # Keep this async since it calls ArxivAPI
             paper = asyncio.run(self.arxiv_api.fetch_metadata(arxiv_id))
             self.create_paper(paper)
             return paper
@@ -39,25 +39,27 @@ class PaperManager:
             raise ValueError(f"Paper directory already exists: {paper.arxiv_id}")
             
         try:
+            # Create directory and save metadata
             paper_dir.mkdir(parents=True)
             self.save_metadata(paper)
-            self.append_event(
-                paper.arxiv_id,
-                PaperRegistrationEvent(
-                    timestamp=datetime.utcnow().isoformat(),
-                    issue_url="",
-                    arxiv_id=paper.arxiv_id
-                )
+            
+            # Record initial registration event
+            event = PaperRegistrationEvent(
+                timestamp=datetime.utcnow().isoformat(),
+                issue_url="",
+                arxiv_id=paper.arxiv_id
             )
+            self.append_event(paper.arxiv_id, event)
+            
             logger.info(f"Created new paper directory for {paper.arxiv_id}")
             
         except Exception as e:
             logger.error(f"Failed to create paper {paper.arxiv_id}: {e}")
             if paper_dir.exists():
-                paper_dir.rmdir()
+                paper_dir.rmdir()  # Cleanup on failure
             raise
 
-    async def ensure_paper_exists(self, arxiv_id: str) -> Paper:
+    def ensure_paper_exists(self, arxiv_id: str) -> Paper:
         """
         Ensure paper directory exists with metadata.
         Fetches from ArXiv if needed.
@@ -66,8 +68,8 @@ class PaperManager:
         metadata_file = paper_dir / "metadata.json"
         
         if not metadata_file.exists():
-            paper = await self.arxiv_api.fetch_metadata(arxiv_id)
-            await self.create_paper(paper)
+            paper = asyncio.run(self.arxiv_api.fetch_metadata(arxiv_id))
+            self.create_paper(paper)
             return paper
             
         return self.load_metadata(arxiv_id)
@@ -92,13 +94,13 @@ class PaperManager:
         with metadata_file.open('r') as f:
             return Paper.model_validate_json(f.read())
 
-    async def append_event(self, arxiv_id: str, event: BaseModel) -> None:
+    def append_event(self, arxiv_id: str, event: BaseModel) -> None:
         """
         Append an event to the paper's event log.
         Creates paper directory if needed.
         """
         # Ensure paper exists before appending event
-        await self.ensure_paper_exists(arxiv_id)
+        self.ensure_paper_exists(arxiv_id)
         
         # Append the event
         paper_dir = self.data_dir / arxiv_id
@@ -109,10 +111,10 @@ class PaperManager:
             f.write(f"{event.model_dump_json()}\n")
         self.modified_files.add(str(events_file))
 
-    async def update_reading_time(self, arxiv_id: str, duration_minutes: int) -> None:
+    def update_reading_time(self, arxiv_id: str, duration_minutes: int) -> None:
         """Update paper's total reading time."""
         # First ensure paper exists
-        paper = await self.ensure_paper_exists(arxiv_id)
+        paper = self.ensure_paper_exists(arxiv_id)
         
         # Update reading time
         paper.total_reading_time_minutes += duration_minutes
