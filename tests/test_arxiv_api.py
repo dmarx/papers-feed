@@ -5,17 +5,6 @@ from unittest.mock import Mock, patch, AsyncMock
 from scripts.arxiv_api import ArxivAPI
 from scripts.models import Paper
 
-class AsyncContextManagerMock:
-    """Mock for async context managers."""
-    def __init__(self, return_value):
-        self.return_value = return_value
-        
-    async def __aenter__(self):
-        return self.return_value
-        
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        pass
-
 @pytest.fixture
 def sample_arxiv_response():
     """Sample XML response from arXiv API."""
@@ -38,77 +27,84 @@ def sample_arxiv_response():
   </entry>
 </feed>'''
 
-@pytest.fixture
-def mock_response(sample_arxiv_response):
-    """Mock aiohttp response."""
-    response = AsyncMock()
-    response.status = 200
-    response.text = AsyncMock(return_value=sample_arxiv_response)
-    return response
-
-@pytest.fixture
-def mock_session(mock_response):
-    """Mock aiohttp ClientSession with async context manager."""
-    session = AsyncMock()
-    session.get.return_value = AsyncContextManagerMock(mock_response)
-    return session
-
 class TestArxivAPI:
     @pytest.mark.asyncio
-    async def test_fetch_metadata_success(self, mock_session):
+    async def test_fetch_metadata_success(self, sample_arxiv_response):
         """Test successful metadata fetch and parsing."""
-        with patch('aiohttp.ClientSession', return_value=mock_session):
-            api = ArxivAPI()
-            paper = await api.fetch_metadata("2401.00001")
-            
-            assert isinstance(paper, Paper)
-            assert paper.arxiv_id == "2401.00001"
-            assert paper.title == "Test Paper Title"
-            assert paper.authors == "Test Author One, Test Author Two"
-            assert paper.abstract == "This is a test abstract."
-            assert paper.url == "http://arxiv.org/abs/2401.00001"
-
-    @pytest.mark.asyncio
-    async def test_fetch_metadata_api_error(self, mock_response, mock_session):
-        """Test handling of API errors."""
-        mock_response.status = 404
-        mock_session.get.return_value = AsyncContextManagerMock(mock_response)
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        mock_response.text = AsyncMock(return_value=sample_arxiv_response)
         
-        with patch('aiohttp.ClientSession', return_value=mock_session):
-            api = ArxivAPI()
-            with pytest.raises(ValueError, match="ArXiv API error: 404"):
-                await api.fetch_metadata("2401.00001")
+        mock_session = AsyncMock()
+        mock_session.get = AsyncMock(return_value=mock_response)
+        
+        api = ArxivAPI()
+        api.session = mock_session
+        api.delay = 0  # Disable delay for testing
+        
+        paper = await api.fetch_metadata("2401.00001")
+        
+        assert isinstance(paper, Paper)
+        assert paper.arxiv_id == "2401.00001"
+        assert paper.title == "Test Paper Title"
+        assert paper.authors == "Test Author One, Test Author Two"
+        assert paper.abstract == "This is a test abstract."
+        assert paper.url == "http://arxiv.org/abs/2401.00001"
 
     @pytest.mark.asyncio
-    async def test_fetch_metadata_invalid_xml(self, mock_session):
+    async def test_fetch_metadata_api_error(self):
+        """Test handling of API errors."""
+        mock_response = AsyncMock()
+        mock_response.status = 404
+        
+        mock_session = AsyncMock()
+        mock_session.get = AsyncMock(return_value=mock_response)
+        
+        api = ArxivAPI()
+        api.session = mock_session
+        api.delay = 0
+        
+        with pytest.raises(ValueError, match="ArXiv API error: 404"):
+            await api.fetch_metadata("2401.00001")
+
+    @pytest.mark.asyncio
+    async def test_fetch_metadata_invalid_xml(self):
         """Test handling of invalid XML responses."""
         mock_response = AsyncMock()
         mock_response.status = 200
         mock_response.text = AsyncMock(return_value="Invalid XML")
-        mock_session.get.return_value = AsyncContextManagerMock(mock_response)
         
-        with patch('aiohttp.ClientSession', return_value=mock_session):
-            api = ArxivAPI()
-            with pytest.raises(ValueError, match="Invalid XML response"):
-                await api.fetch_metadata("2401.00001")
+        mock_session = AsyncMock()
+        mock_session.get = AsyncMock(return_value=mock_response)
+        
+        api = ArxivAPI()
+        api.session = mock_session
+        api.delay = 0
+        
+        with pytest.raises(ValueError, match="Invalid XML response"):
+            await api.fetch_metadata("2401.00001")
 
     @pytest.mark.asyncio
-    async def test_fetch_metadata_missing_entry(self, mock_session):
+    async def test_fetch_metadata_missing_entry(self):
         """Test handling of XML response without entry element."""
         mock_response = AsyncMock()
         mock_response.status = 200
         mock_response.text = AsyncMock(return_value='''<?xml version="1.0"?>
             <feed xmlns="http://www.w3.org/2005/Atom">
             </feed>''')
-        mock_session.get.return_value = AsyncContextManagerMock(mock_response)
         
-        with patch('aiohttp.ClientSession', return_value=mock_session):
-            api = ArxivAPI()
-            with pytest.raises(ValueError, match="No entry found"):
-                await api.fetch_metadata("2401.00001")
+        mock_session = AsyncMock()
+        mock_session.get = AsyncMock(return_value=mock_response)
+        
+        api = ArxivAPI()
+        api.session = mock_session
+        api.delay = 0
+        
+        with pytest.raises(ValueError, match="No entry found"):
+            await api.fetch_metadata("2401.00001")
 
     @pytest.mark.asyncio
-    async def test_fetch_metadata_partial_data(self, mock_session):
+    async def test_fetch_metadata_partial_data(self):
         """Test handling of XML response with partial data."""
         mock_response = AsyncMock()
         mock_response.status = 200
@@ -119,47 +115,61 @@ class TestArxivAPI:
                 <!-- Missing authors and abstract -->
               </entry>
             </feed>''')
-        mock_session.get.return_value = AsyncContextManagerMock(mock_response)
         
-        with patch('aiohttp.ClientSession', return_value=mock_session):
-            api = ArxivAPI()
-            paper = await api.fetch_metadata("2401.00001")
-            
-            assert paper.title == "Test Title"
-            assert paper.authors == ""  # Should handle missing authors
-            assert paper.abstract == ""  # Should handle missing abstract
-
-    @pytest.mark.asyncio
-    async def test_rate_limiting(self, mock_session, mock_response):
-        """Test rate limiting behavior."""
+        mock_session = AsyncMock()
+        mock_session.get = AsyncMock(return_value=mock_response)
+        
         api = ArxivAPI()
-        api.delay = 0.1  # Reduce delay for testing
+        api.session = mock_session
+        api.delay = 0
         
-        with patch('aiohttp.ClientSession', return_value=mock_session):
-            start_time = asyncio.get_event_loop().time()
-            
-            # Make multiple concurrent requests
-            results = await asyncio.gather(
-                api.fetch_metadata("2401.00001"),
-                api.fetch_metadata("2401.00002"),
-                api.fetch_metadata("2401.00003")
-            )
-            
-            end_time = asyncio.get_event_loop().time()
-            
-            # Verify all requests succeeded
-            assert all(isinstance(paper, Paper) for paper in results)
-            
-            # Verify rate limiting delay was applied
-            # Should take at least (num_requests - 1) * delay seconds
-            assert end_time - start_time >= (len(results) - 1) * api.delay
+        paper = await api.fetch_metadata("2401.00001")
+        
+        assert paper.title == "Test Title"
+        assert paper.authors == ""  # Should handle missing authors
+        assert paper.abstract == ""  # Should handle missing abstract
 
     @pytest.mark.asyncio
-    async def test_network_error(self, mock_session):
-        """Test handling of network errors."""
-        mock_session.get.side_effect = Exception("Network error")
+    async def test_rate_limiting(self):
+        """Test rate limiting behavior."""
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        mock_response.text = AsyncMock(return_value='''<?xml version="1.0"?>
+            <feed xmlns="http://www.w3.org/2005/Atom"><entry><title>Test</title></entry></feed>''')
         
-        with patch('aiohttp.ClientSession', return_value=mock_session):
-            api = ArxivAPI()
-            with pytest.raises(Exception, match="Network error"):
-                await api.fetch_metadata("2401.00001")
+        mock_session = AsyncMock()
+        mock_session.get = AsyncMock(return_value=mock_response)
+        
+        api = ArxivAPI()
+        api.session = mock_session
+        api.delay = 0.1  # Short delay for testing
+        
+        start_time = asyncio.get_event_loop().time()
+        
+        # Make multiple concurrent requests
+        results = await asyncio.gather(
+            api.fetch_metadata("2401.00001"),
+            api.fetch_metadata("2401.00002"),
+            api.fetch_metadata("2401.00003")
+        )
+        
+        end_time = asyncio.get_event_loop().time()
+        
+        # Verify all requests succeeded
+        assert all(isinstance(paper, Paper) for paper in results)
+        
+        # Verify rate limiting delay was applied
+        assert end_time - start_time >= (len(results) - 1) * api.delay
+
+    @pytest.mark.asyncio
+    async def test_network_error(self):
+        """Test handling of network errors."""
+        mock_session = AsyncMock()
+        mock_session.get = AsyncMock(side_effect=Exception("Network error"))
+        
+        api = ArxivAPI()
+        api.session = mock_session
+        api.delay = 0
+        
+        with pytest.raises(Exception, match="Network error"):
+            await api.fetch_metadata("2401.00001")
