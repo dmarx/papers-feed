@@ -17,6 +17,21 @@ class ArxivAPI:
         self.headers = {'User-Agent': 'ArxivPaperTracker/1.0'}
         self.delay = 3  # Seconds between requests
         self.api_base = "http://export.arxiv.org/api/query"
+        self.session = None
+
+    async def __aenter__(self):
+        self.session = aiohttp.ClientSession()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        if self.session:
+            await self.session.close()
+
+    async def _get_session(self):
+        """Get or create aiohttp session."""
+        if self.session is None:
+            self.session = aiohttp.ClientSession()
+        return self.session
 
     async def fetch_metadata(self, arxiv_id: str) -> Paper:
         """
@@ -26,7 +41,7 @@ class ArxivAPI:
             arxiv_id: The arXiv identifier
 
         Returns:
-            Paper: Constructed Paper object with metadata
+            Paper: Constructed Paper object
 
         Raises:
             ValueError: If the API response is invalid
@@ -37,16 +52,16 @@ class ArxivAPI:
                 url = f"{self.api_base}?id_list={arxiv_id}"
                 logger.debug(f"Fetching arXiv metadata: {url}")
                 
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(url, headers=self.headers) as response:
-                        if response.status != 200:
-                            raise ValueError(f"ArXiv API error: {response.status}")
-                        
-                        xml_text = await response.text()
-                        paper = self._parse_arxiv_response(xml_text, arxiv_id)
-                        await asyncio.sleep(self.delay)  # Rate limiting
-                        return paper
-                        
+                session = await self._get_session()
+                async with session.get(url, headers=self.headers) as response:
+                    if response.status != 200:
+                        raise ValueError(f"ArXiv API error: {response.status}")
+                    
+                    xml_text = await response.text()
+                    paper = self._parse_arxiv_response(xml_text, arxiv_id)
+                    await asyncio.sleep(self.delay)  # Rate limiting
+                    return paper
+                    
             except Exception as e:
                 logger.error(f"Error fetching arXiv metadata for {arxiv_id}: {e}")
                 raise
