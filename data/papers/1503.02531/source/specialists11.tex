@@ -1,0 +1,180 @@
+\section{Training ensembles of specialists on very big datasets}
+
+Training an ensemble of models is a very simple way to take advantage
+of parallel computation and the usual objection that an ensemble
+requires too much computation at test time can be dealt with by using
+distillation. There is, however, another important objection to
+ensembles: If the individual models are large neural networks and the
+dataset is very large, the amount of computation required at training
+time is excessive, even though it is easy to parallelize.
+
+In this section we give an example of such a dataset and we show how
+learning specialist models that each focus on a different confusable
+subset of the classes can reduce the total amount of computation
+required to learn an ensemble.  The main problem with specialists that
+focus on making fine-grained distinctions is that they overfit very
+easily and we describe how this overfitting may be prevented by using
+soft targets.
+
+\subsection{The JFT dataset}
+
+JFT is an internal Google dataset that has 100 million labeled images
+with 15,000 labels. When we did this work, Google's baseline model for
+JFT was a deep convolutional neural network \cite{Kriz} that had been trained for
+about six months using asynchronous stochastic gradient descent on a
+large number of cores.  This training used two types of
+parallelism \cite{brain-stuff}. First, there were many replicas of the neural net running
+on different sets of cores and processing different mini-batches from
+the training set. Each replica computes the average gradient on its
+current mini-batch and sends this gradient to a sharded parameter server which
+sends back new values for the parameters. These new values reflect all
+of the gradients received by the parameter server since the last time
+it sent parameters to the replica. Second, each replica is spread over
+multiple cores by putting different subsets of the neurons on each
+core. Ensemble training is yet a third type of parallelism that can be
+wrapped around the other two types, but only if a lot more cores are
+available. Waiting for several years to train an ensemble of models was
+not an option, so we needed a much faster way to improve the baseline
+model. 
+
+\subsection{Specialist Models}\label{sec:specialists}
+
+When the number of classes is very large, it makes sense for the
+cumbersome model to be an ensemble that contains one generalist 
+model trained on all the data and  many ``specialist''
+models, each of which is trained on data that is highly enriched in
+examples from a very confusable subset of the classes (like different
+types of mushroom). The softmax of this type of specialist can be made
+much smaller by combining all of the classes it does not care about into a
+single dustbin class. 
+
+To reduce overfitting and share the work of learning lower level feature detectors, each specialist model is initialized
+with the weights of the generalist model. These weights are then slightly modified by training the
+specialist with half its examples coming from its special subset and half sampled at random from the remainder of the
+training set. After training, we can correct for the biased training set by incrementing the logit
+of the dustbin class by the log of the proportion by which the specialist class is oversampled.
+
+
+
+\subsection{Assigning classes to specialists}
+
+In order to derive groupings of object categories for the specialists, we decided to focus on categories that our full
+network often confuses. Even though we could have computed the confusion matrix and used it as a way to find such
+clusters, we opted for a simpler approach that does not require the true labels to construct the clusters.
+
+\begin{table}
+\small
+\centering
+\begin{tabular}{|l|}
+\hline
+\textbf{JFT 1:} Tea party; Easter; Bridal shower; Baby shower; Easter Bunny;  ... \\
+\textbf{JFT 2:} Bridge; Cable-stayed bridge; Suspension bridge; Viaduct; Chimney; ... \\
+\textbf{JFT 3:} Toyota Corolla E100; Opel Signum; Opel Astra; Mazda Familia; ... \\
+\hline
+\end{tabular}
+\caption{Example classes from clusters computed by our
+  covariance matrix clustering algorithm}\label{tab:example_clusters}
+\end{table}
+
+
+In particular, we apply a clustering algorithm to the covariance matrix of the predictions of our generalist model, so that
+a set of classes $S^m$ that are often predicted together will be used as targets for one of our specialist models, $m$. We applied an on-line
+version of the K-means algorithm to the columns of the covariance matrix, and obtained reasonable clusters (shown in
+Table \ref{tab:example_clusters}). We tried several clustering algorithms which produced similar results.
+
+\subsection{Performing inference with ensembles of specialists}
+
+Before investigating what happens when specialist models are
+distilled, we wanted to see how well ensembles containing specialists
+performed. In addition to the specialist models, we always have a
+generalist model so that we can deal with classes for which we
+have no specialists and so that we can decide which specialists to
+use. Given an input image $\bx$, we do top-one classification in two steps:
+
+Step 1: For each test case, we find
+  the $n$ most probable classes according to the generalist model. Call this set of classes $k$. In our
+  experiments, we used $n=1$.
+
+Step 2: We then take all the specialist models, $m$, whose special
+subset of confusable classes,
+  $S^m$, has a non-empty intersection with $k$ and call this the active
+  set of specialists $A_k$ (note that this set may be empty). We then
+  find the full probability distribution $\bq$ over all the classes
+  that minimizes:
+\begin{equation}
+KL (\bp^g, \bq) + \sum_{m \in A_k} KL (\bp^m , \bq)  
+\label{eq:kl}
+\end{equation}
+where $KL$ denotes the KL divergence, and $\bp^m$ $\bp^g$ denote the
+probability distribution of a specialist model or the generalist full
+model. The distribution $\bp^m$ is a distribution over all the
+specialist classes of $m$ plus a single dustbin class, so when
+computing its KL divergence from the full $\bq$ distribution we sum
+all of the probabilities that the full $\bq$ distribution assigns to
+all the classes in $m$'s dustbin.
+
+
+Eq.~\ref{eq:kl} does not have a general closed form solution, though when all the models produce a single probability for
+each class the solution is either the arithmetic or geometric mean, depending on whether we use $KL(\bp,\bq)$
+or $KL(\bq,\bp)$). We parameterize $\bq =
+softmax(\bz)$ (with $T=1$) and we use gradient descent to optimize the logits $\bz$ w.r.t. eq.~\ref{eq:kl}. Note that this
+optimization must be carried out for each image.  
+
+\subsection{Results}
+
+\begin{table}
+\centering
+\small
+\begin{tabular}{|c|c|c|c|}
+\hline
+System & Conditional Test Accuracy & Test Accuracy \\
+\hline
+Baseline & 43.1\% & 25.0\%\\
+ + 61 Specialist models & 45.9\%& 26.1\% \\
+\hline
+\end{tabular}
+\caption{Classification accuracy (top 1) on the JFT development set.}\label{tab:image_results_spec}
+\end{table}
+
+Starting from the trained baseline full network,
+the specialists train extremely fast (a few days instead of many weeks for JFT). Also, all the specialists
+are trained completely independently.  Table ~\ref{tab:image_results_spec} shows the absolute test accuracy for the
+baseline system and the baseline system combined with the specialist
+models.  With 61 specialist models, there is a
+4.4\% relative improvement in test accuracy overall. We also report conditional test accuracy, which is the accuracy by only considering examples belonging to the specialist classes, and restricting our predictions to that subset of classes.
+
+
+
+\begin{table}
+\centering
+\small
+\begin{tabular}{|r|r|r|r|}
+\hline
+\# of specialists covering & \# of test examples & delta in top1 correct &
+relative accuracy change \\
+\hline
+  0 &  350037 &      0 & 0.0\% \\
+  1 &  141993 &  +1421 & +3.4\% \\
+  2 &   67161 &  +1572 & +7.4\% \\
+  3 &   38801 &  +1124 & +8.8\% \\
+  4 &   26298 &   +835 & +10.5\% \\
+  5 &   16474 &   +561 & +11.1\% \\
+  6 &   10682 &   +362 & +11.3\% \\
+  7 &    7376 &   +232 & +12.8\% \\
+  8 &    4703 &   +182 & +13.6\% \\
+  9 &    4706 &   +208 & +16.6\% \\
+ 10 or more &    9082 &   +324 & +14.1\% \\
+\hline
+\end{tabular}
+\caption{Top 1 accuracy improvement by \# of specialist models covering
+correct class on the JFT test set.}\label{tab:jft_specialists_histogram}
+\end{table}
+
+For our JFT specialist experiments, we trained 61 specialist models, each with 300 classes (plus the dustbin class).
+Because the sets of classes for the specialists are not disjoint, we often had multiple specialists covering a
+particular image class.  Table ~\ref{tab:jft_specialists_histogram} shows the number of test set examples, the change in
+the number of examples correct at position 1 when using the specialist(s), and the relative percentage improvement in
+top1 accuracy for the JFT dataset broken down by the number of specialists covering the class.  We are encouraged by the
+general trend that accuracy improvements are larger when we have more specialists covering a particular class, since
+training independent specialist models is very easy to parallelize.
+
