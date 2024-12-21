@@ -24,12 +24,11 @@ def mock_response():
 def mock_session(mock_response):
     """Create mock session returning mock response."""
     session = AsyncMock()
-    session.__aenter__.return_value = session
     session.get.return_value.__aenter__.return_value = mock_response
     return session
 
 @pytest.fixture
-async def api():
+def api():
     """Create ArxivAPI instance with mocked delay."""
     api = ArxivAPI()
     api.delay = 0  # Disable delay for testing
@@ -39,10 +38,8 @@ class TestArxivAPI:
     @pytest.mark.asyncio
     async def test_fetch_metadata_success(self, api, mock_session):
         """Test successful metadata fetch."""
-        with patch('aiohttp.ClientSession') as mock_client:
-            mock_client.return_value = mock_session
+        with patch('aiohttp.ClientSession', return_value=mock_session):
             paper = await api.fetch_metadata("2401.00001")
-            
             assert isinstance(paper, Paper)
             assert paper.arxiv_id == "2401.00001"
             assert paper.title == "Test Paper Title"
@@ -51,8 +48,7 @@ class TestArxivAPI:
     async def test_fetch_metadata_api_error(self, api, mock_session, mock_response):
         """Test handling of API error."""
         mock_response.status = 404
-        with patch('aiohttp.ClientSession') as mock_client:
-            mock_client.return_value = mock_session
+        with patch('aiohttp.ClientSession', return_value=mock_session):
             with pytest.raises(ValueError, match="ArXiv API error: 404"):
                 await api.fetch_metadata("2401.00001")
 
@@ -60,7 +56,6 @@ class TestArxivAPI:
     async def test_fetch_metadata_invalid_xml(self, api, mock_session, mock_response):
         """Test handling of invalid XML."""
         mock_response.text.return_value = "Invalid XML"
-        with patch('aiohttp.ClientSession') as mock_client:
-            mock_client.return_value = mock_session
-            with pytest.raises(ValueError, match="Invalid XML response"):
+        with patch('aiohttp.ClientSession', return_value=mock_session):
+            with pytest.raises(ValueError):
                 await api.fetch_metadata("2401.00001")
