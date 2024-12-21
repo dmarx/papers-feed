@@ -194,21 +194,19 @@ class EventProcessor:
         async with aiohttp.ClientSession() as session:
             issues = await self.get_open_issues(session)
             
+            # Process issues synchronously
             for issue in issues:
                 labels = [label["name"] for label in issue["labels"]]
                 
                 if "reading-session" in labels:
-                    await self.process_reading_session(issue)
+                    self.process_reading_session(issue)
                 elif "paper" in labels:
-                    await self.process_new_paper(issue)
+                    self.process_new_paper(issue)
 
-            # Update registry if we have any changes
             if self.paper_manager.get_modified_files():
                 self.update_registry()
                 try:
-                    # Commit all modified files
                     commit_and_push(list(self.paper_manager.get_modified_files()))
-                    # Only close issues if commit was successful
                     await self.close_issues(session)
                 except Exception as e:
                     logger.error(f"Failed to commit changes: {e}")
