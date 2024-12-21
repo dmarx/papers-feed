@@ -4,6 +4,7 @@ import pytest
 from pathlib import Path
 from scripts.process_events import EventProcessor
 from scripts.models import ReadingSession, PaperRegistrationEvent
+from unittest.mock import patch
 
 @pytest.fixture
 def event_processor(tmp_path):
