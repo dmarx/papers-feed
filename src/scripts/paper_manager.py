@@ -19,43 +19,42 @@ class PaperManager:
         self.arxiv_api = ArxivAPI()
         self.modified_files: set[str] = set()
 
-    async def get_or_create_paper(self, arxiv_id: str) -> Paper:
+        def get_or_create_paper(self, arxiv_id: str) -> Paper:
         """
         Get or create a paper by arxiv ID.
         Creates metadata if not exists by fetching from ArXiv.
         """
         try:
-            return await self.ensure_paper_exists(arxiv_id)
+            return self.ensure_paper_exists(arxiv_id)
         except FileNotFoundError:
-            paper = await self.arxiv_api.fetch_metadata(arxiv_id)
-            await self.create_paper(paper)
+            # Keep this async since it calls ArxivAPI
+            paper = asyncio.run(self.arxiv_api.fetch_metadata(arxiv_id))
+            self.create_paper(paper)
             return paper
 
-    async def create_paper(self, paper: Paper) -> None:
+    def create_paper(self, paper: Paper) -> None:
         """Create a new paper directory and initialize with metadata."""
         paper_dir = self.data_dir / paper.arxiv_id
         if paper_dir.exists():
             raise ValueError(f"Paper directory already exists: {paper.arxiv_id}")
             
         try:
-            # Create directory and save metadata
             paper_dir.mkdir(parents=True)
             self.save_metadata(paper)
-            
-            # Record initial registration event
-            event = PaperRegistrationEvent(
-                timestamp=datetime.utcnow().isoformat(),
-                issue_url="",
-                arxiv_id=paper.arxiv_id
+            self.append_event(
+                paper.arxiv_id,
+                PaperRegistrationEvent(
+                    timestamp=datetime.utcnow().isoformat(),
+                    issue_url="",
+                    arxiv_id=paper.arxiv_id
+                )
             )
-            await self.append_event(paper.arxiv_id, event)
-            
             logger.info(f"Created new paper directory for {paper.arxiv_id}")
             
         except Exception as e:
             logger.error(f"Failed to create paper {paper.arxiv_id}: {e}")
             if paper_dir.exists():
-                paper_dir.rmdir()  # Cleanup on failure
+                paper_dir.rmdir()
             raise
 
     async def ensure_paper_exists(self, arxiv_id: str) -> Paper:
