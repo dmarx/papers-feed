@@ -1,6 +1,7 @@
 # tests/test_process_events.py
 import json
 import pytest
+import yaml
 from pathlib import Path
 from datetime import datetime
 from unittest.mock import Mock, patch, AsyncMock, MagicMock
@@ -48,7 +49,7 @@ def mock_arxiv_api():
 def sample_paper():
     """Create sample Paper object."""
     return Paper(
-        arxivId="2401.00001",
+        arxiv_id="2401.00001",
         title="Test Paper",
         authors="Test Author",
         abstract="Test Abstract",
@@ -113,6 +114,7 @@ def event_processor(tmp_path):
         processor.papers_dir.mkdir(parents=True)
         return processor
 
+
 class TestEventProcessor:
     @pytest.mark.asyncio
     async def test_process_new_paper_with_arxiv_fetch(
@@ -145,7 +147,7 @@ class TestEventProcessor:
         event_data = json.loads(events[0])
         assert event_data["type"] == "paper_registered"
         assert event_data["arxiv_id"] == sample_paper.arxiv_id
-
+        
     @pytest.mark.asyncio
     async def test_process_reading_session_new_paper(
         self, event_processor, sample_paper, sample_reading_session_issue, mock_arxiv_api
@@ -224,7 +226,7 @@ class TestEventProcessor:
 
     @pytest.mark.asyncio
     async def test_process_all_issues(
-        self, event_processor, mock_session, sample_paper_issue, sample_reading_session_issue, mock_arxiv_api
+        self, event_processor, mock_session, sample_paper_issue, sample_reading_session_issue, mock_arxiv_api, sample_paper
     ):
         """Test processing multiple issues."""
         # Setup mock response with multiple issues
@@ -236,17 +238,19 @@ class TestEventProcessor:
         ])
         
         mock_session.get = Mock(return_value=AsyncContextManagerMock(mock_response))
-        mock_arxiv_api.fetch_metadata.return_value = sample_paper_issue
+        mock_arxiv_api.fetch_metadata.return_value = sample_paper
         
         # Mock commit_and_push
         with patch('scripts.process_events.commit_and_push') as mock_commit:
             await event_processor.process_all_issues()
         
         # Verify papers were processed
-        paper_dir = event_processor.papers_dir / sample_paper_issue["arxivId"]
+        paper_dir = event_processor.papers_dir / sample_paper.arxiv_id
         assert paper_dir.exists()
         
         # Verify registry was updated and changes committed
+        registry_file = event_processor.papers_dir.parent / "papers.yaml"
+        assert registry_file.exists()
         mock_commit.assert_called_once()
 
     @pytest.mark.asyncio
@@ -305,13 +309,22 @@ class TestEventProcessor:
         paper_dir.mkdir(parents=True)
         event_processor.paper_manager.save_metadata(sample_paper)
         
+        # Update registry (using temp directory)
+        registry_file = event_processor.papers_dir.parent / "papers.yaml"
+        event_processor.registry_file = registry_file  # Override default path
+        
         # Update registry
         event_processor.update_registry()
         
         # Verify registry file
-        registry_file = Path("data/papers.yaml")
-        assert registry_file in event_processor.paper_manager.modified_files
+        assert registry_file.exists()
+        with registry_file.open() as f:
+            registry_data = yaml.safe_load(f)
+            assert sample_paper.arxiv_id in registry_data
+            
+        # Verify registry file was tracked
+        assert str(registry_file) in event_processor.paper_manager.get_modified_files()
         
         # Clear modified files
         event_processor.paper_manager.clear_modified_files()
-        assert len(event_processor.paper_manager.modified_files) == 0
+        assert len(event_processor.paper_manager.get_modified_files()) == 0
