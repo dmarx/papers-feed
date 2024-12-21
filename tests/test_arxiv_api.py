@@ -5,6 +5,17 @@ from unittest.mock import Mock, patch, AsyncMock
 from scripts.arxiv_api import ArxivAPI
 from scripts.models import Paper
 
+class AsyncContextManagerMock:
+    """Mock for async context managers."""
+    def __init__(self, return_value):
+        self.return_value = return_value
+        
+    async def __aenter__(self):
+        return self.return_value
+        
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        pass
+
 @pytest.fixture
 def sample_arxiv_response():
     """Sample XML response from arXiv API."""
@@ -39,9 +50,7 @@ def mock_response(sample_arxiv_response):
 def mock_session(mock_response):
     """Mock aiohttp ClientSession with async context manager."""
     session = AsyncMock()
-    session.__aenter__.return_value = session
-    session.__aexit__.return_value = None
-    session.get.return_value.__aenter__.return_value = mock_response
+    session.get.return_value = AsyncContextManagerMock(mock_response)
     return session
 
 class TestArxivAPI:
@@ -60,9 +69,10 @@ class TestArxivAPI:
             assert paper.url == "http://arxiv.org/abs/2401.00001"
 
     @pytest.mark.asyncio
-    async def test_fetch_metadata_api_error(self, mock_session, mock_response):
+    async def test_fetch_metadata_api_error(self, mock_response, mock_session):
         """Test handling of API errors."""
         mock_response.status = 404
+        mock_session.get.return_value = AsyncContextManagerMock(mock_response)
         
         with patch('aiohttp.ClientSession', return_value=mock_session):
             api = ArxivAPI()
@@ -70,9 +80,12 @@ class TestArxivAPI:
                 await api.fetch_metadata("2401.00001")
 
     @pytest.mark.asyncio
-    async def test_fetch_metadata_invalid_xml(self, mock_session, mock_response):
+    async def test_fetch_metadata_invalid_xml(self, mock_session):
         """Test handling of invalid XML responses."""
+        mock_response = AsyncMock()
+        mock_response.status = 200
         mock_response.text = AsyncMock(return_value="Invalid XML")
+        mock_session.get.return_value = AsyncContextManagerMock(mock_response)
         
         with patch('aiohttp.ClientSession', return_value=mock_session):
             api = ArxivAPI()
@@ -80,11 +93,14 @@ class TestArxivAPI:
                 await api.fetch_metadata("2401.00001")
 
     @pytest.mark.asyncio
-    async def test_fetch_metadata_missing_entry(self, mock_session, mock_response):
+    async def test_fetch_metadata_missing_entry(self, mock_session):
         """Test handling of XML response without entry element."""
+        mock_response = AsyncMock()
+        mock_response.status = 200
         mock_response.text = AsyncMock(return_value='''<?xml version="1.0"?>
             <feed xmlns="http://www.w3.org/2005/Atom">
             </feed>''')
+        mock_session.get.return_value = AsyncContextManagerMock(mock_response)
         
         with patch('aiohttp.ClientSession', return_value=mock_session):
             api = ArxivAPI()
@@ -92,8 +108,10 @@ class TestArxivAPI:
                 await api.fetch_metadata("2401.00001")
 
     @pytest.mark.asyncio
-    async def test_fetch_metadata_partial_data(self, mock_session, mock_response):
+    async def test_fetch_metadata_partial_data(self, mock_session):
         """Test handling of XML response with partial data."""
+        mock_response = AsyncMock()
+        mock_response.status = 200
         mock_response.text = AsyncMock(return_value='''<?xml version="1.0"?>
             <feed xmlns="http://www.w3.org/2005/Atom">
               <entry>
@@ -101,6 +119,7 @@ class TestArxivAPI:
                 <!-- Missing authors and abstract -->
               </entry>
             </feed>''')
+        mock_session.get.return_value = AsyncContextManagerMock(mock_response)
         
         with patch('aiohttp.ClientSession', return_value=mock_session):
             api = ArxivAPI()
@@ -111,7 +130,7 @@ class TestArxivAPI:
             assert paper.abstract == ""  # Should handle missing abstract
 
     @pytest.mark.asyncio
-    async def test_rate_limiting(self, mock_session):
+    async def test_rate_limiting(self, mock_session, mock_response):
         """Test rate limiting behavior."""
         api = ArxivAPI()
         api.delay = 0.1  # Reduce delay for testing
@@ -138,11 +157,9 @@ class TestArxivAPI:
     @pytest.mark.asyncio
     async def test_network_error(self, mock_session):
         """Test handling of network errors."""
-        session = AsyncMock()
-        session.__aenter__.return_value = session
-        session.get.side_effect = Exception("Network error")
+        mock_session.get.side_effect = Exception("Network error")
         
-        with patch('aiohttp.ClientSession', return_value=session):
+        with patch('aiohttp.ClientSession', return_value=mock_session):
             api = ArxivAPI()
             with pytest.raises(Exception, match="Network error"):
                 await api.fetch_metadata("2401.00001")
