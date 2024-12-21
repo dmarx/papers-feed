@@ -1,12 +1,13 @@
 # tests/test_process_events.py
-import pytest
 import json
-import yaml
+import pytest
 from pathlib import Path
 from datetime import datetime
 from unittest.mock import Mock, patch, AsyncMock, MagicMock
+
 from scripts.process_events import EventProcessor
 from scripts.models import Paper, ReadingSession, PaperRegistrationEvent
+from scripts.arxiv_api import ArxivAPI
 
 class AsyncContextManagerMock:
     def __init__(self, return_value):
@@ -20,27 +21,50 @@ class AsyncContextManagerMock:
 
 @pytest.fixture
 def mock_response():
-    """Create a mock response with common attributes"""
+    """Create mock aiohttp response."""
     response = AsyncMock()
     response.status = 200
+    response.json = AsyncMock(return_value=[])
     return response
 
 @pytest.fixture
 def mock_session(mock_response):
-    """Create a mock session with proper context manager methods"""
+    """Create mock aiohttp ClientSession."""
     session = Mock()
-    
-    def make_context_manager(response):
-        return AsyncContextManagerMock(response)
-    
-    session.get = Mock(return_value=make_context_manager(mock_response))
-    session.post = Mock(return_value=make_context_manager(mock_response))
-    session.patch = Mock(return_value=make_context_manager(mock_response))
+    session.get = Mock(return_value=AsyncContextManagerMock(mock_response))
+    session.post = Mock(return_value=AsyncContextManagerMock(mock_response))
+    session.patch = Mock(return_value=AsyncContextManagerMock(mock_response))
     return session
 
 @pytest.fixture
-def sample_paper_issue():
-    """Fixture for a sample paper registration issue"""
+def mock_arxiv_api():
+    """Create mock ArxivAPI."""
+    with patch('scripts.paper_manager.ArxivAPI') as mock:
+        api = mock.return_value
+        api.fetch_metadata = AsyncMock()
+        yield api
+
+@pytest.fixture
+def sample_paper():
+    """Create sample Paper object."""
+    return Paper(
+        arxivId="2401.00001",
+        title="Test Paper",
+        authors="Test Author",
+        abstract="Test Abstract",
+        url="https://arxiv.org/abs/2401.00001",
+        issue_number=1,
+        issue_url="https://github.com/user/repo/issues/1",
+        created_at=datetime.utcnow().isoformat(),
+        state="open",
+        labels=["paper"],
+        total_reading_time_minutes=0,
+        last_read=None
+    )
+
+@pytest.fixture
+def sample_paper_issue(sample_paper):
+    """Create sample paper registration issue."""
     return {
         "number": 1,
         "html_url": "https://github.com/user/repo/issues/1",
@@ -48,19 +72,19 @@ def sample_paper_issue():
         "created_at": "2024-01-01T00:00:00Z",
         "labels": [{"name": "paper"}],
         "body": json.dumps({
-            "arxivId": "2401.00001",
-            "title": "Test Paper",
-            "authors": "Test Author",
-            "abstract": "Test abstract",
-            "url": "https://arxiv.org/abs/2401.00001",
-            "timestamp": "2024-01-01T00:00:00Z",
+            "arxivId": sample_paper.arxiv_id,
+            "title": sample_paper.title,
+            "authors": sample_paper.authors,
+            "abstract": sample_paper.abstract,
+            "url": sample_paper.url,
+            "timestamp": datetime.utcnow().isoformat(),
             "rating": "novote"
         })
     }
 
 @pytest.fixture
-def sample_reading_session_issue():
-    """Fixture for a sample reading session issue"""
+def sample_reading_session_issue(sample_paper):
+    """Create sample reading session issue."""
     return {
         "number": 2,
         "html_url": "https://github.com/user/repo/issues/2",
@@ -69,17 +93,17 @@ def sample_reading_session_issue():
         "labels": [{"name": "reading-session"}],
         "body": json.dumps({
             "type": "reading_session",
-            "arxivId": "2401.00001",
-            "timestamp": "2024-01-01T01:00:00Z",
+            "arxivId": sample_paper.arxiv_id,
+            "timestamp": datetime.utcnow().isoformat(),
             "duration_minutes": 30,
-            "paper_url": "https://arxiv.org/abs/2401.00001",
-            "paper_title": "Test Paper"
+            "paper_url": sample_paper.url,
+            "paper_title": sample_paper.title
         })
     }
 
 @pytest.fixture
 def event_processor(tmp_path):
-    """Fixture for EventProcessor with temporary directory"""
+    """Create EventProcessor with temp directory and mocked environment."""
     with patch.dict('os.environ', {
         'GITHUB_TOKEN': 'fake_token',
         'GITHUB_REPOSITORY': 'user/repo'
@@ -89,172 +113,205 @@ def event_processor(tmp_path):
         processor.papers_dir.mkdir(parents=True)
         return processor
 
-@pytest.mark.asyncio
-async def test_get_open_issues(event_processor, mock_session):
-    """Test fetching open issues"""
-    mock_response = AsyncMock()
-    mock_response.status = 200
-    mock_response.json = AsyncMock(return_value=[
-        {"labels": [{"name": "paper"}]},
-        {"labels": [{"name": "reading-session"}]},
-        {"labels": [{"name": "other"}]}
-    ])
-    
-    mock_session.get = Mock(return_value=AsyncContextManagerMock(mock_response))
-    
-    issues = await event_processor.get_open_issues(mock_session)
-    assert len(issues) == 2
-    assert all(any(label["name"] in ["paper", "reading-session"] 
-              for label in issue["labels"]) for issue in issues)
+class TestEventProcessor:
+    @pytest.mark.asyncio
+    async def test_process_new_paper_with_arxiv_fetch(
+        self, event_processor, sample_paper, sample_paper_issue, mock_arxiv_api
+    ):
+        """Test processing new paper with ArXiv metadata fetch."""
+        mock_arxiv_api.fetch_metadata.return_value = sample_paper
+        
+        success = await event_processor.process_new_paper(sample_paper_issue)
+        assert success
+        
+        # Verify paper directory and metadata created
+        paper_dir = event_processor.papers_dir / sample_paper.arxiv_id
+        assert paper_dir.exists()
+        assert (paper_dir / "metadata.json").exists()
+        assert (paper_dir / "events.log").exists()
+        
+        # Verify ArXiv API was called
+        mock_arxiv_api.fetch_metadata.assert_called_once_with(sample_paper.arxiv_id)
+        
+        # Verify paper metadata
+        metadata_file = paper_dir / "metadata.json"
+        paper_data = json.loads(metadata_file.read_text())
+        assert paper_data["arxivId"] == sample_paper.arxiv_id
+        assert paper_data["title"] == sample_paper.title
+        
+        # Verify registration event was logged
+        events_file = paper_dir / "events.log"
+        events = events_file.read_text().splitlines()
+        event_data = json.loads(events[0])
+        assert event_data["type"] == "paper_registered"
+        assert event_data["arxiv_id"] == sample_paper.arxiv_id
 
-def test_create_paper_from_issue(event_processor, sample_paper_issue):
-    """Test paper creation from issue data"""
-    paper_data = json.loads(sample_paper_issue["body"])
-    paper = event_processor.create_paper_from_issue(sample_paper_issue, paper_data)
-    
-    assert isinstance(paper, Paper)
-    assert paper.arxiv_id == "2401.00001"
-    assert paper.title == "Test Paper"
-    assert paper.issue_number == 1
-    assert paper.total_reading_time_minutes == 0
+    @pytest.mark.asyncio
+    async def test_process_reading_session_new_paper(
+        self, event_processor, sample_paper, sample_reading_session_issue, mock_arxiv_api
+    ):
+        """Test processing reading session for new paper."""
+        mock_arxiv_api.fetch_metadata.return_value = sample_paper
+        
+        success = await event_processor.process_reading_session(sample_reading_session_issue)
+        assert success
+        
+        # Verify paper was created and metadata updated
+        paper = event_processor.paper_manager.load_metadata(sample_paper.arxiv_id)
+        assert paper.total_reading_time_minutes == 30
+        assert paper.last_read is not None
+        
+        # Verify events were logged
+        paper_dir = event_processor.papers_dir / sample_paper.arxiv_id
+        events_file = paper_dir / "events.log"
+        events = events_file.read_text().splitlines()
+        
+        # Should have registration and reading events
+        assert len(events) == 2
+        
+        reg_event = json.loads(events[0])
+        read_event = json.loads(events[1])
+        
+        assert reg_event["type"] == "paper_registered"
+        assert read_event["type"] == "reading_session"
+        assert read_event["duration_minutes"] == 30
 
-def test_ensure_paper_directory(event_processor):
-    """Test paper directory creation"""
-    arxiv_id = "2401.00001"
-    paper_dir = event_processor.ensure_paper_directory(arxiv_id)
-    
-    assert paper_dir.exists()
-    assert paper_dir.is_dir()
-    assert paper_dir.name == arxiv_id
-
-def test_save_and_load_paper_metadata(event_processor, sample_paper_issue):
-    """Test saving and loading paper metadata"""
-    paper_data = json.loads(sample_paper_issue["body"])
-    paper = event_processor.create_paper_from_issue(sample_paper_issue, paper_data)
-    
-    # Save metadata
-    event_processor.ensure_paper_directory(paper.arxiv_id)
-    event_processor.save_paper_metadata(paper)
-    
-    # Load metadata
-    loaded_paper = event_processor.load_paper_metadata(paper.arxiv_id)
-    
-    assert loaded_paper is not None
-    assert loaded_paper.arxiv_id == paper.arxiv_id
-    assert loaded_paper.title == paper.title
-
-def test_append_event(event_processor):
-    """Test appending events to log file"""
-    arxiv_id = "2401.00001"
-    event = ReadingSession(
-        arxivId=arxiv_id,
-        timestamp="2024-01-01T00:00:00Z",
-        duration_minutes=30,
-        issue_url="https://github.com/user/repo/issues/1"
-    )
-    
-    event_processor.ensure_paper_directory(arxiv_id)
-    event_processor.append_event(arxiv_id, event)
-    
-    events_file = event_processor.papers_dir / arxiv_id / "events.log"
-    assert events_file.exists()
-    
-    with events_file.open('r') as f:
-        event_data = json.loads(f.readline())
-        assert event_data["arxiv_id"] == arxiv_id
+    @pytest.mark.asyncio
+    async def test_process_reading_session_existing_paper(
+        self, event_processor, sample_paper, sample_reading_session_issue
+    ):
+        """Test processing reading session for existing paper."""
+        # Create initial paper
+        paper_dir = event_processor.papers_dir / sample_paper.arxiv_id
+        paper_dir.mkdir(parents=True)
+        event_processor.paper_manager.save_metadata(sample_paper)
+        
+        success = await event_processor.process_reading_session(sample_reading_session_issue)
+        assert success
+        
+        # Verify reading time was updated
+        paper = event_processor.paper_manager.load_metadata(sample_paper.arxiv_id)
+        assert paper.total_reading_time_minutes == 30
+        
+        # Verify reading event was logged
+        events_file = paper_dir / "events.log"
+        events = events_file.read_text().splitlines()
+        event_data = json.loads(events[0])
+        assert event_data["type"] == "reading_session"
         assert event_data["duration_minutes"] == 30
 
-def test_process_new_paper(event_processor, sample_paper_issue):
-    """Test processing a new paper registration"""
-    success = event_processor.process_new_paper(sample_paper_issue)
-    assert success
-    
-    arxiv_id = "2401.00001"
-    paper = event_processor.load_paper_metadata(arxiv_id)
-    assert paper is not None
-    assert paper.arxiv_id == arxiv_id
+    @pytest.mark.asyncio
+    async def test_close_issues(self, event_processor, mock_session):
+        """Test closing processed issues."""
+        # Setup mock responses for comment and close
+        mock_comment_response = AsyncMock()
+        mock_comment_response.status = 201
+        
+        mock_close_response = AsyncMock()
+        mock_close_response.status = 200
+        
+        mock_session.post = Mock(return_value=AsyncContextManagerMock(mock_comment_response))
+        mock_session.patch = Mock(return_value=AsyncContextManagerMock(mock_close_response))
+        
+        # Add processed issues
+        event_processor.processed_issues = [1, 2]
+        
+        await event_processor.close_issues(mock_session)
+        
+        # Verify comments and closes
+        assert mock_session.post.call_count == 2  # One comment per issue
+        assert mock_session.patch.call_count == 2  # One close per issue
 
-def test_process_reading_session(event_processor, sample_reading_session_issue):
-    """Test processing a reading session"""
-    # First create a paper
-    event_processor.process_new_paper({
-        **sample_reading_session_issue,
-        "labels": [{"name": "paper"}],
-        "body": json.dumps({
-            "arxivId": "2401.00001",
-            "title": "Test Paper",
-            "authors": "Test Author",
-            "abstract": "Test abstract",
-            "url": "https://arxiv.org/abs/2401.00001"
-        })
-    })
-    
-    # Process reading session
-    success = event_processor.process_reading_session(sample_reading_session_issue)
-    assert success
-    
-    # Verify paper was updated
-    paper = event_processor.load_paper_metadata("2401.00001")
-    assert paper.total_reading_time_minutes == 30
-    assert paper.last_read == "2024-01-01T01:00:00Z"
-
-def test_update_registry(event_processor, sample_paper_issue):
-    """Test updating the centralized registry"""
-    # Process a paper to create some data
-    event_processor.process_new_paper(sample_paper_issue)
-    
-    # Update registry
-    event_processor.update_registry()
-    
-    # Check if data/papers.yaml exists in modified files
-    assert any('papers.yaml' in file for file in event_processor.modified_files)
-
-@pytest.mark.asyncio
-async def test_close_issues(event_processor, mock_session):
-    """Test closing processed issues"""
-    # Create mock responses with correct status codes
-    mock_comment_response = AsyncMock()
-    mock_comment_response.status = 201  # Success status for creating comments
-    
-    mock_close_response = AsyncMock()
-    mock_close_response.status = 200  # Success status for closing issues
-    
-    # Set up session mock with correct responses
-    mock_session.post = Mock(return_value=AsyncContextManagerMock(mock_comment_response))
-    mock_session.patch = Mock(return_value=AsyncContextManagerMock(mock_close_response))
-    
-    # Add some processed issues
-    event_processor.processed_issues = [1, 2]
-    
-    # Execute close_issues
-    await event_processor.close_issues(mock_session)
-    
-    # Verify both issues were processed
-    assert mock_session.post.call_count == 2
-    assert mock_session.patch.call_count == 2
-
-@pytest.mark.asyncio
-async def test_process_all_issues(event_processor, sample_paper_issue, sample_reading_session_issue):
-    """Test end-to-end processing of all issues"""
-    mock_response = AsyncMock()
-    mock_response.status = 200
-    mock_response.json.return_value = [sample_paper_issue, sample_reading_session_issue]
-    
-    mock_session = Mock()
-    mock_session.get = Mock(return_value=AsyncContextManagerMock(mock_response))
-    mock_session.post = Mock(return_value=AsyncContextManagerMock(mock_response))
-    mock_session.patch = Mock(return_value=AsyncContextManagerMock(mock_response))
-    
-    mock_client_session = AsyncMock()
-    mock_client_session.__aenter__.return_value = mock_session
-    mock_client_session.__aexit__.return_value = None
-    
-    with patch('aiohttp.ClientSession', return_value=mock_client_session):
+    @pytest.mark.asyncio
+    async def test_process_all_issues(
+        self, event_processor, mock_session, sample_paper_issue, sample_reading_session_issue, mock_arxiv_api
+    ):
+        """Test processing multiple issues."""
+        # Setup mock response with multiple issues
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        mock_response.json = AsyncMock(return_value=[
+            sample_paper_issue,
+            sample_reading_session_issue
+        ])
+        
+        mock_session.get = Mock(return_value=AsyncContextManagerMock(mock_response))
+        mock_arxiv_api.fetch_metadata.return_value = sample_paper_issue
+        
+        # Mock commit_and_push
         with patch('scripts.process_events.commit_and_push') as mock_commit:
             await event_processor.process_all_issues()
-    
-    # Verify both issues were processed
-    paper = event_processor.load_paper_metadata("2401.00001")
-    assert paper is not None
-    assert paper.total_reading_time_minutes == 30
-    assert mock_commit.call_count == 1
+        
+        # Verify papers were processed
+        paper_dir = event_processor.papers_dir / sample_paper_issue["arxivId"]
+        assert paper_dir.exists()
+        
+        # Verify registry was updated and changes committed
+        mock_commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_get_open_issues(self, event_processor, mock_session):
+        """Test fetching open issues."""
+        # Setup mock response with different issue types
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        mock_response.json = AsyncMock(return_value=[
+            {"labels": [{"name": "paper"}]},
+            {"labels": [{"name": "reading-session"}]},
+            {"labels": [{"name": "other"}]}
+        ])
+        
+        mock_session.get = Mock(return_value=AsyncContextManagerMock(mock_response))
+        
+        issues = await event_processor.get_open_issues(mock_session)
+        
+        # Should only get paper and reading-session issues
+        assert len(issues) == 2
+        assert all(
+            any(label["name"] in ["paper", "reading-session"] 
+                for label in issue["labels"]) 
+            for issue in issues
+        )
+
+    @pytest.mark.asyncio
+    async def test_error_handling(self, event_processor, mock_session, mock_arxiv_api):
+        """Test error handling during event processing."""
+        # Setup ArXiv API to fail
+        mock_arxiv_api.fetch_metadata.side_effect = Exception("ArXiv API Error")
+        
+        # Create issue with invalid data
+        invalid_issue = {
+            "number": 1,
+            "html_url": "https://github.com/user/repo/issues/1",
+            "state": "open",
+            "labels": [{"name": "paper"}],
+            "body": "invalid json"
+        }
+        
+        # Attempt to process invalid issue
+        result = await event_processor.process_new_paper(invalid_issue)
+        assert not result
+        
+        # Verify no files were created
+        assert len(list(event_processor.papers_dir.iterdir())) == 0
+
+    @pytest.mark.asyncio
+    async def test_registry_update(self, event_processor, sample_paper, mock_arxiv_api):
+        """Test updating the central registry."""
+        mock_arxiv_api.fetch_metadata.return_value = sample_paper
+        
+        # Create some papers
+        paper_dir = event_processor.papers_dir / sample_paper.arxiv_id
+        paper_dir.mkdir(parents=True)
+        event_processor.paper_manager.save_metadata(sample_paper)
+        
+        # Update registry
+        event_processor.update_registry()
+        
+        # Verify registry file
+        registry_file = Path("data/papers.yaml")
+        assert registry_file in event_processor.paper_manager.modified_files
+        
+        # Clear modified files
+        event_processor.paper_manager.clear_modified_files()
+        assert len(event_processor.paper_manager.modified_files) == 0
