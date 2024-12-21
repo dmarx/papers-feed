@@ -55,7 +55,7 @@ class EventProcessor:
                 ]
             return []
 
-    async def process_new_paper(self, issue_data: Dict[str, Any]) -> bool:
+    def process_new_paper(self, issue_data: Dict[str, Any]) -> bool:
         """
         Process a new paper registration.
 
@@ -72,7 +72,7 @@ class EventProcessor:
                 raise ValueError("No arXiv ID found in metadata")
 
             # Ensure paper exists (fetches from arXiv if needed)
-            paper = await self.paper_manager.ensure_paper_exists(arxiv_id)
+            paper = self.paper_manager.get_or_create_paper(arxiv_id)
             
             # Update paper with issue information
             paper.issue_number = issue_data["number"]
@@ -89,7 +89,7 @@ class EventProcessor:
             logger.error(f"Error processing new paper: {e}")
             return False
 
-    async def process_reading_session(self, issue_data: Dict[str, Any]) -> bool:
+    def process_reading_session(self, issue_data: Dict[str, Any]) -> bool:
         """
         Process a reading session event.
 
@@ -105,9 +105,6 @@ class EventProcessor:
             
             if not arxiv_id:
                 raise ValueError("No arXiv ID found in session data")
-
-            # Ensure paper exists
-            paper = await self.paper_manager.ensure_paper_exists(arxiv_id)
 
             # Create reading session event
             event = ReadingSession(
@@ -194,7 +191,6 @@ class EventProcessor:
         async with aiohttp.ClientSession() as session:
             issues = await self.get_open_issues(session)
             
-            # Process issues synchronously
             for issue in issues:
                 labels = [label["name"] for label in issue["labels"]]
                 
@@ -203,6 +199,7 @@ class EventProcessor:
                 elif "paper" in labels:
                     self.process_new_paper(issue)
 
+            # Update registry if we have any changes
             if self.paper_manager.get_modified_files():
                 self.update_registry()
                 try:
