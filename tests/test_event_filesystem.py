@@ -2,9 +2,9 @@
 import json
 import pytest
 from pathlib import Path
+from unittest.mock import patch
 from scripts.process_events import EventProcessor
 from scripts.models import ReadingSession, PaperRegistrationEvent
-from unittest.mock import patch
 
 @pytest.fixture
 def event_processor(tmp_path):
@@ -15,7 +15,7 @@ def event_processor(tmp_path):
     }):
         processor = EventProcessor()
         processor.papers_dir = tmp_path / "papers"
-        processor.papers_dir.mkdir(parents=True)
+        processor.papers_dir.mkdir(parents=True, exist_ok=True)
         return processor
 
 def test_event_file_creation(event_processor):
@@ -35,9 +35,19 @@ def test_event_file_creation(event_processor):
     # Append event should create directory and file
     event_processor.append_event(arxiv_id, event)
     
+    # Verify directory and file were created
+    assert paper_dir.exists()
+    assert paper_dir.is_dir()
+    
     events_file = paper_dir / "events.log"
     assert events_file.exists()
     assert events_file.is_file()
+    
+    # Verify file content
+    content = events_file.read_text()
+    event_data = json.loads(content.strip())
+    assert event_data["arxiv_id"] == arxiv_id
+    assert event_data["duration_minutes"] == 30
 
 def test_multiple_event_appending(event_processor):
     """Test appending multiple events to log file"""
@@ -51,12 +61,16 @@ def test_multiple_event_appending(event_processor):
         ) for i in range(3)
     ]
     
+    # First ensure directory exists
+    paper_dir = event_processor.papers_dir / arxiv_id
+    paper_dir.mkdir(parents=True, exist_ok=True)
+    
     # Append multiple events
     for event in events:
         event_processor.append_event(arxiv_id, event)
     
     # Verify file contents
-    events_file = event_processor.papers_dir / arxiv_id / "events.log"
+    events_file = paper_dir / "events.log"
     lines = events_file.read_text().splitlines()
     
     assert len(lines) == 3
@@ -70,6 +84,10 @@ def test_multiple_event_appending(event_processor):
 def test_event_file_structure(event_processor):
     """Test structure and format of events log entries"""
     arxiv_id = "2401.00001"
+    
+    # First ensure directory exists
+    paper_dir = event_processor.papers_dir / arxiv_id
+    paper_dir.mkdir(parents=True, exist_ok=True)
     
     # Test both types of events
     reading_event = ReadingSession(
@@ -89,7 +107,7 @@ def test_event_file_structure(event_processor):
     event_processor.append_event(arxiv_id, registration_event)
     
     # Verify file contents and structure
-    events_file = event_processor.papers_dir / arxiv_id / "events.log"
+    events_file = paper_dir / "events.log"
     lines = events_file.read_text().splitlines()
     
     # Parse and verify each event
@@ -106,6 +124,11 @@ def test_event_file_structure(event_processor):
 def test_event_file_concurrent_access(event_processor):
     """Test concurrent access to events log file"""
     arxiv_id = "2401.00001"
+    
+    # First ensure directory exists
+    paper_dir = event_processor.papers_dir / arxiv_id
+    paper_dir.mkdir(parents=True, exist_ok=True)
+    
     events = [
         ReadingSession(
             arxivId=arxiv_id,
@@ -124,7 +147,7 @@ def test_event_file_concurrent_access(event_processor):
         ))
     
     # Verify all events were written
-    events_file = event_processor.papers_dir / arxiv_id / "events.log"
+    events_file = paper_dir / "events.log"
     lines = events_file.read_text().splitlines()
     assert len(lines) == 10
     
