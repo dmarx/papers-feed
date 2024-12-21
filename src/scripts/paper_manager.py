@@ -19,7 +19,7 @@ class PaperManager:
         self.arxiv_api = ArxivAPI()
         self.modified_files: set[str] = set()
 
-        def get_or_create_paper(self, arxiv_id: str) -> Paper:
+    def get_or_create_paper(self, arxiv_id: str) -> Paper:
         """
         Get or create a paper by arxiv ID.
         Creates metadata if not exists by fetching from ArXiv.
