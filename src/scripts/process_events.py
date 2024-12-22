@@ -7,45 +7,28 @@ import aiohttp
 from pathlib import Path
 from datetime import datetime
 from loguru import logger
-from typing import Optional, List, Dict, Any
+from typing import List, Dict, Any
 
-from .models import Paper, ReadingSession, PaperRegistrationEvent
+from .models import Paper, ReadingSession
 from .paper_manager import PaperManager
 from llamero.utils import commit_and_push
 
-class EventProcessor:
-    """Processes GitHub issues into paper events."""
-
-    def __init__(self):
-        """Initialize EventProcessor with GitHub credentials and paths."""
-        self.github_token = os.environ["GITHUB_TOKEN"]
-        self.repo = os.environ["GITHUB_REPOSITORY"]
-        self.base_headers = {
-            "Authorization": f"token {self.github_token}",
+class GithubClient:
+    """Handles GitHub API interactions."""
+    def __init__(self, token: str, repo: str):
+        self.token = token
+        self.repo = repo
+        self.headers = {
+            "Authorization": f"token {token}",
             "Accept": "application/vnd.github.v3+json"
         }
-        self.papers_dir = Path("data/papers")
-        self.papers_dir.mkdir(parents=True, exist_ok=True)
-        self.paper_manager = PaperManager(self.papers_dir)
-        self.processed_issues: list[int] = []
 
     async def get_open_issues(self, session: aiohttp.ClientSession) -> List[Dict[str, Any]]:
-        """
-        Fetch all open issues with paper or reading-session labels.
-
-        Args:
-            session: aiohttp ClientSession for making requests
-
-        Returns:
-            List of issue data dictionaries
-        """
+        """Fetch open issues with paper or reading-session labels."""
         url = f"https://api.github.com/repos/{self.repo}/issues"
-        params = {
-            "state": "open",
-            "per_page": 100
-        }
+        params = {"state": "open", "per_page": 100}
         
-        async with session.get(url, headers=self.base_headers, params=params) as response:
+        async with session.get(url, headers=self.headers, params=params) as response:
             if response.status == 200:
                 all_issues = await response.json()
                 return [
@@ -55,74 +38,79 @@ class EventProcessor:
                 ]
             return []
 
-    def process_new_paper(self, issue_data: Dict[str, Any]) -> bool:
-        """
-        Process a new paper registration.
+    async def close_issue(self, session: aiohttp.ClientSession, issue_number: int) -> bool:
+        """Close an issue with comment."""
+        base_url = f"https://api.github.com/repos/{self.repo}/issues/{issue_number}"
+        
+        # Add comment
+        comment_data = {"body": "✅ Event processed and recorded. Closing this issue."}
+        async with session.post(f"{base_url}/comments", headers=self.headers, json=comment_data) as response:
+            if response.status != 201:
+                logger.error(f"Failed to add comment to issue {issue_number}")
+                return False
 
-        Args:
-            issue_data: GitHub issue data
+        # Close issue
+        close_data = {"state": "closed"}
+        async with session.patch(base_url, headers=self.headers, json=close_data) as response:
+            if response.status != 200:
+                logger.error(f"Failed to close issue {issue_number}")
+                return False
 
-        Returns:
-            bool: True if processing succeeded
-        """
+        return True
+
+class EventProcessor:
+    """Processes GitHub issues into paper events."""
+
+    def __init__(self):
+        self.github = GithubClient(
+            token=os.environ["GITHUB_TOKEN"],
+            repo=os.environ["GITHUB_REPOSITORY"]
+        )
+        self.papers_dir = Path("data/papers")
+        self.papers_dir.mkdir(parents=True, exist_ok=True)
+        self.paper_manager = PaperManager(self.papers_dir)
+        self.processed_issues: list[int] = []
+
+    def process_paper_issue(self, issue_data: Dict[str, Any]) -> bool:
+        """Process paper registration issue."""
         try:
             paper_data = json.loads(issue_data["body"])
             arxiv_id = paper_data.get("arxivId")
             if not arxiv_id:
                 raise ValueError("No arXiv ID found in metadata")
 
-            # Ensure paper exists (fetches from arXiv if needed)
             paper = self.paper_manager.get_or_create_paper(arxiv_id)
-            
-            # Update paper with issue information
             paper.issue_number = issue_data["number"]
             paper.issue_url = issue_data["html_url"]
             paper.labels = [label["name"] for label in issue_data["labels"]]
             
-            # Save updated metadata
             self.paper_manager.save_metadata(paper)
-            
             self.processed_issues.append(issue_data["number"])
             return True
 
         except Exception as e:
-            logger.error(f"Error processing new paper: {e}")
+            logger.error(f"Error processing paper issue: {e}")
             return False
 
-    def process_reading_session(self, issue_data: Dict[str, Any]) -> bool:
-        """
-        Process a reading session event.
-
-        Args:
-            issue_data: GitHub issue data
-
-        Returns:
-            bool: True if processing succeeded
-        """
+    def process_reading_issue(self, issue_data: Dict[str, Any]) -> bool:
+        """Process reading session issue."""
         try:
             session_data = json.loads(issue_data["body"])
             arxiv_id = session_data.get("arxivId")
+            duration = session_data.get("duration_minutes")
             
-            if not arxiv_id:
-                raise ValueError("No arXiv ID found in session data")
+            if not arxiv_id or not duration:
+                raise ValueError("Missing required fields in session data")
 
-            # Create reading session event
             event = ReadingSession(
                 arxivId=arxiv_id,
-                timestamp=session_data["timestamp"],
-                duration_minutes=session_data["duration_minutes"],
+                timestamp=datetime.utcnow().isoformat(),
+                duration_minutes=duration,
                 issue_url=issue_data["html_url"]
             )
             
-            # Update paper reading time
-            self.paper_manager.update_reading_time(
-                arxiv_id, 
-                session_data["duration_minutes"]
-            )
-            
-            # Log reading session event
+            self.paper_manager.update_reading_time(arxiv_id, duration)
             self.paper_manager.append_event(arxiv_id, event)
-            
             self.processed_issues.append(issue_data["number"])
             return True
 
@@ -130,43 +118,15 @@ class EventProcessor:
             logger.error(f"Error processing reading session: {e}")
             return False
 
-    async def close_issues(self, session: aiohttp.ClientSession) -> None:
-        """
-        Close all successfully processed issues.
-
-        Args:
-            session: aiohttp ClientSession for making requests
-        """
-        for issue_number in self.processed_issues:
-            url = f"https://api.github.com/repos/{self.repo}/issues/{issue_number}"
-            
-            # Add comment
-            comment_url = f"{url}/comments"
-            comment_data = {
-                "body": "✅ Event processed and recorded. Closing this issue."
-            }
-            async with session.post(comment_url, headers=self.base_headers, json=comment_data) as response:
-                if response.status != 201:
-                    logger.error(f"Failed to add comment to issue {issue_number}")
-                    continue
-
-            # Close issue
-            close_data = {"state": "closed"}
-            async with session.patch(url, headers=self.base_headers, json=close_data) as response:
-                if response.status != 200:
-                    logger.error(f"Failed to close issue {issue_number}")
-
     def update_registry(self) -> None:
-        """Update the centralized registry file with any modified papers."""
-        registry = {}
+        """Update central registry with modified papers."""
         registry_file = Path("data/papers.yaml")
+        registry = {}
         
-        # Load existing registry if it exists
         if registry_file.exists():
             with registry_file.open('r') as f:
                 registry = yaml.safe_load(f) or {}
         
-        # Only update entries for modified papers
         modified_papers = {
             path.parent.name 
             for path in map(Path, self.paper_manager.get_modified_files())
@@ -180,7 +140,6 @@ class EventProcessor:
             except Exception as e:
                 logger.error(f"Error adding {arxiv_id} to registry: {e}")
         
-        # Save if we made changes
         if modified_papers:
             with registry_file.open('w') as f:
                 yaml.safe_dump(registry, f, sort_keys=True, indent=2, allow_unicode=True)
@@ -189,22 +148,22 @@ class EventProcessor:
     async def process_all_issues(self) -> None:
         """Process all open issues."""
         async with aiohttp.ClientSession() as session:
-            issues = await self.get_open_issues(session)
-            
+            # Get and process issues
+            issues = await self.github.get_open_issues(session)
             for issue in issues:
                 labels = [label["name"] for label in issue["labels"]]
-                
                 if "reading-session" in labels:
-                    self.process_reading_session(issue)
+                    self.process_reading_issue(issue)
                 elif "paper" in labels:
-                    self.process_new_paper(issue)
+                    self.process_paper_issue(issue)
 
-            # Update registry if we have any changes
+            # Update registry and close issues
             if self.paper_manager.get_modified_files():
                 self.update_registry()
                 try:
                     commit_and_push(list(self.paper_manager.get_modified_files()))
-                    await self.close_issues(session)
+                    for issue_number in self.processed_issues:
+                        await self.github.close_issue(session, issue_number)
                 except Exception as e:
                     logger.error(f"Failed to commit changes: {e}")
                 finally:
