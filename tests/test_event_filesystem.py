@@ -5,6 +5,7 @@ import asyncio
 from pathlib import Path
 from datetime import datetime
 from unittest.mock import patch, AsyncMock
+from loguru import logger
 
 from scripts.process_events import EventProcessor
 from scripts.models import ReadingSession, PaperRegistrationEvent
