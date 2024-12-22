@@ -75,7 +75,7 @@ class EventProcessor:
 
     def update_registry(self) -> None:
         """Update central registry with modified papers."""
-        registry_file = Path("data/papers.yaml")
+        registry_file = self.papers_dir / "papers.yaml"
         registry = {}
         
         if registry_file.exists():
