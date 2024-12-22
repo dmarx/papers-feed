@@ -51,6 +51,7 @@ def test_event_file_creation(event_processor, tmp_path):
     assert paper_dir.is_dir()
     
     events_file = paper_dir / event_processor.paper_manager._event_log_fname
+    logger.info(f"target: {events_file}")
     assert events_file.exists()
     assert events_file.is_file()
 
