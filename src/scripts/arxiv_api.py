@@ -1,6 +1,6 @@
 # src/scripts/arxiv_api.py
-import asyncio
-import aiohttp
+import time
+import requests
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from loguru import logger
@@ -13,12 +13,20 @@ class ArxivAPI:
 
     def __init__(self):
         """Initialize ArxivAPI with rate limiting controls."""
-        self.rate_limit = asyncio.Semaphore(1)
+        self.last_request = 0
+        self.min_delay = 3  # Seconds between requests
         self.headers = {'User-Agent': 'ArxivPaperTracker/1.0'}
-        self.delay = 3  # Seconds between requests
         self.api_base = "http://export.arxiv.org/api/query"
 
-    async def fetch_metadata(self, arxiv_id: str) -> Paper:
+    def _wait_for_rate_limit(self):
+        """Enforce rate limiting between requests."""
+        now = time.time()
+        time_since_last = now - self.last_request
+        if time_since_last < self.min_delay:
+            time.sleep(self.min_delay - time_since_last)
+        self.last_request = time.time()
+
+    def fetch_metadata(self, arxiv_id: str) -> Paper:
         """
         Fetch paper metadata from arXiv API.
 
@@ -32,39 +40,24 @@ class ArxivAPI:
             ValueError: If the API response is invalid
             Exception: For network or parsing errors
         """
-        async with self.rate_limit:
-            try:
-                url = f"{self.api_base}?id_list={arxiv_id}"
-                logger.debug(f"Fetching arXiv metadata: {url}")
-                
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(url, headers=self.headers) as response:
-                        if response.status != 200:
-                            raise ValueError(f"ArXiv API error: {response.status}")
-                        
-                        xml_text = await response.text()
-                        paper = self._parse_arxiv_response(xml_text, arxiv_id)
-                        await asyncio.sleep(self.delay)  # Rate limiting
-                        return paper
-                        
-            except Exception as e:
-                logger.error(f"Error fetching arXiv metadata for {arxiv_id}: {e}")
-                raise
+        self._wait_for_rate_limit()
+        
+        try:
+            url = f"{self.api_base}?id_list={arxiv_id}"
+            logger.debug(f"Fetching arXiv metadata: {url}")
+            
+            response = requests.get(url, headers=self.headers, timeout=30)
+            if response.status_code != 200:
+                raise ValueError(f"ArXiv API error: {response.status_code}")
+            
+            return self._parse_arxiv_response(response.text, arxiv_id)
+                    
+        except Exception as e:
+            logger.error(f"Error fetching arXiv metadata for {arxiv_id}: {e}")
+            raise
 
     def _parse_arxiv_response(self, xml_text: str, arxiv_id: str) -> Paper:
-        """
-        Parse arXiv API response XML into Paper object.
-        
-        Args:
-            xml_text: XML response from arXiv API
-            arxiv_id: The arXiv identifier
-
-        Returns:
-            Paper: Constructed Paper object
-
-        Raises:
-            ValueError: If required data is missing from response
-        """
+        """Parse ArXiv API response XML into Paper object."""
         try:
             # Parse XML
             root = ET.fromstring(xml_text)
