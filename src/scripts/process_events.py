@@ -9,54 +9,11 @@ from datetime import datetime
 from loguru import logger
 from typing import List, Dict, Any
 
+from .github_client import GithubClient
 from .models import Paper, ReadingSession
 from .paper_manager import PaperManager
 from llamero.utils import commit_and_push
 
-class GithubClient:
-    """Handles GitHub API interactions."""
-    def __init__(self, token: str, repo: str):
-        self.token = token
-        self.repo = repo
-        self.headers = {
-            "Authorization": f"token {token}",
-            "Accept": "application/vnd.github.v3+json"
-        }
-
-    async def get_open_issues(self, session: aiohttp.ClientSession) -> List[Dict[str, Any]]:
-        """Fetch open issues with paper or reading-session labels."""
-        url = f"https://api.github.com/repos/{self.repo}/issues"
-        params = {"state": "open", "per_page": 100}
-        
-        async with session.get(url, headers=self.headers, params=params) as response:
-            if response.status == 200:
-                all_issues = await response.json()
-                return [
-                    issue for issue in all_issues
-                    if any(label['name'] in ['paper', 'reading-session'] 
-                          for label in issue['labels'])
-                ]
-            return []
-
-    async def close_issue(self, session: aiohttp.ClientSession, issue_number: int) -> bool:
-        """Close an issue with comment."""
-        base_url = f"https://api.github.com/repos/{self.repo}/issues/{issue_number}"
-        
-        # Add comment
-        comment_data = {"body": "✅ Event processed and recorded. Closing this issue."}
-        async with session.post(f"{base_url}/comments", headers=self.headers, json=comment_data) as response:
-            if response.status != 201:
-                logger.error(f"Failed to add comment to issue {issue_number}")
-                return False
-
-        # Close issue
-        close_data = {"state": "closed"}
-        async with session.patch(base_url, headers=self.headers, json=close_data) as response:
-            if response.status != 200:
-                logger.error(f"Failed to close issue {issue_number}")
-                return False
-
-        return True
 
 class EventProcessor:
     """Processes GitHub issues into paper events."""
