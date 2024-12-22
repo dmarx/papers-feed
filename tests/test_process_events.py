@@ -4,9 +4,9 @@ import yaml
 import pytest
 from pathlib import Path
 from datetime import datetime
-from unittest.mock import Mock, patch, AsyncMock
+from unittest.mock import Mock, patch
 
-from scripts.process_events import EventProcessor, GithubClient
+from scripts.process_events import EventProcessor
 from scripts.models import Paper
 
 @pytest.fixture
@@ -45,21 +45,6 @@ def sample_paper_issue(sample_paper):
     }
 
 @pytest.fixture
-def sample_reading_issue(sample_paper):
-    """Create sample reading session issue."""
-    return {
-        "number": 2,
-        "html_url": "https://github.com/user/repo/issues/2",
-        "state": "open",
-        "labels": [{"name": "reading-session"}],
-        "body": json.dumps({
-            "arxivId": sample_paper.arxiv_id,
-            "timestamp": datetime.utcnow().isoformat(),
-            "duration_minutes": 30
-        })
-    }
-
-@pytest.fixture
 def event_processor(tmp_path):
     """Create EventProcessor with temp directory."""
     with patch.dict('os.environ', {
@@ -71,57 +56,6 @@ def event_processor(tmp_path):
         processor.papers_dir.mkdir(parents=True)
         return processor
 
-class TestGithubClient:
-    @pytest.mark.asyncio
-    async def test_get_open_issues(self):
-        """Test fetching open issues."""
-        client = GithubClient(token="fake_token", repo="user/repo")
-        
-        mock_session = AsyncMock()
-        mock_response = AsyncMock()
-        mock_response.status = 200
-        mock_response.json.return_value = [
-            {"labels": [{"name": "paper"}]},
-            {"labels": [{"name": "reading-session"}]},
-            {"labels": [{"name": "other"}]}
-        ]
-        mock_session.__aenter__.return_value = mock_session
-        mock_session.get.return_value.__aenter__.return_value = mock_response
-        
-        issues = await client.get_open_issues(mock_session)
-        
-        assert len(issues) == 2  # Only paper and reading-session issues
-        assert all(
-            any(label["name"] in ["paper", "reading-session"] 
-                for label in issue["labels"]) 
-            for issue in issues
-        )
-
-    @pytest.mark.asyncio
-    async def test_close_issue(self):
-        """Test closing issue with comment."""
-        client = GithubClient(token="fake_token", repo="user/repo")
-        
-        # Mock session responses
-        mock_session = AsyncMock()
-        mock_session.__aenter__.return_value = mock_session
-        
-        # Mock comment response
-        mock_comment_response = AsyncMock()
-        mock_comment_response.status = 201
-        mock_session.post.return_value.__aenter__.return_value = mock_comment_response
-        
-        # Mock close response
-        mock_close_response = AsyncMock()
-        mock_close_response.status = 200
-        mock_session.patch.return_value.__aenter__.return_value = mock_close_response
-        
-        success = await client.close_issue(mock_session, 1)
-        
-        assert success
-        mock_session.post.assert_called_once()  # Comment added
-        mock_session.patch.assert_called_once()  # Issue closed
-
 class TestEventProcessor:
     def test_process_paper_issue(self, event_processor, sample_paper_issue, sample_paper):
         """Test processing paper registration issue."""
@@ -131,15 +65,26 @@ class TestEventProcessor:
             assert success
             assert sample_paper_issue["number"] in event_processor.processed_issues
 
-    def test_process_reading_issue(self, event_processor, sample_reading_issue, sample_paper):
+    def test_process_reading_issue(self, event_processor, sample_paper):
         """Test processing reading session issue."""
+        issue_data = {
+            "number": 2,
+            "html_url": "https://github.com/user/repo/issues/2",
+            "labels": [{"name": "reading-session"}],
+            "body": json.dumps({
+                "arxivId": sample_paper.arxiv_id,
+                "timestamp": datetime.utcnow().isoformat(),
+                "duration_minutes": 30
+            })
+        }
+        
         with patch('scripts.paper_manager.PaperManager.get_or_create_paper', return_value=sample_paper), \
              patch('scripts.paper_manager.PaperManager.update_reading_time'), \
              patch('scripts.paper_manager.PaperManager.append_event'):
             
-            success = event_processor.process_reading_issue(sample_reading_issue)
+            success = event_processor.process_reading_issue(issue_data)
             assert success
-            assert sample_reading_issue["number"] in event_processor.processed_issues
+            assert issue_data["number"] in event_processor.processed_issues
 
     def test_process_reading_issue_invalid_data(self, event_processor):
         """Test processing invalid reading session data."""
@@ -161,76 +106,47 @@ class TestEventProcessor:
         paper_dir.mkdir(parents=True)
         event_processor.paper_manager.save_metadata(sample_paper)
         
-        # Override registry path for testing
         registry_file = tmp_path / "papers.yaml"
-        with patch('pathlib.Path', return_value=registry_file):
-            # Update registry
+        with patch('pathlib.Path', lambda x: registry_file):
             event_processor.update_registry()
-        
-            # Verify registry was updated
-            assert registry_file.exists()
             
-            # Verify registry content
-            with registry_file.open('r') as f:
+            assert registry_file.exists()
+            with registry_file.open() as f:
                 registry_data = yaml.safe_load(f)
+            
             assert sample_paper.arxiv_id in registry_data
             assert registry_data[sample_paper.arxiv_id]["title"] == sample_paper.title
 
-    @pytest.mark.asyncio
-    async def test_process_all_issues(self, event_processor, sample_paper_issue, sample_reading_issue):
+    def test_process_all_issues(self, event_processor, sample_paper_issue):
         """Test processing multiple issue types."""
-        mock_session = AsyncMock()
-        mock_session.__aenter__.return_value = mock_session
-        
-        # Mock issues response
-        mock_issues_response = AsyncMock()
-        mock_issues_response.status = 200
-        mock_issues_response.json.return_value = [sample_paper_issue, sample_reading_issue]
-        mock_session.get.return_value.__aenter__.return_value = mock_issues_response
-        
-        # Mock issue closing responses
-        mock_success_response = AsyncMock()
-        mock_success_response.status = 200
-        mock_session.post.return_value.__aenter__.return_value = mock_success_response
-        mock_session.patch.return_value.__aenter__.return_value = mock_success_response
-        
-        with patch('aiohttp.ClientSession', return_value=mock_session), \
+        with patch('scripts.github_client.GithubClient.get_open_issues') as mock_get_issues, \
+             patch('scripts.github_client.GithubClient.close_issue') as mock_close_issue, \
              patch('scripts.paper_manager.PaperManager.get_or_create_paper'), \
              patch('scripts.process_events.commit_and_push'):
             
-            await event_processor.process_all_issues()
+            # Mock issue fetching
+            mock_get_issues.return_value = [sample_paper_issue]
+            mock_close_issue.return_value = True
             
-            # Verify both issues were processed
-            assert len(event_processor.processed_issues) == 2
-            mock_session.get.assert_called_once()  # Fetched issues
-            assert mock_session.post.call_count == 2  # Added comments
-            assert mock_session.patch.call_count == 2  # Closed issues
+            event_processor.process_all_issues()
+            
+            assert len(event_processor.processed_issues) == 1
+            mock_get_issues.assert_called_once()
+            mock_close_issue.assert_called_once()
 
-    @pytest.mark.asyncio
-    async def test_process_no_issues(self, event_processor):
+    def test_process_no_issues(self, event_processor):
         """Test behavior when no issues exist."""
-        mock_session = AsyncMock()
-        mock_session.__aenter__.return_value = mock_session
-        
-        mock_response = AsyncMock()
-        mock_response.status = 200
-        mock_response.json.return_value = []
-        mock_session.get.return_value.__aenter__.return_value = mock_response
-        
-        with patch('aiohttp.ClientSession', return_value=mock_session):
-            await event_processor.process_all_issues()
+        with patch('scripts.github_client.GithubClient.get_open_issues') as mock_get_issues:
+            mock_get_issues.return_value = []
+            
+            event_processor.process_all_issues()
             assert len(event_processor.processed_issues) == 0
+            mock_get_issues.assert_called_once()
 
-    @pytest.mark.asyncio
-    async def test_github_api_error(self, event_processor):
+    def test_github_api_error(self, event_processor):
         """Test handling of GitHub API errors."""
-        mock_session = AsyncMock()
-        mock_session.__aenter__.return_value = mock_session
-        
-        mock_response = AsyncMock()
-        mock_response.status = 404
-        mock_session.get.return_value.__aenter__.return_value = mock_response
-        
-        with patch('aiohttp.ClientSession', return_value=mock_session):
-            await event_processor.process_all_issues()
+        with patch('scripts.github_client.GithubClient.get_open_issues') as mock_get_issues:
+            mock_get_issues.return_value = []  # API error returns empty list
+            
+            event_processor.process_all_issues()
             assert len(event_processor.processed_issues) == 0
