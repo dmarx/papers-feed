@@ -2,23 +2,21 @@
 import os
 import json
 import yaml
-import asyncio
-import aiohttp
 from pathlib import Path
 from datetime import datetime
 from loguru import logger
-from typing import List, Dict, Any
+from typing import Optional, List, Dict, Any
 
-from .github_client import GithubClient
 from .models import Paper, ReadingSession
 from .paper_manager import PaperManager
+from .github_client import GithubClient
 from llamero.utils import commit_and_push
-
 
 class EventProcessor:
     """Processes GitHub issues into paper events."""
 
     def __init__(self):
+        """Initialize EventProcessor with GitHub credentials and paths."""
         self.github = GithubClient(
             token=os.environ["GITHUB_TOKEN"],
             repo=os.environ["GITHUB_REPOSITORY"]
@@ -102,34 +100,33 @@ class EventProcessor:
                 yaml.safe_dump(registry, f, sort_keys=True, indent=2, allow_unicode=True)
             self.paper_manager.modified_files.add(str(registry_file))
 
-    async def process_all_issues(self) -> None:
+    def process_all_issues(self) -> None:
         """Process all open issues."""
-        async with aiohttp.ClientSession() as session:
-            # Get and process issues
-            issues = await self.github.get_open_issues(session)
-            for issue in issues:
-                labels = [label["name"] for label in issue["labels"]]
-                if "reading-session" in labels:
-                    self.process_reading_issue(issue)
-                elif "paper" in labels:
-                    self.process_paper_issue(issue)
+        # Get and process issues
+        issues = self.github.get_open_issues()
+        for issue in issues:
+            labels = [label["name"] for label in issue["labels"]]
+            if "reading-session" in labels:
+                self.process_reading_issue(issue)
+            elif "paper" in labels:
+                self.process_paper_issue(issue)
 
-            # Update registry and close issues
-            if self.paper_manager.get_modified_files():
-                self.update_registry()
-                try:
-                    commit_and_push(list(self.paper_manager.get_modified_files()))
-                    for issue_number in self.processed_issues:
-                        await self.github.close_issue(session, issue_number)
-                except Exception as e:
-                    logger.error(f"Failed to commit changes: {e}")
-                finally:
-                    self.paper_manager.clear_modified_files()
+        # Update registry and close issues
+        if self.paper_manager.get_modified_files():
+            self.update_registry()
+            try:
+                commit_and_push(list(self.paper_manager.get_modified_files()))
+                for issue_number in self.processed_issues:
+                    self.github.close_issue(issue_number)
+            except Exception as e:
+                logger.error(f"Failed to commit changes: {e}")
+            finally:
+                self.paper_manager.clear_modified_files()
 
 def main():
     """Main entry point for processing paper events."""
     processor = EventProcessor()
-    asyncio.run(processor.process_all_issues())
+    processor.process_all_issues()
 
 if __name__ == "__main__":
     main()
