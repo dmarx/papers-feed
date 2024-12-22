@@ -91,9 +91,11 @@ class PaperManager:
     
         # Create and write to events file
         events_file = paper_dir / self._event_log_fname
+        logger.info(f"Appending event to {events_file}")
         with events_file.open('a+', encoding='utf-8') as f:
             f.write(f"{event.model_dump_json()}\n")
         self.modified_files.add(str(events_file))
+        logger.info(f"exists? {events_file.exists()}")
 
     def update_reading_time(self, arxiv_id: str, duration_minutes: int) -> None:
         """Update paper's total reading time."""
