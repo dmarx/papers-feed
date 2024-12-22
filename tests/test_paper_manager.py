@@ -71,7 +71,7 @@ class TestPaperManager:
         paper_dir = paper_manager.data_dir / sample_paper.arxiv_id
         assert paper_dir.exists()
         assert (paper_dir / "metadata.json").exists()
-        assert (paper_dir / "events.log").exists()
+        assert (paper_dir / paper_manager._event_log_fname).exists()
         
         # Verify metadata content
         with (paper_dir / "metadata.json").open() as f:
@@ -80,7 +80,7 @@ class TestPaperManager:
             assert saved_data["title"] == sample_paper.title
 
         # Verify registration event
-        with (paper_dir / "events.log").open() as f:
+        with (paper_dir / paper_manager._event_log_fname).open() as f:
             event_data = json.loads(f.readline())
             assert event_data["type"] == "paper_registered"
             assert event_data["arxiv_id"] == sample_paper.arxiv_id
@@ -133,7 +133,7 @@ class TestPaperManager:
         paper_manager.append_event(sample_paper.arxiv_id, event)
         
         # Verify event log
-        events_file = paper_manager.data_dir / sample_paper.arxiv_id / "events.log"
+        events_file = paper_manager.data_dir / sample_paper.arxiv_id / paper_manager._event_log_fname
         events = events_file.read_text().splitlines()
         
         assert len(events) == 2  # Registration event + reading event
@@ -161,7 +161,7 @@ class TestPaperManager:
         modified = paper_manager.get_modified_files()
         assert len(modified) == 2  # metadata.json and events.log
         assert any("metadata.json" in f for f in modified)
-        assert any("events.log" in f for f in modified)
+        assert any(paper_manager._event_log_fname in f for f in modified)
         
         paper_manager.clear_modified_files()
         assert len(paper_manager.get_modified_files()) == 0
