@@ -118,18 +118,33 @@ class TestEventProcessor:
         """Test processing multiple issue types."""
         with patch('scripts.github_client.GithubClient.get_open_issues') as mock_get_issues, \
              patch('scripts.github_client.GithubClient.close_issue') as mock_close_issue, \
-             patch('scripts.paper_manager.PaperManager.get_or_create_paper'), \
+             patch('scripts.paper_manager.PaperManager.get_or_create_paper') as mock_get_paper, \
              patch('scripts.process_events.commit_and_push'):
             
-            # Mock issue fetching
+            # Configure mocks
             mock_get_issues.return_value = [sample_paper_issue]
             mock_close_issue.return_value = True
+            mock_get_paper.return_value = Paper(
+                arxivId=sample_paper_issue["body"]["arxivId"],
+                title="Test Paper",
+                authors="Test Author",
+                abstract="Test Abstract",
+                url="https://arxiv.org/abs/2401.00001",
+                issue_number=1,
+                issue_url="https://github.com/user/repo/issues/1",
+                created_at=datetime.utcnow().isoformat(),
+                state="open",
+                labels=["paper"],
+                total_reading_time_minutes=0,
+                last_read=None
+            )
             
             event_processor.process_all_issues()
             
             assert len(event_processor.processed_issues) == 1
             mock_get_issues.assert_called_once()
             mock_close_issue.assert_called_once()
+            mock_get_paper.assert_called_once()
 
     def test_process_no_issues(self, event_processor):
         """Test behavior when no issues exist."""
