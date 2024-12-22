@@ -1,10 +1,10 @@
 # src/scripts/paper_manager.py
 import json
-import asyncio
-from pathlib import Path 
+from pathlib import Path
 from loguru import logger
 from datetime import datetime
 from typing import Optional
+import asyncio
 from pydantic import BaseModel
 
 from .models import Paper, ReadingSession, PaperRegistrationEvent
@@ -14,68 +14,52 @@ class PaperManager:
     """Manages paper metadata and event storage."""
 
     def __init__(self, data_dir: Path, arxiv_api: Optional[ArxivAPI] = None):
-        """Initialize PaperManager with data directory and ArXiv client."""
         self.data_dir = data_dir
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.arxiv_api = arxiv_api or ArxivAPI()
         self.modified_files: set[str] = set()
 
-    def _ensure_event_loop(self):
-        """Ensure we have an event loop for async operations."""
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-        return loop
+    def get_paper(self, arxiv_id: str) -> Paper:
+        """Get paper metadata if it exists."""
+        return self.load_metadata(arxiv_id)
+
+    def fetch_new_paper(self, arxiv_id: str) -> Paper:
+        """Fetch paper metadata from ArXiv API."""
+        paper = asyncio.run(self.arxiv_api.fetch_metadata(arxiv_id))
+        self.create_paper(paper)
+        return paper
 
     def get_or_create_paper(self, arxiv_id: str) -> Paper:
-        """Get or create a paper by arxiv ID."""
+        """Get existing paper or create new one."""
         try:
-            return self.ensure_paper_exists(arxiv_id)
+            return self.get_paper(arxiv_id)
         except FileNotFoundError:
-            loop = self._ensure_event_loop()
-            paper = loop.run_until_complete(self.arxiv_api.fetch_metadata(arxiv_id))
-            self.create_paper(paper)
-            return paper
+            return self.fetch_new_paper(arxiv_id)
 
     def create_paper(self, paper: Paper) -> None:
-        """Create a new paper directory and initialize with metadata."""
+        """Create new paper directory and initialize metadata."""
         paper_dir = self.data_dir / paper.arxiv_id
         if paper_dir.exists():
             raise ValueError(f"Paper directory already exists: {paper.arxiv_id}")
-            
+
         try:
-            paper_dir.mkdir(parents=True, exist_ok=True)
+            # Create directory and save metadata
+            paper_dir.mkdir(parents=True)
             self.save_metadata(paper)
-            
+
+            # Record registration event
             event = PaperRegistrationEvent(
                 timestamp=datetime.utcnow().isoformat(),
                 issue_url="",
                 arxiv_id=paper.arxiv_id
             )
             self.append_event(paper.arxiv_id, event)
-            
-            logger.info(f"Created new paper directory for {paper.arxiv_id}")
-            
+
         except Exception as e:
             logger.error(f"Failed to create paper {paper.arxiv_id}: {e}")
             if paper_dir.exists():
-                paper_dir.rmdir()
+                paper_dir.rmdir()  # Cleanup on failure
             raise
-
-    def ensure_paper_exists(self, arxiv_id: str) -> Paper:
-        """Ensure paper exists and return its metadata."""
-        paper_dir = self.data_dir / arxiv_id
-        metadata_file = paper_dir / "metadata.json"
-        
-        if not metadata_file.exists():
-            loop = self._ensure_event_loop()
-            paper = loop.run_until_complete(self.arxiv_api.fetch_metadata(arxiv_id))
-            self.create_paper(paper)
-            return paper
-            
-        return self.load_metadata(arxiv_id)
 
     def save_metadata(self, paper: Paper) -> None:
         """Save paper metadata to file."""
@@ -98,14 +82,7 @@ class PaperManager:
             return Paper.model_validate_json(f.read())
 
     def append_event(self, arxiv_id: str, event: BaseModel) -> None:
-        """
-        Append an event to the paper's event log.
-        Creates paper directory if needed.
-        """
-        # Ensure paper exists before appending event
-        self.ensure_paper_exists(arxiv_id)
-        
-        # Append the event
+        """Append event to paper's event log."""
         paper_dir = self.data_dir / arxiv_id
         events_file = paper_dir / "events.log"
         paper_dir.mkdir(parents=True, exist_ok=True)
@@ -116,10 +93,7 @@ class PaperManager:
 
     def update_reading_time(self, arxiv_id: str, duration_minutes: int) -> None:
         """Update paper's total reading time."""
-        # First ensure paper exists
-        paper = self.ensure_paper_exists(arxiv_id)
-        
-        # Update reading time
+        paper = self.get_paper(arxiv_id)
         paper.total_reading_time_minutes += duration_minutes
         paper.last_read = datetime.utcnow().isoformat()
         self.save_metadata(paper)
@@ -129,5 +103,5 @@ class PaperManager:
         return self.modified_files.copy()
 
     def clear_modified_files(self) -> None:
-        """Clear the set of modified files."""
+        """Clear set of modified files."""
         self.modified_files.clear()
