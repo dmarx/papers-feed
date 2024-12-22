@@ -106,11 +106,9 @@ class TestEventProcessor:
         paper_dir.mkdir(parents=True)
         event_processor.paper_manager.save_metadata(sample_paper)
         
-        registry_file = tmp_path / "papers.yaml"
-        event_processor.registry_file = registry_file  # Set directly instead of mocking Path
-        
         event_processor.update_registry()
         
+        registry_file = event_processor.papers_dir / "papers.yaml"
         assert registry_file.exists()
         with registry_file.open() as f:
             registry_data = yaml.safe_load(f)
