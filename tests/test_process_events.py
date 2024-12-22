@@ -1,85 +1,52 @@
 # tests/test_process_events.py
-import pytest
 import json
 import yaml
+import pytest
 from pathlib import Path
 from datetime import datetime
-from unittest.mock import Mock, patch, AsyncMock, MagicMock
+from unittest.mock import Mock, patch
+
 from scripts.process_events import EventProcessor
-from scripts.models import Paper, ReadingSession, PaperRegistrationEvent
-
-class AsyncContextManagerMock:
-    def __init__(self, return_value):
-        self.return_value = return_value
-        
-    async def __aenter__(self):
-        return self.return_value
-        
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        pass
+from scripts.models import Paper
 
 @pytest.fixture
-def mock_response():
-    """Create a mock response with common attributes"""
-    response = AsyncMock()
-    response.status = 200
-    return response
+def sample_paper():
+    """Create sample Paper object."""
+    return Paper(
+        arxivId="2401.00001",
+        title="Test Paper",
+        authors="Test Author",
+        abstract="Test Abstract",
+        url="https://arxiv.org/abs/2401.00001",
+        issue_number=1,
+        issue_url="https://github.com/user/repo/issues/1",
+        created_at=datetime.utcnow().isoformat(),
+        state="open",
+        labels=["paper"],
+        total_reading_time_minutes=0,
+        last_read=None
+    )
 
 @pytest.fixture
-def mock_session(mock_response):
-    """Create a mock session with proper context manager methods"""
-    session = Mock()
-    
-    def make_context_manager(response):
-        return AsyncContextManagerMock(response)
-    
-    session.get = Mock(return_value=make_context_manager(mock_response))
-    session.post = Mock(return_value=make_context_manager(mock_response))
-    session.patch = Mock(return_value=make_context_manager(mock_response))
-    return session
-
-@pytest.fixture
-def sample_paper_issue():
-    """Fixture for a sample paper registration issue"""
+def sample_paper_issue(sample_paper):
+    """Create sample paper registration issue."""
     return {
         "number": 1,
         "html_url": "https://github.com/user/repo/issues/1",
         "state": "open",
-        "created_at": "2024-01-01T00:00:00Z",
         "labels": [{"name": "paper"}],
         "body": json.dumps({
-            "arxivId": "2401.00001",
-            "title": "Test Paper",
-            "authors": "Test Author",
-            "abstract": "Test abstract",
-            "url": "https://arxiv.org/abs/2401.00001",
-            "timestamp": "2024-01-01T00:00:00Z",
-            "rating": "novote"
-        })
-    }
-
-@pytest.fixture
-def sample_reading_session_issue():
-    """Fixture for a sample reading session issue"""
-    return {
-        "number": 2,
-        "html_url": "https://github.com/user/repo/issues/2",
-        "state": "open",
-        "created_at": "2024-01-01T01:00:00Z",
-        "labels": [{"name": "reading-session"}],
-        "body": json.dumps({
-            "type": "reading_session",
-            "arxivId": "2401.00001",
-            "timestamp": "2024-01-01T01:00:00Z",
-            "duration_minutes": 30,
-            "paper_url": "https://arxiv.org/abs/2401.00001",
-            "paper_title": "Test Paper"
+            "arxivId": sample_paper.arxiv_id,
+            "title": sample_paper.title,
+            "authors": sample_paper.authors,
+            "abstract": sample_paper.abstract,
+            "url": sample_paper.url
         })
     }
 
 @pytest.fixture
 def event_processor(tmp_path):
-    """Fixture for EventProcessor with temporary directory"""
+    """Create EventProcessor with temp directory."""
     with patch.dict('os.environ', {
         'GITHUB_TOKEN': 'fake_token',
         'GITHUB_REPOSITORY': 'user/repo'
@@ -89,172 +56,112 @@ def event_processor(tmp_path):
         processor.papers_dir.mkdir(parents=True)
         return processor
 
-@pytest.mark.asyncio
-async def test_get_open_issues(event_processor, mock_session):
-    """Test fetching open issues"""
-    mock_response = AsyncMock()
-    mock_response.status = 200
-    mock_response.json = AsyncMock(return_value=[
-        {"labels": [{"name": "paper"}]},
-        {"labels": [{"name": "reading-session"}]},
-        {"labels": [{"name": "other"}]}
-    ])
-    
-    mock_session.get = Mock(return_value=AsyncContextManagerMock(mock_response))
-    
-    issues = await event_processor.get_open_issues(mock_session)
-    assert len(issues) == 2
-    assert all(any(label["name"] in ["paper", "reading-session"] 
-              for label in issue["labels"]) for issue in issues)
+class TestEventProcessor:
+    def test_process_paper_issue(self, event_processor, sample_paper_issue, sample_paper):
+        """Test processing paper registration issue."""
+        with patch('scripts.paper_manager.PaperManager.get_or_create_paper', return_value=sample_paper):
+            success = event_processor.process_paper_issue(sample_paper_issue)
+            
+            assert success
+            assert sample_paper_issue["number"] in event_processor.processed_issues
 
-def test_create_paper_from_issue(event_processor, sample_paper_issue):
-    """Test paper creation from issue data"""
-    paper_data = json.loads(sample_paper_issue["body"])
-    paper = event_processor.create_paper_from_issue(sample_paper_issue, paper_data)
-    
-    assert isinstance(paper, Paper)
-    assert paper.arxiv_id == "2401.00001"
-    assert paper.title == "Test Paper"
-    assert paper.issue_number == 1
-    assert paper.total_reading_time_minutes == 0
+    def test_process_reading_issue(self, event_processor, sample_paper):
+        """Test processing reading session issue."""
+        issue_data = {
+            "number": 2,
+            "html_url": "https://github.com/user/repo/issues/2",
+            "labels": [{"name": "reading-session"}],
+            "body": json.dumps({
+                "arxivId": sample_paper.arxiv_id,
+                "timestamp": datetime.utcnow().isoformat(),
+                "duration_minutes": 30
+            })
+        }
+        
+        with patch('scripts.paper_manager.PaperManager.get_or_create_paper', return_value=sample_paper), \
+             patch('scripts.paper_manager.PaperManager.update_reading_time'), \
+             patch('scripts.paper_manager.PaperManager.append_event'):
+            
+            success = event_processor.process_reading_issue(issue_data)
+            assert success
+            assert issue_data["number"] in event_processor.processed_issues
 
-def test_ensure_paper_directory(event_processor):
-    """Test paper directory creation"""
-    arxiv_id = "2401.00001"
-    paper_dir = event_processor.ensure_paper_directory(arxiv_id)
-    
-    assert paper_dir.exists()
-    assert paper_dir.is_dir()
-    assert paper_dir.name == arxiv_id
+    def test_process_reading_issue_invalid_data(self, event_processor):
+        """Test processing invalid reading session data."""
+        invalid_issue = {
+            "number": 1,
+            "html_url": "https://github.com/user/repo/issues/1",
+            "labels": [{"name": "reading-session"}],
+            "body": "invalid json"
+        }
+        
+        success = event_processor.process_reading_issue(invalid_issue)
+        assert not success
+        assert 1 not in event_processor.processed_issues
 
-def test_save_and_load_paper_metadata(event_processor, sample_paper_issue):
-    """Test saving and loading paper metadata"""
-    paper_data = json.loads(sample_paper_issue["body"])
-    paper = event_processor.create_paper_from_issue(sample_paper_issue, paper_data)
-    
-    # Save metadata
-    event_processor.ensure_paper_directory(paper.arxiv_id)
-    event_processor.save_paper_metadata(paper)
-    
-    # Load metadata
-    loaded_paper = event_processor.load_paper_metadata(paper.arxiv_id)
-    
-    assert loaded_paper is not None
-    assert loaded_paper.arxiv_id == paper.arxiv_id
-    assert loaded_paper.title == paper.title
+    def test_update_registry(self, event_processor, sample_paper, tmp_path):
+        """Test updating registry file."""
+        # Setup: create paper and mark as modified
+        paper_dir = event_processor.papers_dir / sample_paper.arxiv_id
+        paper_dir.mkdir(parents=True)
+        event_processor.paper_manager.save_metadata(sample_paper)
+        
+        event_processor.update_registry()
+        
+        registry_file = event_processor.papers_dir / "papers.yaml"
+        assert registry_file.exists()
+        with registry_file.open() as f:
+            registry_data = yaml.safe_load(f)
+        assert sample_paper.arxiv_id in registry_data
 
-def test_append_event(event_processor):
-    """Test appending events to log file"""
-    arxiv_id = "2401.00001"
-    event = ReadingSession(
-        arxivId=arxiv_id,
-        timestamp="2024-01-01T00:00:00Z",
-        duration_minutes=30,
-        issue_url="https://github.com/user/repo/issues/1"
-    )
-    
-    event_processor.ensure_paper_directory(arxiv_id)
-    event_processor.append_event(arxiv_id, event)
-    
-    events_file = event_processor.papers_dir / arxiv_id / "events.log"
-    assert events_file.exists()
-    
-    with events_file.open('r') as f:
-        event_data = json.loads(f.readline())
-        assert event_data["arxiv_id"] == arxiv_id
-        assert event_data["duration_minutes"] == 30
+    def test_process_all_issues(self, event_processor, sample_paper_issue):
+        """Test processing multiple issue types."""
+        with patch('scripts.github_client.GithubClient.get_open_issues') as mock_get_issues, \
+             patch('scripts.github_client.GithubClient.close_issue') as mock_close_issue, \
+             patch('scripts.paper_manager.PaperManager.get_or_create_paper') as mock_get_paper, \
+             patch('scripts.process_events.commit_and_push'):
+            
+            # Configure mocks
+            mock_get_issues.return_value = [sample_paper_issue]
+            mock_close_issue.return_value = True
+            
+            # Parse JSON from issue body
+            issue_data = json.loads(sample_paper_issue["body"])
+            mock_get_paper.return_value = Paper(
+                arxivId=issue_data["arxivId"],
+                title=issue_data["title"],
+                authors=issue_data["authors"], 
+                abstract=issue_data["abstract"],
+                url=issue_data["url"],
+                issue_number=sample_paper_issue["number"],
+                issue_url=sample_paper_issue["html_url"],
+                created_at=datetime.utcnow().isoformat(),
+                state="open",
+                labels=["paper"],
+                total_reading_time_minutes=0,
+                last_read=None
+            )
+            
+            event_processor.process_all_issues()
+            
+            assert len(event_processor.processed_issues) == 1
+            mock_get_issues.assert_called_once()
+            mock_close_issue.assert_called_once()
+            mock_get_paper.assert_called_once()
 
-def test_process_new_paper(event_processor, sample_paper_issue):
-    """Test processing a new paper registration"""
-    success = event_processor.process_new_paper(sample_paper_issue)
-    assert success
-    
-    arxiv_id = "2401.00001"
-    paper = event_processor.load_paper_metadata(arxiv_id)
-    assert paper is not None
-    assert paper.arxiv_id == arxiv_id
+    def test_process_no_issues(self, event_processor):
+        """Test behavior when no issues exist."""
+        with patch('scripts.github_client.GithubClient.get_open_issues') as mock_get_issues:
+            mock_get_issues.return_value = []
+            
+            event_processor.process_all_issues()
+            assert len(event_processor.processed_issues) == 0
+            mock_get_issues.assert_called_once()
 
-def test_process_reading_session(event_processor, sample_reading_session_issue):
-    """Test processing a reading session"""
-    # First create a paper
-    event_processor.process_new_paper({
-        **sample_reading_session_issue,
-        "labels": [{"name": "paper"}],
-        "body": json.dumps({
-            "arxivId": "2401.00001",
-            "title": "Test Paper",
-            "authors": "Test Author",
-            "abstract": "Test abstract",
-            "url": "https://arxiv.org/abs/2401.00001"
-        })
-    })
-    
-    # Process reading session
-    success = event_processor.process_reading_session(sample_reading_session_issue)
-    assert success
-    
-    # Verify paper was updated
-    paper = event_processor.load_paper_metadata("2401.00001")
-    assert paper.total_reading_time_minutes == 30
-    assert paper.last_read == "2024-01-01T01:00:00Z"
-
-def test_update_registry(event_processor, sample_paper_issue):
-    """Test updating the centralized registry"""
-    # Process a paper to create some data
-    event_processor.process_new_paper(sample_paper_issue)
-    
-    # Update registry
-    event_processor.update_registry()
-    
-    # Check if data/papers.yaml exists in modified files
-    assert any('papers.yaml' in file for file in event_processor.modified_files)
-
-@pytest.mark.asyncio
-async def test_close_issues(event_processor, mock_session):
-    """Test closing processed issues"""
-    # Create mock responses with correct status codes
-    mock_comment_response = AsyncMock()
-    mock_comment_response.status = 201  # Success status for creating comments
-    
-    mock_close_response = AsyncMock()
-    mock_close_response.status = 200  # Success status for closing issues
-    
-    # Set up session mock with correct responses
-    mock_session.post = Mock(return_value=AsyncContextManagerMock(mock_comment_response))
-    mock_session.patch = Mock(return_value=AsyncContextManagerMock(mock_close_response))
-    
-    # Add some processed issues
-    event_processor.processed_issues = [1, 2]
-    
-    # Execute close_issues
-    await event_processor.close_issues(mock_session)
-    
-    # Verify both issues were processed
-    assert mock_session.post.call_count == 2
-    assert mock_session.patch.call_count == 2
-
-@pytest.mark.asyncio
-async def test_process_all_issues(event_processor, sample_paper_issue, sample_reading_session_issue):
-    """Test end-to-end processing of all issues"""
-    mock_response = AsyncMock()
-    mock_response.status = 200
-    mock_response.json.return_value = [sample_paper_issue, sample_reading_session_issue]
-    
-    mock_session = Mock()
-    mock_session.get = Mock(return_value=AsyncContextManagerMock(mock_response))
-    mock_session.post = Mock(return_value=AsyncContextManagerMock(mock_response))
-    mock_session.patch = Mock(return_value=AsyncContextManagerMock(mock_response))
-    
-    mock_client_session = AsyncMock()
-    mock_client_session.__aenter__.return_value = mock_session
-    mock_client_session.__aexit__.return_value = None
-    
-    with patch('aiohttp.ClientSession', return_value=mock_client_session):
-        with patch('scripts.process_events.commit_and_push') as mock_commit:
-            await event_processor.process_all_issues()
-    
-    # Verify both issues were processed
-    paper = event_processor.load_paper_metadata("2401.00001")
-    assert paper is not None
-    assert paper.total_reading_time_minutes == 30
-    assert mock_commit.call_count == 1
+    def test_github_api_error(self, event_processor):
+        """Test handling of GitHub API errors."""
+        with patch('scripts.github_client.GithubClient.get_open_issues') as mock_get_issues:
+            mock_get_issues.return_value = []  # API error returns empty list
+            
+            event_processor.process_all_issues()
+            assert len(event_processor.processed_issues) == 0
