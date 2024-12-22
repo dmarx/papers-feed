@@ -1,12 +1,13 @@
 # tests/test_arxiv_api.py
 import pytest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import Mock, patch
+import xml.etree.ElementTree as ET
 from scripts.arxiv_api import ArxivAPI
 from scripts.models import Paper
 
 @pytest.fixture
 def arxiv_success_response():
-    """Mock successful arXiv API response."""
+    """Sample successful arXiv API response."""
     return '''<?xml version="1.0" encoding="UTF-8"?>
         <feed xmlns="http://www.w3.org/2005/Atom">
             <entry>
@@ -23,33 +24,20 @@ def arxiv_success_response():
         </feed>'''
 
 @pytest.fixture
-def mock_http_session(arxiv_success_response):
-    """Create mock aiohttp session."""
-    mock_response = AsyncMock()
-    mock_response.status = 200
-    mock_response.text.return_value = arxiv_success_response
-    
-    mock_session = AsyncMock()
-    mock_session_ctx = AsyncMock()
-    mock_session_ctx.__aenter__.return_value = mock_response
-    mock_session_ctx.__aexit__.return_value = None
-    mock_session.get.return_value = mock_session_ctx
-    
-    return mock_session
-
-@pytest.fixture
 def api():
-    """Create ArxivAPI instance."""
+    """Create ArxivAPI instance with disabled rate limiting."""
     api = ArxivAPI()
-    api.delay = 0  # Disable delay for testing
+    api.min_delay = 0  # Disable rate limiting for tests
     return api
 
 class TestArxivAPI:
-    @pytest.mark.asyncio
-    async def test_fetch_metadata_success(self, api, mock_http_session):
+    def test_fetch_metadata_success(self, api, arxiv_success_response):
         """Test successful metadata fetch."""
-        with patch('aiohttp.ClientSession', return_value=mock_http_session):
-            paper = await api.fetch_metadata("2401.00001")
+        with patch('requests.get') as mock_get:
+            mock_get.return_value.status_code = 200
+            mock_get.return_value.text = arxiv_success_response
+            
+            paper = api.fetch_metadata("2401.00001")
             
             assert isinstance(paper, Paper)
             assert paper.arxiv_id == "2401.00001"
@@ -57,49 +45,52 @@ class TestArxivAPI:
             assert paper.authors == "Test Author One, Test Author Two"
             assert paper.abstract == "Test Abstract"
             assert paper.url == "http://arxiv.org/abs/2401.00001"
+            
+            # Verify API call
+            mock_get.assert_called_once()
+            args, kwargs = mock_get.call_args
+            assert "2401.00001" in args[0]
+            assert kwargs["headers"]["User-Agent"].startswith("ArxivPaperTracker")
 
-    @pytest.mark.asyncio
-    async def test_fetch_metadata_api_error(self, api, mock_http_session):
-        """Test handling of API errors."""
-        mock_http_session.get.return_value.__aenter__.return_value.status = 404
-        
-        with patch('aiohttp.ClientSession', return_value=mock_http_session):
+    def test_fetch_metadata_api_error(self, api):
+        """Test handling of API error responses."""
+        with patch('requests.get') as mock_get:
+            mock_get.return_value.status_code = 404
+            
             with pytest.raises(ValueError, match="ArXiv API error: 404"):
-                await api.fetch_metadata("2401.00001")
+                api.fetch_metadata("2401.00001")
 
-    @pytest.mark.asyncio
-    async def test_fetch_metadata_network_error(self, api):
+    def test_fetch_metadata_network_error(self, api):
         """Test handling of network errors."""
-        mock_session = AsyncMock()
-        mock_session.get.side_effect = Exception("Network error")
-        
-        with patch('aiohttp.ClientSession', return_value=mock_session):
+        with patch('requests.get') as mock_get:
+            mock_get.side_effect = Exception("Network error")
+            
             with pytest.raises(Exception, match="Network error"):
-                await api.fetch_metadata("2401.00001")
+                api.fetch_metadata("2401.00001")
 
-    @pytest.mark.asyncio
-    async def test_fetch_metadata_invalid_xml(self, api, mock_http_session):
-        """Test handling of invalid XML."""
-        mock_http_session.get.return_value.__aenter__.return_value.text.return_value = "Invalid XML"
-        
-        with patch('aiohttp.ClientSession', return_value=mock_http_session):
+    def test_fetch_metadata_invalid_xml(self, api):
+        """Test handling of invalid XML responses."""
+        with patch('requests.get') as mock_get:
+            mock_get.return_value.status_code = 200
+            mock_get.return_value.text = "Invalid XML"
+            
             with pytest.raises(ValueError, match="Invalid XML response"):
-                await api.fetch_metadata("2401.00001")
+                api.fetch_metadata("2401.00001")
 
-    @pytest.mark.asyncio
-    async def test_rate_limiting(self, api, mock_http_session):
-        """Test rate limiting behavior."""
-        api.delay = 0.1  # Short delay for testing
+    def test_rate_limiting(self, api):
+        """Test rate limiting between requests."""
+        api.min_delay = 0.1  # Short delay for testing
         
-        with patch('aiohttp.ClientSession', return_value=mock_http_session):
-            start_time = pytest.import_time = pytest.importorskip("asyncio").get_event_loop().time()
+        with patch('requests.get') as mock_get, \
+             patch('time.sleep') as mock_sleep:
             
-            # Make multiple concurrent requests
-            await asyncio.gather(
-                api.fetch_metadata("2401.00001"),
-                api.fetch_metadata("2401.00002"),
-                api.fetch_metadata("2401.00003")
-            )
+            mock_get.return_value.status_code = 200
+            mock_get.return_value.text = "<feed><entry></entry></feed>"
             
-            end_time = pytest.import_time = pytest.importorskip("asyncio").get_event_loop().time()
-            assert end_time - start_time >= 0.2  # Should take at least 2 delays
+            # Make multiple requests
+            for _ in range(3):
+                api.fetch_metadata("2401.00001")
+            
+            # Verify rate limiting was applied
+            assert mock_sleep.call_count == 2  # Called between requests
+            assert all(args[0] >= 0.1 for args, _ in mock_sleep.call_args_list)
