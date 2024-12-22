@@ -17,9 +17,7 @@ def event_processor(tmp_path):
         'GITHUB_TOKEN': 'fake_token',
         'GITHUB_REPOSITORY': 'user/repo'
     }):
-        processor = EventProcessor()
-        processor.papers_dir = tmp_path / "papers"
-        processor.papers_dir.mkdir(parents=True)
+        processor = EventProcessor(papers_dir = tmp_path / "papers")
         return processor
 
 @pytest.fixture
