@@ -24,8 +24,8 @@ class PaperManager:
         return self.load_metadata(arxiv_id)
 
     def fetch_new_paper(self, arxiv_id: str) -> Paper:
-        """Fetch paper metadata from ArXiv API."""
-        paper = asyncio.run(self.arxiv_api.fetch_metadata(arxiv_id))
+        """Fetch paper metadata from ArXiv."""
+        paper = self.arxiv_api.fetch_metadata(arxiv_id)
         self.create_paper(paper)
         return paper
 
