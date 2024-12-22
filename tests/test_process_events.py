@@ -124,14 +124,17 @@ class TestEventProcessor:
             # Configure mocks
             mock_get_issues.return_value = [sample_paper_issue]
             mock_close_issue.return_value = True
+            
+            # Parse JSON from issue body
+            issue_data = json.loads(sample_paper_issue["body"])
             mock_get_paper.return_value = Paper(
-                arxivId=sample_paper_issue["body"]["arxivId"],
-                title="Test Paper",
-                authors="Test Author",
-                abstract="Test Abstract",
-                url="https://arxiv.org/abs/2401.00001",
-                issue_number=1,
-                issue_url="https://github.com/user/repo/issues/1",
+                arxivId=issue_data["arxivId"],
+                title=issue_data["title"],
+                authors=issue_data["authors"], 
+                abstract=issue_data["abstract"],
+                url=issue_data["url"],
+                issue_number=sample_paper_issue["number"],
+                issue_url=sample_paper_issue["html_url"],
                 created_at=datetime.utcnow().isoformat(),
                 state="open",
                 labels=["paper"],
