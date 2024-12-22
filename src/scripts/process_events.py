@@ -15,13 +15,13 @@ from llamero.utils import commit_and_push
 class EventProcessor:
     """Processes GitHub issues into paper events."""
 
-    def __init__(self):
+    def __init__(self, papers_dir: str|Path = "data/papers"):
         """Initialize EventProcessor with GitHub credentials and paths."""
         self.github = GithubClient(
             token=os.environ["GITHUB_TOKEN"],
             repo=os.environ["GITHUB_REPOSITORY"]
         )
-        self.papers_dir = Path("data/papers")
+        self.papers_dir = Path(papers_dir)
         self.papers_dir.mkdir(parents=True, exist_ok=True)
         self.paper_manager = PaperManager(self.papers_dir)
         self.processed_issues: list[int] = []
