@@ -1,21 +1,28 @@
 // background.js
+import { loadSessionConfig, getConfigurationInMs } from './config/session.js';
+
 let githubToken = '';
 let githubRepo = '';
 let currentPaperData = null;
 let currentSession = null;
 let activityInterval = null;
 let activityTimeout = null;
+let sessionConfig = null;
 
-// Load credentials when extension starts
+// Load credentials and configuration when extension starts
 async function loadCredentials() {
     const items = await chrome.storage.sync.get(['githubToken', 'githubRepo']);
     githubToken = items.githubToken || '';
     githubRepo = items.githubRepo || '';
     console.log('Credentials loaded:', { hasToken: !!githubToken, hasRepo: !!githubRepo });
+    
+    // Load session configuration
+    sessionConfig = getConfigurationInMs(await loadSessionConfig());
+    console.log('Session configuration loaded:', sessionConfig);
 }
 
 // Listen for credential changes
-chrome.storage.onChanged.addListener((changes) => {
+chrome.storage.onChanged.addListener(async (changes) => {
     console.log('Storage changes detected:', Object.keys(changes));
     if (changes.githubToken) {
         githubToken = changes.githubToken.newValue;
@@ -23,18 +30,21 @@ chrome.storage.onChanged.addListener((changes) => {
     if (changes.githubRepo) {
         githubRepo = changes.githubRepo.newValue;
     }
+    if (changes.sessionConfig) {
+        sessionConfig = getConfigurationInMs(changes.sessionConfig.newValue);
+        console.log('Session configuration updated:', sessionConfig);
+    }
 });
 
 // Reading Session class to track individual reading sessions
 class ReadingSession {
-    constructor(arxivId) {
+    constructor(arxivId, config) {
         this.arxivId = arxivId;
         this.startTime = Date.now();
         this.activeTime = 0;
         this.lastActiveTime = Date.now();
         this.isTracking = true;
-        this.idleThreshold = 5 * 60 * 1000; // 5 minute idle threshold for academic reading
-        this.MIN_SESSION_DURATION = 30 * 1000; // Minimum 30 seconds to count as a session
+        this.config = config;
     }
 
     update() {
@@ -42,9 +52,11 @@ class ReadingSession {
             const now = Date.now();
             const timeSinceLastActive = now - this.lastActiveTime;
             
-            // For academic reading, we count all time up to the idle threshold
-            if (timeSinceLastActive < this.idleThreshold) {
+            if (timeSinceLastActive < this.config.idleThreshold) {
                 this.activeTime += timeSinceLastActive;
+            } else if (this.config.requireContinuousActivity) {
+                // Reset active time if continuous activity is required
+                this.activeTime = 0;
             }
             
             this.lastActiveTime = now;
@@ -54,7 +66,11 @@ class ReadingSession {
     end() {
         this.isTracking = false;
         this.update();
-        return this.activeTime >= this.MIN_SESSION_DURATION ? this.activeTime : 0;
+        
+        if (this.config.logPartialSessions) {
+            return this.activeTime;
+        }
+        return this.activeTime >= this.config.minSessionDuration ? this.activeTime : 0;
     }
 }
 
@@ -147,7 +163,7 @@ async function handleTabChange(tab) {
     currentPaperData = await processArxivUrl(tab.url);
     if (currentPaperData) {
         console.log('Starting new session for:', currentPaperData.arxivId);
-        currentSession = new ReadingSession(currentPaperData.arxivId);
+        currentSession = new ReadingSession(currentPaperData.arxivId, sessionConfig);
         startActivityTracking();
     }
 }
@@ -173,7 +189,7 @@ function startActivityTracking() {
             if (currentSession) {
                 currentSession.update();
             }
-        }, 1000);
+        }, sessionConfig.activityUpdateInterval);
     }
 }
 
@@ -218,7 +234,13 @@ async function createReadingEvent(paperData, sessionDuration) {
         title: paperData.title,
         authors: paperData.authors,
         abstract: paperData.abstract,
-        url: paperData.url
+        url: paperData.url,
+        session_config: {
+            idle_threshold_minutes: sessionConfig.idleThreshold / (60 * 1000),
+            min_duration_seconds: sessionConfig.minSessionDuration / 1000,
+            continuous_activity_required: sessionConfig.requireContinuousActivity,
+            partial_sessions_logged: sessionConfig.logPartialSessions
+        }
     };
 
     const issueBody = JSON.stringify(eventData, null, 2);
@@ -419,5 +441,6 @@ async function updatePaperRating(issueNumber, rating) {
         console.log('Rating updated successfully');
     } catch (error) {
         console.error('Error updating rating:', error);
+        throw error;
     }
 }
