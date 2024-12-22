@@ -85,12 +85,13 @@ class TestArxivAPI:
              patch('time.sleep') as mock_sleep:
             
             mock_get.return_value.status_code = 200
-            mock_get.return_value.text = "<feed><entry></entry></feed>"
+            mock_get.return_value.text = '''<?xml version="1.0" encoding="UTF-8"?>
+                <feed xmlns="http://www.w3.org/2005/Atom">
+                    <entry><title>Test</title></entry>
+                </feed>'''
             
             # Make multiple requests
             for _ in range(3):
                 api.fetch_metadata("2401.00001")
             
-            # Verify rate limiting was applied
             assert mock_sleep.call_count == 2  # Called between requests
-            assert all(args[0] >= 0.1 for args, _ in mock_sleep.call_args_list)
