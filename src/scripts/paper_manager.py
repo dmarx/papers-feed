@@ -67,8 +67,10 @@ class PaperManager:
         metadata_file = paper_dir / "metadata.json"
         paper_dir.mkdir(parents=True, exist_ok=True)
         
+        # Convert to dict and store
+        data = paper.model_dump(by_alias=True)
         with metadata_file.open('w') as f:
-            f.write(paper.model_dump_json(indent=2))
+            json.dump(data, f, indent=2)
         self.modified_files.add(str(metadata_file))
 
     def load_metadata(self, arxiv_id: str) -> Paper:
