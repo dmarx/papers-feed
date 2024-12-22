@@ -50,7 +50,7 @@ def test_event_file_creation(event_processor, tmp_path):
     assert paper_dir.exists()
     assert paper_dir.is_dir()
     
-    events_file = paper_dir / "events.log"
+    events_file = paper_dir / event_processor.paper_manager._event_log_fname
     assert events_file.exists()
     assert events_file.is_file()
 
@@ -75,7 +75,7 @@ def test_multiple_event_appending(event_processor, tmp_path):
         event_processor.paper_manager.append_event(arxiv_id, event)
     
     # Verify events were written
-    events_file = paper_dir / "events.log"
+    events_file = paper_dir / event_processor.paper_manager._event_log_fname
     lines = events_file.read_text().splitlines()
     
     events_data = [json.loads(line) for line in lines]
@@ -101,7 +101,7 @@ def test_event_file_structure(event_processor, tmp_path):
     event_processor.paper_manager.append_event(arxiv_id, event)
     
     # Verify event structure
-    events_file = paper_dir / "events.log"
+    events_file = paper_dir / event_processor.paper_manager._event_log_fname
     event_data = json.loads(events_file.read_text())
     
     assert event_data["type"] == "reading_session"
@@ -129,7 +129,7 @@ def test_event_file_concurrent_access(event_processor, tmp_path):
         event_processor.paper_manager.append_event(arxiv_id, event)
     
     # Verify all events were written
-    events_file = paper_dir / "events.log"
+    events_file = paper_dir / event_processor.paper_manager._event_log_fname
     lines = events_file.read_text().splitlines()
     assert len(lines) == 10
     
