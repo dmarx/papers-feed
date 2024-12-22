@@ -91,7 +91,7 @@ class PaperManager:
     
         # Create and write to events file
         events_file = paper_dir / self._event_log_fname
-        logger.info(f"Appending event to {events_file}")
+        logger.info(f"Appending event to {events_file.absolute()}")
         with events_file.open('a+', encoding='utf-8') as f:
             f.write(f"{event.model_dump_json()}\n")
         self.modified_files.add(str(events_file))
