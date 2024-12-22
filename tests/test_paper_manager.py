@@ -38,7 +38,7 @@ def mock_arxiv_api(sample_paper):
     """Mock ArxivAPI with pre-configured response."""
     with patch('scripts.arxiv_api.ArxivAPI') as mock:
         api = mock.return_value
-        api.fetch_metadata = AsyncMock(return_value=sample_paper)
+        api.fetch_metadata = Mock(return_value=sample_paper)
         yield api
 
 @pytest.fixture
