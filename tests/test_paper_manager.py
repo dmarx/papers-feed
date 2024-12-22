@@ -94,6 +94,9 @@ class TestPaperManager:
 
     def test_fetch_new_paper(self, paper_manager, sample_paper, mock_arxiv_api):
         """Test fetching new paper from ArXiv."""
+        mock_arxiv_api.fetch_metadata.return_value = sample_paper
+        paper_manager.arxiv_api = mock_arxiv_api
+        
         paper = paper_manager.fetch_new_paper(sample_paper.arxiv_id)
         
         assert paper.arxiv_id == sample_paper.arxiv_id
@@ -102,6 +105,9 @@ class TestPaperManager:
 
     def test_get_or_create_paper_existing(self, paper_manager, sample_paper, mock_arxiv_api):
         """Test get_or_create with existing paper."""
+        mock_arxiv_api.fetch_metadata.return_value = sample_paper
+        paper_manager.arxiv_api = mock_arxiv_api
+        
         # Create initial paper
         paper_manager.create_paper(sample_paper)
         
@@ -112,6 +118,9 @@ class TestPaperManager:
 
     def test_get_or_create_paper_new(self, paper_manager, sample_paper, mock_arxiv_api):
         """Test get_or_create with new paper."""
+        mock_arxiv_api.fetch_metadata.return_value = sample_paper
+        paper_manager.arxiv_api = mock_arxiv_api
+        
         paper = paper_manager.get_or_create_paper(sample_paper.arxiv_id)
         
         assert paper.arxiv_id == sample_paper.arxiv_id
