@@ -85,13 +85,12 @@ class PaperManager:
 
     def append_event(self, arxiv_id: str, event: BaseModel) -> None:
         """Append event to paper's event log."""
-        # Ensure paper exists
         paper_dir = self.data_dir / arxiv_id
-        events_file = paper_dir / "events.log"
         paper_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Write event
-        with events_file.open('a+') as f:  # 'a+' mode creates file if it doesn't exist
+    
+        # Create and write to events file
+        events_file = paper_dir / "events.log"
+        with events_file.open('a+', encoding='utf-8') as f:
             f.write(f"{event.model_dump_json()}\n")
         self.modified_files.add(str(events_file))
 
