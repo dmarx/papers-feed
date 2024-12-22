@@ -12,6 +12,7 @@ from .arxiv_api import ArxivAPI
 
 class PaperManager:
     """Manages paper metadata and event storage."""
+    _event_log_fname = "interactions.log"
 
     def __init__(self, data_dir: Path, arxiv_api: Optional[ArxivAPI] = None):
         self.data_dir = data_dir
@@ -89,7 +90,7 @@ class PaperManager:
         paper_dir.mkdir(parents=True, exist_ok=True)
     
         # Create and write to events file
-        events_file = paper_dir / "events.log"
+        events_file = paper_dir / self._event_log_fname
         with events_file.open('a+', encoding='utf-8') as f:
             f.write(f"{event.model_dump_json()}\n")
         self.modified_files.add(str(events_file))
