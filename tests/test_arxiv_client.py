@@ -156,7 +156,7 @@ class TestArxivClient:
                 content = "Test TeX content"
                 info = tarfile.TarInfo(name="main.tex")
                 info.size = len(content)
-                tar.addfile(info, file=StringIO(content))
+                tar.addfile(info, StringIO(content))
             
             with patch('requests.get') as mock_get:
                 mock_get.return_value.status_code = 200
