@@ -215,7 +215,7 @@ async function createReadingEvent(paperData, sessionDuration) {
     }
 
     const seconds = Math.round(sessionDuration / 1000);
-    if (seconds < sessionConfig.minSessionDuration) {
+    if (sessionDuration < sessionConfig.minSessionDuration) {
         console.log('Session too short to log:', seconds, 'seconds');
         return;
     }
@@ -228,7 +228,7 @@ async function createReadingEvent(paperData, sessionDuration) {
 
     const eventData = {
         type: 'reading_session',
-        arxivId: paperData.arxivId,
+        arxivId: paperData.arxivId, // TODO: change to arxiv_id throughout
         timestamp: new Date().toISOString(),
         duration_seconds: seconds,
         title: paperData.title,

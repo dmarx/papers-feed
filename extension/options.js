@@ -72,7 +72,7 @@ async function validateSettings(settings) {
   if (sessionConfig.idleThresholdMinutes < 1 || sessionConfig.idleThresholdMinutes > 60) {
     throw new Error('Idle threshold must be between 1 and 60 minutes');
   }
-  if (sessionConfig.minSessionDurationSeconds < 10 || sessionConfig.minSessionDurationSeconds > 300) {
+  if (sessionConfig.minSessionDurationSeconds < 1 || sessionConfig.minSessionDurationSeconds > 300) {
     throw new Error('Minimum session duration must be between 10 and 300 seconds');
   }
 }
