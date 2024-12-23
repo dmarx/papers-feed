@@ -29,7 +29,7 @@ def sample_paper():
         created_at=datetime.utcnow().isoformat(),
         state="open",
         labels=["paper"],
-        total_reading_time_minutes=0,
+        total_reading_time_seconds=0,
         last_read=None
     )
 
@@ -135,7 +135,7 @@ class TestPaperManager:
         event = ReadingSession(
             arxivId=sample_paper.arxiv_id,
             timestamp=datetime.utcnow().isoformat(),
-            duration_minutes=30,
+            duration_seconds=30,
             issue_url="https://example.com/1"
         )
         
@@ -148,7 +148,7 @@ class TestPaperManager:
         assert len(events) == 2  # Registration event + reading event
         read_event = json.loads(events[1])
         assert read_event["type"] == "reading_session"
-        assert read_event["duration_minutes"] == 30
+        assert read_event["duration_seconds"] == 30
 
     def test_update_reading_time(self, paper_manager, sample_paper):
         """Test updating paper reading time."""
@@ -160,7 +160,7 @@ class TestPaperManager:
         
         # Verify update
         paper = paper_manager.get_paper(sample_paper.arxiv_id)
-        assert paper.total_reading_time_minutes == 30
+        assert paper.total_reading_time_seconds == 30
         assert paper.last_read is not None
 
     def test_modified_files_tracking(self, paper_manager, sample_paper):

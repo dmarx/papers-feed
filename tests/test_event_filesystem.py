@@ -33,7 +33,7 @@ def test_event_file_creation(event_processor, tmp_path):
     event = ReadingSession(
         arxivId=arxiv_id,
         timestamp="2024-01-01T00:00:00Z",
-        duration_minutes=30,
+        duration_seconds=30,
         issue_url="https://example.com/1"
     )
     
@@ -61,7 +61,7 @@ def test_multiple_event_appending(event_processor, tmp_path):
         ReadingSession(
             arxivId=arxiv_id,
             timestamp=f"2024-01-01T0{i}:00:00Z",
-            duration_minutes=30,
+            duration_seconds=30,
             issue_url=f"https://example.com/{i}"
         ) for i in range(3)
     ]
@@ -83,7 +83,7 @@ def test_multiple_event_appending(event_processor, tmp_path):
     
     for i, event_data in enumerate(events_data):
         assert event_data["timestamp"] == f"2024-01-01T0{i}:00:00Z"
-        assert event_data["duration_minutes"] == 30
+        assert event_data["duration_seconds"] == 30
 
 def test_event_file_structure(event_processor, tmp_path):
     """Test structure and format of events log entries."""
@@ -94,7 +94,7 @@ def test_event_file_structure(event_processor, tmp_path):
     event = ReadingSession(
         arxivId=arxiv_id,
         timestamp="2024-01-01T00:00:00Z",
-        duration_minutes=30,
+        duration_seconds=30,
         issue_url="https://example.com/1"
     )
     
@@ -105,7 +105,7 @@ def test_event_file_structure(event_processor, tmp_path):
     event_data = json.loads(events_file.read_text())
     
     assert event_data["type"] == "reading_session"
-    assert event_data["duration_minutes"] == 30
+    assert event_data["duration_seconds"] == 30
     assert event_data["arxiv_id"] == arxiv_id
 
 def test_event_file_concurrent_access(event_processor, tmp_path):
@@ -119,7 +119,7 @@ def test_event_file_concurrent_access(event_processor, tmp_path):
         ReadingSession(
             arxivId=arxiv_id,
             timestamp=f"2024-01-01T00:0{i}:00Z",
-            duration_minutes=30,
+            duration_seconds=30,
             issue_url=f"https://example.com/{i}"
         ) for i in range(10)
     ]
@@ -137,4 +137,4 @@ def test_event_file_concurrent_access(event_processor, tmp_path):
     for line in lines:
         event_data = json.loads(line)
         assert event_data["type"] == "reading_session"
-        assert event_data["duration_minutes"] == 30
+        assert event_data["duration_seconds"] == 30
