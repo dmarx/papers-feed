@@ -54,7 +54,7 @@ class EventProcessor:
             arxiv_id = session_data.get("arxivId")
             duration_seconds = session_data.get("duration_seconds")
             
-            if not arxiv_id or not duration:
+            if not arxiv_id or not duration_seconds:
                 raise ValueError("Missing required fields in session data")
 
             event = ReadingSession(
