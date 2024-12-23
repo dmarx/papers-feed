@@ -35,7 +35,7 @@ def mock_markdown_service():
         yield service
 
 @pytest.fixture
-def manager(mock_arxiv_client, mock_markdown_service):
+def manager(tmp_path, mock_arxiv_client, mock_markdown_service):
     """Create PaperAssetManager with mocked dependencies."""
     return PaperAssetManager(
         papers_dir=tmp_path,
