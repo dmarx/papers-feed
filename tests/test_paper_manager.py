@@ -6,7 +6,7 @@ from datetime import datetime
 from unittest.mock import Mock, patch
 
 from scripts.paper_manager import PaperManager
-from scripts.models import Paper
+from scripts.models import Paper, ReadingSession
 
 @pytest.fixture
 def paper_dir(tmp_path):
