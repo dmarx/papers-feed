@@ -13,13 +13,13 @@ from .markdown_service import MarkdownService
 class PaperAssetManager:
     """Manages paper assets including PDFs, source files, and markdown conversions."""
     
-    def __init__(self, papers_dir: str | Path = "data/papers"):
-        """Initialize with base directory for papers."""
+    def __init__(self, papers_dir: str | Path, 
+                 arxiv_client: Optional[ArxivClient] = None,
+                 markdown_service: Optional[MarkdownService] = None):
         self.papers_dir = Path(papers_dir)
         self.papers_dir.mkdir(parents=True, exist_ok=True)
-        
-        self.arxiv = ArxivClient(papers_dir)
-        self.markdown = MarkdownService(papers_dir)
+        self.arxiv = arxiv_client or ArxivClient(papers_dir)
+        self.markdown = markdown_service or MarkdownService(papers_dir)
         
     def get_incomplete_assets(self) -> list[dict]:
         """
