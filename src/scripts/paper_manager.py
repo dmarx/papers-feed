@@ -4,20 +4,18 @@ from pathlib import Path
 from loguru import logger
 from datetime import datetime
 from typing import Optional
-import asyncio
-from pydantic import BaseModel
 
 from .models import Paper, ReadingSession, PaperRegistrationEvent
-from .arxiv_api import ArxivAPI
+from .arxiv_client import ArxivClient
 
 class PaperManager:
     """Manages paper metadata and event storage."""
     _event_log_fname = "interactions.log"
 
-    def __init__(self, data_dir: Path, arxiv_api: Optional[ArxivAPI] = None):
+    def __init__(self, data_dir: Path, arxiv_client: Optional[ArxivClient] = None):
         self.data_dir = data_dir
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        self.arxiv_api = arxiv_api or ArxivAPI()
+        self.arxiv_client = arxiv_client or ArxivClient(data_dir)
         self.modified_files: set[str] = set()
 
     def get_paper(self, arxiv_id: str) -> Paper:
@@ -26,7 +24,7 @@ class PaperManager:
 
     def fetch_new_paper(self, arxiv_id: str) -> Paper:
         """Fetch paper metadata from ArXiv."""
-        paper = self.arxiv_api.fetch_metadata(arxiv_id)
+        paper = self.arxiv_client.fetch_metadata(arxiv_id)
         self.create_paper(paper)
         return paper
 
@@ -84,7 +82,7 @@ class PaperManager:
         with metadata_file.open('r') as f:
             return Paper.model_validate_json(f.read())
 
-    def append_event(self, arxiv_id: str, event: BaseModel) -> None:
+    def append_event(self, arxiv_id: str, event: PaperRegistrationEvent | ReadingSession) -> None:
         """Append event to paper's event log."""
         paper_dir = self.data_dir / arxiv_id
         paper_dir.mkdir(parents=True, exist_ok=True)
