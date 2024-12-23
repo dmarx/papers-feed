@@ -3,10 +3,10 @@ import json
 import pytest
 from pathlib import Path
 from datetime import datetime
-from unittest.mock import Mock, patch, AsyncMock
+from unittest.mock import Mock, patch
 
 from scripts.paper_manager import PaperManager
-from scripts.models import Paper, ReadingSession, PaperRegistrationEvent
+from scripts.models import Paper
 
 @pytest.fixture
 def paper_dir(tmp_path):
@@ -34,17 +34,17 @@ def sample_paper():
     )
 
 @pytest.fixture
-def mock_arxiv_api(sample_paper):
-    """Mock ArxivAPI with pre-configured response."""
-    with patch('scripts.arxiv_api.ArxivAPI') as mock:
-        api = mock.return_value
-        api.fetch_metadata = Mock(return_value=sample_paper)
-        yield api
+def mock_arxiv_client(sample_paper):
+    """Mock ArxivClient with pre-configured response."""
+    with patch('scripts.arxiv_client.ArxivClient') as mock:
+        client = mock.return_value
+        client.fetch_metadata = Mock(return_value=sample_paper)
+        yield client
 
 @pytest.fixture
-def paper_manager(paper_dir):
+def paper_manager(paper_dir, mock_arxiv_client):
     """Create PaperManager instance for testing."""
-    return PaperManager(paper_dir)
+    return PaperManager(paper_dir, arxiv_client=mock_arxiv_client)
 
 class TestPaperManager:
     def test_get_paper_existing(self, paper_manager, sample_paper):
