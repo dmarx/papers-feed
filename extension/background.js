@@ -214,29 +214,29 @@ async function createReadingEvent(paperData, sessionDuration) {
         return;
     }
 
-    const minutes = Math.round(sessionDuration / 1000 / 60);
-    if (minutes < 1) {
-        console.log('Session too short to log:', sessionDuration / 1000, 'seconds');
+    const seconds = Math.round(sessionDuration / 1000);
+    if (sessionDuration < sessionConfig.minSessionDuration) {
+        console.log('Session too short to log:', seconds, 'seconds');
         return;
     }
 
     console.log('Creating reading event:', {
         arxivId: paperData.arxivId,
-        duration: minutes,
+        duration: seconds,
         title: paperData.title
     });
 
     const eventData = {
         type: 'reading_session',
-        arxivId: paperData.arxivId,
+        arxivId: paperData.arxivId, // TODO: change to arxiv_id throughout
         timestamp: new Date().toISOString(),
-        duration_minutes: minutes,
+        duration_seconds: seconds,
         title: paperData.title,
         authors: paperData.authors,
         abstract: paperData.abstract,
         url: paperData.url,
         session_config: {
-            idle_threshold_minutes: sessionConfig.idleThreshold / (60 * 1000),
+            idle_threshold_seconds: sessionConfig.idleThreshold / 1000,
             min_duration_seconds: sessionConfig.minSessionDuration / 1000,
             continuous_activity_required: sessionConfig.requireContinuousActivity,
             partial_sessions_logged: sessionConfig.logPartialSessions
@@ -253,7 +253,7 @@ async function createReadingEvent(paperData, sessionDuration) {
                 'Accept': 'application/vnd.github.v3+json'
             },
             body: JSON.stringify({
-                title: `[Reading] ${paperData.title || paperData.arxivId} (${minutes}min)`,
+                title: `[Reading] ${paperData.title || paperData.arxivId} (${seconds}s)`,
                 body: issueBody,
                 labels: ['reading-session']
             })

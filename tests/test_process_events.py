@@ -23,7 +23,7 @@ def sample_paper():
         created_at=datetime.utcnow().isoformat(),
         state="open",
         labels=["paper"],
-        total_reading_time_minutes=0,
+        total_reading_time_seconds=0,
         last_read=None
     )
 
@@ -74,7 +74,7 @@ class TestEventProcessor:
             "body": json.dumps({
                 "arxivId": sample_paper.arxiv_id,
                 "timestamp": datetime.utcnow().isoformat(),
-                "duration_minutes": 30
+                "duration_seconds": 30
             })
         }
         
@@ -138,7 +138,7 @@ class TestEventProcessor:
                 created_at=datetime.utcnow().isoformat(),
                 state="open",
                 labels=["paper"],
-                total_reading_time_minutes=0,
+                total_reading_time_seconds=0,
                 last_read=None
             )
             

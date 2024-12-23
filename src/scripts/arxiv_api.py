@@ -106,7 +106,7 @@ class ArxivAPI:
                 created_at=datetime.utcnow().isoformat(),
                 state="open",
                 labels=["paper"],
-                total_reading_time_minutes=0,
+                total_reading_time_seconds=0,
                 last_read=None
             )
 
