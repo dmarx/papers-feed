@@ -203,9 +203,12 @@ class TestArxivClient:
             
             mock_get.return_value.status_code = 200
             mock_get.return_value.text = '''<?xml version="1.0" encoding="UTF-8"?>
-                <feed xmlns="http://www.w3.org/2005/Atom">
-                    <entry><title>Test</title></entry>
-                </feed>'''
+    <feed xmlns="http://www.w3.org/2005/Atom">
+        <entry>
+            <title>Test</title>
+            <summary>Test summary</summary>
+        </entry>
+    </feed>'''
             
             # Make multiple requests
             for _ in range(3):
