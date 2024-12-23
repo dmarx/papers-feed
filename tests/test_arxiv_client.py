@@ -1,6 +1,7 @@
 # tests/test_arxiv_client.py
 import pytest
 from pathlib import Path
+from io import StringIO
 import tarfile
 import tempfile
 from unittest.mock import Mock, patch
@@ -155,7 +156,7 @@ class TestArxivClient:
                 content = "Test TeX content"
                 info = tarfile.TarInfo(name="main.tex")
                 info.size = len(content)
-                tar.addfile(info, file=tempfile.StringIO(content))
+                tar.addfile(info, file=StringIO(content))
             
             with patch('requests.get') as mock_get:
                 mock_get.return_value.status_code = 200
