@@ -152,7 +152,6 @@ header-includes:
             # Table and formatting
             '--columns=1000',
             '--wrap=none',
-            '--atx-headers',
             
             # Figure handling
             f'--extract-media={self.config.extract_media_dir.resolve()}',
