@@ -6,19 +6,6 @@ from unittest.mock import Mock, patch, MagicMock
 from scripts.asset_manager import PaperAssetManager
 
 @pytest.fixture
-def manager(tmp_path):
-    """Create PaperAssetManager with temp directory."""
-    return PaperAssetManager(papers_dir=tmp_path)
-
-@pytest.fixture
-def paper_dir(manager):
-    """Create a paper directory for testing."""
-    arxiv_id = "2401.00001"
-    paper_dir = manager.papers_dir / arxiv_id
-    paper_dir.mkdir()
-    return paper_dir
-
-@pytest.fixture
 def mock_arxiv_client():
     """Create mock ArxivClient."""
     with patch('scripts.arxiv_client.ArxivClient') as mock:
@@ -46,6 +33,24 @@ def mock_markdown_service():
         }
         service.convert_paper.return_value = True
         yield service
+
+@pytest.fixture
+def manager(mock_arxiv_client, mock_markdown_service):
+    """Create PaperAssetManager with mocked dependencies."""
+    return PaperAssetManager(
+        papers_dir=tmp_path,
+        arxiv_client=mock_arxiv_client,
+        markdown_service=mock_markdown_service
+    )
+
+@pytest.fixture
+def paper_dir(manager):
+    """Create a paper directory for testing."""
+    arxiv_id = "2401.00001"
+    paper_dir = manager.papers_dir / arxiv_id
+    paper_dir.mkdir()
+    return paper_dir
+    
 
 def test_get_incomplete_assets(manager, paper_dir, mock_arxiv_client, mock_markdown_service):
     """Test detection of papers with incomplete assets."""
