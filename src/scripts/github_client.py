@@ -3,6 +3,11 @@ from typing import List, Dict, Any
 import requests
 from loguru import logger
 
+def patch_schema_change(issue):
+    if 'duration_minutes' in issue:
+        issue['duration_seconds'] = issue.pop('duraction_minutes') * 60
+    return issue
+
 class GithubClient:
     """Handles GitHub API interactions."""
     def __init__(self, token: str, repo: str):
@@ -17,16 +22,16 @@ class GithubClient:
         """Fetch open issues with paper or reading-session labels."""
         url = f"https://api.github.com/repos/{self.repo}/issues"
         params = {"state": "open", "per_page": 100}
-        
+        outv=[]
         response = requests.get(url, headers=self.headers, params=params, timeout=30)
         if response.status_code == 200:
             all_issues = response.json()
-            return [
-                issue for issue in all_issues
+            outv = [
+                patch_schema_change(issue) for issue in all_issues
                 if any(label['name'] in ['paper', 'reading-session'] 
                       for label in issue['labels'])
             ]
-        return []
+        return outv
 
     def close_issue(self, issue_number: int) -> bool:
         """Close an issue with comment."""

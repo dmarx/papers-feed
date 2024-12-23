@@ -12,7 +12,7 @@ class Paper(BaseModel):
     created_at: str
     state: str
     labels: list[str]
-    total_reading_time_minutes: int = 0
+    total_reading_time_seconds: int = 0
     last_read: str | None = None
 
     class Config:
@@ -23,7 +23,7 @@ class ReadingSession(BaseModel):
     type: str = "reading_session"
     arxiv_id: str = Field(..., alias="arxivId")
     timestamp: str
-    duration_minutes: int
+    duration_seconds: int
     issue_url: str
 
 class PaperRegistrationEvent(BaseModel):

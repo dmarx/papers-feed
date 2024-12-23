@@ -97,10 +97,10 @@ class PaperManager:
         self.modified_files.add(str(events_file))
         logger.info(f"exists? {events_file.exists()}")
 
-    def update_reading_time(self, arxiv_id: str, duration_minutes: int) -> None:
+    def update_reading_time(self, arxiv_id: str, duration_seconds: int) -> None:
         """Update paper's total reading time."""
         paper = self.get_paper(arxiv_id)
-        paper.total_reading_time_minutes += duration_minutes
+        paper.total_reading_time_seconds += duration_seconds
         paper.last_read = datetime.utcnow().isoformat()
         self.save_metadata(paper)
 

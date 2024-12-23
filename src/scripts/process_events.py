@@ -52,7 +52,7 @@ class EventProcessor:
         try:
             session_data = json.loads(issue_data["body"])
             arxiv_id = session_data.get("arxivId")
-            duration = session_data.get("duration_minutes")
+            duration_seconds = session_data.get("duration_seconds")
             
             if not arxiv_id or not duration:
                 raise ValueError("Missing required fields in session data")
@@ -60,11 +60,11 @@ class EventProcessor:
             event = ReadingSession(
                 arxivId=arxiv_id,
                 timestamp=datetime.utcnow().isoformat(),
-                duration_minutes=duration,
+                duration_seconds=duration_seconds,
                 issue_url=issue_data["html_url"]
             )
             
-            self.paper_manager.update_reading_time(arxiv_id, duration)
+            self.paper_manager.update_reading_time(arxiv_id, duration_seconds)
             self.paper_manager.append_event(arxiv_id, event)
             self.processed_issues.append(issue_data["number"])
             return True
