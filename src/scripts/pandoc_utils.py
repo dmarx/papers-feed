@@ -189,70 +189,69 @@ header-includes:
         
         return cmd
     
-    # src/scripts/pandoc_utils.py
-def convert_tex_to_markdown(self, tex_file: Path, output_file: Optional[Path] = None) -> bool:
-    """
-    Convert a LaTeX file to Markdown using Pandoc.
-    
-    Args:
-        tex_file: Path to LaTeX file
-        output_file: Optional output path, defaults to same name with .md extension
+    def convert_tex_to_markdown(self, tex_file: Path, output_file: Optional[Path] = None) -> bool:
+        """
+        Convert a LaTeX file to Markdown using Pandoc.
         
-    Returns:
-        bool: True if conversion successful
-        
-    Raises:
-        RuntimeError: If pandoc conversion fails with details from stderr
-    """
-    try:
-        if not tex_file.exists():
-            raise FileNotFoundError(f"LaTeX file not found: {tex_file}")
+        Args:
+            tex_file: Path to LaTeX file
+            output_file: Optional output path, defaults to same name with .md extension
             
-        if not output_file:
-            output_file = tex_file.with_suffix('.md')
+        Returns:
+            bool: True if conversion successful
+            
+        Raises:
+            RuntimeError: If pandoc conversion fails with details from stderr
+        """
+        try:
+            if not tex_file.exists():
+                raise FileNotFoundError(f"LaTeX file not found: {tex_file}")
                 
-        # Verify all required files exist
-        if not self._verify_files_exist():
-            raise RuntimeError("Missing required files for pandoc conversion")
-            
-        # Create temporary directory for conversion
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_dir = Path(temp_dir)
-            
-            # Copy LaTeX file to temp directory
-            temp_tex = temp_dir / tex_file.name
-            shutil.copy2(tex_file, temp_tex)
-            if not temp_tex.exists():
-                raise RuntimeError(f"Failed to copy LaTeX file to temp directory: {temp_tex}")
-            
-            # Build and run Pandoc command
-            cmd = self.build_pandoc_command(temp_tex, output_file)
-            logger.debug(f"Running Pandoc command: {' '.join(cmd)}")
-            
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                cwd=str(temp_dir)
-            )
-            
-            if result.returncode != 0:
-                error_msg = result.stderr.strip() or "Unknown pandoc error"
-                raise RuntimeError(f"Pandoc conversion failed: {error_msg}")
-            
-            # Verify output file was created
-            if not output_file.exists() or output_file.stat().st_size == 0:
-                raise RuntimeError(f"Output file not created or empty: {output_file}")
+            if not output_file:
+                output_file = tex_file.with_suffix('.md')
+                    
+            # Verify all required files exist
+            if not self._verify_files_exist():
+                raise RuntimeError("Missing required files for pandoc conversion")
                 
-            logger.success(f"Successfully converted {tex_file} to {output_file}")
-            return True
-            
-    except Exception as e:
-        error_msg = str(e)
-        if isinstance(e, subprocess.CalledProcessError):
-            error_msg = e.stderr.decode().strip() if e.stderr else str(e)
-        logger.error(f"Error converting {tex_file} to Markdown: {error_msg}")
-        raise RuntimeError(error_msg)
+            # Create temporary directory for conversion
+            with tempfile.TemporaryDirectory() as temp_dir:
+                temp_dir = Path(temp_dir)
+                
+                # Copy LaTeX file to temp directory
+                temp_tex = temp_dir / tex_file.name
+                shutil.copy2(tex_file, temp_tex)
+                if not temp_tex.exists():
+                    raise RuntimeError(f"Failed to copy LaTeX file to temp directory: {temp_tex}")
+                
+                # Build and run Pandoc command
+                cmd = self.build_pandoc_command(temp_tex, output_file)
+                logger.debug(f"Running Pandoc command: {' '.join(cmd)}")
+                
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    cwd=str(temp_dir)
+                )
+                
+                if result.returncode != 0:
+                    error_msg = result.stderr.strip() or "Unknown pandoc error"
+                    raise RuntimeError(f"Pandoc conversion failed: {error_msg}")
+                
+                # Verify output file was created
+                if not output_file.exists() or output_file.stat().st_size == 0:
+                    raise RuntimeError(f"Output file not created or empty: {output_file}")
+                    
+                logger.success(f"Successfully converted {tex_file} to {output_file}")
+                return True
+                
+        except Exception as e:
+            error_msg = str(e)
+            if isinstance(e, subprocess.CalledProcessError):
+                error_msg = e.stderr.decode().strip() if e.stderr else str(e)
+            logger.error(f"Error converting {tex_file} to Markdown: {error_msg}")
+            raise RuntimeError(error_msg)
 
 def create_default_config(paper_dir: Path) -> PandocConfig:
     """Create default Pandoc configuration for a paper directory."""
