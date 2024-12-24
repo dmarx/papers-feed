@@ -131,7 +131,6 @@ def find_main_tex_file(tex_files: Sequence[Path], arxiv_id: str = "unknown") -> 
     
     # Score all files
     scored_files = [score_tex_file(f) for f in tex_files]
-    scored_files.sort(key=lambda x: x.score, reverse=True)
     
     # Log detailed scoring
     logger.debug(f"\nTeX file scoring for {arxiv_id}:")
@@ -140,4 +139,10 @@ def find_main_tex_file(tex_files: Sequence[Path], arxiv_id: str = "unknown") -> 
         for reason in result.reasons:
             logger.debug(f"  {reason}")
     
-    return scored_files[0].path if scored_files else None
+    # Filter and sort files
+    valid_files = [f for f in scored_files if f.score >= 10]  # Minimum score threshold
+    if not valid_files:
+        return None
+        
+    valid_files.sort(key=lambda x: x.score, reverse=True)
+    return valid_files[0].path
