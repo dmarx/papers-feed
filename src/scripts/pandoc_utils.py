@@ -189,7 +189,7 @@ header-includes:
         
         return cmd
     
-    def convert_tex_to_markdown(self, tex_file: Path, output_file: Optional[Path] = None) -> bool:
+    def convert_tex_to_markdown(self, tex_file: Path, output_file: Optional[Path] = None):
         """
         Convert a LaTeX file to Markdown using Pandoc.
         
@@ -197,8 +197,9 @@ header-includes:
             tex_file: Path to LaTeX file
             output_file: Optional output path, defaults to same name with .md extension
             
-        Returns:
-            bool: True if conversion successful
+        Raises:
+            FileNotFoundError: If input file or required config files are missing
+            RuntimeError: If pandoc conversion fails
         """
         try:
             if not tex_file.exists():
