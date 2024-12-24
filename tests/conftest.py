@@ -32,8 +32,8 @@ def mock_pandoc_run(cmd, capture_output=False, cwd=None, text=True):
             output_path = cmd[output_idx + 1]
             
             # For tex file errors, check input file
-            input_file = cmd[-3]  # Assuming input file is before -o output
-            if 'appendix.tex' in input_file or 'supplement.tex' in input_file:
+            input_files = [arg for arg in cmd if arg.endswith('.tex')]
+            if any('appendix.tex' in f or 'supplement.tex' in f for f in input_files):
                 mock_result.returncode = 1
                 mock_result.stderr = "Error: No main file identified"
                 return mock_result
