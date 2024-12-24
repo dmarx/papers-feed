@@ -146,18 +146,18 @@ class TestArxivClient:
             success = client.download_pdf("2401.00001")
             assert not success
 
-    def test_download_source_success(self, client):
+        def test_download_source_success(self, client):
         """Test successful source download."""
         arxiv_id = "2401.00001"
         
         # Create a test tar file
         with tempfile.NamedTemporaryFile(suffix='.tar') as tmp_file:
             with tarfile.open(tmp_file.name, 'w') as tar:
-                content = "Test TeX content"
+                content = b"Test TeX content"
                 info = tarfile.TarInfo(name="main.tex")
                 info.size = len(content)
-                content_io = StringIO(content)
-                tar.addfile(info, content_io)  # Remove "file=" keyword
+                content_io = io.BytesIO(content)
+                tar.addfile(info, content_io)
             
             with patch('requests.get') as mock_get:
                 mock_get.return_value.status_code = 200
@@ -169,7 +169,7 @@ class TestArxivClient:
                 source_dir = client.get_paper_dir(arxiv_id) / "source"
                 assert source_dir.exists()
                 assert (source_dir / "main.tex").exists()
-                assert "Test TeX content" in (source_dir / "main.tex").read_text()
+                assert b"Test TeX content" in (source_dir / "main.tex").read_bytes()
 
     def test_download_source_failure(self, client):
         """Test handling of source download failures."""
