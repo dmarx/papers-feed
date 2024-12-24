@@ -188,7 +188,7 @@ header-includes:
         ])
         
         return cmd
-    
+        
     def convert_tex_to_markdown(self, tex_file: Path, output_file: Optional[Path] = None) -> bool:
         """
         Convert a LaTeX file to Markdown using Pandoc.
@@ -210,7 +210,7 @@ header-includes:
             # Verify all required files exist
             if not self._verify_files_exist():
                 raise FileNotFoundError("Missing required pandoc configuration files")
-                
+                    
             # Create temporary directory for conversion
             with tempfile.TemporaryDirectory() as temp_dir:
                 temp_dir = Path(temp_dir)
@@ -236,19 +236,18 @@ header-includes:
                     error_msg = result.stderr.strip() or "Unknown pandoc error"
                     raise RuntimeError(f"Pandoc conversion failed: {error_msg}")
                 
-                # Verify output file was created
-                if not output_file.exists() or output_file.stat().st_size == 0:
-                    raise RuntimeError(f"Output file not created or empty: {output_file}")
+                # Verify output file was created and not empty
+                if not output_file.exists():
+                    raise RuntimeError(f"Output file not created: {output_file}")
+                if output_file.stat().st_size == 0:
+                    raise RuntimeError(f"Output file is empty: {output_file}")
                     
                 logger.success(f"Successfully converted {tex_file} to {output_file}")
                 return True
                 
         except Exception as e:
-            error_msg = str(e)
-            logger.error(f"Error converting {tex_file} to Markdown: {error_msg}")
-            if 'Not a main TeX file' in error_msg:
-                return False  # Special case for non-main tex files
-            raise  # Re-raise all other errors
+            logger.error(f"Error converting {tex_file} to Markdown: {e}")
+            raise
 
 def create_default_config(paper_dir: Path) -> PandocConfig:
     """Create default Pandoc configuration for a paper directory."""
