@@ -2,6 +2,7 @@
 import subprocess
 import pytest
 from unittest.mock import Mock, patch
+import io
 
 def is_pandoc_installed():
     """Check if pandoc is available on the system."""
@@ -25,23 +26,24 @@ def mock_pandoc_run(cmd, capture_output=False, cwd=None, text=True):
         return mock_result
 
     # Get the output file if specified
-    cmd_str = ' '.join(cmd)
-    if '-o' in cmd:
-        output_path = cmd[cmd.index('-o') + 1]
-        
-        # For tex file errors, check input file
-        input_file = cmd[-3]  # Assuming input file is before -o output
-        if 'appendix.tex' in input_file or 'supplement.tex' in input_file:
-            mock_result.returncode = 1
-            mock_result.stderr = "Error: No main file identified"
-            return mock_result
+    try:
+        output_idx = cmd.index('-o')
+        if output_idx + 1 < len(cmd):
+            output_path = cmd[output_idx + 1]
             
-        # Create successful output for main.tex
-        with open(output_path, 'w') as f:
-            f.write("# Mock Pandoc Output\n\nConverted content")
+            # For tex file errors, check input file
+            input_file = cmd[-3]  # Assuming input file is before -o output
+            if 'appendix.tex' in input_file or 'supplement.tex' in input_file:
+                mock_result.returncode = 1
+                mock_result.stderr = "Error: No main file identified"
+                return mock_result
+                
+            # Create successful output for main.tex
+            with open(output_path, 'w') as f:
+                f.write("# Mock Pandoc Output\n\nConverted content")
+    except (ValueError, IndexError):
+        pass
             
-    return mock_result
-    
     return mock_result
 
 @pytest.fixture
@@ -49,7 +51,7 @@ def mock_pandoc():
     """Fixture to provide pandoc mock if not installed."""
     if not is_pandoc_installed():
         with patch('subprocess.run') as mock_run:
-            mock_run.side_effect = mock_pandoc_success
+            mock_run.side_effect = mock_pandoc_run
             yield mock_run
     else:
         yield None
