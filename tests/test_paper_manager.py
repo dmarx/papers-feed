@@ -3,10 +3,10 @@ import json
 import pytest
 from pathlib import Path
 from datetime import datetime
-from unittest.mock import Mock, patch, AsyncMock
+from unittest.mock import Mock, patch
 
 from scripts.paper_manager import PaperManager
-from scripts.models import Paper, ReadingSession, PaperRegistrationEvent
+from scripts.models import Paper, ReadingSession
 
 @pytest.fixture
 def paper_dir(tmp_path):
@@ -34,17 +34,17 @@ def sample_paper():
     )
 
 @pytest.fixture
-def mock_arxiv_api(sample_paper):
-    """Mock ArxivAPI with pre-configured response."""
-    with patch('scripts.arxiv_api.ArxivAPI') as mock:
-        api = mock.return_value
-        api.fetch_metadata = Mock(return_value=sample_paper)
-        yield api
+def mock_arxiv_client(sample_paper):
+    """Mock ArxivClient with pre-configured response."""
+    with patch('scripts.arxiv_client.ArxivClient') as mock:
+        client = mock.return_value
+        client.fetch_metadata = Mock(return_value=sample_paper)
+        yield client
 
 @pytest.fixture
-def paper_manager(paper_dir):
+def paper_manager(paper_dir, mock_arxiv_client):
     """Create PaperManager instance for testing."""
-    return PaperManager(paper_dir)
+    return PaperManager(paper_dir, arxiv_client=mock_arxiv_client)
 
 class TestPaperManager:
     def test_get_paper_existing(self, paper_manager, sample_paper):
@@ -92,39 +92,31 @@ class TestPaperManager:
         with pytest.raises(ValueError, match="Paper directory already exists"):
             paper_manager.create_paper(sample_paper)
 
-    def test_fetch_new_paper(self, paper_manager, sample_paper, mock_arxiv_api):
+    def test_fetch_new_paper(self, paper_manager, sample_paper):
         """Test fetching new paper from ArXiv."""
-        mock_arxiv_api.fetch_metadata.return_value = sample_paper
-        paper_manager.arxiv_api = mock_arxiv_api
-        
         paper = paper_manager.fetch_new_paper(sample_paper.arxiv_id)
         
         assert paper.arxiv_id == sample_paper.arxiv_id
         assert paper.title == sample_paper.title
-        mock_arxiv_api.fetch_metadata.assert_called_once()
+        paper_manager.arxiv_client.fetch_metadata.assert_called_once()
 
-    def test_get_or_create_paper_existing(self, paper_manager, sample_paper, mock_arxiv_api):
+    def test_get_or_create_paper_existing(self, paper_manager, sample_paper):
         """Test get_or_create with existing paper."""
-        mock_arxiv_api.fetch_metadata.return_value = sample_paper
-        paper_manager.arxiv_api = mock_arxiv_api
-        
         # Create initial paper
         paper_manager.create_paper(sample_paper)
         
         paper = paper_manager.get_or_create_paper(sample_paper.arxiv_id)
         
         assert paper.arxiv_id == sample_paper.arxiv_id
-        mock_arxiv_api.fetch_metadata.assert_not_called()
+        paper_manager.arxiv_client.fetch_metadata.assert_not_called()
 
-    def test_get_or_create_paper_new(self, paper_manager, sample_paper, mock_arxiv_api):
+    def test_get_or_create_paper_new(self, paper_manager, sample_paper):
         """Test get_or_create with new paper."""
-        mock_arxiv_api.fetch_metadata.return_value = sample_paper
-        paper_manager.arxiv_api = mock_arxiv_api
         
         paper = paper_manager.get_or_create_paper(sample_paper.arxiv_id)
         
         assert paper.arxiv_id == sample_paper.arxiv_id
-        mock_arxiv_api.fetch_metadata.assert_called_once()
+        paper_manager.arxiv_client.fetch_metadata.assert_called_once()
 
     def test_append_event(self, paper_manager, sample_paper):
         """Test appending event to paper log."""
