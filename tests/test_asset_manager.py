@@ -160,18 +160,108 @@ def test_retry_failed_markdown(manager, mock_markdown_service):
     manager.ensure_all_assets(retry_failed=True)
     mock_markdown_service.retry_failed_conversions.assert_called_once_with(force=False)
 
-def test_force_processing(manager, mock_arxiv_client, mock_markdown_service):
-    """Test forced reprocessing of assets."""
-    arxiv_id = "2401.00001"
-    (manager.papers_dir / arxiv_id).mkdir()
+# tests/test_asset_manager.py
+
+def test_find_missing_pdfs(manager):
+    """Test finding papers missing PDFs."""
+    (manager.papers_dir / "2401.00001").mkdir(parents=True)
+    (manager.papers_dir / "2401.00002").mkdir(parents=True)
     
-    manager.process_paper_assets(arxiv_id, force=True)
+    def get_status(arxiv_id):
+        if arxiv_id == "2401.00002":
+            return {"has_pdf": True, "has_source": False}
+        return {"has_pdf": False, "has_source": False}
+    manager.arxiv.get_paper_status.side_effect = get_status
     
-    mock_arxiv_client.download_paper.assert_called_once_with(
-        arxiv_id,
-        skip_existing=False
-    )
-    mock_markdown_service.convert_paper.assert_called_once_with(
-        arxiv_id,
-        force=True
-    )
+    missing = manager.find_missing_pdfs()
+    assert "2401.00001" in missing
+    assert "2401.00002" not in missing
+
+def test_find_missing_source(manager):
+    """Test finding papers missing source files."""
+    (manager.papers_dir / "2401.00001").mkdir(parents=True)
+    (manager.papers_dir / "2401.00002").mkdir(parents=True)
+    
+    def get_status(arxiv_id):
+        if arxiv_id == "2401.00002":
+            return {"has_pdf": True, "has_source": True}
+        return {"has_pdf": True, "has_source": False}
+    manager.arxiv.get_paper_status.side_effect = get_status
+    
+    missing = manager.find_missing_source()
+    assert "2401.00001" in missing
+    assert "2401.00002" not in missing
+
+def test_download_pdfs(manager):
+    """Test downloading missing PDFs."""
+    (manager.papers_dir / "2401.00001").mkdir(parents=True)
+    (manager.papers_dir / "2401.00002").mkdir(parents=True)
+    
+    def get_status(arxiv_id):
+        return {"has_pdf": False, "has_source": False}
+    manager.arxiv.get_paper_status.side_effect = get_status
+    manager.arxiv.download_pdf.return_value = True
+    
+    results = manager.download_pdfs()
+    assert all(results.values())  # All downloads successful
+    assert manager.arxiv.download_pdf.call_count == 2
+
+def test_download_source(manager):
+    """Test downloading missing source files."""
+    (manager.papers_dir / "2401.00001").mkdir(parents=True)
+    (manager.papers_dir / "2401.00002").mkdir(parents=True)
+    
+    def get_status(arxiv_id):
+        return {"has_pdf": True, "has_source": False}
+    manager.arxiv.get_paper_status.side_effect = get_status
+    manager.arxiv.download_source.return_value = True
+    
+    results = manager.download_source()
+    assert all(results.values())  # All downloads successful
+    assert manager.arxiv.download_source.call_count == 2
+
+def test_convert_markdown(manager):
+    """Test converting papers to markdown."""
+    (manager.papers_dir / "2401.00001").mkdir(parents=True)
+    (manager.papers_dir / "2401.00002").mkdir(parents=True)
+    
+    def get_paper_status(arxiv_id):
+        return {"has_pdf": True, "has_source": True}
+    def get_markdown_status(arxiv_id):
+        return {"has_markdown": False, "has_source": True, "failed": False}
+    
+    manager.arxiv.get_paper_status.side_effect = get_paper_status
+    manager.markdown.get_conversion_status.side_effect = get_markdown_status
+    manager.markdown.convert_paper.return_value = True
+    
+    results = manager.convert_markdown()
+    assert all(results.values())  # All conversions successful
+    assert manager.markdown.convert_paper.call_count == 2
+
+def test_download_failure(manager):
+    """Test handling download failures."""
+    (manager.papers_dir / "2401.00001").mkdir(parents=True)
+    
+    manager.arxiv.get_paper_status.return_value = {"has_pdf": False, "has_source": False}
+    manager.arxiv.download_pdf.return_value = False  # Simulate failure
+    
+    results = manager.download_pdfs()
+    assert not results["2401.00001"]  # Download failed
+
+def test_force_processing(manager):
+    """Test forced downloads and conversions."""
+    (manager.papers_dir / "2401.00001").mkdir(parents=True)
+    
+    # Set up mocks for success
+    manager.arxiv.get_paper_status.return_value = {"has_pdf": True, "has_source": True}
+    manager.arxiv.download_pdf.return_value = True
+    manager.arxiv.download_source.return_value = True
+    manager.markdown.convert_paper.return_value = True
+    
+    # Test force download PDFs
+    results = manager.download_pdfs(force=True)
+    assert results["2401.00001"]  # Should process even though pdf exists
+    
+    # Test force download source
+    results = manager.download_source(force=True)
+    assert results["2401.00001"]  # Should process even though source exists
