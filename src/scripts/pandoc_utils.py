@@ -199,59 +199,62 @@ header-includes:
             
         Returns:
             bool: True if conversion successful
-            
-        Raises:
-            RuntimeError: If pandoc conversion fails with details from stderr
         """
         try:
             if not tex_file.exists():
-                raise FileNotFoundError(f"LaTeX file not found: {tex_file}")
+                logger.error(f"LaTeX file not found: {tex_file}")
+                return False
                 
             if not output_file:
                 output_file = tex_file.with_suffix('.md')
                     
             # Verify all required files exist
             if not self._verify_files_exist():
-                raise RuntimeError("Missing required files for pandoc conversion")
+                logger.error("Missing required files for pandoc conversion")
+                return False
                 
             # Create temporary directory for conversion
             with tempfile.TemporaryDirectory() as temp_dir:
                 temp_dir = Path(temp_dir)
                 
-                # Copy LaTeX file to temp directory
-                temp_tex = temp_dir / tex_file.name
-                shutil.copy2(tex_file, temp_tex)
-                if not temp_tex.exists():
-                    raise RuntimeError(f"Failed to copy LaTeX file to temp directory: {temp_tex}")
-                
-                # Build and run Pandoc command
-                cmd = self.build_pandoc_command(temp_tex, output_file)
-                logger.debug(f"Running Pandoc command: {' '.join(cmd)}")
-                
-                result = subprocess.run(
-                    cmd,
-                    capture_output=True,
-                    text=True,
-                    cwd=str(temp_dir)
-                )
-                
-                if result.returncode != 0:
-                    error_msg = result.stderr.strip() or "Unknown pandoc error"
-                    raise RuntimeError(f"Pandoc conversion failed: {error_msg}")
-                
-                # Verify output file was created
-                if not output_file.exists() or output_file.stat().st_size == 0:
-                    raise RuntimeError(f"Output file not created or empty: {output_file}")
+                try:
+                    # Copy LaTeX file to temp directory
+                    temp_tex = temp_dir / tex_file.name
+                    shutil.copy2(tex_file, temp_tex)
+                    if not temp_tex.exists():
+                        logger.error(f"Failed to copy LaTeX file to temp directory: {temp_tex}")
+                        return False
                     
-                logger.success(f"Successfully converted {tex_file} to {output_file}")
-                return True
-                
+                    # Build and run Pandoc command
+                    cmd = self.build_pandoc_command(temp_tex, output_file)
+                    logger.debug(f"Running Pandoc command: {' '.join(cmd)}")
+                    
+                    result = subprocess.run(
+                        cmd,
+                        capture_output=True,
+                        text=True,
+                        cwd=str(temp_dir)
+                    )
+                    
+                    if result.returncode != 0:
+                        logger.error(f"Pandoc conversion failed: {result.stderr}")
+                        return False
+                    
+                    # Verify output file was created
+                    if not output_file.exists() or output_file.stat().st_size == 0:
+                        logger.error(f"Output file not created or empty: {output_file}")
+                        return False
+                        
+                    logger.success(f"Successfully converted {tex_file} to {output_file}")
+                    return True
+                    
+                except Exception as e:
+                    logger.error(f"Error during pandoc conversion: {e}")
+                    return False
+                    
         except Exception as e:
-            error_msg = str(e)
-            if isinstance(e, subprocess.CalledProcessError):
-                error_msg = e.stderr.decode().strip() if e.stderr else str(e)
-            logger.error(f"Error converting {tex_file} to Markdown: {error_msg}")
-            raise RuntimeError(error_msg)
+            logger.error(f"Error converting {tex_file} to Markdown: {e}")
+            return False
 
 def create_default_config(paper_dir: Path) -> PandocConfig:
     """Create default Pandoc configuration for a paper directory."""
