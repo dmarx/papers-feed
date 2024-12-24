@@ -147,29 +147,29 @@ class TestArxivClient:
             assert not success
 
         def test_download_source_success(self, client):
-        """Test successful source download."""
-        arxiv_id = "2401.00001"
-        
-        # Create a test tar file
-        with tempfile.NamedTemporaryFile(suffix='.tar') as tmp_file:
-            with tarfile.open(tmp_file.name, 'w') as tar:
-                content = b"Test TeX content"
-                info = tarfile.TarInfo(name="main.tex")
-                info.size = len(content)
-                content_io = io.BytesIO(content)
-                tar.addfile(info, content_io)
+            """Test successful source download."""
+            arxiv_id = "2401.00001"
             
-            with patch('requests.get') as mock_get:
-                mock_get.return_value.status_code = 200
-                mock_get.return_value.content = open(tmp_file.name, 'rb').read()
+            # Create a test tar file
+            with tempfile.NamedTemporaryFile(suffix='.tar') as tmp_file:
+                with tarfile.open(tmp_file.name, 'w') as tar:
+                    content = b"Test TeX content"
+                    info = tarfile.TarInfo(name="main.tex")
+                    info.size = len(content)
+                    content_io = io.BytesIO(content)
+                    tar.addfile(info, content_io)
                 
-                success = client.download_source(arxiv_id)
-                
-                assert success
-                source_dir = client.get_paper_dir(arxiv_id) / "source"
-                assert source_dir.exists()
-                assert (source_dir / "main.tex").exists()
-                assert b"Test TeX content" in (source_dir / "main.tex").read_bytes()
+                with patch('requests.get') as mock_get:
+                    mock_get.return_value.status_code = 200
+                    mock_get.return_value.content = open(tmp_file.name, 'rb').read()
+                    
+                    success = client.download_source(arxiv_id)
+                    
+                    assert success
+                    source_dir = client.get_paper_dir(arxiv_id) / "source"
+                    assert source_dir.exists()
+                    assert (source_dir / "main.tex").exists()
+                    assert b"Test TeX content" in (source_dir / "main.tex").read_bytes()
 
     def test_download_source_failure(self, client):
         """Test handling of source download failures."""
