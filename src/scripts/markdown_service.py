@@ -86,25 +86,24 @@ class MarkdownService:
         Args:
             arxiv_id: Paper ID to convert
             force: Force conversion even if previously failed
-            
-        Returns:
-            bool: True if conversion successful
         """
         try:
-            # Check if we should attempt conversion
-            if not force and not self.should_retry_conversion(arxiv_id):
-                logger.info(f"Skipping recent failed conversion for {arxiv_id}")
-                return False
-            
             paper_dir = self.papers_dir / arxiv_id
             source_dir = paper_dir / "source"
             markdown_file = paper_dir / f"{arxiv_id}.md"
             
-            # Skip if already converted successfully
-            if markdown_file.exists() and markdown_file.stat().st_size > 0:
-                logger.info(f"Markdown already exists for {arxiv_id}")
-                self._clear_failure(arxiv_id)
-                return True
+            # Check if we should skip conversion
+            if not force:
+                # Skip if recently failed
+                if not self.should_retry_conversion(arxiv_id):
+                    logger.info(f"Skipping recent failed conversion for {arxiv_id}")
+                    return False
+                    
+                # Skip if already converted successfully
+                if markdown_file.exists() and markdown_file.stat().st_size > 0:
+                    logger.info(f"Markdown already exists for {arxiv_id}")
+                    self._clear_failure(arxiv_id)
+                    return True
             
             # Verify source exists
             if not source_dir.exists():
@@ -136,6 +135,8 @@ class MarkdownService:
             
         except Exception as e:
             logger.error(f"Error converting {arxiv_id} to Markdown: {e}")
+            if not isinstance(e, (FileNotFoundError, ValueError)):
+                e = RuntimeError("Pandoc conversion failed")  # Generic error for pandoc issues
             self._record_failure(arxiv_id, str(e))
             return False
     
