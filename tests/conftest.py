@@ -2,7 +2,7 @@
 import subprocess
 import pytest
 from unittest.mock import Mock, patch
-import io
+from pathlib import Path
 
 def is_pandoc_installed():
     """Check if pandoc is available on the system."""
@@ -13,8 +13,6 @@ def is_pandoc_installed():
         return result.returncode == 0
     except FileNotFoundError:
         return False
-
-# tests/conftest.py
 
 def mock_pandoc_run(cmd, capture_output=False, cwd=None, text=True):
     """Mock pandoc execution that can return errors or success."""
@@ -40,13 +38,15 @@ def mock_pandoc_run(cmd, capture_output=False, cwd=None, text=True):
                 mock_result.stderr = "Error: Not a main TeX file"
                 return mock_result
                 
-            # Create successful output for main.tex
-            mock_content = "# Converted Test Document\n\nTest content converted by mock pandoc\n"
+            # Create successful output
+            mock_content = "# Mock Pandoc Output\n\nConverted content\n"
             
             # Write the mock output
-            if Path(output_path).exists():
-                Path(output_path).unlink()  # Remove if exists
-            Path(output_path).write_text(mock_content)
+            output_path = Path(output_path)
+            if output_path.exists():
+                output_path.unlink()  # Remove if exists
+            output_path.write_text(mock_content)
+            
     except (ValueError, IndexError):
         pass
             
