@@ -111,7 +111,7 @@ class PaperAssetManager:
 def main():
     """Command-line interface."""
     manager = PaperAssetManager(papers_dir="data/papers")
-    Fire({
+    fire.Fire({
         'ensure': manager.ensure_all_assets,
         'retry-markdown': lambda: manager.markdown.retry_failed_conversions(force=True),
         'status': lambda: manager.get_incomplete_assets()
