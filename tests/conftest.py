@@ -14,6 +14,8 @@ def is_pandoc_installed():
     except FileNotFoundError:
         return False
 
+# tests/conftest.py
+
 def mock_pandoc_run(cmd, capture_output=False, cwd=None, text=True):
     """Mock pandoc execution that can return errors or success."""
     mock_result = Mock()
@@ -33,21 +35,25 @@ def mock_pandoc_run(cmd, capture_output=False, cwd=None, text=True):
             
             # For tex file errors, check input file
             input_files = [arg for arg in cmd if arg.endswith('.tex')]
-            if any('appendix.tex' in f or 'supplement.tex' in f for f in input_files):
+            if any('appendix.tex' in f.lower() or 'supplement.tex' in f.lower() for f in input_files):
                 mock_result.returncode = 1
-                mock_result.stderr = "Error: No main file identified"
+                mock_result.stderr = "Error: Not a main TeX file"
                 return mock_result
                 
             # Create successful output for main.tex
-            with open(output_path, 'w') as f:
-                f.write("# Test Document\n\nTest content\n")
+            mock_content = "# Converted Test Document\n\nTest content converted by mock pandoc\n"
+            
+            # Write the mock output
+            if Path(output_path).exists():
+                Path(output_path).unlink()  # Remove if exists
+            Path(output_path).write_text(mock_content)
     except (ValueError, IndexError):
         pass
             
     return mock_result
 
 @pytest.fixture
-def mock_pandoc():
+def mock_pandoc(monkeypatch):
     """Fixture to provide pandoc mock if not installed."""
     if not is_pandoc_installed():
         with patch('subprocess.run') as mock_run:
