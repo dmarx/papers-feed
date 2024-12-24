@@ -83,15 +83,32 @@ class PaperAssetManager:
             success = self.arxiv.download_source(arxiv_id)
             results[arxiv_id] = success
         return results
-    
+        
     def convert_markdown(self, force: bool = False) -> dict[str, bool]:
         """Convert papers with source to markdown."""
-        papers = self.find_pending_markdown() if not force else [
-            p.name for p in self.papers_dir.iterdir() if p.is_dir()
-            if self.arxiv.get_paper_status(p.name)["has_source"]
-        ]
+        # Get candidate papers
+        if force:
+            # On force, attempt all papers that have source files
+            candidates = [
+                p.name for p in self.papers_dir.iterdir() 
+                if p.is_dir() and self.arxiv.get_paper_status(p.name)["has_source"]
+            ]
+        else:
+            # Get papers with source but no markdown
+            candidates = []
+            for paper_dir in self.papers_dir.iterdir():
+                if not paper_dir.is_dir():
+                    continue
+                arxiv_id = paper_dir.name
+                download_status = self.arxiv.get_paper_status(arxiv_id)
+                markdown_status = self.markdown.get_conversion_status(arxiv_id)
+                
+                if (download_status["has_source"] and not markdown_status["has_markdown"]):
+                    candidates.append(arxiv_id)
+        
+        # Process candidates
         results = {}
-        for arxiv_id in papers:
+        for arxiv_id in candidates:
             logger.info(f"Converting {arxiv_id} to markdown")
             try:
                 success = self.markdown.convert_paper(arxiv_id, force=force)
@@ -99,6 +116,7 @@ class PaperAssetManager:
             except Exception as e:
                 logger.error(f"Error converting {arxiv_id}: {e}")
                 results[arxiv_id] = False
+        
         return results
     
     def ensure_all_assets(self, force: bool = False, retry_failed: bool = True):
