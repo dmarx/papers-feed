@@ -13,19 +13,34 @@ def is_pandoc_installed():
     except FileNotFoundError:
         return False
 
-def mock_pandoc_success(cmd, **kwargs):
-    """Mock successful pandoc execution."""
+def mock_pandoc_run(cmd, capture_output=False, cwd=None, text=True):
+    """Mock pandoc execution that can return errors or success."""
     mock_result = Mock()
     mock_result.returncode = 0
     mock_result.stdout = "Success"
     mock_result.stderr = ""
-    
-    # If output file was specified, create it
+
+    # Check if this is a version check
+    if '--version' in cmd:
+        return mock_result
+
+    # Get the output file if specified
     cmd_str = ' '.join(cmd)
-    if '-o' in cmd_str:
-        output_file = cmd[cmd.index('-o') + 1]
-        with open(output_file, 'w') as f:
+    if '-o' in cmd:
+        output_path = cmd[cmd.index('-o') + 1]
+        
+        # For tex file errors, check input file
+        input_file = cmd[-3]  # Assuming input file is before -o output
+        if 'appendix.tex' in input_file or 'supplement.tex' in input_file:
+            mock_result.returncode = 1
+            mock_result.stderr = "Error: No main file identified"
+            return mock_result
+            
+        # Create successful output for main.tex
+        with open(output_path, 'w') as f:
             f.write("# Mock Pandoc Output\n\nConverted content")
+            
+    return mock_result
     
     return mock_result
 
