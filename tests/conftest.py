@@ -40,7 +40,7 @@ def mock_pandoc_run(cmd, capture_output=False, cwd=None, text=True):
                 
             # Create successful output for main.tex
             with open(output_path, 'w') as f:
-                f.write("# Mock Pandoc Output\n\nConverted content")
+                f.write("# Test Document\n\nTest content\n")
     except (ValueError, IndexError):
         pass
             
