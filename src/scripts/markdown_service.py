@@ -78,7 +78,7 @@ class MarkdownService:
         )
         retry_threshold = datetime.utcnow() - timedelta(hours=retry_after_hours)
         return last_attempt < retry_threshold
-
+    
     def convert_paper(self, arxiv_id: str, force: bool = False) -> bool:
         """
         Convert a paper's LaTeX source to Markdown.
@@ -93,7 +93,7 @@ class MarkdownService:
                 if not self.should_retry_conversion(arxiv_id):
                     logger.info(f"Skipping recent failed conversion for {arxiv_id}")
                     return False
-    
+                    
                 paper_dir = self.papers_dir / arxiv_id
                 markdown_file = paper_dir / f"{arxiv_id}.md"
                 if markdown_file.exists() and markdown_file.stat().st_size > 0:
@@ -122,16 +122,11 @@ class MarkdownService:
             config = create_default_config(paper_dir)
             converter = PandocConverter(config)
             
-            # Attempt conversion
-            try:
-                success = converter.convert_tex_to_markdown(main_tex, markdown_file)
-                if success:
-                    logger.success(f"Successfully converted {arxiv_id} to Markdown")
-                    self._clear_failure(arxiv_id)
-                    return True
-            except RuntimeError as e:
-                # Preserve pandoc error message
-                raise RuntimeError(str(e))
+            # Attempt conversion - will raise exception on failure
+            converter.convert_tex_to_markdown(main_tex, markdown_file)
+            logger.success(f"Successfully converted {arxiv_id} to Markdown")
+            self._clear_failure(arxiv_id)
+            return True
                 
         except Exception as e:
             error_msg = str(e)
