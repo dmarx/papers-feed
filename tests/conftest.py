@@ -21,33 +21,32 @@ def mock_pandoc_run(cmd, capture_output=False, cwd=None, text=True):
     mock_result.stdout = "Success"
     mock_result.stderr = ""
 
-    # Check if this is a version check
-    if '--version' in cmd:
-        return mock_result
-
-    # Get the output file if specified
     try:
-        output_idx = cmd.index('-o')
-        if output_idx + 1 < len(cmd):
-            output_path = cmd[output_idx + 1]
+        # Get I/O files if specified
+        input_idx = None
+        output_idx = None
+        for i, arg in enumerate(cmd):
+            if arg.endswith('.tex'):
+                input_idx = i
+            if arg == '-o':
+                output_idx = i
+        
+        if input_idx is not None and output_idx is not None:
+            input_file = Path(cmd[input_idx])
+            output_file = Path(cmd[output_idx + 1])
             
-            # For tex file errors, check input file
-            input_files = [arg for arg in cmd if arg.endswith('.tex')]
-            if any('appendix.tex' in f.lower() or 'supplement.tex' in f.lower() for f in input_files):
+            # Handle non-main files
+            if not input_file.name.startswith('main') and not input_file.name.startswith('neurips'):
                 mock_result.returncode = 1
                 mock_result.stderr = "Error: Not a main TeX file"
                 return mock_result
-                
-            # Create successful output
+            
+            # Create mock output
             mock_content = "# Mock Pandoc Output\n\nConverted content\n"
+            output_file.write_text(mock_content)
             
-            # Write the mock output
-            output_path = Path(output_path)
-            if output_path.exists():
-                output_path.unlink()  # Remove if exists
-            output_path.write_text(mock_content)
-            
-    except (ValueError, IndexError):
+    except (ValueError, IndexError) as e:
+        print(f"Error in mock_pandoc_run: {e}")  # Debug output
         pass
             
     return mock_result
