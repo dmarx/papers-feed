@@ -10,8 +10,6 @@ import fire
 from .arxiv_client import ArxivClient
 from .markdown_service import MarkdownService
 
-# src/scripts/asset_manager.py
-
 class PaperAssetManager:
     """Manages paper assets including PDFs, source files, and markdown conversions."""
     
@@ -64,7 +62,9 @@ class PaperAssetManager:
     
     def download_pdfs(self, force: bool = False) -> dict[str, bool]:
         """Download PDFs for papers missing them."""
-        papers = self.find_missing_pdfs() if not force else list(p.name for p in self.papers_dir.iterdir() if p.is_dir())
+        papers = self.find_missing_pdfs() if not force else [
+            p.name for p in self.papers_dir.iterdir() if p.is_dir()
+        ]
         results = {}
         for arxiv_id in papers:
             logger.info(f"Downloading PDF for {arxiv_id}")
@@ -74,7 +74,9 @@ class PaperAssetManager:
     
     def download_source(self, force: bool = False) -> dict[str, bool]:
         """Download source files for papers missing them."""
-        papers = self.find_missing_source() if not force else list(p.name for p in self.papers_dir.iterdir() if p.is_dir())
+        papers = self.find_missing_source() if not force else [
+            p.name for p in self.papers_dir.iterdir() if p.is_dir()
+        ]
         results = {}
         for arxiv_id in papers:
             logger.info(f"Downloading source for {arxiv_id}")
@@ -84,7 +86,10 @@ class PaperAssetManager:
     
     def convert_markdown(self, force: bool = False) -> dict[str, bool]:
         """Convert papers with source to markdown."""
-        papers = self.find_pending_markdown() if not force else list(p.name for p in self.papers_dir.iterdir() if p.is_dir())
+        papers = self.find_pending_markdown() if not force else [
+            p.name for p in self.papers_dir.iterdir() if p.is_dir()
+            if self.arxiv.get_paper_status(p.name)["has_source"]
+        ]
         results = {}
         for arxiv_id in papers:
             logger.info(f"Converting {arxiv_id} to markdown")
@@ -97,7 +102,7 @@ class PaperAssetManager:
         return results
     
     def ensure_all_assets(self, force: bool = False, retry_failed: bool = True):
-        """Legacy method that ensures all assets are present."""
+        """Ensure all papers have complete assets."""
         if retry_failed:
             self.markdown.retry_failed_conversions(force=force)
         
@@ -120,7 +125,7 @@ class PaperAssetManager:
 def main():
     """Command-line interface."""
     manager = PaperAssetManager(papers_dir="data/papers")
-    Fire({
+    fire.Fire({
         'ensure': manager.ensure_all_assets,
         'download-pdfs': manager.download_pdfs,
         'download-source': manager.download_source,
@@ -133,3 +138,6 @@ def main():
             'failed_markdown': list(manager.markdown.failed_conversions.keys())
         }
     })
+
+if __name__ == "__main__":
+    main()
