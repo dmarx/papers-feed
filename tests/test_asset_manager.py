@@ -22,7 +22,7 @@ def manager(test_dir):
         # Configure mock MarkdownService
         mock_markdown.return_value.get_conversion_status.return_value = {
             "has_markdown": False,
-            "has_source": True,
+            "has_source": False,
             "failed": False,
         }
         mock_markdown.return_value.convert_paper.return_value = True
@@ -38,6 +38,25 @@ def test_ensure_all_assets(manager):
     # Create test papers
     (manager.papers_dir / "2401.00001").mkdir()
     (manager.papers_dir / "2401.00002").mkdir()
+    
+    # Set up mock behavior to create conditions for markdown conversion
+    def get_paper_status(arxiv_id):
+        # After "downloading" source files, report them as present
+        call_count = manager.arxiv.download_source.call_count
+        return {
+            "has_pdf": False,  # Always need PDF
+            "has_source": call_count > 0,  # Source exists after download
+        }
+    
+    def get_conversion_status(arxiv_id):
+        return {
+            "has_markdown": False,  # Always need markdown conversion
+            "has_source": True,  # Source files present
+            "failed": False,
+        }
+    
+    manager.arxiv.get_paper_status.side_effect = get_paper_status
+    manager.markdown.get_conversion_status.side_effect = get_conversion_status
     
     manager.ensure_all_assets()
     
@@ -55,6 +74,11 @@ def test_convert_markdown(manager):
     
     # Configure mock for papers with source
     manager.arxiv.get_paper_status.return_value = {"has_pdf": True, "has_source": True}
+    manager.markdown.get_conversion_status.return_value = {
+        "has_markdown": False,
+        "has_source": True,
+        "failed": False,
+    }
     
     results = manager.convert_markdown()
     assert len(results) == 2
