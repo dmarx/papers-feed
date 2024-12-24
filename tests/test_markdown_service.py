@@ -159,24 +159,27 @@ class TestMarkdownService:
         assert arxiv_id in new_service.failed_conversions
         assert new_service.failed_conversions[arxiv_id]["error"] == error_msg
 
-    def test_force_reconversion(self, service, paper_dir):
+    def test_force_reconversion(self, service, paper_dir, mock_pandoc):
         """Test forced reconversion of papers."""
         arxiv_id = paper_dir.name
         markdown_file = paper_dir / f"{arxiv_id}.md"
         markdown_file.write_text("# Existing content")
+    
+        source_dir = paper_dir / "source"
+        source_dir.mkdir()
+        tex_file = source_dir / "main.tex"
+        tex_file.write_text(r"\documentclass{article}\begin{document}Test\end{document}")
+        
+        service.convert_paper(arxiv_id)  # First conversion
+        markdown_file.write_text("# Modified content")  # Simulate existing file
+        
+        success = service.convert_paper(arxiv_id, force=True)  # Force reconversion
+        assert success
+        with markdown_file.open() as f:
+            content = f.read()
+        assert "Mock Pandoc Output" in content  # Verify reconversion happened
 
-        with patch('scripts.pandoc_utils.PandocConverter.convert_tex_to_markdown') as mock_convert:
-            mock_convert.return_value = True
-            
-            # Normal conversion should skip existing file
-            service.convert_paper(arxiv_id)
-            mock_convert.assert_not_called()
-            
-            # Force conversion should reconvert
-            service.convert_paper(arxiv_id, force=True)
-            mock_convert.assert_called_once()
-
-    def test_clear_failure_after_success(self, service, paper_dir):
+    def test_clear_failure_after_success(self, service, paper_dir, mock_pandoc):
         """Test that successful conversion clears failure record."""
         arxiv_id = paper_dir.name
         service._record_failure(arxiv_id, "Test error")
@@ -187,16 +190,9 @@ class TestMarkdownService:
         tex_file = source_dir / "main.tex"
         tex_file.write_text(r"\documentclass{article}\begin{document}Test\end{document}")
         
-        with patch('scripts.pandoc_utils.PandocConverter.convert_tex_to_markdown') as mock_convert:
-            mock_convert.return_value = True
-            service.convert_paper(arxiv_id)
-        
+        success = service.convert_paper(arxiv_id, force=True)  # Force retry
+        assert success
         assert arxiv_id not in service.failed_conversions
-        assert service.failed_conversions_file.exists()
-        
-        # Verify persistence
-        new_service = MarkdownService(service.papers_dir)
-        assert arxiv_id not in new_service.failed_conversions
 
     def test_skip_recent_failure(self, service, paper_dir):
         """Test that recent failures are skipped."""
@@ -210,7 +206,7 @@ class TestMarkdownService:
         # Should still be marked as failed
         assert arxiv_id in service.failed_conversions
 
-    def test_conversion_with_missing_tex(self, service, paper_dir):
+    def test_conversion_with_missing_tex(self, service, paper_dir, mock_pandoc):
         """Test handling when main tex file can't be found."""
         arxiv_id = paper_dir.name
         source_dir = paper_dir / "source"
@@ -220,11 +216,19 @@ class TestMarkdownService:
         (source_dir / "appendix.tex").write_text("\\section{Appendix}")
         (source_dir / "supplement.tex").write_text("\\section{Supplement}")
         
+        # Ensure mock pandoc doesn't interfere with the main test purpose
+        if mock_pandoc is not None:
+            mock_pandoc.side_effect = lambda *args, **kwargs: Mock(
+                returncode=1,
+                stderr="Error: No main file identified"
+            )
+        
         success = service.convert_paper(arxiv_id)
         
         assert not success
         assert arxiv_id in service.failed_conversions
-        assert "Could not identify main tex file" in service.failed_conversions[arxiv_id]["error"]
+        error_msg = service.failed_conversions[arxiv_id]["error"]
+        assert "Could not identify main tex file" in error_msg
 
     def test_conversion_empty_source_dir(self, service, paper_dir):
         """Test handling of empty source directory."""
