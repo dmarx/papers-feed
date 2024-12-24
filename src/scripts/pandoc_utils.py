@@ -189,7 +189,7 @@ header-includes:
         
         return cmd
     
-    def convert_tex_to_markdown(self, tex_file: Path, output_file: Optional[Path] = None):
+    def convert_tex_to_markdown(self, tex_file: Path, output_file: Optional[Path] = None) -> bool:
         """
         Convert a LaTeX file to Markdown using Pandoc.
         
@@ -197,9 +197,8 @@ header-includes:
             tex_file: Path to LaTeX file
             output_file: Optional output path, defaults to same name with .md extension
             
-        Raises:
-            FileNotFoundError: If input file or required config files are missing
-            RuntimeError: If pandoc conversion fails
+        Returns:
+            bool: True if conversion successful
         """
         try:
             if not tex_file.exists():
@@ -242,10 +241,14 @@ header-includes:
                     raise RuntimeError(f"Output file not created or empty: {output_file}")
                     
                 logger.success(f"Successfully converted {tex_file} to {output_file}")
-                    
+                return True
+                
         except Exception as e:
-            logger.error(f"Error converting {tex_file} to Markdown: {e}")
-            raise
+            error_msg = str(e)
+            logger.error(f"Error converting {tex_file} to Markdown: {error_msg}")
+            if 'Not a main TeX file' in error_msg:
+                return False  # Special case for non-main tex files
+            raise  # Re-raise all other errors
 
 def create_default_config(paper_dir: Path) -> PandocConfig:
     """Create default Pandoc configuration for a paper directory."""
