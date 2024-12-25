@@ -27,27 +27,36 @@ def truncate_text(text: str, max_length: int = 300) -> str:
         return text
     return f"{text[:max_length-3]}..."
 
-def parse_datetime(date_str: str | None) -> datetime | None:
-    """Parse datetime string to datetime object."""
+def normalize_datetime(date_str: str | None) -> datetime | None:
+    """Parse datetime string to UTC datetime and strip timezone info."""
     if not date_str:
         return None
     try:
-        return datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+        # Replace Z with +00:00 for consistent timezone handling
+        dt = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+        # Convert to UTC if timezone aware
+        if dt.tzinfo is not None:
+            dt = dt.astimezone().replace(tzinfo=None)
+        return dt
     except (ValueError, AttributeError):
         return None
 
 def get_last_visited(paper: Dict[str, Any]) -> str:
     """Compute the most recent interaction time for a paper."""
-    last_read = parse_datetime(paper.get('last_read'))
-    last_visited = parse_datetime(paper.get('last_visited'))
+    last_read = normalize_datetime(paper.get('last_read'))
+    last_visited = normalize_datetime(paper.get('last_visited'))
     
+    # Compare only if both exist
     if last_read and last_visited:
-        return max(last_read, last_visited).isoformat()
+        latest = max(last_read, last_visited)
     elif last_read:
-        return last_read.isoformat()
+        latest = last_read
     elif last_visited:
-        return last_visited.isoformat()
-    return ''
+        latest = last_visited
+    else:
+        return ''
+    
+    return latest.isoformat()
 
 def preprocess_paper(paper: Dict[str, Any]) -> Dict[str, Any]:
     """Process a single paper entry."""
