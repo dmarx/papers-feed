@@ -120,7 +120,7 @@ class TestPaperManager:
         session_event = events[1]
         assert session_event["type"] == "reading_session"
         assert session_event["arxivId"] == sample_paper.arxiv_id
-        assert session_event["durationSeconds"] == 300
+        assert session_event["duration_seconds"] == 300
 
     def test_modified_files_tracking(self, manager, sample_paper):
         """Test tracking of modified files."""
