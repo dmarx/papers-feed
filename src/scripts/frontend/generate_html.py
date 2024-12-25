@@ -1,16 +1,35 @@
-# generate_html.py
+# src/scripts/frontend/generate_html.py
 import yaml
 import json
 from pathlib import Path
+import fire
+from typing import Optional
 
-def main():
+def generate_html(
+    data_path: str,
+    template_path: str,
+    output_path: str,
+) -> None:
+    """Generate HTML page from papers data and template.
+    
+    Args:
+        data_path: Path to papers YAML file
+        template_path: Path to HTML template file
+        output_path: Path where generated HTML should be written
+    """
+    # Convert all paths to Path objects
+    data_path = Path(data_path)
+    template_path = Path(template_path)
+    output_path = Path(output_path)
+
+    # Create output directory if it doesn't exist
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    
     # Read the papers YAML
-    papers_path = Path('data/papers.yaml')
-    with open(papers_path, 'r', encoding='utf-8') as f:
+    with open(data_path, 'r', encoding='utf-8') as f:
         papers = yaml.safe_load(f)
     
     # Read the template
-    template_path = Path('index.template.html')
     with open(template_path, 'r', encoding='utf-8') as f:
         template = f.read()
     
@@ -24,9 +43,8 @@ def main():
     )
     
     # Write the final HTML
-    output_path = Path('index.html')
     with open(output_path, 'w', encoding='utf-8') as f:
         f.write(html)
 
 if __name__ == '__main__':
-    main()
+    fire.Fire(generate_html)
