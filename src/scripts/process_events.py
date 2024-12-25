@@ -53,13 +53,14 @@ class EventProcessor:
             session_data = json.loads(issue_data["body"])
             arxiv_id = session_data.get("arxivId")
             duration_seconds = session_data.get("duration_seconds")
+            timestamp = session_data.get("timestamp")
             
-            if not arxiv_id or not duration_seconds:
+            if not all([arxiv_id, duration_seconds, timestamp]):
                 raise ValueError("Missing required fields in session data")
 
             event = ReadingSession(
                 arxivId=arxiv_id,
-                timestamp=datetime.utcnow().isoformat(),
+                timestamp=timestamp,  # Use original timestamp from the event
                 duration_seconds=duration_seconds,
                 issue_url=issue_data["html_url"]
             )

@@ -21,10 +21,11 @@ class Paper(BaseModel):
 class ReadingSession(BaseModel):
     """Schema for reading session events"""
     type: str = "reading_session"
-    arxiv_id: str = Field(..., alias="arxivId")
-    timestamp: str
+    arxiv_id: str = Field(..., alias="arxivId") 
+    timestamp: str = Field(..., description="Original timestamp when reading occurred")
     duration_seconds: int
     issue_url: str
+    processed_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
 
 class PaperRegistrationEvent(BaseModel):
     """Schema for paper registration events"""
