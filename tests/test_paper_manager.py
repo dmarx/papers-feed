@@ -109,9 +109,18 @@ class TestPaperManager:
         
         # Read and verify event content
         events = [json.loads(line) for line in events_file.read_text().splitlines() if line.strip()]
-        event_data = events[0]  # Get first event
-        assert event_data["arxiv_id"] == sample_paper.arxiv_id
-        assert event_data["duration_seconds"] == 300
+        assert len(events) == 2  # Should have registration and reading session events
+        
+        # Verify registration event
+        reg_event = events[0]
+        assert reg_event["type"] == "paper_registered"
+        assert reg_event["arxiv_id"] == sample_paper.arxiv_id
+        
+        # Verify reading session event
+        session_event = events[1]
+        assert session_event["type"] == "reading_session"
+        assert session_event["arxivId"] == sample_paper.arxiv_id
+        assert session_event["durationSeconds"] == 300
 
     def test_modified_files_tracking(self, manager, sample_paper):
         """Test tracking of modified files."""
