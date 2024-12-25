@@ -2,10 +2,10 @@
 import json
 from pathlib import Path
 from loguru import logger
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
-from .models import Paper, ReadingSession, PaperRegistrationEvent
+from .models import Paper, ReadingSession, PaperVisitEvent
 from .arxiv_client import ArxivClient
 
 class PaperManager:
@@ -46,10 +46,10 @@ class PaperManager:
             paper_dir.mkdir(parents=True)
             self.save_metadata(paper)
 
-            # Record registration event
-            event = PaperRegistrationEvent(
-                timestamp=datetime.utcnow().isoformat(),
-                issue_url="",
+            # Record visit event with paper's timestamp or current time
+            event = PaperVisitEvent(
+                timestamp=paper.created_at,  # Use paper's creation timestamp
+                issue_url=paper.issue_url,
                 arxiv_id=paper.arxiv_id
             )
             self.append_event(paper.arxiv_id, event)
@@ -82,7 +82,7 @@ class PaperManager:
         with metadata_file.open('r') as f:
             return Paper.model_validate_json(f.read())
 
-    def append_event(self, arxiv_id: str, event: PaperRegistrationEvent | ReadingSession) -> None:
+    def append_event(self, arxiv_id: str, event: PaperVisitEvent | ReadingSession) -> None:
         """Append event to paper's event log."""
         paper_dir = self.data_dir / arxiv_id
         paper_dir.mkdir(parents=True, exist_ok=True)

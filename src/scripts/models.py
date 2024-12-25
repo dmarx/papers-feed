@@ -1,4 +1,5 @@
 from pydantic import BaseModel, Field
+from datetime import datetime, timezone
 
 class Paper(BaseModel):
     """Schema for paper metadata"""
@@ -14,6 +15,7 @@ class Paper(BaseModel):
     labels: list[str]
     total_reading_time_seconds: int = 0
     last_read: str | None = None
+    last_visited: str | None = None
 
     class Config:
         populate_by_name = True
@@ -21,14 +23,15 @@ class Paper(BaseModel):
 class ReadingSession(BaseModel):
     """Schema for reading session events"""
     type: str = "reading_session"
-    arxiv_id: str = Field(..., alias="arxivId")
-    timestamp: str
+    arxiv_id: str = Field(..., alias="arxivId") 
+    timestamp: str = Field(..., description="Original timestamp when reading occurred")
     duration_seconds: int
     issue_url: str
+    processed_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
-class PaperRegistrationEvent(BaseModel):
-    """Schema for paper registration events"""
-    type: str = "paper_registered"
-    timestamp: str
+class PaperVisitEvent(BaseModel):
+    """Schema for paper visit events"""
+    type: str = "paper_visit" 
+    timestamp: str = Field(..., description="Original timestamp when visit occurred")
     issue_url: str
     arxiv_id: str

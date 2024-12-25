@@ -8,7 +8,7 @@ from unittest.mock import patch, AsyncMock
 from loguru import logger
 
 from scripts.process_events import EventProcessor
-from scripts.models import ReadingSession, PaperRegistrationEvent
+from scripts.models import ReadingSession, PaperVisitEvent
 
 @pytest.fixture
 def event_processor(tmp_path):

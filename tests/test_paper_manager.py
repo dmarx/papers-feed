@@ -5,7 +5,7 @@ from datetime import datetime
 from unittest.mock import Mock, patch
 
 from scripts.paper_manager import PaperManager
-from scripts.models import Paper, ReadingSession, PaperRegistrationEvent
+from scripts.models import Paper, ReadingSession, PaperVisitEvent
 from scripts.arxiv_client import ArxivClient
 
 @pytest.fixture
@@ -111,10 +111,10 @@ class TestPaperManager:
         events = [json.loads(line) for line in events_file.read_text().splitlines() if line.strip()]
         assert len(events) == 2  # Should have registration and reading session events
         
-        # Verify registration event
-        reg_event = events[0]
-        assert reg_event["type"] == "paper_registered"
-        assert reg_event["arxiv_id"] == sample_paper.arxiv_id
+        # Verify visit event
+        visit_event = events[0]
+        assert visit_event["type"] == "paper_visit"
+        assert visit_event["arxiv_id"] == sample_paper.arxiv_id
         
         # Verify reading session event
         session_event = events[1]

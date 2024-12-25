@@ -2,7 +2,7 @@
 """Service for managing markdown conversions of arXiv papers."""
 
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from loguru import logger
 
@@ -48,7 +48,7 @@ class MarkdownService:
     def _record_failure(self, arxiv_id: str, error: str):
         """Record a conversion failure with timestamp."""
         self.failed_conversions[arxiv_id] = {
-            "last_attempt": datetime.utcnow().isoformat(),
+            "last_attempt": datetime.now(timezone.utc).isoformat(),
             "error": str(error)
         }
         self._save_failed_conversions()
@@ -76,7 +76,7 @@ class MarkdownService:
         last_attempt = datetime.fromisoformat(
             self.failed_conversions[arxiv_id]["last_attempt"]
         )
-        retry_threshold = datetime.utcnow() - timedelta(hours=retry_after_hours)
+        retry_threshold = datetime.now(timezone.utc) - timedelta(hours=retry_after_hours)
         return last_attempt < retry_threshold
     
     def convert_paper(self, arxiv_id: str, force: bool = False) -> bool:

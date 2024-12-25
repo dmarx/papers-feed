@@ -3,11 +3,11 @@ import os
 import json
 import yaml
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from loguru import logger
 from typing import Optional, List, Dict, Any
 
-from .models import Paper, ReadingSession
+from .models import Paper, ReadingSession, PaperVisitEvent
 from .paper_manager import PaperManager
 from .github_client import GithubClient
 from llamero.utils import commit_and_push
@@ -34,12 +34,24 @@ class EventProcessor:
             if not arxiv_id:
                 raise ValueError("No arXiv ID found in metadata")
 
+            # Create visit event using original timestamp
+            timestamp = paper_data.get("timestamp", datetime.now(timezone.utc).isoformat())
+            event = PaperVisitEvent(
+                arxiv_id=arxiv_id,
+                timestamp=timestamp,
+                issue_url=issue_data["html_url"]
+            )
+            
+            # Update paper metadata
             paper = self.paper_manager.get_or_create_paper(arxiv_id)
             paper.issue_number = issue_data["number"]
             paper.issue_url = issue_data["html_url"]
             paper.labels = [label["name"] for label in issue_data["labels"]]
+            paper.last_visited = timestamp
             
+            # Save both metadata and event
             self.paper_manager.save_metadata(paper)
+            self.paper_manager.append_event(arxiv_id, event)
             self.processed_issues.append(issue_data["number"])
             return True
 
@@ -53,16 +65,25 @@ class EventProcessor:
             session_data = json.loads(issue_data["body"])
             arxiv_id = session_data.get("arxivId")
             duration_seconds = session_data.get("duration_seconds")
+            timestamp = session_data.get("timestamp")
             
-            if not arxiv_id or not duration_seconds:
+            if not all([arxiv_id, duration_seconds, timestamp]):
                 raise ValueError("Missing required fields in session data")
 
             event = ReadingSession(
                 arxivId=arxiv_id,
-                timestamp=datetime.utcnow().isoformat(),
+                timestamp=timestamp,  # Use original timestamp from the event
                 duration_seconds=duration_seconds,
                 issue_url=issue_data["html_url"]
             )
+            
+            # Calculate visit end time by adding duration to timestamp
+            visit_time = datetime.fromisoformat(timestamp)
+            visit_end = visit_time + timedelta(seconds=duration_seconds)
+            
+            paper = self.paper_manager.get_or_create_paper(arxiv_id)
+            paper.last_visited = visit_end.isoformat()
+            self.paper_manager.save_metadata(paper)
             
             self.paper_manager.update_reading_time(arxiv_id, duration_seconds)
             self.paper_manager.append_event(arxiv_id, event)
