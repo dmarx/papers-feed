@@ -1,0 +1,54 @@
+\section{Low-precision and its trade-offs} \label{app:low_precision_and_its_trade_offs}
+
+\paragraph{Number formats for deep learning}
+
+The standard numerical representations used in deep learning are the set of formats defined by the IEEE 754 floating-point standard~\citep{IEEE_754}. IEEE floats comprise three elements: a sign bit, exponent bits, and mantissa bits. The number of exponent bits determines the \textit{range} of a format, while the mantissa determines the \textit{precision}\footnotemark.
+% There are a number of bit-strings reserved for special values, including subnormal numbers which extend the range of a format to smaller absolute values, albeit with a loss of precision.
+We refer readers to the original Unit Scaling paper (\citep{Unit_Scaling}, Section 3.1) for a comprehensive overview of floating-point representations.
+
+\footnotetext{Confusingly, the term \textit{low-precision} tends to indicate using <32 bit-width formats, so in this context \textit{precision} also reflects the number of exponent bits as well as the usual mantissa bits.}
+
+The default format used for training is the single-precision floating-point format, commonly known as FP32, with some hardware providers automatically casting it to the smaller TF32 compute mode for accelerated arithmetic. The 16-bit FP16 and BF16 formats were later introduced, and more recently the FP8 E5 \& E4 formats \citep{HFP8, 8_Bit_Numerical_Formats, FP8_Formats}. The higher range of E5 has typically been used for gradients, while the higher precision of E4 has been seen as necessary for weights and activations. Our particular implementation of FP8 training is covered in \Cref{app:fp8_scheme}. Other aspects of training such as the optimizer state and cross-device communication have also been put into FP8 \citep{FP8-LM}, though not all tensors are amenable to being run in the lowest precision \citep{LLM_INT8} without degradation. The use of multiple formats is known as \textit{mixed precision} \citep{Mixed_Precision}. A comparison of these formats is given in \Cref{table:formats}.
+
+\begin{table*}[ht]
+  \centering
+  \caption{A comparison of deep learning formats. E indicates exponent bits, and M mantissa bits. The smaller formats typically give more FLOPS, at the expense of reduced range and/or precision.}
+  \label{table:formats}
+  \begin{tabular}{lcccccc}
+      \toprule
+      Format & E & M & | max | & | min normal | & | min subnormal | & FLOPS (vs TF32)
+      \\
+      \midrule
+      FP32 & 8 & 23 & $3.4 \times 10^{38}$ & $1.2 \times 10^{-38}$ & $1.4 \times 10^{-45}$ & $< 1 \times \hphantom{<}$
+      \\
+      TF32 & 8 & 10 & $3.4 \times 10^{38}$ & $1.2 \times 10^{-38}$ & $1.1 \times 10^{-41}$ & $1 \times$
+      \\
+      BF16 & 8 & 7 & $3.4 \times 10^{38}$ & $1.2 \times 10^{-38}$ & $9.2 \times 10^{-41}$ & $2 \times$
+      \\
+      FP16 & 5 & 10 & $65504$ & $6.1 \times 10^{-5\hphantom{0}}$ & $6.0 \times 10^{-8\hphantom{0}}$ & $2 \times$
+      \\
+      FP8 E5 & 5 & 2 & $57344$ & $6.1 \times 10^{-5\hphantom{0}}$ & $1.5 \times 10^{-5\hphantom{0}}$ & $4 \times$
+      \\
+      FP8 E4 & 4 & 3 & $448$ & $1.6 \times 10^{-2\hphantom{0}}$ & $2.0 \times 10^{-3\hphantom{0}}$ & $4 \times$
+      \\
+      \bottomrule
+  \end{tabular}
+\end{table*}
+
+\paragraph{The benefits of low-precision}
+
+Using numerical representations with fewer bits facilitates the design of more efficient arithmetic in hardware, typically leading to a linear increase in peak FLOPS (as shown in \Cref{table:formats}). As large-scale training efforts are typically compute-bound due to the size of matmuls \citep{Megatron-LM_Cluster}, putting the inputs to these operations in low-precision formats has a substantial impact on training efficiency. Low-precision formats also reduce the other two common performance constraints: for memory-bandwidth-bound models they require fewer bits to be transmitted, and for memory-size-bound models they require fewer bits to be stored.
+
+\paragraph{The challenges of low-precision}
+
+Unfortunately, moving to low-precision formats also increases \textit{quantization error}. For values within the representable range this takes the form of \textit{rounding error}, and for values outside it, \textit{clipping error} (both overflow and underflow). Rounding error tends to be an intrinsic problem: the number of mantissa bits dictates the expected accuracy of representations and this cannot easily be changed. In contrast, clipping error is often eliminated by scaling a tensor so that its values lie within the range of a format. Note that a multiplicative change in values of this kind doesn't affect the (relative) rounding error, due to the exponential spacing of values. Most research into making low-precision work has focused on the problem of scaling tensors in this way.
+
+Simply casting all tensors to FP16 or FP8 tends to impair training, largely due to clipping error. For FP16, this primarily affects gradients. \citep{Mixed_Precision} address this by introducing a fixed global \textit{loss-scale} HP, which multiplies the loss value in the backward pass, artificially up-scaling gradients to lie within FP16 range \citep{Mixed_Precision}. \textit{Automatic loss scaling} \citep{OpenSeq2Seq} builds upon this idea, making the loss-scale a dynamic value that is tuned during training.
+
+The later BF16 format has the same range as FP32, making loss scaling unnecessary. For FP8 no such range-equivalent format can exist, so the problem of clipping error must be addressed. Most FP8 implementations have done so by moving from a global loss-scale to a local scale for each FP8 tensor. In pseudo-code, this takes the form:
+
+\codefig{scaled_matmul.py}
+
+where we assume that \texttt{matmul} takes inputs in FP8 and directly produces the output in higher precision.
+
+The result of the \texttt{scale()} operation can either be a fixed scale determined before training \citep{8_Bit_Numerical_Formats}, or in the case of Transformer Engine \citep{FP8_Transformer_Engine}, computed dynamically as a function of the `absmax' of the input tensor (though they introduce a delay across time-steps, to facilitate an efficient fused kernel). Increasing granularity and computing scales dynamically using this kind of method inevitably adds complexity (from both a logical and implementation perspective), as well the potential for computational overhead. Unit Scaling generally avoids the need for matmul input scaling.

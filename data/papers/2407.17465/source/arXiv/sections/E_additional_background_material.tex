@@ -1,0 +1,80 @@
+\section{Additional background material}
+
+\subsection{The Maximal Update Parametrization} \label{app:additional_background:mup}
+
+\paragraph{Theoretical background} We do not cover the theory underpinning \mup\ in this paper, presenting only its resulting scaling rules (\Cref{table:mup}). For readers interested in this theory, the extensive Tensor Programs series \citep{Tensor_Programs_I, Tensor_Programs_II, Tensor_Programs_IIb, Tensor_Programs_III, Tensor_Programs_IVb} builds up a framework from which \mup\ is derived \citep{Tensor_Programs_IV}. For those requiring a more accessible introduction, \citep{Spectral_Condition} show that \mup\ can be derived in a simpler and more general way by placing a spectral scaling condition on the norm of weights and their updates.
+
+\paragraph{Approaches to HP sweeping in the literature}
+
+\Cref{table:mup_hps} outlines the ways in which users of \mup\ in the literature have approached HP sweeping. These all follow the approach used in Tensor Programs V of a random sweep, sampling combinations from the joint space of all HPs. The authors of Tensor Programs V note that other more complex methods may be more efficient, but these are considered beyond the scope of their work and have not been used widely. A Bayesian search method was used for the development of MiniCPM~\citep{MiniCPM}, but the authors give no further details---as they use 400 runs in their sweep it is not clear that this approach makes HP search easier.
+
+\begin{table}[h]
+  \centering
+  \caption{Sweeping configurations used for a selection of \mup\ models from the literature.
+  % Differences in approaches are seldom justified, even the set of swept HPs.
+  The sweeping process is similar across models, the only differences being the choice of discrete or continuous distributions and their ranges.}
+  \label{table:mup_hps}
+  \begin{tabular}{cccccl}
+      \toprule
+      Model & \thead{proxy/target\\tokens used} & \thead{proxy/target\\model size} & \thead{sweep\\size} & \thead{base\\width} & \thead{HPs swept}
+      \\
+      \midrule
+      T.P.V WMT14~\citep{Tensor_Programs_V} & 100\% & 7.1\% & 64 & \multirow{3}{*}{?} & $\eta, \alpha_\textrm{out}, \alpha_\textrm{attn}$
+      \\
+      T.P.V $\text{BERT}_\text{large}$~\citep{Tensor_Programs_V} & 10\% & 3.7\% & 256 & & $\eta, \eta_\textrm{emb}, \alpha_\textrm{out}, \alpha_\textrm{attn}, \alpha_\textrm{LN}, \alpha_\textrm{bias}$
+      \\
+      T.P.V GPT-3~\citep{Tensor_Programs_V} & 1.3\% & 0.6\% & 350 & & $\eta, \sigma, \alpha_\textrm{emb}, \alpha_\textrm{out}, \alpha_\textrm{attn}, \alpha_\textrm{pos}$
+      \\
+      MiniCPM~\citep{MiniCPM} & 0.008\% & 0.45\% & 400 & 256 & $\eta, \sigma, \alpha_\textrm{emb}, \alpha_\textrm{residual}$
+      \\
+      Cerebras-GPT~\citep{Cerebras_GPT} & 1.1\% & 1.5\% & 200 & 256 & $\eta, \sigma, \alpha_\textrm{emb}$
+      \\
+      S\mup ar~\citep{Supar} & 6.6\% & 6.4\% & 350 & 256 & $\eta, \sigma, \alpha_\textrm{emb}$
+      \\
+      \bottomrule
+  \end{tabular}
+\end{table}
+
+\FloatBarrier
+
+\subsection{Unit Scaling} \label{app:additional_background:us}
+
+\paragraph{An example: the unit-scaled matmul op} Here we outline the procedure for calculating the scaling factor of a matmul op, which practitioners can use as a guide for scaling new ops that we do not cover in this paper (see \Cref{app:additional_unit_scaled_ops}).
+
+There are two potential approaches here. The first is to derive scaling factors from an analysis of an op's dynamics. Specifically, given the assumption of unit-scaled inputs, the appropriate scaling factor is the reciprocal of the expected output scale. For a basic matrix-matrix matmul we have,
+\begin{align*}
+    &\operatorname{matmul}(X, W) = XW, \quad\quad X \in \mathbb{R}^{d_\mathrm{batch} \times d_\fanin},\; W \in \mathbb{R}^{d_\fanin \times d_\fanout},
+\end{align*}
+where weights and activations are sampled i.i.d. from a centered Gaussian:
+\begin{align*}
+    X_{ij} \sim \mathcal{N}(0, \sigma_X^2), \; W_{jk} \sim \mathcal{N}(0, \sigma_W^2).
+\end{align*}
+From this we can derive the expected output scale (i.e. $\sigma(\operatorname{matmul})$):
+\begin{align*}
+    \operatorname{matmul}(X, W)_{ik} = \sum_{j=1}^{d_\fanin} X_{ij}W_{jk},
+    \\
+    \sigma\left(\operatorname{matmul}(X, W)_{ik} \right) = \sqrt{d_\fanin} \, \sigma_W \, \sigma_X.
+\end{align*}
+Under Unit Scaling we have $\sigma_W = \sigma_X = 1$, and hence the scaling factor required to ensure a unit-scaled output is $1/\sqrt{d_\fanin}$. This gives our final unit-scaled matmul:
+\begin{align*}
+    &\operatorname{u-matmul}(X, W) = \operatorname{matmul}(X, W) / \sqrt{d_\fanin}
+\end{align*}
+
+The distributional assumptions made here hold at initialization, but do not over training. A more precise model for the asymptotic behavior of neural networks under training is given by the Tensor Programs framework, but for the purposes of numerics this precise treatment of scale at initialization appears to be sufficient.
+
+The second, less ideal approach to calculating scaling factors is to use experimentation to infer this relationship empirically. In this case, one would sample random initializations and compute the output scale over a range of $d_\fanin$ values (or whatever HPs one expects the output scale to depend on), fitting a curve to the observed data.
+
+\paragraph{Applying unit scaling} 
+
+To apply Unit Scaling to a model and train in low-precision, the following steps are required:
+
+\begin{enumerate}
+    \item Scale parameter initializations to have zero-mean and unit variance.
+    \item Replace operations with their unit-scaled equivalents (including and especially the loss, matmuls and residual-adds).
+    \item \textit{Constrain} the scales of operations which are required to have the same forward and backward factors.
+    \item Place a simple \texttt{.to(fp8)} cast on the inputs to matmuls.
+\end{enumerate}
+
+Step 3 relates to the problem of conflicting scales in the forward and backward passes. A single linear layer in a differentiated model requires 3 matmul ops in the forward and backward passes, each requiring a different scaling factor ($\frac{1}{\sqrt{d_\fanin}}, \frac{1}{\sqrt{d_\fanout}}, \frac{1}{\sqrt{d_\batchsize}}$). However, using these directly would give invalid gradients. The compromise here is that the activations and activation gradients have their scaling factors \textit{constrained} such that they are equal (the original Unit Scaling paper recommends taking the geometric mean; we modify this for \umup\ in \Cref{app:additional_unit_scaled_ops} to simply use the forward scale everywhere). Weight gradients can still be given their own scaling factor due to the \textit{cut-edge rule} (as explained in \Cref{app:cut_edge_rule}).
+
+Step 4 reflects the key benefit of Unit Scaling. Unlike other methods it changes the learning dynamics of a model, but the advantage is that unit-scaled models then `naturally' generate well-scaled tensors. This means that low-precision arithmetic ideally becomes as simple as placing a cast operation before matmuls as outlined.
