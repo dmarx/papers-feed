@@ -66,6 +66,8 @@ class TestPaperManager:
                 authors="New Author",
                 abstract="New Abstract",
                 url=f"https://arxiv.org/abs/{arxiv_id}",
+                issue_number=1,
+                issue_url="https://github.com/user/repo/issues/1",
                 created_at=datetime.utcnow().isoformat(),
                 state="open",
                 labels=[],
@@ -106,7 +108,8 @@ class TestPaperManager:
         assert events_file.exists()
         
         # Read and verify event content
-        event_data = json.loads(events_file.read_text().strip())
+        events = [json.loads(line) for line in events_file.read_text().splitlines() if line.strip()]
+        event_data = events[0]  # Get first event
         assert event_data["arxiv_id"] == sample_paper.arxiv_id
         assert event_data["duration_seconds"] == 300
 
