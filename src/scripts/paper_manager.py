@@ -2,7 +2,7 @@
 import json
 from pathlib import Path
 from loguru import logger
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from .models import Paper, ReadingSession, PaperVisitEvent
