@@ -5,7 +5,7 @@ from loguru import logger
 from datetime import datetime
 from typing import Optional
 
-from .models import Paper, ReadingSession, PaperRegistrationEvent
+from .models import Paper, ReadingSession, PaperVisitEvent
 from .arxiv_client import ArxivClient
 
 class PaperManager:
@@ -82,7 +82,7 @@ class PaperManager:
         with metadata_file.open('r') as f:
             return Paper.model_validate_json(f.read())
 
-    def append_event(self, arxiv_id: str, event: PaperRegistrationEvent | ReadingSession) -> None:
+    def append_event(self, arxiv_id: str, event: PaperVisitEvent | ReadingSession) -> None:
         """Append event to paper's event log."""
         paper_dir = self.data_dir / arxiv_id
         paper_dir.mkdir(parents=True, exist_ok=True)

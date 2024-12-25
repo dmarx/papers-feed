@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from loguru import logger
 from typing import Optional, List, Dict, Any
 
-from .models import Paper, ReadingSession
+from .models import Paper, ReadingSession, PaperVisitEvent
 from .paper_manager import PaperManager
 from .github_client import GithubClient
 from llamero.utils import commit_and_push
@@ -34,13 +34,24 @@ class EventProcessor:
             if not arxiv_id:
                 raise ValueError("No arXiv ID found in metadata")
 
+            # Create visit event using original timestamp
+            timestamp = paper_data.get("timestamp", datetime.now(timezone.utc).isoformat())
+            event = PaperVisitEvent(
+                arxiv_id=arxiv_id,
+                timestamp=timestamp,
+                issue_url=issue_data["html_url"]
+            )
+            
+            # Update paper metadata
             paper = self.paper_manager.get_or_create_paper(arxiv_id)
             paper.issue_number = issue_data["number"]
             paper.issue_url = issue_data["html_url"]
             paper.labels = [label["name"] for label in issue_data["labels"]]
-            paper.last_visited = paper_data.get("timestamp", datetime.now(timezone.utc).isoformat())
+            paper.last_visited = timestamp
             
+            # Save both metadata and event
             self.paper_manager.save_metadata(paper)
+            self.paper_manager.append_event(arxiv_id, event)
             self.processed_issues.append(issue_data["number"])
             return True
 

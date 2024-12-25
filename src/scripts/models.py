@@ -29,9 +29,9 @@ class ReadingSession(BaseModel):
     issue_url: str
     processed_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
-class PaperRegistrationEvent(BaseModel):
-    """Schema for paper registration events"""
-    type: str = "paper_registered"
-    timestamp: str
+class PaperVisitEvent(BaseModel):
+    """Schema for paper visit events"""
+    type: str = "paper_visit" 
+    timestamp: str = Field(..., description="Original timestamp when visit occurred")
     issue_url: str
     arxiv_id: str
