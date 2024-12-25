@@ -23,7 +23,7 @@ class ReadingSession(BaseModel):
     type: str = "reading_session"
     arxiv_id: str = Field(..., alias="arxivId")
     timestamp: str
-    duration_seconds: int
+    duration_seconds: int = Field(..., alias="durationSeconds")
     issue_url: str
 
 class PaperRegistrationEvent(BaseModel):
