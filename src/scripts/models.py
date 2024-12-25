@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-import datetime
+from datetime import datetime, timezone
 
 class Paper(BaseModel):
     """Schema for paper metadata"""
@@ -27,7 +27,7 @@ class ReadingSession(BaseModel):
     timestamp: str = Field(..., description="Original timestamp when reading occurred")
     duration_seconds: int
     issue_url: str
-    processed_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    processed_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 class PaperRegistrationEvent(BaseModel):
     """Schema for paper registration events"""

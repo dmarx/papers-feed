@@ -3,7 +3,7 @@ import os
 import json
 import yaml
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from loguru import logger
 from typing import Optional, List, Dict, Any
 
@@ -38,7 +38,7 @@ class EventProcessor:
             paper.issue_number = issue_data["number"]
             paper.issue_url = issue_data["html_url"]
             paper.labels = [label["name"] for label in issue_data["labels"]]
-            paper.last_visited = paper_data.get("timestamp", datetime.utcnow().isoformat())
+            paper.last_visited = paper_data.get("timestamp", datetime.now(timezone.utc).isoformat())
             
             self.paper_manager.save_metadata(paper)
             self.processed_issues.append(issue_data["number"])
