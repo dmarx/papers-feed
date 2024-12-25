@@ -3,7 +3,7 @@ import yaml
 import json
 from pathlib import Path
 import fire
-from typing import Optional, Dict, Any
+from typing import Dict, Any
 from datetime import datetime
 
 def format_authors(authors: str | list[str]) -> str:
@@ -27,6 +27,28 @@ def truncate_text(text: str, max_length: int = 300) -> str:
         return text
     return f"{text[:max_length-3]}..."
 
+def parse_datetime(date_str: str | None) -> datetime | None:
+    """Parse datetime string to datetime object."""
+    if not date_str:
+        return None
+    try:
+        return datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+    except (ValueError, AttributeError):
+        return None
+
+def get_last_visited(paper: Dict[str, Any]) -> str:
+    """Compute the most recent interaction time for a paper."""
+    last_read = parse_datetime(paper.get('last_read'))
+    last_visited = parse_datetime(paper.get('last_visited'))
+    
+    if last_read and last_visited:
+        return max(last_read, last_visited).isoformat()
+    elif last_read:
+        return last_read.isoformat()
+    elif last_visited:
+        return last_visited.isoformat()
+    return ''
+
 def preprocess_paper(paper: Dict[str, Any]) -> Dict[str, Any]:
     """Process a single paper entry."""
     return {
@@ -36,22 +58,18 @@ def preprocess_paper(paper: Dict[str, Any]) -> Dict[str, Any]:
         'abstract': truncate_text(paper.get('abstract', '').replace('\n', ' ')),
         'url': paper.get('url', ''),
         'arxivId': paper.get('arxivId', ''),
-        'last_read': paper.get('last_read', ''),
+        'last_visited': get_last_visited(paper),
+        'last_read': paper.get('last_read', ''),  # Keep for "Read on" display
         'total_reading_time_seconds': paper.get('total_reading_time_seconds', 0)
     }
 
 def preprocess_papers(papers: Dict[str, Any]) -> Dict[str, Any]:
     """Process all papers and prepare them for display."""
-    # Filter for read papers and sort by last_read date
-    read_papers = {
-        id_: paper for id_, paper in papers.items()
-        if paper.get('last_read')
-    }
-    
-    # Process each paper
+    # Process all papers that have either last_read or last_visited
     processed_papers = {
         id_: preprocess_paper(paper)
-        for id_, paper in read_papers.items()
+        for id_, paper in papers.items()
+        if paper.get('last_read') or paper.get('last_visited')
     }
     
     return processed_papers
