@@ -38,6 +38,7 @@ class EventProcessor:
             paper.issue_number = issue_data["number"]
             paper.issue_url = issue_data["html_url"]
             paper.labels = [label["name"] for label in issue_data["labels"]]
+            paper.last_visited = paper_data.get("timestamp", datetime.utcnow().isoformat())
             
             self.paper_manager.save_metadata(paper)
             self.processed_issues.append(issue_data["number"])
@@ -64,6 +65,14 @@ class EventProcessor:
                 duration_seconds=duration_seconds,
                 issue_url=issue_data["html_url"]
             )
+            
+            # Calculate visit end time by adding duration to timestamp
+            visit_time = datetime.fromisoformat(timestamp)
+            visit_end = visit_time + timedelta(seconds=duration_seconds)
+            
+            paper = self.paper_manager.get_or_create_paper(arxiv_id)
+            paper.last_visited = visit_end.isoformat()
+            self.paper_manager.save_metadata(paper)
             
             self.paper_manager.update_reading_time(arxiv_id, duration_seconds)
             self.paper_manager.append_event(arxiv_id, event)

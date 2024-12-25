@@ -15,6 +15,7 @@ class Paper(BaseModel):
     labels: list[str]
     total_reading_time_seconds: int = 0
     last_read: str | None = None
+    last_visited: str | None = None
 
     class Config:
         populate_by_name = True
