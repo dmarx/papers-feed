@@ -46,9 +46,9 @@ class PaperManager:
             paper_dir.mkdir(parents=True)
             self.save_metadata(paper)
 
-            # Record registration event
-            event = PaperRegistrationEvent(
-                timestamp=datetime.utcnow().isoformat(),
+            # Record visit event
+            event = PaperVisitEvent(
+                timestamp=datetime.now(timezone.utc).isoformat(),
                 issue_url="",
                 arxiv_id=paper.arxiv_id
             )
