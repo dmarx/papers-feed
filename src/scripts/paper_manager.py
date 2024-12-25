@@ -97,7 +97,7 @@ class PaperManager:
 
     def update_reading_time(self, arxiv_id: str, duration_seconds: int) -> None:
         """Update paper's total reading time."""
-        paper = self.get_paper(arxiv_id)
+        paper = self.get_or_create_paper(arxiv_id)
         paper.total_reading_time_seconds += duration_seconds
         paper.last_read = datetime.utcnow().isoformat()
         self.save_metadata(paper)
