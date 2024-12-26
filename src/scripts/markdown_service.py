@@ -110,20 +110,37 @@ class MarkdownService:
             if not source_dir.exists():
                 raise FileNotFoundError(f"No source directory for {arxiv_id}")
             
-            # Use provided tex file or find main one
-            if tex_file is not None:
-                if not tex_file.exists():
-                    raise FileNotFoundError(f"Specified tex file does not exist: {tex_file}")
-                main_tex = tex_file
-            else:
-                # Find main tex file
-                tex_files = list(source_dir.rglob("*.tex"))
-                if not tex_files:
-                    raise FileNotFoundError(f"No .tex files found for {arxiv_id}")
-                
-                main_tex = find_main_tex_file(tex_files, arxiv_id)
-                if not main_tex:
-                    raise ValueError(f"Could not identify main tex file for {arxiv_id}")
+            # Check metadata for main_tex_file first
+            metadata_file = paper_dir / "metadata.json"
+            if metadata_file.exists():
+                import json
+                try:
+                    metadata = json.loads(metadata_file.read_text())
+                    if metadata.get('main_tex_file'):
+                        specified_tex = paper_dir / metadata['main_tex_file']
+                        if specified_tex.exists():
+                            main_tex = specified_tex
+                            logger.info(f"Using main_tex_file from metadata: {main_tex}")
+                        else:
+                            logger.warning(f"Specified main_tex_file does not exist: {specified_tex}")
+                except Exception as e:
+                    logger.warning(f"Error reading metadata.json: {e}")
+
+            # Fall back to provided tex_file or inference if needed
+            if not locals().get('main_tex'):
+                if tex_file is not None:
+                    if not tex_file.exists():
+                        raise FileNotFoundError(f"Specified tex file does not exist: {tex_file}")
+                    main_tex = tex_file
+                else:
+                    # Find main tex file
+                    tex_files = list(source_dir.rglob("*.tex"))
+                    if not tex_files:
+                        raise FileNotFoundError(f"No .tex files found for {arxiv_id}")
+                    
+                    main_tex = find_main_tex_file(tex_files, arxiv_id)
+                    if not main_tex:
+                        raise ValueError(f"Could not identify main tex file for {arxiv_id}")
             
             # Set up Pandoc conversion
             config = create_default_config(paper_dir)
