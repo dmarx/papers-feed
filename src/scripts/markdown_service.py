@@ -12,14 +12,16 @@ from .tex_utils import find_main_tex_file
 class MarkdownService:
     """Manages the conversion of LaTeX papers to Markdown format."""
     
-    def __init__(self, papers_dir: str | Path):
+    def __init__(self, papers_dir: str | Path, paper_manager=None):
         """
         Initialize MarkdownService.
         
         Args:
             papers_dir: Base directory for paper storage
+            paper_manager: Optional PaperManager instance
         """
         self.papers_dir = Path(papers_dir)
+        self.paper_manager = paper_manager
         self.failed_conversions_file = self.papers_dir / "failed_markdown.json"
         self._load_failed_conversions()
         
@@ -109,14 +111,27 @@ class MarkdownService:
             if not source_dir.exists():
                 raise FileNotFoundError(f"No source directory for {arxiv_id}")
             
-            # Find main tex file
-            tex_files = list(source_dir.rglob("*.tex"))
-            if not tex_files:
-                raise FileNotFoundError(f"No .tex files found for {arxiv_id}")
+            # Check if we have a recorded main tex file path
+            paper = self.paper_manager.get_paper(arxiv_id)
+            main_tex = None
+            if paper.main_tex_file:
+                main_tex_path = Path(paper.main_tex_file)
+                if main_tex_path.exists():
+                    main_tex = main_tex_path
+                    logger.info(f"Using recorded main tex file: {main_tex}")
             
-            main_tex = find_main_tex_file(tex_files, arxiv_id)
+            # If no valid recorded path, find main tex file
             if not main_tex:
-                raise ValueError(f"Could not identify main tex file for {arxiv_id}")
+                tex_files = list(source_dir.rglob("*.tex"))
+                if not tex_files:
+                    raise FileNotFoundError(f"No .tex files found for {arxiv_id}")
+                
+                main_tex = find_main_tex_file(tex_files, arxiv_id)
+                if not main_tex:
+                    raise ValueError(f"Could not identify main tex file for {arxiv_id}")
+                
+                # Record the identified main tex file
+                self.paper_manager.update_main_tex_file(arxiv_id, main_tex)
             
             # Set up Pandoc conversion
             config = create_default_config(paper_dir)
