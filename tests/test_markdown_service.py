@@ -1,5 +1,6 @@
 # tests/test_markdown_service.py
 import pytest
+import shutil
 from pathlib import Path
 from datetime import datetime, timedelta
 from unittest.mock import patch, MagicMock
