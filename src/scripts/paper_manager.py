@@ -125,7 +125,23 @@ class PaperManager:
         """Clear set of modified files."""
         self.modified_files.clear()
     def update_main_tex_file(self, arxiv_id: str, tex_file: Path) -> None:
-        """Update paper's main TeX file path."""
+        """
+        Update paper's main TeX file path and attempt markdown conversion.
+        
+        Args:
+            arxiv_id: Paper ID to update
+            tex_file: Path to main TeX file
+        """
         paper = self.get_paper(arxiv_id)
         paper.main_tex_file = str(tex_file)
         self.save_metadata(paper)
+        
+        # Check if markdown exists
+        paper_dir = self.data_dir / arxiv_id
+        markdown_file = paper_dir / f"{arxiv_id}.md"
+        
+        if not markdown_file.exists() or markdown_file.stat().st_size == 0:
+            # Attempt conversion with specified tex file
+            from .markdown_service import MarkdownService
+            service = MarkdownService(self.data_dir)
+            service.convert_paper(arxiv_id, force=True, tex_file=tex_file)

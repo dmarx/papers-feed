@@ -79,13 +79,14 @@ class MarkdownService:
         retry_threshold = datetime.now(timezone.utc) - timedelta(hours=retry_after_hours)
         return last_attempt < retry_threshold
     
-    def convert_paper(self, arxiv_id: str, force: bool = False) -> bool:
+    def convert_paper(self, arxiv_id: str, force: bool = False, tex_file: Optional[Path] = None) -> bool:
         """
         Convert a paper's LaTeX source to Markdown.
         
         Args:
             arxiv_id: Paper ID to convert
             force: Force conversion even if previously failed
+            tex_file: Optional specific tex file to use for conversion
         """
         try:
             # Check if we should skip conversion
@@ -109,14 +110,20 @@ class MarkdownService:
             if not source_dir.exists():
                 raise FileNotFoundError(f"No source directory for {arxiv_id}")
             
-            # Find main tex file
-            tex_files = list(source_dir.rglob("*.tex"))
-            if not tex_files:
-                raise FileNotFoundError(f"No .tex files found for {arxiv_id}")
-            
-            main_tex = find_main_tex_file(tex_files, arxiv_id)
-            if not main_tex:
-                raise ValueError(f"Could not identify main tex file for {arxiv_id}")
+            # Use provided tex file or find main one
+            if tex_file is not None:
+                if not tex_file.exists():
+                    raise FileNotFoundError(f"Specified tex file does not exist: {tex_file}")
+                main_tex = tex_file
+            else:
+                # Find main tex file
+                tex_files = list(source_dir.rglob("*.tex"))
+                if not tex_files:
+                    raise FileNotFoundError(f"No .tex files found for {arxiv_id}")
+                
+                main_tex = find_main_tex_file(tex_files, arxiv_id)
+                if not main_tex:
+                    raise ValueError(f"Could not identify main tex file for {arxiv_id}")
             
             # Set up Pandoc conversion
             config = create_default_config(paper_dir)
