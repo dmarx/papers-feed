@@ -144,3 +144,33 @@ class TestPaperManager:
         loaded = manager.load_metadata(sample_paper.arxiv_id)
         
         assert loaded.model_dump() == sample_paper.model_dump()
+    
+    def test_concurrent_event_writing(self, manager, sample_paper):
+        """Test concurrent writing of multiple events."""
+        manager.create_paper(sample_paper)
+        
+        # Create multiple events
+        events = [
+            ReadingSession(
+                arxivId=sample_paper.arxiv_id,
+                timestamp=f"2024-01-01T00:0{i}:00Z",
+                duration_seconds=30,
+                issue_url=f"https://example.com/{i}"
+            ) for i in range(10)
+        ]
+        
+        # Write events rapidly
+        for event in events:
+            manager.append_event(sample_paper.arxiv_id, event)
+        
+        # Verify integrity
+        events_file = manager.data_dir / sample_paper.arxiv_id / manager._event_log_fname
+        lines = events_file.read_text().splitlines()
+        assert len(lines) == len(events) + 1  # +1 for initial paper visit event
+        
+        # Verify each event was written correctly
+        for line in lines[1:]:  # Skip initial visit event
+            event_data = json.loads(line)
+            assert event_data["type"] == "reading_session"
+            assert event_data["duration_seconds"] == 30
+            assert event_data["arxiv_id"] == sample_paper.arxiv_id
