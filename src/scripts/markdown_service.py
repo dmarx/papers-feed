@@ -113,13 +113,17 @@ class MarkdownService:
                 raise FileNotFoundError(f"No source directory for {arxiv_id}")
             
             # Check if we have a recorded main tex file path
-            paper = self.paper_manager.get_paper(arxiv_id)
             main_tex = None
-            if paper.main_tex_file:
-                main_tex_path = Path(paper.main_tex_file)
-                if main_tex_path.exists():
-                    main_tex = main_tex_path
-                    logger.info(f"Using recorded main tex file: {main_tex}")
+            if self.paper_manager is not None:
+                try:
+                    paper = self.paper_manager.get_paper(arxiv_id)
+                    if paper.main_tex_file:
+                        main_tex_path = Path(paper.main_tex_file)
+                        if main_tex_path.exists():
+                            main_tex = main_tex_path
+                            logger.info(f"Using recorded main tex file: {main_tex}")
+                except Exception as e:
+                    logger.warning(f"Error getting paper metadata: {e}")
             
             # If no valid recorded path, find main tex file
             if not main_tex:
@@ -131,8 +135,12 @@ class MarkdownService:
                 if not main_tex:
                     raise ValueError(f"Could not identify main tex file for {arxiv_id}")
                 
-                # Record the identified main tex file
-                self.paper_manager.update_main_tex_file(arxiv_id, main_tex)
+                # Record the identified main tex file if we have a paper manager
+                if self.paper_manager is not None:
+                    try:
+                        self.paper_manager.update_main_tex_file(arxiv_id, main_tex)
+                    except Exception as e:
+                        logger.warning(f"Error updating main tex file: {e}")
             
             # Set up Pandoc conversion
             config = create_default_config(paper_dir)
