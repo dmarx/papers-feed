@@ -9,6 +9,14 @@ from scripts.paper_manager import PaperManager
 from scripts.models import Paper
 
 @pytest.fixture
+def paper_dir(test_dir):
+    """Create a paper directory."""
+    paper_dir = test_dir / "2401.00001"
+    if paper_dir.exists():
+        shutil.rmtree(paper_dir)
+    return paper_dir
+
+@pytest.fixture
 def service(test_dir, paper_manager):
     """Create MarkdownService instance with PaperManager."""
     return MarkdownService(test_dir, paper_manager)
