@@ -68,7 +68,7 @@ def mock_paper():
 def source_dir(paper_dir):
     """Create source directory with test TeX content."""
     source_dir = paper_dir / "source"
-    source_dir.mkdir()
+    source_dir.mkdir(parents=True)
     
     main_tex = source_dir / "main.tex"
     main_tex.write_text(r"""
