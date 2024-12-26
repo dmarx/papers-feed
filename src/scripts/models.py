@@ -16,6 +16,7 @@ class Paper(BaseModel):
     total_reading_time_seconds: int = 0
     last_read: str | None = None
     last_visited: str | None = None
+    main_tex_file: str | None = None  # Path to main TeX file used for conversion
 
     class Config:
         populate_by_name = True

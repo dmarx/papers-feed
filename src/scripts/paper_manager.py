@@ -68,6 +68,17 @@ class PaperManager:
         
         # Convert to dict and store
         data = paper.model_dump(by_alias=True)
+        # Ensure relative paths for main_tex_file
+        if data.get('main_tex_file'):
+            try:
+                # Convert to relative path from paper directory
+                full_path = Path(data['main_tex_file'])
+                rel_path = full_path.relative_to(paper_dir)
+                data['main_tex_file'] = str(rel_path)
+            except ValueError:
+                # If path is already relative or invalid, store as-is
+                pass
+                
         with metadata_file.open('w') as f:
             json.dump(data, f, indent=2)
         self.modified_files.add(str(metadata_file))
@@ -80,7 +91,11 @@ class PaperManager:
             raise FileNotFoundError(f"No metadata found for paper {arxiv_id}")
         
         with metadata_file.open('r') as f:
-            return Paper.model_validate_json(f.read())
+            data = json.load(f)
+            # Convert relative main_tex_file path to absolute if it exists
+            if data.get('main_tex_file'):
+                data['main_tex_file'] = str(paper_dir / data['main_tex_file'])
+            return Paper.model_validate(data)
 
     def append_event(self, arxiv_id: str, event: PaperVisitEvent | ReadingSession) -> None:
         """Append event to paper's event log."""
@@ -109,3 +124,8 @@ class PaperManager:
     def clear_modified_files(self) -> None:
         """Clear set of modified files."""
         self.modified_files.clear()
+    def update_main_tex_file(self, arxiv_id: str, tex_file: Path) -> None:
+        """Update paper's main TeX file path."""
+        paper = self.get_paper(arxiv_id)
+        paper.main_tex_file = str(tex_file)
+        self.save_metadata(paper)
