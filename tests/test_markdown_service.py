@@ -15,7 +15,6 @@ def paper_dir(test_dir):
     paper_dir = test_dir / "2401.00001"
     if paper_dir.exists():
         shutil.rmtree(paper_dir)
-    paper_dir.mkdir(parents=True)
     return paper_dir
 
 @pytest.fixture
@@ -43,10 +42,6 @@ def mock_paper():
 @pytest.fixture
 def service(test_dir, paper_manager):
     """Create MarkdownService instance with PaperManager."""
-    # Clean up any existing test data
-    test_papers_dir = test_dir / "2401.00001"
-    if test_papers_dir.exists():
-        shutil.rmtree(test_papers_dir)
     return MarkdownService(test_dir, paper_manager)
 
 class TestMarkdownService:
