@@ -1,5 +1,6 @@
 # tests/conftest.py
 import pytest
+import shutil
 from pathlib import Path
 from datetime import datetime
 from unittest.mock import Mock, patch
