@@ -8,17 +8,18 @@ from loguru import logger
 
 from .pandoc_utils import PandocConverter, create_default_config
 from .tex_utils import find_main_tex_file
+from .paper_manager import PaperManager
 
 class MarkdownService:
     """Manages the conversion of LaTeX papers to Markdown format."""
     
-    def __init__(self, papers_dir: str | Path, paper_manager=None):
+    def __init__(self, papers_dir: str | Path, paper_manager: PaperManager | None = None):
         """
         Initialize MarkdownService.
         
         Args:
             papers_dir: Base directory for paper storage
-            paper_manager: Optional PaperManager instance
+            paper_manager: Optional PaperManager instance for metadata management
         """
         self.papers_dir = Path(papers_dir)
         self.paper_manager = paper_manager
