@@ -9,31 +9,9 @@ from scripts.paper_manager import PaperManager
 from scripts.models import Paper
 
 @pytest.fixture
-def paper_manager(test_dir):
-    """Create PaperManager instance."""
-    return PaperManager(test_dir)
-
-@pytest.fixture
 def service(test_dir, paper_manager):
     """Create MarkdownService instance with PaperManager."""
     return MarkdownService(test_dir, paper_manager)
-
-@pytest.fixture
-def mock_paper():
-    """Create a mock paper."""
-    return Paper(
-        arxivId="2401.00001",
-        title="Test Paper",
-        authors="Test Author",
-        abstract="Test abstract",
-        url="https://arxiv.org/abs/2401.00001",
-        issue_number=1,
-        issue_url="https://github.com/user/repo/issues/1",
-        created_at=datetime.now().isoformat(),
-        state="open",
-        labels=["reading"],
-        main_tex_file=None
-    )
 
 class TestMarkdownService:
     def test_convert_paper_success(self, service, source_dir, mock_pandoc, mock_paper, paper_manager):
