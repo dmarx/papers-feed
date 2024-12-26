@@ -44,8 +44,13 @@ def paper_dir(test_dir):
 
 
 @pytest.fixture
-def source_dir(paper_dir):
+def source_dir(test_dir):
     """Create source directory with test TeX content."""
+    paper_dir = test_dir / "2401.00001"
+    if paper_dir.exists():
+        shutil.rmtree(paper_dir)
+    paper_dir.mkdir(parents=True)
+    
     source_dir = paper_dir / "source"
     source_dir.mkdir(parents=True)
     
