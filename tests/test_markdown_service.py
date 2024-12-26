@@ -88,6 +88,18 @@ class TestMarkdownService:
             shutil.rmtree(paper_dir)
         paper_manager.create_paper(paper)
         
+        # Recreate source directory and tex file
+        source_dir.mkdir(parents=True)
+        main_tex.write_text(r"""
+\documentclass{article}
+\begin{document}
+\title{Test Document}
+\maketitle
+\section{Introduction}
+Test content
+\end{document}
+""")
+        
         # Update via PaperManager
         paper_manager.update_main_tex_file(paper_dir.name, main_tex)
         
