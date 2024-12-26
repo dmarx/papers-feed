@@ -22,7 +22,8 @@ class MarkdownService:
             paper_manager: Optional PaperManager instance for metadata management
         """
         self.papers_dir = Path(papers_dir)
-        self.paper_manager = paper_manager
+        # Create default paper manager if none provided
+        self.paper_manager = paper_manager if paper_manager is not None else PaperManager(self.papers_dir)
         self.failed_conversions_file = self.papers_dir / "failed_markdown.json"
         self._load_failed_conversions()
         
