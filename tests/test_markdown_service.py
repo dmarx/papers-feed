@@ -67,6 +67,22 @@ class TestMarkdownService:
         main_tex = source_dir / "main.tex"
         main_tex.write_text("\\documentclass{article}\n\\begin{document}\nTest\n\\end{document}")
         
+        # Create initial metadata
+        from scripts.models import Paper
+        paper = Paper(
+            arxivId=paper_dir.name,
+            title="Test Paper",
+            authors="Test Author",
+            abstract="Test abstract", 
+            url=f"https://arxiv.org/abs/{paper_dir.name}",
+            issue_number=1,
+            issue_url=f"https://github.com/test/issue/1",
+            created_at="2024-01-01T00:00:00Z",
+            state="open",
+            labels=[]
+        )
+        paper_manager.create_paper(paper)
+        
         # Update via PaperManager
         paper_manager.update_main_tex_file(paper_dir.name, main_tex)
         
