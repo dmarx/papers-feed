@@ -63,11 +63,11 @@ class TestMarkdownService:
 
     def test_convert_with_paper_manager_update(self, service, source_dir, paper_manager, mock_pandoc):
         """Test conversion after updating main_tex_file via PaperManager."""
+        # Get paths from fixtures
         paper_dir = source_dir.parent
         main_tex = source_dir / "main.tex"
-        main_tex.write_text("\\documentclass{article}\n\\begin{document}\nTest\n\\end{document}")
         
-        # Create initial metadata
+        # Create initial metadata using the paper directory name from fixture
         from scripts.models import Paper
         paper = Paper(
             arxivId=paper_dir.name,
@@ -81,6 +81,11 @@ class TestMarkdownService:
             state="open",
             labels=[]
         )
+        
+        # Ensure clean state and create paper
+        import shutil
+        if paper_dir.exists():
+            shutil.rmtree(paper_dir)
         paper_manager.create_paper(paper)
         
         # Update via PaperManager
