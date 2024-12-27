@@ -29,7 +29,7 @@ def mock_pandoc():
 @pytest.fixture
 def test_dir(tmp_path):
     """Create a clean test directory."""
-    return tmp_path / "test_data"
+    return tmp_path / "papers"
 
 @pytest.fixture
 def paper_dir(test_dir):
