@@ -9,23 +9,6 @@ from unittest.mock import Mock, patch
 from scripts.process_events import EventProcessor
 from scripts.models import Paper
 
-@pytest.fixture
-def sample_paper():
-    """Create sample Paper object."""
-    return Paper(
-        arxivId="2401.00001",
-        title="Test Paper",
-        authors="Test Author",
-        abstract="Test Abstract",
-        url="https://arxiv.org/abs/2401.00001",
-        issue_number=1,
-        issue_url="https://github.com/user/repo/issues/1",
-        created_at=datetime.utcnow().isoformat(),
-        state="open",
-        labels=["paper"],
-        total_reading_time_seconds=0,
-        last_read=None
-    )
 
 @pytest.fixture
 def sample_paper_issue(sample_paper):
