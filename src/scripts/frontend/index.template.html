@@ -272,6 +272,135 @@
             margin: 0 0.5rem;
         }
 
+        /* Tag filtering styles */
+        .filter-container {
+            margin-bottom: 2rem;
+            padding: 1rem;
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+        }
+
+        .filter-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .filter-mode {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .mode-button {
+            padding: 0.25rem 0.75rem;
+            border: 1px solid var(--border-color);
+            border-radius: 1rem;
+            background: var(--bg-color);
+            cursor: pointer;
+            font-size: 0.875rem;
+        }
+
+        .mode-button.active {
+            background: var(--link-color);
+            color: white;
+            border-color: var(--link-color);
+        }
+
+        .filter-stats {
+            font-size: 0.875rem;
+            color: var(--secondary-text);
+        }
+
+        .tag-cloud {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .tag-pill {
+            padding: 0.25rem 0.75rem;
+            border-radius: 1rem;
+            background: var(--accent-bg);
+            border: 1px solid var(--border-color);
+            cursor: pointer;
+            font-size: 0.875rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            transition: all 0.2s ease;
+            position: relative;
+        }
+
+        .tag-pill:hover {
+            background: var(--button-hover);
+        }
+
+        .tag-pill.active {
+            background: var(--link-color);
+            color: white;
+            border-color: var(--link-color);
+        }
+
+        .tag-count {
+            background: rgba(0, 0, 0, 0.1);
+            padding: 0.125rem 0.375rem;
+            border-radius: 1rem;
+            font-size: 0.75rem;
+        }
+
+        .tag-pill.active .tag-count {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        .filter-actions {
+            display: flex;
+            gap: 0.5rem;
+            justify-content: flex-end;
+        }
+
+        .filter-action {
+            padding: 0.25rem 0.75rem;
+            border: 1px solid var(--border-color);
+            border-radius: 0.25rem;
+            background: var(--bg-color);
+            cursor: pointer;
+            font-size: 0.875rem;
+        }
+
+        .filter-action:hover {
+            background: var(--button-hover);
+        }
+
+        .tooltip {
+            position: absolute;
+            bottom: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 0.5rem;
+            background: var(--text-color);
+            color: white;
+            border-radius: 0.25rem;
+            font-size: 0.75rem;
+            white-space: nowrap;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.2s ease;
+            margin-bottom: 0.5rem;
+            z-index: 1000;
+        }
+
+        .tag-pill:hover .tooltip {
+            opacity: 1;
+        }
+
+        /* Hide papers that don't match the filter */
+        .paper-card.filtered {
+            display: none;
+        }
+
         @media (max-width: 640px) {
             body {
                 padding: 1rem;
@@ -333,6 +462,27 @@
             <h1>ArXiv Paper Feed</h1>
             <p class="header-desc">Papers recently read by <a href="https://bsky.app/profile/digthatdata.bsky.social">@DigThatData</a></p>
         </header>
+
+        <div class="filter-container">
+            <div class="filter-header">
+                <div class="filter-mode">
+                    <button class="mode-button active" data-mode="any">ANY</button>
+                    <button class="mode-button" data-mode="all">ALL</button>
+                    <button class="mode-button" data-mode="none">NONE</button>
+                </div>
+                <div class="filter-stats">
+                    Showing <span id="filtered-count">0</span> of <span id="total-count">0</span> papers
+                </div>
+            </div>
+            <div class="tag-cloud" id="tag-cloud">
+                <!-- Tags will be inserted here -->
+            </div>
+            <div class="filter-actions">
+                <button class="filter-action" id="clear-filters">Clear Filters</button>
+                <button class="filter-action" id="select-all">Select All</button>
+            </div>
+        </div>
+
         <main id="papers-container">
             <!-- Papers will be inserted here -->
         </main>
@@ -390,8 +540,6 @@
             const freshness = Math.max(0, Math.min(1, 1 - (diffDays / maxAge)));
             
             // Use rgb values for a pure green that gets lighter (whiter)
-            // Start with rgb(200, 255, 200) for fresh (light green)
-            // End with rgb(255, 255, 255) for old (white)
             const value = Math.round(255 - (freshness * 55));  // 55 is the difference from 255 to 200
             return `rgb(${value}, 255, ${value})`;
         }
@@ -483,17 +631,181 @@
                     .map(paper => renderPaperCard(paper, expandedCards[paper.id]))
                     .join('');
         
-                // Add click handlers for paper cards
-                papersContainerInner.querySelectorAll('.paper-card').forEach(card => {
-                    card.onclick = (e) => togglePaperCard(card, e);
-                });
-        
                 papersContainer.appendChild(papersContainerInner);
                 dayGroup.appendChild(dayHeader);
                 dayGroup.appendChild(papersContainer);
                 container.appendChild(dayGroup);
             });
+
+            // Add click handlers for paper cards
+            document.querySelectorAll('.paper-card').forEach(card => {
+                card.onclick = (e) => togglePaperCard(card, e);
+            });
+
+            // Initialize filters after papers are rendered
+            initializeFilters();
         }
+
+        function initializeFilters() {
+            const tags = new Map();
+            
+            // Collect all unique tags and their counts
+            Object.values(window.yamlData).forEach(paper => {
+                if (paper.arxiv_tags) {
+                    paper.arxiv_tags.forEach(tag => {
+                        const count = tags.get(tag) || 0;
+                        tags.set(tag, count + 1);
+                    });
+                }
+            });
+
+            // Sort tags by count (descending)
+            const sortedTags = Array.from(tags.entries())
+                .sort(([, a], [, b]) => b - a);
+
+            // Render tag cloud
+            const tagCloud = document.getElementById('tag-cloud');
+            tagCloud.innerHTML = sortedTags.map(([tag, count]) => `
+                <button class="tag-pill" data-tag="${tag}">
+                    <span class="tag-name">${tag}</span>
+                    <span class="tag-count">${count}</span>
+                    <span class="tooltip">${getFullCategoryName(tag)}</span>
+                </button>
+            `).join('');
+
+            // Update total count
+            document.getElementById('total-count').textContent = 
+                Object.keys(window.yamlData).length;
+
+            // Initialize filter state
+            window.filterState = {
+                mode: 'any',
+                activeTags: new Set()
+            };
+
+            // Add event listeners
+            setupFilterEventListeners();
+        }
+
+        function getFullCategoryName(tag) {
+            // Map of arXiv category codes to full names
+            const categoryMap = {
+                'cs.AI': 'Artificial Intelligence',
+                'cs.LG': 'Machine Learning',
+                'cs.CL': 'Computation and Language',
+                'stat.ML': 'Machine Learning (Statistics)',
+                'cs.CV': 'Computer Vision and Pattern Recognition',
+                'cs.RO': 'Robotics',
+                'cs.NE': 'Neural and Evolutionary Computing',
+                'cs.IR': 'Information Retrieval',
+                'cs.HC': 'Human-Computer Interaction',
+                'cs.SI': 'Social and Information Networks',
+                'cs.DB': 'Databases',
+                'math.ST': 'Statistics Theory',
+                'q-bio.NC': 'Neurons and Cognition'
+            };
+            return categoryMap[tag] || tag;
+        }
+
+        function setupFilterEventListeners() {
+            // Mode buttons
+            document.querySelectorAll('.mode-button').forEach(button => {
+                button.addEventListener('click', () => {
+                    document.querySelectorAll('.mode-button').forEach(b => 
+                        b.classList.remove('active'));
+                    button.classList.add('active');
+                    window.filterState.mode = button.dataset.mode;
+                    applyFilters();
+                });
+            });
+
+            // Tag pills
+            document.querySelectorAll('.tag-pill').forEach(pill => {
+                pill.addEventListener('click', () => {
+                    const tag = pill.dataset.tag;
+                    if (window.filterState.activeTags.has(tag)) {
+                        window.filterState.activeTags.delete(tag);
+                        pill.classList.remove('active');
+                    } else {
+                        window.filterState.activeTags.add(tag);
+                        pill.classList.add('active');
+                    }
+                    applyFilters();
+                });
+            });
+
+            // Clear filters
+            document.getElementById('clear-filters').addEventListener('click', () => {
+                window.filterState.activeTags.clear();
+                document.querySelectorAll('.tag-pill').forEach(pill => 
+                    pill.classList.remove('active'));
+                applyFilters();
+            });
+
+            // Select all
+            document.getElementById('select-all').addEventListener('click', () => {
+                document.querySelectorAll('.tag-pill').forEach(pill => {
+                    window.filterState.activeTags.add(pill.dataset.tag);
+                    pill.classList.add('active');
+                });
+                applyFilters();
+            });
+        }
+
+        function applyFilters() {
+            const { mode, activeTags } = window.filterState;
+            let visibleCount = 0;
+
+            document.querySelectorAll('.paper-card').forEach(card => {
+                const paperId = card.dataset.paperId;
+                const paper = window.yamlData[paperId];
+                const paperTags = new Set(paper.arxiv_tags || []);
+
+                let visible = true;
+                if (activeTags.size > 0) {
+                    if (mode === 'any') {
+                        visible = Array.from(activeTags).some(tag => 
+                            paperTags.has(tag));
+                    } else if (mode === 'all') {
+                        visible = Array.from(activeTags).every(tag => 
+                            paperTags.has(tag));
+                    } else if (mode === 'none') {
+                        visible = Array.from(activeTags).every(tag => 
+                            !paperTags.has(tag));
+                    }
+                }
+
+                card.classList.toggle('filtered', !visible);
+                if (visible) visibleCount++;
+            });
+
+            document.getElementById('filtered-count').textContent = visibleCount;
+        }
+
+        // Controls panel functionality
+        const showControls = document.getElementById('showControls');
+        const controlsPanel = document.getElementById('controlsPanel');
+        const closeControls = document.getElementById('closeControls');
+
+        showControls.addEventListener('click', () => {
+            controlsPanel.classList.add('expanded');
+            showControls.style.visibility = 'hidden';
+        });
+
+        closeControls.addEventListener('click', () => {
+            controlsPanel.classList.remove('expanded');
+            showControls.style.visibility = 'visible';
+        });
+
+        // Close panel when clicking outside
+        document.addEventListener('click', (event) => {
+            if (!controlsPanel.contains(event.target) && 
+                event.target !== showControls && 
+                controlsPanel.classList.contains('expanded')) {
+                controlsPanel.classList.remove('expanded');
+                showControls.style.visibility = 'visible';
+            }
+        });
 
         // Bulk collapse/expand functionality
         function toggleAllDays(shouldCollapse) {
@@ -514,7 +826,6 @@
         }
 
         function toggleAllPapers(shouldCollapse) {
-            // Only select papers in non-collapsed day groups
             const visiblePapers = document.querySelectorAll('.day-group:not(.collapsed) .paper-card');
             const expandedCards = JSON.parse(localStorage.getItem('expandedCards') || '{}');
             
@@ -540,31 +851,6 @@
                 toggleAllDays(shouldCollapse);
             } else {
                 toggleAllPapers(shouldCollapse);
-            }
-        });
-
-        // Controls panel functionality
-        const showControls = document.getElementById('showControls');
-        const controlsPanel = document.getElementById('controlsPanel');
-        const closeControls = document.getElementById('closeControls');
-
-        showControls.addEventListener('click', () => {
-            controlsPanel.classList.add('expanded');
-            showControls.style.visibility = 'hidden';
-        });
-
-        closeControls.addEventListener('click', () => {
-            controlsPanel.classList.remove('expanded');
-            showControls.style.visibility = 'visible';
-        });
-
-        // Close panel when clicking outside
-        document.addEventListener('click', (event) => {
-            if (!controlsPanel.contains(event.target) && 
-                event.target !== showControls && 
-                controlsPanel.classList.contains('expanded')) {
-                controlsPanel.classList.remove('expanded');
-                showControls.style.visibility = 'visible';
             }
         });
 
