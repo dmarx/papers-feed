@@ -1,0 +1,242 @@
+\section{Problem Formulation}
+
+
+% We formulate the prompt compression task as follows.
+% Given an input text sequence $\bm{x} = (x_1, \dots, x_L)$ with $L$ tokens, a prompt compression system is expected to generate the compressed prompt $\widetilde{\bm{x}} = (\widetilde{x}_1, \dots, \widetilde{x}_{\widetilde{L}})$, where $\widetilde{L} (< L)$ is the number of tokens of $\widetilde{\bm{x}}$,
+% to make the distribution of the generated tokens more similar to that of the original prompt. As demonstrated in the following equation:
+% The goal of this system is to produce a compressed prompt that has a distribution of generated tokens that is more similar to that of the original prompt.
+
+% A prompt compression system is designed to generate a compressed prompt $\widetilde{\bm{x}} = (\widetilde{x}_1, \dots, \widetilde{x}_{\widetilde{L}})$ from a given original prompt $\bm{x} = (x_1, \dots, x_L)$, where $\widetilde{L}$ and $L$ ($\widetilde{L} < L$) denote the numbers of tokens in $\widetilde{\bm{x}}$ and $\bm{x}$, respectively.
+% Let $\bm{\widetilde{x}}_G$ represent the LLM-generated results derived by $\widetilde{\bm{x}}$ and $\bm{x}_G$ denotes the tokens derived by $\bm{x}$,
+% the distribution of $\bm{\widetilde{x}}_G$ is expected to be as similar to $\bm{x}_G$ as possible.
+% A high compression ratio $\tau = L / \widetilde{L}$ is preferred to reduce the inference cost.
+% This can be formulated as:
+A prompt compression system is designed to generate a compressed prompt $\widetilde{\bm{x}} = \{\widetilde{x}_i\}_{i=1}^{\widetilde{L}}$ from a given original prompt $\bm{x} = (\bm{x}^{\text{ins}}, \bm{x}^{\text{dems}}, \bm{x}^{\text{que}})$,
+where $\bm{x}^{\text{ins}} = \{x_i^{\text{ins}}\}_{i=1}^{L
+^{\text{ins}}}$, $\bm{x}^{\text{dems}} = \{x_i^{\text{dems}}\}_{i=1}^{L
+^{\text{dems}}}$, and $\bm{x}^{\text{que}} = \{x_i^{\text{que}}\}_{i=1}^{L
+^{\text{que}}}$ denote the instruction, demonstrations, and the question in the original prompt $\bm{x}$.
+$\widetilde{L}$, $L_{\text{ins}}$, $L_{\text{dems}}$, and $L_{\text{que}}$ represent the numbers of tokens in $\widetilde{\bm{x}}$, $\bm{x}^{\text{ins}}$, $\bm{x}^{\text{dems}}$, and $\bm{x}^{\text{que}}$, respectively.
+Let $L = L_{\text{ins}} + L_{\text{dems}} + L_{\text{que}}$ denote the total sequence length of $\bm{x}$, the compression rate is defined as $\tau = \widetilde{L} / L$, $\tau \in [0, 1]$, and the compression ratio is $1/\tau$.
+% The smaller value of $\tau$, the lower the inference cost, and the more we prefer.
+A smaller value of $\tau$ implies a lower inference cost, which is preferable.
+Let $\bm{\widetilde{x}}_G$ represent the LLM-generated results derived by $\widetilde{\bm{x}}$ and $\bm{x}_G$ denotes the tokens derived by $\bm{x}$,
+the distribution of $\bm{\widetilde{x}}_G$ is expected to be as similar to $\bm{x}_G$ as possible.
+This can be formulated as:
+
+% \begin{equation}
+% \min_{\widetilde{\bm{x}}, \tau}\sum_{i=0}^{\text{<end>}} \text{KL}(P(\widetilde{x}_i|\widetilde{\bm{x}}_G, \widetilde{\bm{x}}), P(x_i|\bm{x}_G, \bm{x})),
+% \end{equation}
+\begin{equation}
+\min_{\widetilde{\bm{x}}, \tau}
+\text{KL}(P(\widetilde{\bm{x}}_G|\widetilde{\bm{x}}), P(\bm{x}_G|\bm{x})),
+\end{equation}
+
+% where $\bm{x}_G$ represents the LLM generated results when using $\bm{x}$ as the prompt.
+% \textcolor{red}{$\tau = L / \widetilde{L}$} denotes the prompt compression ratio.
+
+\section{Methodology}
+
+In this section, we elaborate on the proposed coarse-to-fine prompt compression approach, \textit{\sysname{}}. First, we introduce a budget controller to dynamically allocate different compression ratios to various components in prompts and meanwhile, perform coarse-grained, demonstration-level compression to maintain semantic integrity under high compression ratios. Next, we describe the proposed iterative prompt algorithm designed to retain knowledge from the prompt while compressing. Finally, we introduce alignment to address the distribution gap between the small model and black-box large models. 
+% Figure ~\ref{fig:framework} illustrates the overall framework.
+Figure ~\ref{fig:framework} show the framework.
+
+\subsection{Budget Controller}
+The budget controller here is designed to allocate different budgets, \ie, compression ratio, to different components in a prompt such as instructions, demonstrations, and questions, at the sentence or demonstration level.
+There are two considerations:
+
+(i) In general, the instruction and the question in a prompt have a direct influence on the generated results, as they should contain all the necessary knowledge to generate the following answer.
+On the contrary, if there are multiple demonstrations in the original prompt, the conveyed information may be redundant.
+Therefore, a tailored budget controller is required to allocate more budget (\ie, smaller compression ratios) for instructions and questions, and less budget for demonstrations.
+
+(ii) When a high compression ratio is required, token-level dropout as in \citet{li2023unlocking} might make the compressed prompts too trivial and thus lose vital information from the original prompt.
+Consequently, sentence-level dropout should be employed instead to preserve a certain degree of linguistic integrity.
+Especially in the case of multiple redundant demonstrations, we can even perform demonstration-level control to meet the compression requirement.
+% 两个功能
+% i) 不同成分的 contribution 不同
+% ii) 如何去应对比较大的 compression ratio: 信息丢失严重。Controller: 尽量保证留下来的 content 的语义。
+
+Algorithm~\ref{alg:budget_controller} illustrates the overall procedure of the budget controller.
+
+
+\begin{algorithm}[t]
+    \small
+	\caption{Pseudo code of Budget Controller.} 
+    \textbf{Input}: A small language model $\mathcal{M}_{s}$; the original prompt $\bm{x} = (\bm{x}^{\text{ins}}, \bm{x}^{\text{dems}}, \bm{x}^{\text{que}})$. % target compression ratio $\tau$; instruction compression ratio $\tau_{\text{ins}}$; question compression ratio $\tau_{\text{que}}$; granular control coefficient $k$.
+	\begin{algorithmic}[1]
+          \State Set the selected demonstration set $\mathcal{D}=\phi$. % \Comment{Initialization}
+         % \State Get the target token of demonstrations $L_{\text{dem}}$ via Eq.(\ref{eq:target_token_demonstrate})
+         \State Get demonstration compression rate $\tau_{\text{dem}}$ by Eq.(\ref{eq:target_token_demonstrate}).
+         \State Calculate the perplexity of each demonstration via $\mathcal{M}_s$.
+         \State Rank all demonstrations in descending order of their perplexity as a list $(\bm{x}^{\text{dem}}_{(1)}, ..., \bm{x}^{\text{dem}}_{(N)})$, where $N$ is the number of demonstrations, $\bm{x}^{\text{dem}}_{(i)}$ is the $i$-th demonstration.
+         % \While {} 
+         \For{$i = 1$}
+         % \State Select the top perplexity demonstration $d_{k}$
+         % \State Add $d_{k}$ to the selected demonstration set $\bm{d}$
+         \If {$\widetilde{L}_{\mathcal{D}} > k\cdot \tau_{\text{dems}}L_{\text{dems}}$}
+         \State Break.
+         \EndIf
+         \State Append $\bm{x}_{(i)}^{\text{dem}}$ to $\mathcal{D}$.
+         \State $i = i + 1$
+         \EndFor
+         % \EndWhile
+         % \State Get the roughly compressed demonstrations $\bm{x}^{\mathcal{D}}$ from $\bm{d}$,
+         % \State Get the adjusted compression ratio $\triangle\tau_{\text{ins}, \text{que}}$, Eq.(\ref{eq:adjust_tau})
+         \State Allocate remaining budget to $\bm{x}^{\text{ins}}$ and $\bm{x}^{\text{que}}$ via Eq. (\ref{eq:adjust_tau}).
+	\end{algorithmic} 
+    \textbf{Output}: The subset of demonstrations $\mathcal{D}$ obtained from coarse-grained compression; Additional budget $\Delta\tau_{\text{ins}, \text{que}}$ for the instruction and the question.
+    % a roughly compressed demonstrations $\bm{x}^{\mathcal{D}}$, adjusted compression ratio $\triangle\tau_{\text{ins}, \text{que}}$.
+    \label{alg:budget_controller}
+\end{algorithm}
+
+\paragraph{Derive compression ratio for demonstrations.}
+We first compute the compression rate for demonstrations $\tau_{\text{dems}}$ according to the target overall compression rate $\tau$ and the pre-defined compression rate for instructions and questions, \ie, $\tau_{\text{ins}}$ and $\tau_{\text{que}}$, respectively.
+% Considering that the contribution of instructions and questions play different roles in different tasks
+% As illustrated in Algorithm~\ref{alg:budget_controller}, we first calculate the token length of each module in the prompt using a tokenizer and determine the target token count for demonstrations $L_{\text{dem}}$ based on the target compression ratio $\tau$.
+\begin{equation}
+    \tau_{\text{dems}} = \frac{\tau L - (\tau_{\text{ins}} L_{\text{ins}} + \tau_{\text{que}} L_{\text{que}})}{L_{\text{dems}}}.
+    \label{eq:target_token_demonstrate}
+\end{equation}
+
+% where $L_{\text{dem}}$, $L_{\text{ins}}$, and $L_{\text{que}}$ denote the numbers of tokens in demonstrations, instruction, and the question of the original prompt $\bm{x}$, respectively.
+
+\paragraph{Demonstration-level prompt compression.}
+With the derived $\tau_{\text{dems}}$ for demonstrations, we then perform a coarse-grained demonstration-level prompt compression: we construct $\mathcal{D}$, a subset of demonstrations from $\bm{x}^{\text{dems}}$.
+
+Specifically, we first employ a small language model $\mathcal{M}_s$, such as GPT-2 or LLaMA, to compute the perplexity of each demonstration in $\bm{x}^{\text{dems}}$.
+Then, we select demonstrations in descending order of their perplexity values, until adding one more demonstration to $\mathcal{D}$ will make the total number of tokens in $\mathcal{D}$ exceed maximum tokens $k\cdot \tau_{\text{dems}}L_{\text{dems}}$,  where $k$ is the granular control coefficient.
+
+\paragraph{Adjust compression ratios for instruction and question.}
+
+% After obtaining the roughly compressed demonstrations $\bm{x}^{\mathcal{D}}$, we will restore the compression ratio reserved for instructions and questions until the overall prompt length reaches $kL_{\text{dem}} + \tau_{\text{ins}} L_{\text{ins}} + \tau_{\text{que}} L_{\text{que}}$.
+After obtaining the coarse-grained compression result $\mathcal{D}=\{x_i\}_{i=1}^{\widetilde{L}_{\mathcal{D}}}$, we allocate the remaining budget to the instruction and the question:
+% \begin{equation}
+%     \triangle\tau_{\text{ins}, \text{que}} = \frac{kL_{\text{dem}} - \widetilde{L}_{\text{demRou}}}{L_{\text{ins}} + L_{\text{que}}},
+%     \label{eq:adjust_tau}
+% \end{equation}
+\begin{equation}
+    \Delta\tau%^+_{\text{ins}, \text{que}}
+    = \frac{k\cdot \tau_{\text{dems}}L_{\text{dems}} - \widetilde{L}_{\mathcal{D}}}
+    {L_{\text{ins}} + L_{\text{que}}},
+    \label{eq:adjust_tau}
+\end{equation}
+where $\widetilde{L}_{\mathcal{D}}$ denote the total number of tokens in $\mathcal{D}$.
+
+% As a result, we obtain the roughly compressed demonstrations $\bm{x}^{\mathcal{D}}$ along with the adjusted compression ratio $\triangle\tau_{\text{ins}, \text{que}}$ for instructions and questions.
+
+% In most In-context learning tasks, the semantic similarity between demonstrations is relatively high, while the semantic similarity between sentences is comparatively low. This is particularly evident in complex reasoning tasks where each sentence may represent a distinct reasoning step, and filtering prompts at the sentence level could result in a significant loss of valuable reasoning information. Therefore, we incorporate demonstration-level filtering in our Budget Controller to address this issue.
+
+
+
+\subsection{Iterative Token-level Prompt Compression}
+% Here, we describe how to perform fine-grained prompt compression over the coarse-grained compression results from the budget controller.
+% With the roughly compressed prompt $\bm{x}^{\mathcal{D}}$ obtained from the Budget Controller, we then use a perplexity-based iterative token-level prompt compression(ITPC) algorithm to compress the prompt until the target compression rate $\tau$ is achieved.
+\begin{algorithm}[t]
+    \small
+	\caption{Pseudo code of Iterative Token-level Prompt Compression (ITPC).} 
+    \textbf{Input}: A small language model $\mathcal{M}_{s}$; the prompt from budget controller $\bm{x}'= (\bm{x}^{\text{ins}}, \bm{x}^{\mathcal{D}}, \bm{x}^{\text{que}})$; target compression rate$\tau$, adjusted compression rate $\triangle\tau_{\text{ins}, \text{que}}$.
+	\begin{algorithmic}[1]
+        % \State Set the selected token set $\widetilde{\bm{t}}=\phi$ \Comment{Initialization}
+        \State Set the selected token set $\mathcal{T}=\phi$ 
+        % \Comment{Initialization}
+        % \State Get segment set $\bm{s}_i$, and segment compression rate $\tau_{i}$
+        \State Get segment set $\mathcal{S}$. % and the segment compression rate $\tau_{i}$.
+        % \For {$i=1,2,\ldots$, T}
+        \For {$i=1, 2, \ldots, m$}
+        \State Get the conditional probabilities $p(\bm{s}_i)$ via Eq.(\ref{eq:prompt_ppl_iterative})
+        \State Get the compression threshold $\gamma_i$ with Eq. (\ref{eq:tau_for_gamma}).
+        % \State Add the compressed token to $\widetilde{\bm{t}}$, Eq.(\ref{eq:compression_threshold})
+        \State Append the compressed token to $\mathcal{T}$ via Eq.(\ref{eq:compression_threshold}).
+        \EndFor
+        % \State Get the compressed demonstrations $\bm{\widetilde{x}}_{\text{dem}}$ from $\widetilde{\bm{t}}$,
+        \State Concatenate all tokens in $\mathcal{T}$ as $\bm{\widetilde{x}}$.
+	\end{algorithmic} 
+    % \textbf{Output}: The compressed demonstrations $\bm{\widetilde{x}}_{\text{dem}}$.
+    \textbf{Output}: The compressed prompt $\bm{\widetilde{x}}$.
+    \label{alg:iterative_prompt_compression}
+\end{algorithm}
+
+
+Utilizing perplexity for prompt compression encounters the intrinsic limitation, \ie, the independence assumption, similar to the shortcomings of the Mask Language Model~\cite{yang2019xlnet}
+as: %demonstrated in the inequality of Eq.(\ref{eq:prompt_ppl}).
+\begin{equation}
+\begin{aligned}
+p(\bm{\widetilde{x}}) &= \prod_{i=1}^{\widetilde{L}} p(\widetilde{x}_i|\widetilde{x}_{<i}) 	 \\
+&\approx p(\bm{x}') = \prod_{i=1}^{L'} p(x_i|\widetilde{x}_{<i}, \overline{x}_{<i}),
+\label{eq:prompt_ppl}
+\end{aligned}
+\end{equation}
+where $\bm{x}'= (\bm{x}^{\text{ins}}, \bm{x}^{\mathcal{D}}, \bm{x}^{\text{que}})$ is the original prompt after demonstration-level compression; 
+$\bm{x}^{\mathcal{D}}$ is the concatenation of all demonstrations in $\mathcal{D}$; 
+$\widetilde{x}$ is the final compressed prompt; 
+$\widetilde{x}_{<i}$ and $\overline{x}_{<i}$ denote the preserved and compressed tokens before the $i$-th token $x_i$;
+$L'$ and $\widetilde{L}$ denote the numbers of all tokens in $\bm{x}'$ and $\widetilde{\bm{x}}$, respectively.
+
+% Denote the original prompt after demonstration-level compression as $\bm{x}= (\bm{x}^{\text{ins}}, \bm{x}^{\mathcal{D}}, \bm{x}^{\text{que}})$, where $\bm{x}^{\mathcal{D}}$ is the concatenation of all demonstrations in $\mathcal{D}$.
+% % Given a prompt $\bm{x}$ to be compressed,
+% % The probability estimation function of each token by using a language model $\mathcal{M}_{s}$ can be formulated as:
+% A language model $\mathcal{M}_{s}$ estimates the probability of each token in $\bm{x}$ as:
+% \begin{equation}
+% p(\bm{x}) = \prod_{i=1}^{L} p(x_i|\widetilde{x}_{<i}, \overline{x}_{<i}),
+% \end{equation}
+% where $\widetilde{x}_{<i}$ and $\overline{x}_{<i}$ denotes the preserved and compressed tokens before the $i$-th token $x_i$, $L$ is the number of all tokens in $\bm{x}$.
+
+% Similarly, the probability of the compressed prompt $\bm{\widetilde{x}}$ with $\widetilde{L}$ tokens can be formulated as:
+% \begin{equation}
+% p(\bm{\widetilde{x}}) = \prod_{i=1}^{\widetilde{L}} p(x_i|\widetilde{x}_{<i}) 	\approx \prod_{i=1}^{L} p(x_i|\widetilde{x}_{<i}, \overline{x}_{<i}).
+% \label{eq:prompt_ppl}
+% \end{equation}
+
+% Similar to the shortcomings of the Mask Language Model~\cite{yang2019xlnet}, utilizing perplexity for prompt compression also encounter issues related to the independence assumption, as demonstrated in the inequality of Eq.(\ref{eq:prompt_ppl}).
+
+Here we propose an iterative token-level prompt compression (ITPC) algorithm to mitigate the inaccuracy introduced by the conditional independence assumption. Algorithm~\ref{alg:iterative_prompt_compression} shows the pseudo codes.
+
+Specifically, we first divide the target prompt $\bm{x}'$ into several segments $\mathcal{S}=\{\bm{s}_1, \bm{s}_2, ..., \bm{s}_m\}$.
+And then, we use the %which are processed sequentially by a 
+smaller model $\mathcal{M}_s$ to obtain the perplexity distribution of all segments.
+The compressed prompt obtained from each segment %at each step
+is concatenated to the subsequent segment, enabling more accurate estimation of the conditional probability.
+The corresponding probability estimation function can be formulated as:
+\begin{equation}
+\begin{aligned}
+p(\bm{\widetilde{s}}_j) &= \prod_{i=1}^{\sum_k^{j}\widetilde{L}_{s,k}} p(\widetilde{s}_{j, i}|\widetilde{s}_{j,<i}, \bm{\widetilde{s}}_{<j}) 	\\
+&\approx \prod_{i=1}^{L_{s,j} + \sum_k^{j-1}\widetilde{L}_{s,k}} p(s_{j,i}|s_{j,<i}, \bm{\widetilde{s}}_{<j}),
+\end{aligned}
+\label{eq:prompt_ppl_iterative}
+\end{equation}
+where $s_{j,i}$ denotes the $i$-th token in the $j$-th segment, $L_{s, j}$ and $\widetilde{L}_{s, j}$ represent the token length of $j$-th original and compressed segment, respectively.
+
+When the conditional probabilities for each segment $p(\bm{s}_j)$ are obtained, the compression ratio threshold $\gamma_j$ \textit{w.r.t.} $\bm{s}_j$ are dynamically calculated based on the PPL distribution and the corresponding compression ratio $\tau_{\bm{s}_j}$, where
+\begin{equation}
+\tau_{\bm{s}_j} =\left\{
+\begin{aligned}
+\tau_{\text{ins}} + \Delta\tau, &\quad \text{if $\bm{s}_j$ from $\bm{x^{\text{ins}}}$}, \\
+\tau_{\text{dems}}, &\quad \text{if $\bm{s}_j$ from $\bm{x^{\mathcal{D}}}$},\\
+\tau_{\text{que}} + \Delta\tau, &\quad \text{if $\bm{s}_j$ from $\bm{x^{\text{que}}}$}.\\
+\end{aligned}
+\right.
+\label{eq:tau_for_gamma}
+\end{equation}
+
+Finally, tokens in each $\bm{s}_j$ with the PPL greater than $\gamma_j$ are retained in the compressed prompt.
+\begin{equation}
+    \bm{\widetilde{s}}_j = \{s_{j,i}|p(s_{j,i}) > \gamma_j\}
+    \label{eq:compression_threshold}
+\end{equation}
+
+\subsection{Distribution Alignment}
+To narrow the gap between the distribution of the LLM and that of the small language model used for prompt compression, here we align the two distributions via instruction tuning.
+
+Specifically, we start from a pre-trained small language model $\mathcal{M}_s$ and use the data generated by the LLM to perform instruction tuning on $\mathcal{M}_s$.
+The optimization of $\mathcal{M}_s$ can be formulated as:
+% based on well-pretrained small LM $\mathcal{M}_{s}$, instruction tuning is performed using datasets generated by the black-box LLMs to make the probability distribution of the generated tokens in the small LM closely resemble that of the black-box LLMs.
+% To enable small LM $\mathcal{M}_{s}$ to perceive different black-box LLMs and address the distribution discrepancy between the black-box LLMs and small LM, this paper introduces the alignment mechanism.
+% The learning loss is,
+\begin{equation}
+    \min_{\bm{\theta}_{s}} \mathbb{E}\left[\frac{1}{N} \sum_{i=1}^N \mathcal{L}\left(\mathbf{x}_i, \mathbf{y}_{i,\text{LLM}} ; \bm{\theta}_{\mathcal{M}_s} \right)\right],
+\end{equation}
+where $\theta_{\mathcal{M}_s}$ denotes the parameters of $\mathcal{M}_s$, $(\bm{x}_i, \bm{y}_i^{\text{LLM}})$ denotes the pair of instruction $\bm{x}_i$ and the LLM generated texts $\bm{y}_i^{\text{LLM}}$, $N$ is the number of all examples used for instruction tuning.
+% $(\mathbf{x}_i, \mathbf{y}_{i,\text{LLM}})$, N are the instruct turning datasets and the size of datasets from the generation of Black-box LLMs, $\bm{\theta}_{s}$ is the parameter of small LM.
+
+
+
