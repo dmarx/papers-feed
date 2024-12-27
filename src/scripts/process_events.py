@@ -1,4 +1,20 @@
 # src/scripts/process_events.py
+"""
+Event Processing System
+======================
+
+This module handles the processing of paper-related events through GitHub issues.
+
+Flow:
+1. GitHub issues are fetched
+2. Issues are categorized (paper/reading)
+3. Events are processed and stored
+4. Registry is updated
+5. Issues are closed
+
+For new events, see models.py for available event types.
+"""
+
 import os
 import json
 import yaml
