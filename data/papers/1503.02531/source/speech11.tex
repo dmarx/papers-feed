@@ -1,0 +1,69 @@
+\section{Experiments on speech recognition}\label{sec:speech}
+
+In this section, we investigate the effects of ensembling Deep Neural Network (DNN) acoustic models that are used in
+Automatic Speech Recognition (ASR).  We show that the distillation strategy that we propose in this paper achieves the
+desired effect of distilling an ensemble of models into a single model that works significantly better than a model of
+the same size that is learned directly from the same training data.
+
+State-of-the-art ASR systems currently use DNNs to map a (short) temporal context of features derived
+from the waveform to a probability distribution over the discrete states of a Hidden Markov Model (HMM) \cite{SPM}. More
+specifically, the DNN produces a probability distribution over clusters of tri-phone states at each time and a decoder
+then finds a path through the HMM states that is the best compromise between using high probability states and producing
+a transcription that is probable under the language model.
+
+Although it is possible (and desirable) to train the DNN in such a way that the decoder (and, thus, the language model)
+is taken into account by marginalizing over all possible paths, it is common to train the DNN to perform frame-by-frame
+classification by (locally) minimizing the cross entropy between the predictions made by the net and the labels given
+by a forced alignment with the ground truth sequence of states for each observation:
+$$\btheta = \arg\max_{\btheta'} P(h_t | \bs_t;\btheta')$$
+where $\btheta$ are the parameters of our acoustic model $P$
+which maps acoustic observations at time $t$, $\bs_t$, to a probability, $P(h_t | \bs_t;\btheta')$ , of the ``correct''
+HMM state $h_t$, which is determined by a forced alignment with the correct sequence of words. The model is trained with
+a distributed stochastic gradient descent approach. 
+
+We use an architecture with 8 hidden layers each containing 2560 rectified linear units and a final softmax layer with
+14,000 labels (HMM targets $h_t$).  The input is 26 frames of 40 Mel-scaled filterbank coefficients with a 10ms advance
+per frame and we predict the HMM state of 21$^{st}$ frame.  The total number of parameters is about 85M. This is a
+slightly outdated version of the acoustic model used by Android voice search, and should be considered as a very strong
+baseline. To train the DNN acoustic model we use about 2000 hours of spoken English data, which yields about 700M
+training examples. This system achieves a frame accuracy of 58.9\%, and a Word Error Rate (WER) of 10.9\% on our development set.
+
+
+\subsection{Results}
+
+We trained 10 separate models to predict $P(h_t | \bs_t;\btheta)$, using exactly the same architecture and training
+procedure as the baseline. The models are randomly initialized with different initial parameter values and we find that
+this creates sufficient diversity in the trained models to allow the averaged predictions of the ensemble to
+significantly outperform the individual models.  We have explored adding diversity to the models by varying the sets of
+data that each model sees, but we found this to not significantly change our results, so we opted for the simpler
+approach. For the distillation we tried temperatures of $[1, {\bf 2}, 5, 10]$ and used a relative weight of 0.5 on the
+cross-entropy for the hard targets, where bold font indicates the best value that was used for
+table~\ref{tab:speech_results} .
+
+Table~\ref{tab:speech_results} shows that, indeed, our distillation approach is able to extract more useful information
+from the training set than simply using the hard labels to train a single model. More than 80\% of the improvement in
+frame classification accuracy achieved by using an ensemble of 10 models is transferred to the distilled model which is
+similar to the improvement we observed in our preliminary experiments on MNIST. The ensemble gives a smaller improvement
+on the ultimate objective of WER (on a 23K-word test set) due to the mismatch in the objective function, but again, the
+improvement in WER achieved by the ensemble is transferred to the distilled model.  
+
+\begin{table}
+\small
+\centering
+\begin{tabular}{|c|c|c|}
+\hline
+System & Test Frame Accuracy & WER \\
+\hline
+Baseline & 58.9\% & 10.9\%\\
+10xEnsemble & 61.1\%& 10.7\% \\
+Distilled Single model & 60.8\%& 10.7\%\\
+\hline
+\end{tabular}
+\caption{Frame classification accuracy and WER showing that the distilled single model performs about as well as the
+  averaged predictions of  10  models that were used to create the soft targets.}\label{tab:speech_results}
+\end{table}
+
+We have recently become aware of related work on learning a small acoustic model by matching the class probabilities of
+an already trained larger model \cite{LiZhaoHuangGong}. However, they do the distillation at a temperature of 1 using a
+large unlabeled dataset and their best distilled model only reduces the error rate of the small model by 28\% of the
+gap between the error rates of the large and small models when they are both trained with hard labels.

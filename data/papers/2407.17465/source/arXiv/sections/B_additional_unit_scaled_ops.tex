@@ -1,0 +1,147 @@
+\section{Unit-scaled op definitions}
+\label{app:additional_unit_scaled_ops}
+
+\begin{table}[h]
+\vspace{-1em}
+\caption{Implementations of unit-scaled ops, building on Table A.2. from the Unit Scaling paper \citep{Unit_Scaling}. These are considered part of \umup\ and should be used in the place of standard operations.}
+\label{tab:ops_compendium}
+\centering
+\vspace{0.6em}
+\renewcommand{\arraystretch}{1.25}
+\begin{tabular}{lp{6.5cm}}
+    \toprule
+    Op & Unit Scaling factors \\
+    \midrule
+    
+    $\operatorname{matmul}(x,w)=xw$
+    &
+    $\alpha=\frac{1}{\sqrt{\fanin}}, \beta_x=\frac{1}{\sqrt{\fanout}}, \beta_w=\frac{1}{\sqrt{\batchsize}}$
+    \\[1.5em]
+
+    $\operatorname{attention}(q,k,v)=$
+    &
+    $\alpha=\beta_q=\beta_k=\beta_v =$
+    \\
+    $\quad \mathrm{softmax}\left(\alpha_{\mathrm{attn}}  \,d_{\mathrm{head}}^{-1}\, (q k^\top)\, \odot c_\textrm{mask}\right) v$
+    &
+    $\quad 1/ \operatorname{log\_interpolate}\Bigl(\frac{1}{1 + \frac{4 d_{\mathrm{head}}}{\alpha_{\mathrm{attn}}^2}}, 1, \sqrt{\frac{\log(s)}{s}}\Bigr)$
+    \\[2em]
+
+    $\operatorname{gated\_silu}(x_\mathrm{in}, x_\mathrm{gate}) =$
+    &
+    $\alpha=\beta_{x_\mathrm{in}}=\beta_{x_\mathrm{gate}}=$
+    \\
+    $\quad x_\mathrm{in} \odot x_\mathrm{gate} \odot \operatorname{sigmoid}(\alpha_{\mathrm{ffn{\text -}act}}\,x_\mathrm{gate})$
+    &
+    $\quad 1/ \operatorname{log\_interpolate}\Bigl(\frac{1}{1 + \frac{1}{\alpha_{\mathrm{ffn{\text -}act}}^2}}, \frac{1}{\sqrt{2}}, \frac{1}{2}\Bigr)$
+    \\[2em]
+
+    $\operatorname{residual\_add}(x_\mathrm{resid.}, x_\mathrm{skip}) =$
+    &
+    $a=\frac{\tau}{\sqrt{\tau^2 + 1}}, \, b=\frac{1}{\sqrt{\tau^2 + 1}} \quad$
+    \\
+    $\quad a\, x_\mathrm{resid.} + b\,x_\mathrm{skip}$
+    &
+    (see \ref{subsubsec:umup_residual_in_full} for full details, inc. values for $\tau$, which depends on $\alpha_\mathrm{res}$ and $\alpha_\mathrm{res\text{-}attn\text{-}ratio}$.)
+    \\[1.5em]
+
+    $\operatorname{softmax\_xent}(x, t) =$
+    &
+    \\
+    $\quad \operatorname{log\_softmax(\alpha_\mathrm{loss\text{-}softmax} \, x)}_t$
+    &
+    $\alpha=1, \; \beta = s / \sqrt{s-1}$
+    \\[1.5em]
+
+    $\operatorname{RoPE}(x)$
+    &
+    $\alpha=\beta=1 \quad$ (i.e. no scaling)
+    \\[1.5em]
+
+    $\operatorname{RMSNorm}(x)$ (non-trainable, see \citep{Exploration_Of_Mu_Transfer})
+    &
+    $\alpha=\beta=1 \quad$ (i.e. no scaling)
+    \\[0.5em]
+    
+    \bottomrule
+    \vspace{1em}
+\end{tabular}
+\end{table}
+
+\FloatBarrier
+
+The original Unit Scaling paper provides scaling factors for various ops, in order to make them unit-scaled. However, these ops do not cover every case required for the Llama architecture used in our experiments, nor do they cover our updated residual layer implementation. 
+To address this, in this section we outline a series of new unit-scaled ops for each of our required architectural features, as well as existing unit-scaled ops, as given in \Cref{tab:ops_compendium}.
+
+The presentation here is derived from that of the Unit Scaling Compendium given in \citep[Table A.2]{Unit_Scaling}. This makes reference to the factors $\alpha, \beta_1, \dots, \beta_k$. $\alpha$ is the output scaling factor in the forward pass, and $\beta_i$ are the scaling factors for the gradient of the op's inputs in the backward pass. For each op, a value or rule is provided for determining the required mult to ensure unit-scale. The correct value for these multipliers is derived by analyzing the scaling behavior of each op, given some reasonable distributional assumptions about the input and incoming gradient tensors (see \Cref{app:additional_background:us} for an example). Below we provide an in-depth overview of each new or modified unit-scaled op we introduce here.
+
+\paragraph{Unit-scaled dot-product attention}
+
+The Unit Scaling paper considers the attention layer scaling in terms of its separate components: the various matmul operations and the internal softmax. Linear operations are scaled using the standard rule, and the softmax scaling is given a $\alpha = \beta = s$ factor.
+
+From an implementation perspective, the self-attention layer is more typically broken down into weight-matmuls and a fused scaled-dot-product attention operation. This is the case we handle here, accounting for three complicating factors not considered in the Unit Scaling paper:
+\begin{enumerate}
+    \item As we use a decoder-style transformer in our experiments, our softmax operation has a causal mask applied to its input.
+    \item We follow the \mup\ guidance of using $1/ d_{\text head}$ scaling in our self-attention layer, rather than the usual $1 / \sqrt{d_{\text head}}$.
+    \item We place a $\alpha_{\mathrm{attn}}$ multiplier immediately before the softmax, which is an HP that users may tune.
+\end{enumerate}
+As a result our dot-product attention takes the form:
+\begin{align*}
+    \operatorname{attention}(q,k,v) &= \mathrm{softmax}\left(\alpha_{\mathrm{attn\text{-}softmax}} \cdot d_{\mathrm{head}}^{-1} \cdot (q \cdot k^\top) \odot c_\textrm{mask}\right) \cdot v
+\end{align*}
+The addition of an HP before the softmax introduces an additional challenge for Unit Scaling, as our scaling multipliers will need to account for this value when preserving unit scale.
+
+This operation is sufficiently complex that we found an empirical model of its scale to be more accurate than any mathematically-derived rule (future work may consider justifying our model mathematically). We find that the scale of dot-product attention is approximately
+\begin{align*}
+    \sigma(\operatorname{attention}(q,k,v)) &= \operatorname{log\_interpolate}\left(\frac{1}{1 + \frac{4 d_{\mathrm{head}}}{\alpha_{\mathrm{attn}}^2}}, 1, \sqrt{\frac{\log(s)}{s}}\right)
+\end{align*}
+where
+\begin{align*}
+    \operatorname{log\_interpolate}(\alpha, b_\mathrm{upper}, b_\mathrm{lower}) &= e^{\alpha \log(b_\mathrm{upper}) + (1 - \alpha) \log(b_\mathrm{lower})}.
+\end{align*}
+The corresponding scaling rule is therefore to divide by this factor in both the forward and backward pass, as outlined in \Cref{tab:ops_compendium}.
+
+\paragraph{SwiGLU FFN}
+
+Llama uses a SwiGLU \citep{GLU} layer for its FFN, which introduces two new operations for us to unit-scale: a SiLU \citep{SiLU} (a.k.a. swish \citep{Swish}) operation and an element-wise multiplication. We take a similar approach to our dot-product attention, and consider unit-scaling the following fused operation:
+\begin{align*}
+    \operatorname{gated\_silu}(x_\mathrm{in}, x_\mathrm{gate}) &= x_\mathrm{in} \odot x_\mathrm{gate} \odot \operatorname{sigmoid}(\alpha_{\mathrm{ffn{\text -}act}}\,x_\mathrm{gate})
+\end{align*}
+For the surrounding weight-matmuls we follow the standard Unit Scaling rules.
+
+Again, we use an empirical model of the scale of this op, which is surprisingly similar to the dot-product attention model:
+\begin{align*}
+    \sigma(\operatorname{gated\_silu}(x_\mathrm{in}, x_\mathrm{gate})) &= \operatorname{log\_interpolate}\left(\frac{1}{1 + \frac{1}{\alpha_{\mathrm{ffn{\text -}act}}^2}}, \frac{1}{\sqrt{2}}, \frac{1}{2}\right),
+\end{align*}
+dividing through by this factor to get our scaling rule.
+
+\paragraph{Residual layers}
+
+Our implementation of residual layers for \umup\ is more complex than other operations, as adjustments are required to:
+\begin{enumerate}
+    \item Make pre-norm residual networks support Unit Scaling (see \Cref{sec:us_residuals}).
+    \item Introduce our new, principled residual HPs (see \Cref{sec:umup_hparams}).
+\end{enumerate}
+Our residual layer scheme is presented in full in \ref{subsubsec:umup_residual_in_full}. For readers interested in our justification for this, see the sections noted above.
+
+We also follow the example of Unit Scaling and delay the application of our residual multiplier in the backward pass to the base of the branch (see \citep{Unit_Scaling}, Figure 3c). This does not change the model, and enables unit-scale to be maintained on the residual branch regardless of the value of the multiplier.
+
+\paragraph{RoPE embeddings}
+
+We also require a unit-scaled implementation of Rotary Position Embeddings (RoPE \citep{RoPE}), which are applied just before the scaled dot-product attention operation. As RoPE essentially consists of pair-wise rotations of elements by different degrees, we observe no meaningful scale-change as a result of it's application, and hence leave it unchanged.
+
+\paragraph{RMSNorm}
+
+Following \citep{Exploration_Of_Mu_Transfer} we opt to use a non-trainable version of RMSNorm \citep{RMS_Norm}, in order to facilitate better transfer. As a result, we also leave this operation unchanged. Were a trainable RMSNorm to be used, the recipe would follow closely that of the LayerNorm presented in the original Unit Scaling Compendium.
+
+\paragraph{Scale constraints}
+
+One final, minor deviation from the scheme outlined in the Unit Scaling paper is the way in which we apply scale constraints (see their Section 5.2). The essence of scale constraints is that for perfect unit scaling, sometimes the ideal scale for the forward pass differs from those in the backward pass. In some special cases (e.g. at the ends of the network) the use of different scales can be valid, but in the general case a single scale must be agreed upon. The solution in the Unit Scaling paper is to use the geometric mean of the forward and backward scales.
+
+We propose instead to simply use the forward scale over the backward scale(s) in these cases. We do so for the following reasons:
+\begin{enumerate}
+    \item For these architectures we find empirically that where there is a disparity in ideal forward and backward scales, it is not large.
+    \item By taking the forward scale, we can ensure strict unit-scale in the forward pass.
+\end{enumerate}
+The value of the latter point is in terms of what it means for the interpretation of our \umup\ multiplier HPs. Consider the $\alpha_{\mathrm{ffn{\text -}act}}$ multiplier; with strict unit scale we can say that the standard deviation of activations immediately before this multiplier is 1. Therefore the standard deviation immediately after is $\alpha_{\mathrm{ffn{\text -}act}}$. As this multiplier is (by design) the last operation before the ffn activation function, we can say that the interpretation of $\alpha_{\mathrm{ffn{\text -}act}}$ is simply to set the input standard deviation to the FFN's activation function.
+Similar arguments can be made for other \umup\ multiplier HPs. This interpretation only holds because we use the forward-scale in our constraints.

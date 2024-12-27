@@ -1,0 +1,1489 @@
+\documentclass{article}
+\PassOptionsToPackage{numbers}{natbib}
+\usepackage{algorithm, algpseudocode}
+\usepackage[final]{neurips_2023}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{booktabs}
+\usepackage{amsfonts}
+\usepackage{amssymb}
+\usepackage{nicefrac}
+\usepackage{microtype}
+\usepackage{amsmath}
+\usepackage{comment}
+\usepackage{graphicx}
+\usepackage{bm}
+\usepackage{pifont}
+\usepackage{booktabs}
+\usepackage[table]{xcolor}
+\usepackage{makecell}
+\usepackage{array}
+\usepackage{cleveref}
+\usepackage{listings}
+
+\newcommand{\cmark}{\colorbox{green!30}{\makebox(10,10){\ding{51}}}}
+\newcommand{\ymark}{\colorbox{yellow!30}{\makebox(10,10){\ding{107}}}}
+\newcommand{\xmark}{\colorbox{red!30}{\makebox(10,10){\ding{55}}}}
+\newcommand{\bmark}{\colorbox{cyan!30}{\makebox(10,10){}}}
+\newcommand{\omark}{\colorbox{purple!30}{\makebox(10,10){}}}
+\newcommand{\bmarks}{\colorbox{cyan!30}{\makebox(4,4){}}}
+\newcommand{\omarks}{\colorbox{purple!30}{\makebox(4,4){}}}
+\newcommand{\gmark}{\colorbox{green!30}{\makebox(10,10){}}}
+\newcommand{\gmarks}{\colorbox{green!30}{\makebox(4,4){}}}
+\renewcommand{\arraystretch}{1.5}
+\newcolumntype{Y}[1]{>{\centering\arraybackslash}{#1}}
+
+\renewcommand{\figureautorefname}{Figure}
+\renewcommand{\tableautorefname}{Table}
+\renewcommand{\sectionautorefname}{Section}
+\renewcommand{\subsectionautorefname}{Section}
+\renewcommand{\appendixautorefname}{Appendix}
+
+\newcommand{\norm}[1]{\left\lVert#1\right\rVert}
+\newcommand{\tr}{\mathrm{Tr}}
+\newcommand{\mbf}[1]{{\boldsymbol{\mathbf{#1}}}}
+\renewcommand{\bm}{\mbf}
+\newcommand{\tsum}{\textstyle{\sum}}
+\definecolor{flame}{rgb}{0.89, 0.35, 0.13}
+\definecolor{amber}{rgb}{1.0, 0.49, 0.0}
+\definecolor{cp}{RGB}{136,86,167}
+\definecolor{dark-blue}{rgb}{0.15,0.15,0.4}
+\newcommand{\xxcomment}[4]{\textcolor{#1}{[$^{\textsc{#2}}_{\textsc{#3}}$ #4]}}
+\newcommand{\ap}[1]{\xxcomment{cp}{A}{P}{#1}}
+\newcommand{\gp}[1]{\xxcomment{cyan}{G}{P}{#1}}
+\newcommand{\geoff}[1]{\xxcomment{cyan}{G}{P}{#1}}
+\newcommand{\marc}[1]{\xxcomment{flame}{M}{F}{#1}}
+\newcommand{\agw}[1]{\xxcomment{red}{A}{W}{#1}}
+\newcommand{\newtext}[1]{\textcolor{black}{#1}}
+\def \tableWidth {0.6cm}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    filecolor=magenta,
+    urlcolor=cyan,
+    citecolor=dark-blue,
+    pdftitle={Exploiting Compositional Structure for Automatic and Efficient Numerical Linear Algebra},
+    pdfpagemode=FullScreen,
+}
+
+\lstdefinestyle{PythonStyle}{
+    language=Python,
+    basicstyle=\ttfamily\small,
+    keywordstyle=\color{blue},
+    commentstyle=\color{gray},
+    stringstyle=\color{green},
+    showstringspaces=false,
+    numbers=left,
+    numberstyle=\tiny,
+    breaklines=true,
+    frame=single,
+    keywordstyle=[2]\color{flame},
+    keywords=[2]{@dispatch},
+}
+
+\title{CoLA: Exploiting Compositional Structure for Automatic and Efficient Numerical Linear Algebra}
+
+\author{
+\normalsize
+  \textbf{Andres Potapczynski\thanks{Equal contribution.}$\text{\,\,\,}^1$
+  \enspace
+  Marc Finzi$^*$$^2$
+  \enspace
+  Geoff Pleiss$^{3, 4}$
+  \enspace
+  Andrew Gordon Wilson$^1$} \\
+\normalsize
+$^1$New York University, $^2$Carnegie Mellon University, $^3$University of British Columbia, \\ $^4$Vector Institute \\
+}
+
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+\noindent Many areas of machine learning and science involve large linear algebra problems, such as eigendecompositions, solving linear systems, computing matrix exponentials, and trace estimation. The matrices involved often have Kronecker, convolutional, block diagonal, sum, or product structure. In this paper, we propose a simple but general framework for large-scale linear algebra problems in machine learning, named \emph{CoLA} (Compositional Linear Algebra). By combining a linear operator abstraction with compositional dispatch rules, CoLA automatically constructs memory and runtime efficient numerical algorithms. Moreover, CoLA provides memory efficient automatic differentiation, low precision computation, and GPU acceleration in both JAX and PyTorch, while also accommodating new objects, operations, and rules in downstream packages via multiple dispatch. CoLA can accelerate many algebraic operations, while making it easy to prototype matrix structures and algorithms, providing an appealing drop-in tool for virtually any computational effort that requires linear algebra. We showcase its efficacy across a broad range of applications, including partial differential equations, Gaussian processes, equivariant model construction, and unsupervised learning.
+\end{abstract}
+
+
+\section{Introduction}
+
+The framework of automatic differentiation has revolutionized machine learning.
+Although the rules that govern derivatives have long been known, automatically computing derivatives was a nontrivial process that required
+(1) efficient implementations of base-case primitive derivatives,
+(2) software abstractions (autograd and computation graphs) to compose these primitives into complex computations, and
+(3) a mechanism for users to modify or extend compositional rules to new functions.
+Once libraries such as PyTorch, Chainer, Tensorflow, JAX, and others
+\citep{tensorflow2015-whitepaper,jax2018github,maclaurin2016modeling,maclaurin2015gradient,paszke2019pytorch,tokui2015chainer}
+figured out the correct abstractions, the impact was enormous.
+Efforts that previously went into deriving and implementing gradients could be repurposed into developing new models.
+
+In this paper, we automate another notorious bottleneck for ML methods: performing large-scale linear algebra (e.g. matrix solves, eigenvalue problems, nullspace computations).
+These ubiquitous operations are at the heart of principal component analysis, Gaussian processes, normalizing flows, equivariant neural networks, and many other applications
+\citep{anil2020shampoo, cuturi2013sinkhorn, dao2019butterfly, finzi2023nivp, fu2023hippos, kovachi2021neuraloperator, li2018intrinsic, martens2015optimizing, nguyen2022s4nd, perez2018film}.
+Modeling assumptions frequently manifest themselves as algebraic structure---such as diagonal dominance, sparsity, or a low-rank factorization.
+Given a structure (e.g., the sum of low-rank plus diagonal matrices) and a linear algebraic operation (e.g., linear solves),
+there is often a computational routine (e.g. the linear-time Woodbury inversion formula) with lower computational complexity than a general-purpose routine (e.g., the cubic-time Cholesky decomposition).
+However, exploiting structure for faster computation is often an intensive implementation process.
+Rather than having an object $\bm{A}$ in code that represents a low-rank-plus-diagonal matrix and simply calling ${\tt solve}(\bm{A}, \bm{b})$,
+a practitioner must instead store the low-rank factor $\bm{F}$ as a matrix, the diagonal $\bm{d}$ as a vector, and implement the Woodbury formula from scratch.
+Implementing structure-aware routines in machine learning models is often seen as a major research undertaking.
+For example, a nontrivial portion of the Gaussian process literature is devoted to deriving specialty inference algorithms
+for structured kernel matrices
+\citep[e.g.][]{bonilla2007multitask,cunningham2008fast,gardner2018product,katzfuss2021general,loper2021general,snelson2005sparse,wilson2015kernel,wilson2014fast,kapoor2021skiing}.
+
+
+\begin{table}[t!]
+\centering
+
+\hspace{-3em}
+\renewcommand{\arraystretch}{1.2}
+\begin{tabular}{@{}l | *{1}{c}@{}| *{6}{c}@{} | *{5}{c}@{}}
+  \multicolumn{2}{c}{} & \multicolumn{6}{c}{\thead{Simple Operators}} & \multicolumn{5}{c}{\thead{Composition Operators}} \\
+  \cmidrule{3-13}
+    & \thead{Base \, \\ Case \,}& \thead{D} & \thead{T} & \thead{P} & \thead{C} & \thead{S} &\thead{Pr} \, & \hspace{-0.7em} \thead{$\sum$} & \thead{$\prod$} & \thead{$\bigotimes$} &
+    {\tiny $\begin{bmatrix} \bm{A} & \bm{0} \\ \bm{0} & \bm{B} \end{bmatrix}$ } &
+    {\tiny $\begin{bmatrix} \bm{A} & \bm{B} \\ \bm{C} & \bm{D} \end{bmatrix}$ } \\
+  \midrule
+    $\bm{A}^{-1}$ & \gmark& \bmark & \bmark& \bmark& \bmark & & & \hspace{-0.7em} \bmark & \bmark & \bmark & \bmark & \bmark  \\
+    Eigs$(\bm A)$  & \gmark & \bmark & \bmark & & \bmark & & \bmark \, & \hspace{-0.7em} \bmark &  & \bmark & \bmark  \\
+
+    Diag$(\bm A)$ & \gmark & \bmark &\bmark &\bmark & \bmark & \bmark & \, & \hspace{-0.7em} \bmark& &  & \bmark & \bmark \\
+    $\mathrm{Tr}(\bm{A}$)  & \gmark & \omark &\omark &\omark& \omark & \omark &\bmark \, & \hspace{-0.7em} \omark& & \bmark & \omark & \omark \\
+    $\exp(\bm{A}$)  & \gmark& \omark & & &\omark & & \omark \, & &  & & \omark &\\
+    $\mathrm{det}(\bm A)$  & \gmark& \omark & \omark& \bmark & \omark & & \omark \, &  \hspace{-0.7em} \omark & \bmark & \omark & \omark  \\
+  \bottomrule
+\end{tabular}
+\vspace{0.5em}
+\caption{
+  \textbf{Many structures have explicit composition rules to exploit.}
+  Here we show the existence of a dispatch rule (\bmarks) \ that can be used to accelerate a linear algebraic operation for some matrix structure over what is possible with the dense and iterative base cases. Many combinations (shown with \omarks) are automatically accelerated as a consequence of other rules, since for example \texttt{Eigs} and \texttt{Diag} are used in other routines. In absence of a rule, the operation will fall back to the iterative and dense base case for each operation (shown in \gmarks).
+  Columns are basic linear operator types such as D: Diagonal, T: Triangular, P: Permutation, C: Convolution, S:Sparse, Pr: Projection and composition operators such as sum, product, Kronecker product, block diagonal and concatenation.
+  All compositional rules can be mixed and matched and are implemented through multiple dispatch.
+}
+\label{tab:matrix_operations}
+\end{table}
+
+As with automatic differentiation, structure-aware linear algebra is ripe for automation.
+We introduce a general numerical framework that dramatically simplifies implementations efforts while achieving a high degree of computational efficiency.
+In code, we represent structure matrices as \texttt{LinearOperator} objects which adhere to the same API as standard dense matrices.
+For example, a user can call $\bm A^{-1} \bm b$ or $\texttt{eig}(\bm A)$ on any \texttt{LinearOperator} $\bm A$, and under-the-hood our framework derives a computationally efficient algorithm
+built from our set of compositional \emph{dispatch rules} (see \autoref{tab:matrix_operations}).
+If little is known about $\bm A$, the derived algorithm reverts to a general-purpose base case (e.g. Gaussian elimination or GMRES for linear solves).
+Conversely, if $\bm A$ is known to be the Kronecker product of a lower triangular matrix and a positive definite Toeplitz matrix, for example, the derived algorithm uses specialty algorithms for Kronecker, triangular, and positive definite matrices.
+Through this compositional pattern matching,
+our framework can match or outperform special-purpose implementations across numerous applications despite relying on only a small number of base \texttt{LinearOperator} types.
+
+Furthermore, our framework offers additional novel functionality that is necessary for ML applications (see \autoref{tab:libraries}).
+In particular, we automatically compute gradients, diagonals, transposes and adjoints of linear operators,
+and we modify classic iterative algorithms to ensure numerical stability in low precision.
+We also support specialty algorithms, such as SVRG \citep{johnson2013accelerating} and a novel variation of Hutchinson's diagonal estimator \citep{hutchinson1989stochastic},
+which exploit \emph{implicit structure} common to matrices in machine learning applications
+(namely, the ability to express matrices as large-scale sums amenable to stochastic approximations).
+Moreover, our framework is easily extensible in \emph{both directions}:
+a user can implement a new linear operator (i.e. one column in \autoref{tab:matrix_operations}),
+or a new linear algebraic operation (i.e. one row in \autoref{tab:matrix_operations}).
+Finally, our routines benefit from GPU and TPU acceleration and apply to symmetric and non-symmetric operators for both real and complex numbers.
+
+We term our framework \emph{CoLA} (\textbf{Co}mpositional \textbf{L}inear \textbf{A}lgebra), which we package in a library that supports both PyTorch and JAX.
+We showcase the extraordinary versatility of CoLA with a broad range of applications in \autoref{subsec:dispatch} and \autoref{sec:applications}, including:
+PCA, spectral clustering, multi-task Gaussian processes, equivariant models, neural PDEs, random Fourier features,
+and PDEs like minimal surface or the Schr\"{o}dinger equation.
+Not only does CoLA provide competitive performance to specialized packages but it provides significant speedups especially in applications with compositional structure (Kronecker, block diagonal, product, etc).
+Our package is available at \url{https://github.com/wilson-labs/cola}.
+
+\section{Background and Related Work} \label{sec:background}
+
+\textbf{Structured matrices} \quad
+Structure appears throughout machine learning applications,
+either occurring naturally through properties of the data,
+or artificially as a constraint to simplify complexity.
+A nonexhausitve list of examples includes:
+(1) low-rank matrices, which admit efficient solves and determinants \citep{woodbury1950inverting};
+(2) sparse matrices, which admit fast methods for linear solves and eigenvalue problems \citep{davis2006direct,saad2003iterative};
+(3) Kronecker-factorizable matrices,
+which admit efficient spectral decompositions;
+(4) Toeplitz or circulant matrices,
+which admit fast matrix-vector products.
+See \autoref{sec:linops} and \autoref{sec:applications} for applications that use these structures.
+Beyond these explicit types,
+we also consider \emph{implicit structures},
+such as matrices with clustered eigenvalues or matrices with simple unbiased estimates.
+Though these implicit structures do not always fall into straightforward categorizations,
+it is possible to design algorithms that exploit their inherent properties (see \autoref{subsec:beyond}).
+
+\textbf{Iterative matrix-free algorithms} \quad
+Unlike direct methods, which typically require dense instantiations of matrices,
+matrix-free algorithms only access matrices through routines that perform matrix-vector multiples (MVMs) \citep[e.g.][]{saad2003iterative}.
+The most common matrix-free algorithms---such as conjugate gradients, GMRES, Lanczos and Arnoldi iteration---fall under the category of Krylov subspace methods, which iteratively apply MVMs to refine a solution until a desired error tolerance is achieved.
+Though the rate of convergence depends on the conditioning or spectrum of the matrix,
+the number of iterations required is often much less than the size of the matrix.
+These algorithms often provide significant computational speedups for structured matrices that admit sub-quadratic MVMs (e.g. sparse, circulant, Toeplitz, etc.) or when using accelerated hardware (GPUs or TPUs) designed for efficient parallel MVMs \citep[e.g.][]{charlier2021kernel,gardner2018gpytorch,wang2019exact}.
+
+\textbf{Multiple dispatch} \quad
+Popularized by \texttt{Julia} \citep{bezanson2014julia}, multiple dispatch is a functional programming paradigm for defining type-specific behaviors.
+Under this paradigm, a given function (e.g. \texttt{solve}) can have multiple definitions, each of which are specific to a particular set of input types.
+A base-case definition \texttt{solve[LinearOperator]} would use a generic matrix-vector solve algorithm (e.g. Gaussian elimination or GMRES),
+while a type-specific definition (e.g. \texttt{solve[Sum]}, for sums of matrices) would use a special purpose algorithm that makes use of the subclass' structure (e.g. SVRG, see \autoref{subsec:beyond}).
+When a user calls $\texttt{solve}(\bm A, \bm b)$ at runtime,
+the \emph{dispatcher} determines which definition of \texttt{solve} to use based on the types of $\bm A$ and $\bm b$.
+Crucially, dispatch rules can be written for compositional patterns of types.
+For example, a \texttt{solve[Sum[LowRank, Diagonal]]} function will apply the Woodbury formula to a \texttt{Sum} operator that composes \texttt{LowRank} and \texttt{Diagonal} matrices.
+(In contrast, under an inheritance paradigm, one would need to define a specific \texttt{SumOfLowRankAndDiagonal} sub-class that uses the Woodbury formula,
+rather than relying on the composition of general purpose types.)
+
+\textbf{Existing frameworks for exploiting structure} \quad
+Achieving fast computations with structured matrices is often a manual effort.
+Consider for example the problems of second order/natural gradient optimization, which require matrix solves with (potentially large) Hessian/Fisher matrices.
+Researchers have proposed tackling these solves with matrix-free methods \citep{martens2010deep}, diagonal approximations \citep[e.g.][]{becker1989improving}, low-rank approximations \citep[e.g.][]{roux2007topmoumoute}, or Kronecker-factorizable approximations \citep{martens2015optimizing}.
+Despite their commonality---relying on structure for fast solves---all methods currently require different implementations,
+reducing interoperability and adding overhead to experimenting with new structured approximations.
+As an alternative, there are existing libraries like SciPy Sparse \citep{scipy}, Spot \citep{spot}, PyLops \citep{pylops}, or GPyTorch \citep{gardner2018gpytorch}, which offer a unified interface for using matrix-free algorithms with any type of structured matrices.
+A user provides an efficient MVM function for a given matrix
+and then chooses the appropriate iterative method (e.g. conjugate gradients or GMRES) to perform the desired operation (e.g. linear solve).
+With these libraries, a user can adapt to different structures simply by changing the MVM routine. However, this increased interoperability comes at the cost of efficiency,
+as the iterative routines are not optimal for every type of structure.
+(For example, Kronecker products admit efficient inverses that are asymptotically faster than conjugate gradients; see \autoref{fig:structure}.)
+Moreover, these libraries often lack modern features (e.g. GPU acceleration or automatic differentiation) or are specific to certain types of matrices (see \autoref{tab:libraries}).
+
+\begin{table}[th]
+\centering
+\renewcommand{\arraystretch}{0.6}
+\begin{tabular}{l >{\centering\arraybackslash}m{1.5cm} >{\centering\arraybackslash}m{1.5cm} >{\centering\arraybackslash}m{1.5cm} >{\centering\arraybackslash}m{1.5cm} >{\centering\arraybackslash}m{1.5cm} >{\centering\arraybackslash}m{1.5cm}}
+\thead{Package} & \thead{GPU\\ Support} & \thead{Autograd} & \thead{Non-symmetric\\ Matrices} & \thead{Complex\\ Numbers} & \thead{Randomized\\ Algorithms}& \thead{Composition\\ Rules} \\
+\midrule
+\texttt{Scipy Sparse} & \xmark & \xmark & \cmark & \cmark & \xmark & \xmark \\
+\texttt{PyLops} & \ymark & \ymark & \cmark & \cmark & \xmark  &\xmark \\
+\texttt{GPyTorch} & \cmark & \cmark & \xmark & \xmark & \xmark  &\xmark \\
+\texttt{CoLA} & \cmark & \cmark & \cmark & \cmark &\cmark &\cmark \\
+\bottomrule
+\end{tabular}
+\vspace{0.5em}
+\caption{Comparison of scalable linear algebra libraries.
+\texttt{PyLops} only supports propagating gradients through vectors but not through the linear operator's parameters.
+Moreover, \texttt{PyLops} has limited GPU support through CUPY, but lacks support for PyTorch, JAX or TensorFlow which are necessary for modern machine learning applications.
+}
+\label{tab:libraries}
+\end{table}
+
+\section{CoLA: Compositional Linear Algebra} \label{sec:linops}
+We now discuss all the components that make CoLA.
+In \autoref{subsec:linops_core} we first describe the core MVM based \texttt{LinearOperator} abstraction,
+and in \autoref{subsec:dispatch} we discuss our core compositional framework for identifying and automatically exploiting structure for fast computations.
+In \autoref{subsec:beyond}, we highlight how CoLA exploits structure frequently encountered in ML applications beyond well-known analytic formulae (e.g. the Woodbury identity).
+Finally, in \autoref{subsec:mlready} we present CoLA's machine learning-specific features, like automatic differentiation, support for low-precision, and hardware acceleration.
+
+\subsection{Deriving Linear Algebraic Operations Through Fast MVMs}\label{subsec:linops_core}
+
+Borrowing from existing frameworks like \texttt{Scipy Sparse}, the central object of our framework is the \texttt{LinearOperator}: a linear function on a finite dimensional vector space, defined by how it acts on vectors via a matrix-vector multiply $\texttt{MVM}_A: \bm{v} \mapsto \bm{A} \bm{v}$.
+While this function has a matrix representation for a given basis, we do not need to store or compute this matrix to perform a MVM.
+Avoiding the dense representation of the operator saves memory and often compute.
+
+Some basic examples of \texttt{LinearOperators} are:
+unstructured \texttt{Dense} matrices, which are represented by a 2-dimensional array and use the standard \texttt{MVM} routine $\left[\bm{A} \bm{v}\right]_{i} = \sum_{j=1} A_{ij} v_{j}$;
+\texttt{Sparse} matrices, which can be represented by key/value arrays of the nonzero entries with the standard CSR-sparse \texttt{MVM} routine;
+\texttt{Diagonal} matrices,
+which are represented by a 1-dimensional array of the diagonal entries and where the \texttt{MVM} is given by $\left[\bm{\texttt{Diag}}(\bm{d}) \bm{v}\right]_{i} = d_i v_{i}$;
+\texttt{Convolution} operators,
+which are represented by a convolutional filter array and where the \texttt{MVM} is given by $\texttt{Conv}(\bm a) \bm{v} = \bm{a} * \bm{v}$ ; or
+\texttt{JVP} operators---the Jacobian represented implicitly through an autograd Jacobian Vector Product---represented by a function and an input $\bm{x}$ and where the \texttt{MVM} is given by $\texttt{Jacobian}(f,\bm{x})\bm{v} = \mathrm{JVP}(f,\bm{x},\bm{v})$.
+In CoLA, each of these examples are sub-classes of the \texttt{LinearOperator} superclass.
+
+Through the \texttt{LinearOperator}'s \texttt{MVM}, it is possible to derive other linear algebraic operations.
+As a simple example, we obtain the dense representation of the \texttt{LinearOperator} by calling \texttt{MVM}$(\bm e_1)$, $\ldots$,
+\texttt{MVM}$(\bm e_N)$, on each unit vector $\bm e_i$. We now describe several key operations supported by our framework, some well-established, and others novel to CoLA.
+
+\textbf{Solves, eigenvalue problems, determinants, and functions of matrices} \quad
+As a base case for larger matrices, CoLA uses \emph{Krylov subspace methods} (\autoref{sec:background}, \autoref{app:algorithms}) for many matrix operations.
+Specifically, we use GMRES \citep{saad1986gmres} for matrix solves
+and Arnoldi \citep{arnoldi1951principle} for finding eigenvalues, determinants, and functions of matrices.
+Both of these algorithms can be applied to any non-symmetric and/or complex linear operator.
+When \texttt{LinearOperator}s are annotated with additional structure (e.g. self-adjoint, positive semi-definite) we use more efficient Krylov algorithms like MINRES, conjugate gradients,
+and Lanczos (see \autoref{subsec:dispatch}).
+As stated in \autoref{sec:background},
+these algorithms are matrix free (and thus memory efficient),
+amenable to GPU acceleration,
+and asymptotically faster than dense methods.
+See \autoref{app:iterative} for a full list of Krylov methods used by CoLA.
+
+\textbf{Transposes and complex conjugations} \quad
+In alternative frameworks like \texttt{Scipy Sparse} a user must manually define a transposed \texttt{MVM} $\bm{v} \mapsto \bm{A}^\intercal \bm{v}$ for linear operator objects.
+In contrast, CoLA uses a novel autograd trick to derive the transpose from the core \texttt{MVM} routine.
+We note that $\bm{A}^\intercal \bm{v}$ is the vector-Jacobian product (VJP) of the vector $\bm v$ and the Jacobian $\partial \bm{A} \bm{w} / \partial \bm w$.
+Thus, the function $\texttt{transpose}(\bm{A})$ returns a \texttt{LinearOperator} object that uses $\mathrm{VJP}(\texttt{MVM}_{\bm A}, \bm 0, \bm{v})$ as its \texttt{MVM}.
+We extend this idea to Hermitian conjugates, using the fact that $\bm{A}^* \bm{v} = (\overline{\bm{A}})^\intercal \bm{v} = \overline{(\bm{A}^\intercal \overline{\bm{v}})}$.
+
+\textbf{Other operations} \quad
+In \autoref{subsec:beyond} we outline how to stochastically compute diagonals and traces of operators with \texttt{MVM}s, and in \autoref{subsec:mlready} we discuss a novel approach for computing memory-efficient derivatives of iterative methods through \texttt{MVM}s.
+
+\textbf{Implementation} \quad
+CoLA implements all operations (\texttt{solve}, \texttt{eig}, \texttt{logdet}, \texttt{transpose}, \texttt{conjugate}, etc.)
+following a functional programming paradigm rather than as methods of the \texttt{LinearOperator} object.
+This is not a minor implementation detail:
+as we demonstrate in the next section, it is crucial for the efficiency and compositional power of our framework.
+
+\subsection{Beyond Fast MVMs: Exploiting Explicit Structure Using Composition Rules} \label{subsec:dispatch}
+
+\begin{table}[t!]
+  \begin{center}
+  \scriptsize{
+    \begin{tabular}{lcccc}
+      \toprule
+      & $\Pi_i^M \bm{A}_i$ & $\sum_i^M \bm{A}_i$ & $\text{BlockDiag}(\bm{A},\bm{B})$ & $\text{Kron}(\bm{A},\bm{B})$ \\
+      \midrule
+      MVM ($\tau$) &
+      $\sum_i\tau_i$ & $\sum_i \tau_i$ & $\tau_A+\tau_B$ & $\tau_AN_B+N_A\tau_B$ \\
+      Solve ($s$) &
+      $\sum_i\kappa_i\tau_i\log\tfrac{M}{\epsilon}$ &$(1+\kappa/M)\tau\log\tfrac{1}{\epsilon}$& $s_A+s_B$ & $s_AN_B+N_As_B$ \\
+      Eigs $(E)$ &
+       $\tau\log\tfrac{M}{\epsilon}\Pi_i \kappa_i$ & $(1+\kappa/M)\tau\log\tfrac{1}{\epsilon}$ & $E_A+E_B$ & $E_A+E_B$ \\
+      \bottomrule
+    \end{tabular}
+    }
+  \end{center}
+  \caption{
+    \textbf{CoLA selects the best rates for each operation or structure combination.}
+    Asymptotic runtimes resulting from dispatch rules on compositional linear operators in our framework.
+    Listed operations are matrix vector multiplies, linear solves, and eigendecomposition.
+    Here $\epsilon$ denotes error tolerance. For a given operator of size $N \times N$, we denote
+    $\tau$ as its MVM cost, $s$ its linear solve cost, $E$ its eigendecomposition cost and $\kappa$
+    its condition number. A lower script indicates to which matrix the operation belongs to.
+  }
+  \label{tab:ops_runtimes}
+\end{table}
+
+While the GMRES algorithm can compute solves more efficiently than corresponding dense methods such as the Cholesky decomposition, especially with GPU parallelization and preconditioning, it is not the most efficient
+algorithm for many \texttt{LinearOperators}.
+For example, if $\bm A = \texttt{Diag}(\bm a)$, then we know that $\bm A^{-1} = \texttt{Diag}(\bm a^{-1})$ without needing to solve a linear system.
+Similarly, solves with triangular matrices can be inverted efficiently through back substitution, and solves with circulant matrices can be computed efficiently in the Fourier domain $\texttt{Conv}(\bm a) = \mathcal{F}^{-1}\texttt{Diag}(\mathcal{F} \bm a)\mathcal{F}$ (where $\mathcal{F}$ is the Fourier transform linear operator).
+We offer more examples in \autoref{tab:matrix_operations} (left).
+
+As described in \autoref{sec:background}, we use multiple dispatch to implement these special case methods.
+For example, we implement the \texttt{solve[Diagonal]}, \texttt{solve[Triangular]}, and \texttt{solve[Circulant]} dispatch rules using the efficient routines described above.
+If a specific \texttt{LinearOperator} subclass does not have a specific \texttt{solve} dispatch rule then we default to the base-case \texttt{solve} rule using GMRES.
+This behaviour also applies to other operations, such as
+\texttt{logdet}, \texttt{eig}, \texttt{diagonal}, etc.
+
+The dispatch framework makes it easy to implement one-off rules for the basic \texttt{LinearOperator} sub-classes described in \autoref{subsec:linops_core}.
+However, its true power lies in the use of compositional rules, which we describe below.
+
+\textbf{Compositional Linear Operators} \quad
+In addition to the base \texttt{LinearOperator} sub-classes (e.g. \texttt{Sparse}, \texttt{Diagonal}, \texttt{Convolution}),
+our framework provides mechanisms to compose multiple \texttt{LinearOperator}s together.
+Some frequently used compositional structures are \texttt{Sum} ($\sum_i \bm{A}_i$), \texttt{Product} ($\Pi_i \bm{A}_i$), \texttt{Kronecker} ($\bm{A}\otimes \bm{B}$), \texttt{KroneckerSum} ($\bm{A}\oplus \bm{B}$), \texttt{BlockDiag} $[
+\bm{A}, 0; \:\:
+0, \bm{B}]$ and \texttt{Concatenation} $[\bm{A}, \bm{B}]$.
+Each of these compositional \texttt{LinearOperator}s are defined by
+(1) the base \texttt{LinearOperator} objects to be composed, and
+(2) a corresponding \texttt{MVM} routine, which is typically written in terms of the \texttt{MVM}s of the composed \texttt{LinearOperators}.
+For example, $\texttt{MVM}_\texttt{Sum} = \bm v \mapsto \sum_i \texttt{MVM}_i(\bm v)$,
+where $\texttt{MVM}_i$ are the $\texttt{MVM}$ routines for the component \texttt{LinearOperator}s.
+
+Dispatch rules for compositional operators are especially powerful.
+For example, consider \texttt{Kronecker} products where we have the rule $(\bm A \otimes \bm B)^{-1} =   \bm A^{-1} \otimes \bm B^{-1}$.
+Though simple, this rule yields highly efficient routines for numerous structures.
+For example, suppose we want to solve $(\bm{A} \otimes \bm{B} \otimes \bm{C}) \bm{x} = \bm{b}$ where $\bm{A}$ is dense, $\bm{B}$ is diagonal, and $\bm{C}$ is  triangular. From the rules, the solve would be split over the product, using GMRES for $\bm{A}$, diagonal inversion for $\bm{B}$,
+and forward substitution for $\bm{C}$.
+This breakdown is much more efficient than the base case (GMRES with $\texttt{MVM}_\texttt{Kron}$).
+
+When exploited to their full potential, these composition rules provide both asymptotic speedups (shown in \autoref{tab:ops_runtimes}) as well as runtime improvements on real problems across practical sizes (shown in \autoref{fig:structure}). Splitting up the problem with composition rules yields speedups in surprising ways even in the fully iterative case.
+To illustrate, consider one large CG solve with the matrix power $\bm B=\bm A^n$; in general, the runtime is upper-bounded by $O(n\tau \sqrt{\kappa^{n}} \log \tfrac{1}{\epsilon})$, where $\tau$ is the time for a MVM with $\bm A$, $\kappa$ is the condition number of $\bm A$, and $\epsilon$ is the desired error tolerance.
+However, splitting the product via a composition rule into a sequence of solves has a much smaller upper-bound of $O(n\tau\sqrt{\kappa}\log \tfrac{n}{\epsilon})$. We observe this speedup in the solving the Bi-Poisson PDE shown in \autoref{fig:structure}(b).
+
+\textbf{Additional flexibly and efficiency via parametric typing} \quad
+A crucial advantage of multiple dispatch is the ability to write simple special rules for compositions of specific operators.
+While a general purpose \texttt{solve}[Sum] method (SVRG; see next section) yields efficiency over the GMRES base case,
+it is not the most efficient algorithm when the \texttt{Sum} operator is combining a \texttt{LowRank} and a \texttt{Diagonal} operator.
+In this case, the Woodbury formula would be far more efficient.
+To account for this, CoLA allows for dispatch rules on \emph{parametric types};
+that is, the user defines a $\texttt{solve[Sum[LowRank, Diagonal]]}$ dispatch rule that is used if the \texttt{Sum} operator is specifically combining a \texttt{LowRank} and a \texttt{Diagonal} linear operator.
+Coding these rules without multiple dispatch would require
+specialty defining sub-classes like \texttt{LowRankPlusDiagonal} over the \texttt{LinearOperator} object, increasing complexity and hampering extendibility.
+
+\textbf{Decoration/annotation operators} \quad
+Finally, we include several \emph{decorator} types
+that annotate existing \texttt{LinearOperator}s with additional structure.
+For example,
+we define \texttt{SelfAdjoint} (Hermetian/symmetric), \texttt{Unitary} (orthonormal), and \texttt{PSD} (positive semi-definite) operators,
+each of which wraps an existing \texttt{LinearOperator} object.
+None of these decorators define a specialty \texttt{MVM};
+however, these decorators can be used to define dispatch rules for increased efficiency.
+For example \texttt{solve[PSD]} can use conjugate gradients rather than GMRES,
+and \texttt{solve[PSD[Tridiagonal]]} can use the linear time tridiagonal Cholesky decomposition \citep[see e.g.,][Sec.~4.3.6]{golub2018matrix}.
+
+\textbf{Taken together} \quad
+Our framework defines 16 base linear operators,
+5 compositional linear operators,
+6 decoration linear operators,
+and roughly 70 specialty dispatch rules for \texttt{solve}, \texttt{eig}, and other operations.
+(See \autoref{tab:matrix_operations} for a short summary and \autoref{app:rules} for a complete list of rules.)
+We note that these numbers are relatively small compared with existing solutions
+yet---as we demonstrate in \autoref{sec:applications}---
+these operators and dispatch rules are sufficient to match or exceed performance of specialty implementations in numerous applications.
+Finally, we note that CoLA is extensible by users in \emph{both directions}.
+A user can write their own custom dispatch rules,
+either to (1) define a new \texttt{LinearOperator} and special dispatch rules for it, or (2) to define a new algebraic operation for all \texttt{LinearOperators}, and crucially this requires no changes to the original implementation.
+
+\begin{figure*}
+    \centering
+    \begin{tabular}{ccc}
+      \hspace{-2em}
+    \includegraphics[width=0.34\textwidth]{./figs/gps_kron_solve.pdf}
+      &
+      \hspace{-2em}
+    \includegraphics[width=0.34\textwidth]{./figs/multigrid_bipoisson.pdf}
+      &
+      \hspace{-2em}
+    \includegraphics[width=0.34\textwidth]{./figs/emlp_block_solve.pdf}
+    \vspace{-1em}
+    \\
+      (a) Multi-task GPs ($\otimes$) & (b) Bi-Poisson ($\Pi$) & (c) EMLP {\tiny $\left(\begin{bmatrix} \bm{A} & \bm{0} \\ \bm{0} & \bm{B} \end{bmatrix}\right)$ }
+    \end{tabular}
+    \caption{
+      \textbf{Empirically, our composition rules yield the best runtimes} across applications consisting of linear operators with different structures (more application details in \autoref{sec:applications}).
+      We plot mean runtime (over 3 repetitions) for different methods (dense, iterative and ours (CoLA)) against the size of the linear operator.
+      \textbf{(a)} Computing solves on a multi-task GP problem \citep{bonilla2007multitask} for a linear operator having Kronecker structure
+      $\bm{K}_{T} \otimes \bm{K}_{X}$, where $\bm{K}_{T}$ is a kernel matrix containing the correlation between the tasks and
+      $\bm{K}_{X}$ is a RBF kernel on the data.
+      For this experiment we used a synthetic Gaussian dataset which has dimension $D=33$, $N=1$K and we used $T=11$ tasks.
+      \textbf{(b)} Computing solves on the 2-dimensional Bi-Poisson PDE problem for the composition of the Laplacian operator
+      $\Delta$ composed with itself on grid of sizes up to $N=1000^{2}$.
+      We use CG with a multi-grid $\alpha$SA preconditioner \citep{brezina2006asa} to solve the linear system required in this application.
+      \textbf{(c)} Finding the nullspace of an equivariant MLP of a linear operator having block diagonal structure.
+      Here, NullF refers to the iterative nullspace finder algorithm detailed in \citep{finzi2021practical}.
+      We ran a 5-node symmetric operator $S(5)$ as done in \citep{finzi2021practical} with MLP sizes up to $15$K.
+      See \autoref{app:experiments} for further details.
+    }
+    \vspace{-1.1em}
+    \label{fig:structure}
+\end{figure*}
+
+\subsection{Exploiting Implicit Structure in Machine Learning Applications} \label{subsec:beyond}
+So far we have discussed \emph{explicit} matrix structures and composition rules for which there are simple analytic formulas easily found in well-known references \citep[e.g.][]{golub2018matrix, saad2003iterative, trefethen1997NLA}.
+However, current large systems---especially those found in machine learning---
+often have \emph{implicit structure} and special properties that yield additional efficiencies.
+In particular, many ML problems give rise to linear operators composed of large summations which are amenable to stochastic algorithms.
+Below we outline two impactful general purpose algorithms used in CoLA to exploit this implicit structure.
+
+\begin{figure*}[t!]
+    \centering
+    \begin{tabular}{ccc}
+      \hspace{-2em}
+    \includegraphics[width=0.34\textwidth]{./figs/pca_svrg_eig.pdf}
+      &
+      \hspace{-2em}
+    \includegraphics[width=0.34\textwidth]{./figs/rff_solve.pdf}
+      &
+      \hspace{-2em}
+    \includegraphics[width=0.34\textwidth]{./figs/nivp_solve.pdf}
+    \vspace{-1.2em}
+    \\
+      (a) PCA (Eig) & (b) GPs RFF (Solve) & (c) Neural-IVP (Solve)
+    \end{tabular}
+    \caption{
+      \textbf{CoLA exploits the sum structure of linear operators through stochastic routines}.
+      \textbf{(a)} Eigenvalue convergence criteria against number of MVMs
+      for computing the first principal component on Buzz ($N=430$K, $D=77$) using VR-PCA \citep{shamir2015stochastic}.
+      \textbf{(b)} Solve relative residual against
+      number of MVMs for a random Fourier features (RFFs) approximation \citep{rahimi2007randomfeatures} to a RBF kernel with $J=1$K features on
+      Elevators ($N=12.5$K, $D=18$).
+      \textbf{(c)} Solve relative residual against number of MVMs when applying Neural-IVP \citep{finzi2023nivp}
+      to the 2-dimensional wave equation equation as done in \citep{finzi2023nivp}.
+      See \autoref{app:experiments} for further details.
+    }
+    \vspace{-1.2em}
+    \label{fig:rnla}
+\end{figure*}
+
+\textbf{Accelerating iterative algorithms on large sums with SVRG} \quad
+Stochastic gradient descent (SGD) is widely used for optimizating problems with very large or infinite sums to avoid having to traverse the full dataset per iteration.
+Like Monte Carlo estimation, SGD is very quick to converge to a few decimal places but very slow to converge to higher accuracies.
+When an exact solution is required on a problem with a finite sum, the stochastic variance reduced gradient (SVRG) algorithm \citep{johnson2013accelerating} is much more compelling, converging on strongly convex problems (and many others) at an exponential rate, with runtime $O((1+\kappa/M)\log \tfrac{1}{\epsilon})$ where $\kappa$ is the condition number and $\epsilon$ is the desired accuracy. When the condition number and the number of elements in the sum is large, SVRG becomes a desirable alternative even to classical deterministic iterative algorithms
+such as CG or Lanczos whose runtimes are bounded by $O(\sqrt{\kappa} \log \tfrac{1}{\epsilon})$.
+\autoref{fig:rnla} shows the impact of using SVRG to exploit the structure of different linear operators that are composed of large sums.
+
+\textbf{Stochastic diagonal and trace estimation with reduced variance} \quad
+Another case where we exploit implicit structure is when estimating the trace or the diagonal of a linear operator.
+While collecting the diagonal for a dense matrix is a trivial task, it is a costly algorithm for an arbitrary \texttt{LinearOperator} defined only through its \texttt{MVM}---it requires computing $\texttt{Diag}(\bm A) = \sum_{i=1}^N e_i \odot \bm A e_i$ where $\odot$ is the Hadamard (elementwise) product.
+If we need merely an approximation or unbiased estimate of the diagonal (or the sum of the diagonal), we can instead perform stochastic diagonal estimation \citep{hutchinson1989stochastic}
+$\overline{\texttt{Diag}}(\bm A) = \frac{1}{n}\sum_{j=1}^n z_j\odot \bm A z_j$ where the $z_j \in \mathbb{R}^N$ are any randomly sampled probe vectors with covariance $I$.
+We extend this randomized estimator to use randomization both in the probes, and random draws from a sum when $\bm A = \sum_{i=1}^M\bm A_i$:
+\begin{equation*}
+    \overline{\texttt{Diag}}\left(\tsum_{i=1}^M \bm A_i\right) := \tsum_{ij}z_{ij}\odot \bm A_i z_{ij}.
+\end{equation*}
+In \autoref{app:diagonal_estimator} we derive the variance of this estimator and we show that it converges faster than the base Hutchinson estimator when applied \texttt{Sum} structures. We validate empirically this analysis in \autoref{fig:doubly}.
+
+\subsection{Automatic Differentiation and Machine Learning Readiness}\label{subsec:mlready}
+\textbf{Memory efficient auto-differentiation} \quad
+In ML applications, we want to backpropagate through operations like
+$\bm A^{-1}$, $\texttt{Eigs}(\bm A)$, $\texttt{Tr}(\bm A)$, $\exp(\bm A)$, $\log \mathrm{det}(\bm A)$.
+To achieve this, in CoLA we define a novel concept of the gradient of a \texttt{LinearOperator}
+which we detail in \autoref{app:features}.
+For routines like GMRES, SVRG, and Arnoldi,
+we utilize a custom backward pass that does not require backproagating through the iterations of these algorithms.
+This custom backward pass results in substantial memory savings (the computation graph does not have to store the intermediate iterations of these algorithms), which we demonstrate in \autoref{app:features} (\autoref{fig:autograd-memory}).
+
+\textbf{Low precision linear algebra} \quad
+By default, all routines in CoLA support the standard \texttt{float32} and \texttt{float64} precisions.
+Moreover, many CoLA routines also support \texttt{float16} and \texttt{bfloat16} half precision
+using algorithmic modifications for increased stability.
+In particular, we use variants of the GMRES, Arnoldi, and Lanczos iterations that are less susceptible to instabilities that arise through orthogonalization \citep[][Ch.~6]{saad2003iterative}
+and we use the half precision variant of conjugate gradients introduced by \citet{maddox2022lowpres}.
+See \autoref{app:algorithms} for further details.
+
+\textbf{Multi framework support and GPU/TPU acceleration} \quad
+CoLA is compatible with both PyTorch and JAX.
+This compatibility not only makes our framework \emph{plug-and-play} with existing implemented models,
+but it also adds GPU/TPU support, differentiating it from existing solutions (see \autoref{tab:libraries}).
+CoLA's iterative algorithms are the class of linear algebra algorithms that benefit most from hardware accelerators as the main bottleneck of these algorithms are the MVMs executed at each iteration, which can easily be parallelized on hardware such as GPUs.
+\autoref{fig:hardware} empirically shows the additional impact of hardware accelerators across different datasets and linear algebra operations.
+
+\begin{figure*}[t!]
+    \centering
+      \hspace{-2em}
+    \includegraphics[width=1.0\textwidth]{./figs/hardware.pdf}
+    \caption{
+    \textbf{
+    For sufficiently large problems, switching from dense to iterative algorithms provides consistent runtime reductions, especially on a GPU, where matrix multiplies can be effectively parallelized.
+    }
+    We plot the ratio between the runtime of a linear algebra operation using CoLA or PyTorch on different hardware (CPU and GPU) divided by the runtime of using PyTorch CPU.
+    % On the plot, GPU has a darker shading.
+    For the linear solves, we use the matrix market sparse operator Trefethen;
+    for the eigenvalue estimation, we use the matrix market sparse operator mhd4800b and, finally,
+    for the log determinant computation, we use the matrix market sparse operator bcsstk18.
+    We provide additional details in \autoref{app:hardware}.
+    }
+    \vspace{-1.5em}
+    \label{fig:hardware}
+\end{figure*}
+
+\section{Applications} \label{sec:applications}
+
+We now apply CoLA to an extensive list of applications showing the impact, value and broad applicability of our numerical linear algebra framework, as illustrated in \autoref{fig:results}.
+This list of applications encompasses PCA, linear regression, Gaussian processes, spectral clustering, and partial differential equations like
+the Schr\"{o}dinger equation or minimal surface problems.
+In contrast to \autoref{sec:linops} (\autoref{fig:structure} \& \autoref{fig:rnla}), the applications presented here have a basic structure (sparse, vector-product, etc)
+but not a compositional structure (Kronecker, product, block diagonal, etc).
+We choose these applications due to their popularity and heterogeneity (the linear operators have different properties: self-adjoint, positive definite, symmetric and non-symmetric), and to show that CoLA performs in any application.
+We compare against several well-known libraries,
+sometimes providing runtime improvements but other times performing equally.
+This is remarkable as our numerical framework does not specialize in any of those applications (like \texttt{GPyTorch})
+nor does it rely on Fortran implementations of high-level algorithms
+(like \texttt{sklearn} or \texttt{SciPy}).
+Below we describe each of the applications found in \autoref{fig:results}.
+
+\begin{figure*}[t!]
+    \centering
+    \begin{tabular}{ccc}
+      \hspace{-2em}
+    \includegraphics[width=0.34\textwidth]{./figs/pca.pdf}
+      &
+      \hspace{-2em}
+    \includegraphics[width=0.34\textwidth]{./figs/linear_regression.pdf}
+      &
+      \hspace{-2em}
+    \includegraphics[width=0.34\textwidth]{./figs/gps.pdf}
+    \vspace{-1.2em}
+    \\
+    (a) PCA & (b) Linear Regression & (c) GPs
+    \\
+      \hspace{-2em}
+    \includegraphics[width=0.34\textwidth]{./figs/spectral_clustering.pdf}
+      &
+      \hspace{-2em}
+    \includegraphics[width=0.34\textwidth]{./figs/schrodinger.pdf}
+      &
+      \hspace{-2em}
+    \includegraphics[width=0.34\textwidth]{./figs/minimal_surface.pdf}
+    \vspace{-1.2em}
+    \\
+    (d) Spectral Clustering & (e) Schr\"{o}dinger Equation & (f) Minimal Surface
+    \end{tabular}
+    \caption{
+        \textbf{CoLA is easily applied to numerous applications with competitive performance}.
+        Here sk: sklearn, GP: GPyTorch and the tuple ($N$, $D$) denotes dataset size and dimensionality.
+      \textbf{(a)}: Runtime for PCA decomposition on Buzz ($437.4$K, $77$).
+      \textbf{(b)}: Linear regression runtime on Song ($386.5$K, $90$), where we run CoLA on both GPU and CPU.
+      \textbf{(c)}: Training efficiency (measure in epochs) on exact GP inference on Elevators ($14$K, $18$) and Kin ($20$K, $8$) on GPU.
+      \textbf{(d)}: Spectral clustering runtime on a citations graph (cit-HepPh) consisting on $34.5$K nodes and $842$K edges.
+      sk(L) denotes sklearn's implicitly restarted Lanczos implementation and sk(A) denotes sklearn's LOBPCG with an algebraic multi-graph preconditioner (PyAMG) \citep{pyamg2023, knyazev2000lobpcg}.
+      CoLA(L) denotes our Lanczos implementation and CoLA(B) our LOBPCG implementation.
+      \textbf{(e)}: Runtimes for finding the smallest eigenfunctions expanding grids of a Schr\"{o}dinger equation with an expanding finite difference grid.
+      \textbf{(f)}: Runtimes for solving the minimal surface equation via root finding on expanding grids. Here SciPy utilizes the \texttt{ARPACK} package,
+      a highly-optimized Fortran implementation of the Arnoldi iteration,
+      while SciPy JAX (the SciPy version integrated with JAX) and CoLA utilize python Arnoldi implementations.
+      \autoref{app:experiments} expands on the experimental details.
+    }
+    \vspace{-1.5em}
+    \label{fig:results}
+\end{figure*}
+
+\textbf{Principal Component Analysis} \quad
+PCA is a classical ML technique that finds the directions in the data that capture the most variance. PCA can be performed by computing the right singular vectors of  $\bm{X} \in \mathbb{R}^{N\times D}$. When the number of data points $N$ is very large, stochastic methods like SVRG in VR-PCA \citep{shamir2015stochastic} can accelerate finding the eigenvectors over SVD or Lanczos, as shown in \autoref{fig:rnla}(a).
+
+\textbf{Spectral Clustering} \quad
+Spectral clustering \citep{ng2001spectral} finds clusters of individual nodes in a graph by analyzing the graph Laplacian $\bm{L} = \bm{D} - \bm{W}$
+where $\bm{D}$ denotes a diagonal matrix containing the degree of the nodes and $\bm{W}$ the weights on the edges between nodes.
+This problem requires finding the smallest $k$ eigenvectors of $\bm{L}$.
+We run this experiment on the high energy physics arXiv paper citation graph (cit-HepPh).
+
+\textbf{Gaussian processes} \quad
+GPs are flexible nonparametric probabilistic models where inductive biases are expressed through a covariance (kernel) function.
+At its core, training a GP involves computing and taking gradients of the log determinant of a kernel $\log \left|\bm{K}\right|$ and of a
+quadratic term $\bm{y}^{T} \bm{K}^{-1} \bm{y}$ (where $\bm{y}$ is the vector of observations).
+
+\textbf{Schr\"{o}dinger Equation} \quad
+In this problem we characterize the spectrum of an atom or molecule by finding the eigenspectrum of a PDE operator in a Schrodinger equation $\bm{H}\psi = E\psi$.
+After discretizing $\psi$ to a grid, we compute the smallest eigenvalues and eigenvectors of the operator $\bm{H}$ which for this experiment is
+non-symmetric as we perform a compactfying transform.
+
+\textbf{Minimal Surface} \quad
+Here we solve a set of nonlinear PDEs with the objective of finding the surface that locally minimizes its area under given boundary constraints.
+When applied to the graph of a function, the PDE can be expressed as $f(z)=(1+z_x^2)z_{yy}-2z_xz_yz_{xy}+(1+z_y^2)z_{xx}=0$ and solved by root finding on a discrete grid.
+Applying Newton-Raphson, we iteratively solve the non-symmetric linear system $z \gets  z-\bm{J}^{-1}f(z)$ where $\bm{J}$ is the Jacobian of the PDE operator.
+
+\textbf{Bi-Poisson Equation} \quad
+The Bi-Poisson equation $\Delta^2 u = \rho$ is a linear boundary value PDE relevant in continuum mechanics, where $\Delta$ is the Laplacian. When discretized using a grid, the result is a large symmetric system to be solved. We show speedups from the product structure in \autoref{fig:structure}(b).
+
+\textbf{Neural PDEs} \quad
+Neural networks show promise for solving high dimensional PDEs.
+One approach for initial value problems requires advancing an ODE on the neural network parameters $\theta$, where
+$\dot{\theta} = \bm{M}(\theta)^{-1}F(\theta)$
+where $\bm{M}$ is an operator defined from Jacobian of the neural network which decomposes as the sum over data points $\bm{M} = \tfrac{1}{N}\sum_i \bm{M}_i$ and where $F$ is determined by the governing dynamics of the PDE \citep{du2021evolutional,finzi2023nivp}.
+By leveraging the sum structure with SVRG, we provide further speedups over \citet{finzi2023nivp} as shown in \autoref{fig:rnla}(c).
+
+\textbf{Equivariant Neural Network Construction} \quad
+As shown in \citep{finzi2021practical}, constructing the equivariant layers of a neural network for a given data type and symmetry group is equivalent to finding the nullspace of a large linear equivariance constraint $\bm{C} \bm{v}=\bm{0}$, where the constraint matrix $\bm{C}$ is highly structured, being a block diagonal matrix of concatenated Kronecker products and Kronecker sums of sparse matrices. In \autoref{fig:structure}(c) we show the empirical benefits of exploiting this structure.
+
+\section{Discussion}
+We have presented the CoLA framework for structure-aware linear algebraic operations in machine learning applications and beyond. Building on top of dense and iterative
+algorithms, we leverage explicit composition rules via multiple dispatch to achieve algorithmic speedups
+across a wide variety of practical applications.
+Algorithms like SVRG and a novel variation of Hutchinson's diagonal estimator exploit implicit structure common to large-scale machine learning problems.
+Finally, CoLA supports many features necessary for machine learning research and development, including memory efficient automatic differentiation, multi-framework support of both JAX and PyTorch, hardware acceleration, and lower precision.
+
+While structure exploiting methods are used across different application domains, domain knowledge often does not cross between communities.
+We hope that our framework brings these disparate communities and ideas together, enabling rapid development and reducing the
+burden of deploying fast methods for linear algebra at scale.
+Much like how automatic differentiation simplified and accelerated the training of machine learning models---with custom autograd functions as the exception rather than the rule---CoLA has the potential to streamline scalable linear algebra.
+
+\section*{Acknowledgements}
+This work is supported by
+NSF Award 1922658,
+NSF CAREER IIS-2145492,
+BigHat Biosciences,
+Capital One,
+and an Amazon Research Award.
+
+\bibliography{refs}
+\bibliographystyle{plainnat}
+
+\clearpage
+
+\appendix
+
+\section*{Appendix Outline}
+
+This Appendix is organized as follows:
+\begin{itemize}
+    \item In \autoref{app:rules} we describe various dispatch rules including the base rules, the composition rules and rules derived from other rules.
+    \item In \autoref{app:features} we provide an extended discussion of several noteworthy features of CoLA, such as doubly stochastic estimators and memory-efficient autograd implementation.
+    \item In \autoref{app:algorithms} we include pseudo-code on various of the iterative methods incorporated in CoLA and discuss modifications to improve lower precision performance.
+    \item In \autoref{app:experiments} we expand on the details of the experiments in the main text.
+\end{itemize}
+
+\section{Dispatch Rules} \label{app:rules}
+We now present the linear algebra identities that we use to exploit structure in CoLA.
+
+\subsection{Core Functions}
+\subsubsection{Inverses}
+We incorporate several identities for the compositional operators: product, Kronecker product, block diagonal and sum.
+For product we have $(\bm A\bm B)^{-1} = (\bm B^{-1}\bm A^{-1})$ and
+for Kronecker product we have
+$(\bm A\otimes \bm B)^{-1} = \bm A^{-1}\otimes \bm B^{-1}$.
+In terms of block compositions we have the following identities:
+
+\begin{equation*}
+    \begin{split}
+      {\begin{bmatrix} \bm{A} & \bm{0} \\ \bm{0} & \bm{D} \end{bmatrix} }^{-1}
+        =
+        \begin{bmatrix} \bm{A}^{-1} & \bm{0} \\ \bm{0} & \bm{D}^{-1} \end{bmatrix}
+          \quad \text{and} \quad
+      {\begin{bmatrix} \bm{A} & \bm{B} \\ \bm{0} & \bm{D} \end{bmatrix}}^{-1} = {\begin{bmatrix} \bm{A}^{-1} & -\bm{A}^{-1}\bm{B}\bm{D}^{-1} \\ \bm{0} & \bm{D}^{-1}\end{bmatrix}}
+    \end{split}
+\end{equation*}
+\begin{equation*}
+    \begin{split}
+{\begin{bmatrix} \bm{A} & \bm{B} \\ \bm{C} & \bm{D} \end{bmatrix}}^{-1}
+  =
+  {\begin{bmatrix} \bm{I} & -\bm{A}^{-1}\bm{B}\\ \bm{0} & \bm{I}\end{bmatrix}}
+  {\begin{bmatrix} \bm{A} & \bm{0}\\ \bm{0} & \bm{D}-\bm{C}\bm{A}^{-1}\bm{B} \end{bmatrix}}^{-1}
+  {\begin{bmatrix} \bm{I}& \bm{0}\\ -\bm{C}\bm{A}^{-1} & \bm{I} \end{bmatrix}}
+    \end{split}
+\end{equation*}
+
+Finally, for sum we have the Woodbury identity and its variants.
+Namely, for Woodbury we have
+\begin{equation*}
+    \begin{split}
+      \left(\bm{A} + \bm{U} \bm{B} \bm{V}\right)^{-1}
+      =
+      \bm{A}^{-1} -
+      \bm{A}^{-1} \bm{U} \left(\bm{B}^{-1} + \bm{V} \bm{A}^{-1} \bm{U}\right)^{-1} \bm{V} \bm{A}^{-1}
+      ,
+    \end{split}
+\end{equation*}
+the Kailath variant where
+\begin{equation*}
+    \begin{split}
+      \left(\bm{A} + \bm{B} \bm{C}\right)^{-1}
+      =
+      \bm{A}^{-1}
+      -
+      \bm{A}^{-1}\bm{B}\left(\bm{I} + \bm{C} \bm{A}^{-1} \bm{B}\right)\bm{C} \bm{A}^{-1}
+    \end{split}
+\end{equation*}
+and the rank one update via the Sherman-Morrison formula
+\begin{equation*}
+    \begin{split}
+      \left(\bm{A} + \bm{b} \bm{c}^{\intercal}\right)^{-1}
+      =
+      \bm{A}^{-1} -
+      \frac{1}{1 + \bm{c}^{\intercal} \bm{A} \bm{b}}
+      \bm{A}^{-1}\bm{b} \bm{c}^{\intercal} \bm{A}^{-1}
+      .
+    \end{split}
+\end{equation*}
+
+Besides the compositional operators, we have some rules for some special operators.
+For example, for $\bm{A} = \texttt{Diag}\left(\bm{a}\right)$ we have
+$\bm{A}^{-1} = \texttt{Diag}\left(\bm{a}^{-1}\right)$.
+Also, if $\bm{Q}$ is unitary then $\bm{Q}^{-1} = \bm{Q}^{*}$
+or if $\bm{Q}$ is orthonormal then $\bm{Q}^{-1} = \bm{Q}^{\intercal}$.
+
+\subsubsection{Eigendecomposition}
+We now assume that the matrices in this section are diagonalizable.
+That is,  $\texttt{Eigs}\left(\bm{A}\right)= \bm{\Lambda}_{\bm{A}}, \bm{V}_{\bm{A}}$, where
+$\bm{A} = \bm{V}_{\bm{A}} \bm{\Lambda}_{\bm{A}} \bm{V}_{\bm{A}}^{-1}$.
+In terms of the compositional operators, there is not a general rule for product or sum.
+However, for the Kronecker product we have
+$\texttt{Eigs}(\bm A\otimes \bm B) = \bm{\Lambda}_{\bm{A}} \otimes \bm{\Lambda}_{\bm{B}},\ \bm{V}_{\bm{A}} \otimes \bm{V}_{\bm{B}} $
+and for the Kronecker sum we have
+$\texttt{Eigs}(\bm A\oplus \bm B) = \bm{\Lambda}_{\bm{A}} \oplus \bm{\Lambda}_{\bm{B}},\ \bm{V}_{\bm{A}} \otimes \bm{V}_{\bm{B}} $.
+Finally, for block diagonal we have
+\begin{equation*}
+    \begin{split}
+    \texttt{Eigs}\bigg({\begin{bmatrix} \bm{A} & \bm{0} \\ \bm{0} & \bm{D} \end{bmatrix} }\bigg)
+    =
+      \begin{bmatrix} \bm{\Lambda_A} & \bm{0} \\ \bm{0} & \bm{\Lambda_D} \end{bmatrix}, \ \begin{bmatrix} \bm{V_A} & \bm{0} \\ \bm{0} & \bm{V_D} \end{bmatrix}
+  .
+    \end{split}
+\end{equation*}
+
+\subsubsection{Diagonal}
+As a base case, if we need to compute $\texttt{Diag}\left(\bm{A}\right)$ for a general matrix $\bm{A}$
+we may compute each diagonal element by $\bm{e}_{i}^{\intercal}\bm{A} \bm{e}_{i}$.
+Additionally, if $\bm{A}$ is large enough we switch to randomized estimation
+$\texttt{Diag}(\bm A) \approx( \bm{Z} \odot \bm{A} \bm{Z})\mathbf{1}/N$ with $\bm{Z} \sim \mathcal{N}(0,1)^{d\times N}$
+where $N$ is the number of samples used to approximate the diagonal.
+In terms of compositional operators, we have that for sum
+$\texttt{Diag}\left(\bm{A} + \bm{B}\right) = \texttt{Diag}\left(\bm{A}\right) + \texttt{Diag}\left(\bm{B}\right)$.
+For Kronecker product we have
+$\texttt{Diag}(\bm{A} \otimes \bm{B}) = \texttt{vec}\big(\texttt{Diag}(\bm{A})\texttt{Diag}(\bm{B})^{\intercal}\big)$
+and for Kronecker sum
+$\texttt{Diag}(\bm{A} \oplus \bm{B}) = \texttt{vec}\big(\texttt{Diag}\left(\bm{A}\right)\mathbf{1}^\intercal + \mathbf{1}\texttt{Diag}\left(\bm{B}\right)^\intercal\big)$.
+Finally, for block composition we have
+\begin{equation*}
+    \begin{split}
+      \texttt{Diag}\bigg({\begin{bmatrix} \bm{A} & \bm{B} \\ \bm{C} & \bm{D} \end{bmatrix}}\bigg)
+        =
+        [\texttt{Diag}(\bm{A}),\texttt{Diag}(\bm{D})]
+        .
+    \end{split}
+\end{equation*}
+
+\subsubsection{Transpose / Adjoint}
+As explained in \autoref{subsec:linops_core}, as a base case we have an automatic procedure to compute the transpose or adjoint of any operator $\bm{A}$ via autodiff.
+However, we also incorporate the following rules.
+For sum we have $\left(\bm{A} + \bm{B}\right)^{*} = \bm{A}^{*} + \bm{B}^{*}$ and $\left(\bm{A} + \bm{B}\right)^{\intercal} = \bm{A}^{\intercal} + \bm{B}^{\intercal}$.
+For product we have $\left(\bm{A} \bm{B}\right)^{*} = \bm{B}^{*}\bm{A}^{*} $ and $\left(\bm{A} \bm{B}\right)^{\intercal} = \bm{B}^{\intercal} \bm{A}^{\intercal}$.
+For Kronecker product we have $\left(\bm{A} \otimes \bm{B}\right)^{*} = \bm{A}^{*} \otimes \bm{B}^{*}$ and
+$\left(\bm{A} \otimes \bm{B}\right)^{\intercal} = \bm{A}^{\intercal} \otimes \bm{B}^{\intercal}$.
+For the Kronecker sum we have $\left(\bm{A} \oplus \bm{B}\right)^{*} = \bm{A}^{*} \oplus \bm{B}^{*}$
+and $\left(\bm{A} \oplus \bm{B}\right)^{\intercal} = \bm{A}^{\intercal} \oplus \bm{B}^{\intercal}$.
+In terms of block composition we have
+\begin{equation*}
+    \begin{split}
+      \bigg({\begin{bmatrix} \bm{A} & \bm{B} \\ \bm{C} & \bm{D} \end{bmatrix} }\bigg)^{*}
+        =
+      {\begin{bmatrix} \bm{A}^{*} & \bm{C}^{*} \\ \bm{B}^{*} & \bm{D}^{*} \end{bmatrix} }
+        \quad \text{and} \quad
+      \bigg({\begin{bmatrix} \bm{A} & \bm{B} \\ \bm{C} & \bm{D} \end{bmatrix} }\bigg)^{\intercal}
+        =
+      {\begin{bmatrix} \bm{A}^{\intercal} & \bm{C}^{\intercal} \\ \bm{B}^{\intercal} & \bm{D}^{\intercal} \end{bmatrix} }
+        .
+    \end{split}
+\end{equation*}
+Finally for the annotated operators we have the following rules.
+$\bm{A}^{*} = \bm{A}$ if $\bm{A}$ is self-adjoint and $\bm{A}^{\intercal} = \bm{A}$ if $\bm{A}$ is symmetric.
+
+\subsubsection{Pseudo-inverse}
+As a base case, if we need to compute $\bm{A}^{+}$, we may use $\texttt{SVD}\left(\bm{A}\right)= \bm{U}, \bm{\Sigma}, \bm{V}$
+and therefore set $\bm{A}^{+} = \bm{U}\bm{\Sigma}^{+} \bm{V}^{*}$, where $\bm{\Sigma}^{+}$ inverts the nonzero diagonal scalars.
+If the size of $\bm{A}$ is too large, then we may use randomized SVD.
+Yet, it is uncommon to simply want $\bm{A}^{+}$, usually we want to solve a least-squares problem and therefore
+we can use solvers that are not as expensive to run as SVD.
+For the compositional operators we have the following identities.
+For product $\left(\bm{A} \bm{B}\right)^{+} = \left(\bm{A}^{+} \bm{A} \bm{B}\right)^{+} \left(\bm{A}\bm{B} \bm{B}^{+}\right)^{+}$
+and for Kronecker product we have $\left(\bm{A} \otimes \bm{B}\right)^{+} = \bm{A}^{+} \otimes \bm{B}^{+}$.
+For block diagonal we have
+\begin{equation*}
+    \begin{split}
+      \bigg({\begin{bmatrix} \bm{A} & \bm{0} \\ \bm{0} & \bm{D} \end{bmatrix} }\bigg)^{+}
+        =
+      \begin{bmatrix} \bm{A}^{+} & \bm{0} \\ \bm{0} & \bm{D}^{+} \end{bmatrix}
+  .
+    \end{split}
+\end{equation*}
+Finally, we have some identities that are mathematically trivial but that are necessary when recursively exploiting structure as
+that would save computation. For example, if $\bm{Q}$ is unitary we know that $\bm{Q}^{+} = \bm{Q}$ and similarly when $\bm{Q}$ is orthonormal.
+If $\bm{A}$ is self-adjoint, then $\bm{A}^{+} = \bm{A}^{-1}$ and also if it is symmetric and PSD.
+
+\subsection{Derived Functions}
+Interestingly, the previous core functions allow us to derive multiple rules from the previous ones.
+To illustrate, we have that $\texttt{Tr}\left(\bm{A}\right) = \sum_{i}^{} \texttt{Diag}\left(\bm{A}\right)_{i}$.
+Additionally, if $\bm{A}$ is PSD we have that $f\left(\bm{A}\right) = \bm{V}_{\bm{A}} f\left(\bm{\Lambda}_{\bm{A}}\right) \bm{V}_{\bm{A}}^{-1}$
+and if $\bm{A}$ is both symmetric and PSD then $f\left(\bm{A}\right) = \bm{V}_{\bm{A}} f\left(\bm{\Lambda}_{\bm{A}}\right) \bm{V}_{\bm{A}}^{\intercal}$.
+where in both cases we used $\texttt{Eigs}\left(\bm{A}\right) = \bm{\Lambda}_{\bm{A}}, \bm{V}_{\bm{A}}$.
+Some example functions for PSD matrices are $\texttt{Sqrt}\left(\bm{A}\right) = \bm{V}_{\bm{A}} \bm{\Lambda}_{\bm{A}}^{1/2} \bm{V}_{\bm{A}}^{-1}$
+or $\texttt{Log}\left(\bm{A}\right) = \bm{V}_{\bm{A}} \log\bm{\Lambda}_{\bm{A}} \bm{V}_{\bm{A}}^{-1}$.
+Which also this rules allow us to define $\texttt{LogDet}\left(\bm{A}\right) = \texttt{Tr}\left(\texttt{Log}\left(\bm{A}\right)\right)$.
+
+\subsection{Other matrix identities}
+We emphasize that there are a myriad more matrix identities that we do not intentionally include
+such as $\texttt{Tr}(\bm{A} + \bm{B}) = \texttt{Tr}(\bm{A}) + \texttt{Tr}(\bm{B})$ or $\texttt{Tr}(\bm{A} \bm{B}) = \texttt{Tr}(\bm{B} \bm{A})$ when $\bm{A}$ and
+$\bm{B}$ are squared.
+These additional cases are not part of our dispatch rules as either they are automatically computed from other rules (as in the first example)
+or they do not yield any computational savings (as in the second example).
+
+\section{Features in CoLA} \label{app:features}
+\subsection{Doubly stochastic diagonal and trace estimation} \label{app:diagonal_estimator}
+\textbf{Singly Stochastic Trace Estimator} \quad
+Consider the traditional stochastic trace estimator:
+\begin{equation}
+  \overline{\texttt{Tr}}[\texttt{Base}](\bm A) = \tfrac{1}{n}\sum_{j=1}^n \bm{z}^{\intercal}_j \bm{A} \bm{z}_j
+\end{equation}
+with each $\bm{z}_{j} \sim \mathcal{N}(\bm{0},\bm{I}_{D})$ where $\bm{A}$ is a $D\times D$ matrix.
+When $\bm A$ is itself a sum $\bm A = \tfrac{1}{m}\sum_{i=1}^m \bm A_i$, we can expand the trace as $ \overline{\texttt{Tr}}[\texttt{Base}](\bm A) = \tfrac{1}{mn}\sum_{j=1}^n\sum_{i=1}^m \bm{z}^{\intercal}_j \bm{A}_i \bm{z}_j$, with probe variables shared across elements of the sum.
+
+Consider the quadratic form $Q:=\bm{z}^{\intercal} \bm{A} \bm{z}$, which for Gaussian random variables has a
+cumulant generating function of $K_Q(t) = \log \mathbb{E}[e^{tQ}] = -\tfrac{1}{2} \log \mathrm{det}(\bm I-2t\bm A)$.
+From the generating function we can derive the mean and variance of this estimator: $\mathbb{E}[Q] = K_Q'(0) = \mathrm{Tr}(\bm A)$ and $\mathrm{Var}[Q] = K_Q''(0) = 2 \mathrm{Tr}(\bm A^2)$.
+Since $\overline{\texttt{Tr}}[\texttt{Base}](\bm A)$ is a sum of independent random draws of $Q$, we see:
+\begin{equation}
+    \mathbb{E}\big[\overline{\texttt{Tr}}[\texttt{Base}](\bm A)\big] = \mathrm{Tr}(\bm A) \quad \mathrm{and}\quad \mathrm{Var}\big[\overline{\texttt{Tr}}[\texttt{Base}](\bm A)\big] = \frac{2}{n} \mathrm{Tr}(\bm A^2).
+\end{equation}
+
+\textbf{Doubly Stochastic Trace Estimator} \quad
+For the doubly stochastic estimator, we choose probe variables which are sampled independently for each element of the sum:
+\begin{equation}
+  \overline{\texttt{Tr}}[\texttt{Sum}](\bm A) = \tfrac{1}{nm}\sum_{j=1}^n \sum_{i=1}^m \bm{z}^{\intercal}_{ij} \bm A_i \bm{z}_{ij}.
+\end{equation}
+Separating out the elements of the sum, we can write the estimator as $
+    \overline{\texttt{Tr}}[\texttt{Sum}](\bm A) = \tfrac{1}{n}\sum_{j=1}^n R_j$
+    where $R_j$ are independent random samples of the value $R = \tfrac{1}{m} \sum_{i=1}^m \bm{z}_i^{\intercal} \bm A_i \bm{z}_i$.
+    The cumulant generating function is merely $K_R(t) = \sum_{i=1}^m K_{Q_i}(t/m)$ where $Q_i = \bm{z}^{\intercal} \bm A_i \bm{z}$.
+    Taking derivatives we find that,
+    \begin{equation}
+        \mathbb{E}[R] = K_R'(0) = \tfrac{1}{m}\sum_{i=1}^m \mathrm{Tr}(\bm A_i) =  \mathrm{Tr}(\bm A),
+    \end{equation}
+    \begin{equation}
+        \textrm{Var}[R] = K_R''(0) = \tfrac{1}{m^2}\sum_{i=1}^m 2\mathrm{Tr}(\bm A_i^2) =\tfrac{2}{m}\mathrm{Tr}(\tfrac{1}{m}\sum_{i=1}^m \bm A_i^2)
+    \end{equation}
+Assuming bounded moments on $\bm A_i$, then both $\bm A = \tfrac{1}{m}\sum_i \bm A_i$ and $S(\bm A) = \tfrac{1}{m}\sum_i \bm A_i^2$ will converge to fixed values as $m \rightarrow \infty$.
+Given that $\overline{\texttt{Tr}}[\texttt{Sum}](\bm A) = \tfrac{1}{n}\sum_{j=1}^n R_j$, we can now write the mean and variance of the doubly stochastic estimator:
+\begin{equation}
+    \mathbb{E}\big[\overline{\texttt{Tr}}[\texttt{Sum}](\bm A)\big] = \mathrm{Tr}(\bm A) \quad \mathrm{and}\quad \mathrm{Var}\big[\overline{\texttt{Tr}}[\texttt{Sum}](\bm A)\big] = \frac{2}{mn} \mathrm{Tr}(S(\bm A)).
+\end{equation}
+
+As the error of the estimator can be bounded by the square root of the variance,
+showing that while the error for $\overline{\texttt{Tr}}[\texttt{Base}]$ is $O(1/\sqrt{n})$ (even when applied to sum structures),
+whereas the error for $\overline{\texttt{Tr}}[\texttt{Sum}]$ is $O(1/\sqrt{nm})$, a significant asymptotic variance reduction.
+
+The related stochastic diagonal estimator
+\begin{equation}
+  \overline{\texttt{Diag}}[\texttt{Sum}](\bm A) = \tfrac{1}{nm}\sum_{j=1}^n \sum_{i=1}^m \bm{z}_{ij}\odot \bm A_i \bm{z}_{ij}.
+\end{equation}
+achieves the same $O(1/\sqrt{nm})$ convergence rate, though we omit this derivation for brevity as it is follows the same steps.
+
+In \autoref{fig:doubly} we empirically how our
+doubly stochastic diagonal estimator outperforms the
+standard Hutchinson estimator.
+\begin{figure*}
+  \centering
+    \includegraphics[width=0.65\textwidth]{./figs/diagonal_estimation.pdf}
+    \caption{
+    \textbf{Improved convergence of doubly stochastic diagonal estimator}.
+    Convergence of our doubly stochastic diagonal estimator in evaluating the diagonal of the UCI \emph{Buzz} empirical covariance matrix (batch size = $100$). Shown is the relative error of the estimate vs the number of passes through the $n$ data points of the dataset. Our diagonal estimator has lower variance and converges faster than the standard Hutchinson estimator.}
+    \label{fig:doubly}
+\end{figure*}
+\vspace{-3mm}
+
+\subsection{Autograd rules for iterative algorithms} \label{app:autograd}
+
+\begin{figure*}
+    \centering
+    \begin{tabular}{cc}
+    \includegraphics[width=0.5\textwidth]{./figs/trace_runtime.pdf}
+      &
+    \hspace{-2em}
+    \includegraphics[width=0.5\textwidth]{./figs/trace_memory.pdf}
+    \\
+    \includegraphics[width=0.5\textwidth]{./figs/trace_runtime_slq.pdf}
+      &
+    \hspace{-2em}
+    \includegraphics[width=0.5\textwidth]{./figs/trace_memory_slq.pdf}
+    \\
+    (a) Backwards pass runtime & (b) Backwards pass memory
+    \\
+    \end{tabular}
+    \caption{
+      \textbf{Our autograd rules allow for fast and memory efficient backpropagation}.
+      For two different linear algebra operations $\bm{A}_{\bm{\theta}}^{-1} \bm{b}$ and $\log |\bm{A}_{\bm{\theta}}|$,
+      we show the runtime and peak memory utilization required to compute the derivatives as we increase the size of the problem.
+      In all plots, we compare CoLA's autograd rules against the autograd default of
+      backpropagating through each iteration of the solver (unrolled autodiff).
+      Notably, using the custom autograd rules allows us to save substantial memory and runtime when performing the backwards pass.
+    }
+    \vspace{-0.5em}
+    \label{fig:autograd-memory}
+\end{figure*}
+
+For machine learning applications, we want to seamlessly interweave linear algebra operations with automatic differentiation.
+The most basic strategy is to simply let the autograd engine trace through the operations and backpropagate accordingly.
+However, when using iterative methods like conjugate gradients or Lanczos, this naive approach is extremely memory inefficient and, for problems with many iterations,
+the cost can be prohibitive (as seen in \autoref{fig:autograd-memory}).
+However, the linear algebra operations corresponding to inverse, eigendecomposition and trace estimation have simple closed form derivatives which we can implement to avoid the prohibitive memory consumption and reduce runtime.
+
+Simply put, for an operation like $f = \texttt{CGSolve}$, $\texttt{CGSolve}(\bm A, \bm{b}) = \bm A^{-1} \bm{b}$ we must define a Vector Jacobian Product: $\texttt{VJP}(f, (\bm A, \bm{b}), \bm{v}) = \big(\bm{v}^{\intercal} \frac{\partial f}{\partial \bm A}, \bm{v}^{\intercal} \frac{\partial f}{\partial \bm{b}}\big)$.
+However, for matrix-free linear operators, we cannot afford to store the dense matrix $\bm A$, and thus neither can we store the gradients with respect to each of its elements!
+Instead we must (recursively) consider how the linear operator was constructed in terms of its differentiable arguments.
+In other words, we must flatten the tree structure of possibly nested differentiable arguments into a vector: $\theta = \texttt{flatten}[\bm A]$.
+For example for $\bm A = \texttt{Kron}\big(\texttt{Diag}(\theta_1), \texttt{Conv}(\theta_2)\big)$, $\texttt{flatten}[\bm A] = [\theta_1,\theta_2]$.
+From this perspective, we consider $\bm A$ as a container or tree of its arguments $\theta$,
+and define $v^{\intercal} \frac{\partial f}{\partial \bm A}:= \texttt{unflatten}[v^{\intercal} \frac{\partial f}{\partial \bm \theta}]$
+which coincides with the usual definition for dense matrices.
+Applying to inverses, we can now write a simple $\texttt{VJP}$:
+\begin{equation}
+    \bm{v}^\intercal\tfrac{\partial f}{\partial \bm A}
+    =
+    \texttt{unflatten}[\texttt{VJP}\big(\theta \mapsto \texttt{unflatten}(\theta) \bm{A}^{-1} \bm{b}, \theta, \bm{A}^{-1} \bm{v}\big)]
+\end{equation}
+for $\bm v^{\intercal}\frac{\partial f}{\partial \bm \theta} =
+\bm v^{\intercal} (\bm A^{-1})^{\intercal}(\partial_\theta \bm A_\theta)  \bm A^{-1}\bm b$, and we will adopt this notation below for brevity.
+Doing so gives a memory cost which is constant in the number of solver iterations, and proportional to the memory used in the forward pass.
+Below we list the autograd rules for some of the iterative routines that we implement in CoLA with their \texttt{VJP} definitions.
+\begin{enumerate}
+    \item
+      $\bm{y}=\texttt{Solve}(\bm A_{\bm{}},\bm b): \quad
+      \bm{w}^\intercal\tfrac{\partial \bm{y}}{\partial \bm \theta}
+      =
+      -(\bm{A}_{\bm{}}^{-1} \bm{w})^\intercal(\partial_{\bm{\theta}} \bm A_{\bm{\theta}})  (\bm{A}_{\bm{}}^{-1} \bm b)$
+    \item
+      $\bm \lambda, \bm V = \texttt{Eigs}(\bm A): \quad
+      \bm{w}^\intercal\tfrac{\partial \lambda}{\partial \bm \theta}
+      =
+      \bm{w}^\intercal\texttt{Diag}\big(\bm V^{-1} (\partial_{\bm{\theta}} \bm A_{\bm{\theta}}) \bm V \big)
+      $
+    \item
+      $\bm \lambda, \bm V = \texttt{Eigs}(\bm A): \quad
+      \bm{w}^\intercal\tfrac{\partial \bm{v}_{i}}{\partial \bm \theta} =
+      \bm{w}^{\intercal}(\lambda_{i} \bm{I} - \bm{A})^{+} \partial_{\bm{\theta}} \bm{A}_{\bm{\theta}} \bm{v}_{i}
+      $
+    \item
+      $y = \log |\bm{A}|: \quad
+      \frac{\partial y}{\partial \bm{\theta}}
+      =
+      \texttt{Tr} \big(\bm{A}^{-1} \partial_{\bm{\theta}} \bm{A}_{\bm{\theta}}\big)
+      $
+    \item
+      $\bm y = \texttt{Diag}(\bm{A}): \quad
+      \bm{w}^{\intercal} \frac{\partial \bm y}{\partial{\bm \theta}}
+      =
+      \bm{w}^{\intercal} \texttt{Diag}\left(\partial_{\bm{\theta}} \bm{A}_{\bm{\theta}}\right)
+      $
+\end{enumerate}
+
+In \autoref{fig:autograd-memory} we show the practical benefits of our autograd rules.
+We take gradients of different linear solves $\bm{A}_{\bm{\theta}}^{-1} \bm{b}$ that were derived using conjugate gradients (CG), where each solve required an increasing number of CG iterations.
+
+\section{Algorithmic Details} \label{app:algorithms}
+In this section we expand upon three different points introduced in the main paper.
+For the first point we argue why SVRG leads to gradients with reduced variants.
+For the second points we display all the iterative methods that we use as base algorithms in CoLA.
+Finally, for the third point we expand upon CoLA's strategy for dealing with the different numerical precisions that we support.
+
+\subsection{SVRG}
+In simplest form, SVRG \citep{johnson2013accelerating} performs gradient descent with the varianced reduced gradient
+\begin{equation}\label{eq:svrg_eq}
+    \bm{w} \gets \bm{w} -  \eta(g_i(\bm{w})-g_i(\bm{w}_0)+g(\bm{w}_0))
+\end{equation} where $g_i$ represents the stochastic gradient evaluated at only a single element or minibatch of the sum, and $g(\bm{w}_0)$ is the full batch gradient evaluated at the anchor point $\bm{w}_0$ which is recomputed at the end of each epoch with an updated anchor.
+
+With different loss functions, we can use this update rule to solve symmetric or non-symmetric linear systems, to compute the top eigenvectors or even find the nullspace of a matrix. Despite the fact that the corresponding objectives are not strongly convex in the last two cases, it has been shown that gradient descent and thus SVRG will converge at this exponential rate \citep{xu2018accelerated,finzi2021practical}.
+Below we list the gradients that enable us to solve different linear algebra problems:
+\begin{table}[ht]
+\centering
+\begin{tabular}{|c|c|c|c|}
+\hline
+ & Symmetric Solve $\bm{A} \bm{w} = \bm{b}$ & Top-$k$ Eigenvectors $\bm A\bm W = \bm W\bm \Lambda$ & Nullspace $\bm A\bm W=0$\\
+\hline
+  $g_i(\bm{w})$ & $\bm{A}_i \bm{w} - \bm{b}$ & $-\bm A_i\bm W+\bm W\bm W^{\intercal} \bm W$ \citep{xu2018accelerated} & $\bm A_i\bm{W}$ \citep{finzi2021practical}\\
+\hline
+\end{tabular}
+\vspace{1mm}
+\caption{SVRG gradients for solving different linear algebra problems.}
+\label{your_label}
+\end{table}
+In each of the three cases listed above, we can recognize that if the average of all the gradients $g(w)$ is $0$, then the corresponding linear algebra solution has been recovered.
+
+While it may seem that we need to take three complete passes through $\{\bm A_i\}$ per SVRG epoch (due to the three terms in \autoref{eq:svrg_eq}), we can reduce this cost to two
+complete passes exploiting the fact that the gradients are linear in the matrix object, replacing $\bm A_i \bm W - \bm A_i \bm W_0$ with $\bm A_i(\bm W-\bm W_0)$ where appropriate.
+In all of the \texttt{Sum} structure experiments where we leverage SVRG, the x-axis measures the total number of passes through $\{\bm A_i\}_{i=1}^m$, two for each epoch for SVRG.
+
+\subsection{Iterative methods} \label{app:iterative}
+In \autoref{tab:iterative} we list the different iterative methods (base cases) that we use for different linear algebraic operations as well as for different types of linear operators.
+As seen in \autoref{tab:iterative}, there are many alternatives to our base cases, however we opted for algorithms that are known to be performant, that are well-studied and that
+are popular amongst practitioners.
+A comprehensive explanation of our bases cases and their alternatives can be found in \citet{golub2018matrix} and \citet{saad2003iterative}.
+
+\begin{table}[ht]
+  \centering
+  \begin{tabular}{|c|c|c|}
+    \hline
+     \textbf{Linear Algebra Op}
+     & \textbf{Base Case}
+     & \textbf{Alternatives}
+     \\
+    \hline
+    $\bm{A} \bm{x} = \bm{b}$ (non-symmetric)
+    & GMRES
+    & BiCGSTAB, LGMRES, QMR
+    \\
+    $\bm{A} \bm{x} = \bm{b}$ (self-adjoint)
+    & MINRES
+    & GMRES
+    \\
+    $\bm{A} \bm{x} = \bm{b}$ (PSD)
+    & CG
+    & GMRES
+    \\
+    $\texttt{Eigs}(\bm{A})$ (non-symmetric)
+    & Arnoldi
+    & IRAM, Bi-Lanczos
+    \\
+    $\texttt{Eigs}(\bm{A})$ (self-adjoint)
+    & Lanczos
+    & LOBPCG
+    \\
+    $\bm{A}^{+}$
+    & CG
+    & LSQR, LSMR
+    \\
+    $\bm{A} = \bm{U} \bm{\Sigma} \bm{V}^{*}$
+    & Lanczos, rSVD
+    & Jacobi-Davidson
+    \\
+    $f(\bm{A})$ (self-adjoint)
+    & SLQ
+    & Arnoldi
+    \\
+    \hline
+  \end{tabular}
+  \vspace{1mm}
+  \caption{
+  \textbf{CoLA's base case iterative algorithm and some alternatives.}
+  We now expand on the acronyms.
+  GMRES: Generalized Minimum RESidual,
+  BiCGSTAB: BiConjugate Gradient STABilized,
+  QMR: Quasi-Minimal Residual,
+  MINRES: MINimum RESidual,
+  CG: Conjugate Gradients,
+  IRAM: Implicitly Restarted Arnoldi Method,
+  LOBPCG: Locally Optimal Block Preconditioned Conjugate Gradients,
+  Bi-Lanczos: Bidiagonal Lanczos,
+  CGS: Conjugate Gradient Squared,
+  LSQR: Least squares QR,
+  LSMR: Least squares Minimal Residual iteration,
+  LGMRES: Least squares Generalized Minimum RESidual,
+  rSVD: randomized Singular Value Decomposition,
+  and
+  SLQ: Stochastic Lanczos Quadrature.
+  }
+  \label{tab:iterative}
+\end{table}
+
+\subsection{Lower precision linear algebra} \label{app:lowpres}
+The accumulation of round-off error is usually the breaking point of several numerical linear algebra (NLA) routines.
+As such, it is common to use precisions like \texttt{float64} or higher,
+especially when running these routines on a CPU.
+In contrast, in machine learning, lower precisions like \texttt{float32} or \texttt{float16} are ubiquitously used because
+more parameters and data can be fitted into the GPU memory (whose memory is usually much lower than CPUs)
+and because the MVMs can be done faster (the CUDA kernels are optimized for operations on these precisions).
+Additionally, the round-off error incurred on MVMs is not as detrimental when training machine learning models (as we are already running noisy optimization algorithms)
+as when solving linear algebra problems (where round-off error can lead us to poor solutions).
+Thus, it is an active area of research in NLA to derive routines which utilize lower precisions than \texttt{float64} or that mix precisions
+in order to achieve better runtimes without a complete degradation of the quality of the solution.
+
+In CoLA we take a two prong approach to deal with lower precisions in our NLA routines.
+First, we incorporate additional variants of well-known algorithms that propagate less round-off error at the expense of requiring more computation,
+as seen in \autoref{fig:arnoldi-versions}.
+Second, we integrate novel variants of algorithms that are designed to be used on lower precisions such as the CG modification found in \citet{maddox2022lowpres}.
+We now discuss the first approach.
+
+As discussed in \autoref{app:iterative}, there are two algorithms that are key for eigendecompositions.
+The first is Arnoldi (applicable to any operator), and the second is Lanczos (for symmetric operators) --- where actually Lanczos can be viewed as a simplified version of Arnoldi.
+Central to these algorithms is the use of an orthogonalization step which is well-known to be a source of numerical instability.
+One approach to aggressively ameliorate the propagation of round-off error during orthogonalization is to use
+Householder projectors, which is the strategy that we use in CoLA.
+Given a unitary vector $\bm{u}$, a Householder projector (or Householder reflector)
+is defined as the following operator $\bm{R} = \bm{I} - 2 \bm{u} \bm{u}^{*}$.
+When applied to a vector $\bm{x}$ the result $\bm{R}\bm{x}$ is basically a reflection of $\bm{x}$ over the $\bm{u}^{\intercal}$ space.
+To easily visualize this, suppose that $\bm{x} \in \mathbb{R}^{2}$ and $\bm{u} = \bm{e}_{1}$.
+Hence,
+\begin{equation*}
+    \begin{split}
+      \bm{R} \bm{x}
+      =
+      \begin{pmatrix}
+        x_{1} \\ x_{2}
+      \end{pmatrix}
+      -
+      2
+      \begin{pmatrix}
+        x_{1} \\ 0
+      \end{pmatrix}
+      =
+      \begin{pmatrix}
+        -x_{1} \\ x_{2}
+      \end{pmatrix}
+    \end{split}
+\end{equation*}
+which is exactly the reflection of the vector across the axis generated by $\bm{e}_{2}$.
+Most notably, $\bm{R}$ is unitary $\bm{R} \bm{R}^{*} = \bm{I}$ which can be easily verified from the definition.
+Being unitary is crucial as under the usual round-off error model, applying $\bm{R}$
+to another matrix $\bm{A}$ does not worsen the already accumulated error $\bm{E}$.
+Mathematically, $\norm{\bm{R}\left(\bm{A} + \bm{E}\right) - \bm{R} \bm{A}} = \norm{\bm{R} \bm{E}} = \norm{\bm{E}}$, where the last equality
+results from basic properties of unitary matrices.
+We are going to use Arnoldi as an example of how Householder projectors are used during orthogonalization.
+In \autoref{fig:arnoldi-versions} we have an example of two different variants of
+Arnoldi present in CoLA.
+The implementations are notably different and also it is easy to see how Algorithm \ref{alg:arnoldi-house} is more expensive
+than Algorithm \ref{alg:arnoldi}.
+First, note that for Algorithm \ref{alg:arnoldi-house} we have two for loops (line 6 and line 8) whereas for Algorithm \ref{alg:arnoldi} we only have one (line 4-6).
+Worse, the two for loops in Algorithm \ref{alg:arnoldi-house} require more flops than the only for loop in Algorithm \ref{alg:arnoldi}.
+Note that we do not always favor the more expensive but robust implementation of an algorithm as in some cases, like when running GMRES,
+the round-off error is not as impactful to the quality of the solution, and shorter runtimes are actually more desirable.
+
+\begin{figure}[htbp]
+  \begin{minipage}[t]{0.49\linewidth}
+    \begin{algorithm}[H] \caption{ Arnoldi iteration } \label{alg:arnoldi}
+      \begin{algorithmic}[1]
+        \State \textbf{Inputs:} $\bm{A}$, $\bm{q}_{0} = \bm{\nu}_{0} / \norm{\bm{\nu}_{0}}$ where possibly $\bm{\nu}_{0} \sim \mathcal{N}\left(\bm{0}, \bm{I}\right)$,
+        maximum number of iterations $T$ and tolerance $\epsilon \in \left(0,1\right)$.
+        \vspace{0.03cm}
+        \For{$j=0$ to $T - 1$}
+            \State $\bm{\nu}_{j+1} \leftarrow \bm{A} \bm{q}_{j}$
+            \For{$i=0$ to $j$}
+            \State $h_{i,j} = \bm{q}_{i}^{*} (\bm{A} \bm{q}_{j})$
+            \State $\bm{\nu}_{j+1} \leftarrow \bm{\nu}_{j+1} - h_{i,j} \bm{q}_{i}$
+            \EndFor
+            \State $h_{j+1,j} = \norm{\bm{\nu}_{j+1}}$
+            \vspace{0.05cm}
+            \If {$ h_{j+1,j} < \epsilon$}
+              \State \textbf{stop}
+            \Else
+              \State $\bm{q}_{j+1} = \bm{\nu}_{j+1} / h_{j+1,j}$
+              \vspace{0.05cm}
+            \EndIf
+        \vspace{0.05cm}
+        \EndFor
+        \State \textbf{return} $\bm{H}, \bm{Q} = \left(\bm{q}_{0} | \dots | \bm{q}_{T-1} | \bm{q}_{T}\right)$
+        \vspace{0.03cm}
+      \end{algorithmic}
+    \end{algorithm}
+  \end{minipage}\hfill
+  \begin{minipage}[t]{0.49\linewidth}
+    \begin{algorithm}[H] \caption{ Householder Arnoldi iteration } \label{alg:arnoldi-house}
+      \begin{algorithmic}[1]
+        \State \textbf{Inputs:} $\bm{A}$, $\bm{\nu}_{0} \neq \bm{0}$ where possibly $\bm{\nu}_{0} \sim \mathcal{N}\left(\bm{0}, \bm{I}\right)$,
+        and maximum number of iterations $T$.
+        \vspace{0.03cm}
+        \For{$j=0$ to $T$}
+            \State $\bm{u}_{j} = $ \texttt{GET\_HOUSEHOLDER\_VEC}$(\bm{\nu}_{j}, j)$
+            \State $\bm{R}_{j} = \bm{I} - 2 \bm{u}_{j} \bm{u}_{j}^{*}$
+            \State $\bm{h}_{j} = \bm{R}_{j} \bm{\nu}_{j}$
+            \State $\bm{q}_{j} = \bm{R}_{0} \cdots \bm{R}_{j} \bm{e}_{j+1}$
+            \vspace{0.05cm}
+            \If {$ j < T$}
+              \State $\bm{\nu}_{j+1} = \bm{R}_{j} \cdots \bm{R}_{0} (\bm{A} \bm{q}_{j})$
+              \vspace{0.05cm}
+            \EndIf
+        \EndFor
+        \State \textbf{return} $\bm{H}, \bm{Q} = \left(\bm{q}_{0} | \dots | \bm{q}_{T}\right)$
+        \vspace{0.03cm}
+        \Function{\texttt{GET\_HOUSEHOLDER\_VEC}}{$\bm{w}$, $k$}
+            \State $u_{i}=0$ for $i < k$ and $u_{i} = w_{i}$ for $i > k$.
+            \State $u_{k}=w_{k} - \norm{\bm{w}}$
+            \State \textbf{return} $\bm{u}$
+        \EndFunction
+      \end{algorithmic}
+    \end{algorithm}
+  \end{minipage}
+  \caption{Different versions of the same algorithm, but the Householder variant being more numerically robust.}
+  \label{fig:arnoldi-versions}
+\end{figure}
+
+\section{Experimental Details} \label{app:experiments}
+In this section we expand upon the details of all the experiments ran in the paper.
+Such details include the datasets that were used, the hyperparameters of different algorithms and the specific choices of algorithms used both for CoLA but also for the alternatives.
+We run each of the experiments 3 times and compute the mean dropping the first observation (as usually the first run contains some compiling time much is not too large).
+We do not display the standard deviation as those numbers are imperceptible for each experiment.
+In terms of hardware, the CPU experiments were run on an Intel(R) Core(TM) i5-9600K CPU @ 3.70GHz and the GPU experiments were run on a NVIDIA GeForce RTX 2080 Ti.
+
+\subsection{Datasets} \label{app:datasets}
+Below we enumerate the datasets that we used in the various applications.
+Most of the datasets are sourced from the University of California at Irvine's (UCI) Machine Learning Respository
+that can be found here: \url{https://archive.ics.uci.edu/ml/datasets.php}.
+Also, a community repo hosting these UCI benchmarks can be found
+here:
+\url{https://github.com/treforevans/uci_datasets} (we have no affiliation).
+
+\begin{enumerate}
+    \item \emph{Elevators}.
+    This dataset is a modified version of the \emph{Ailerons} dataset,
+    where the goal is to to predict the control action on the ailerons of the aircraft.
+    This UCI dataset consists of $N=14$K observations and
+    has $D=18$ dimensions.
+
+    \item \emph{Kin40K}.
+    The full name of this UCI dataset is
+    \emph{Statlog (Shuttle) Data Set}.
+    This dataset contains information about NASA shuttle flights and we used a subset that consists of $N=40$K observations and has $D=8$ dimensions.
+
+    \item \emph{Buzz}.
+    The full name of this UCI dataset is
+    \emph{Buzz in social media}.
+    This dataset consists of examples of buzz events from Twitter and Tom's Hardware. We used a subset consisting of $N=430$K observations and
+    has $D=77$ dimensions.
+
+    \item \emph{Song}.
+    The full name of this UCI dataset is
+    \emph{YearPredictionMSD}.
+    This dataset consists of $N=386.5$K observations and
+    it has $D=90$ audio features such as
+    12 timbre average features and 78 timbre covariance features.
+
+    \item \emph{cit-HepPh}.
+    This dataset is based on arXiv's HEP-PH (high energy physics phenomenology)
+    citation graph and can be found here:
+    \url{https://snap.stanford.edu/data/cit-HepPh.html}.
+    The dataset covers all the citations from January 1993 to April 2003
+    of $|V|=34,549$ papers, ultimately containing $|E|=421,578$ directed edges.
+    The notion of relationship that we used in our spectral clustering experiment
+    creates a connection between two papers when at least one cites another (undirected symmetric graph).
+    Therefore the dataset that we used has the same number of nodes
+    but instead $|E|=841,798$ undirected edges.
+\end{enumerate}
+
+\subsection{Compositional experiments} \label{app:compositional-exps}
+This section pertains to the experiments of \autoref{subsec:dispatch}
+displayed in \autoref{fig:structure}.
+We now elaborate on each of \autoref{fig:structure}'s panels.
+\begin{enumerate}
+    \item[(a)]
+    The multi-task GP problem exploits the structure
+    of the following Kronecker operator $\bm{K}_T \otimes \bm{K}_X$,
+    where $\bm{K}_{T}$ is a kernel matrix containing the correlation between the tasks and $\bm{K}_{X}$ is a RBF kernel on the data.
+    For this experiment, we used a synthetic Gaussian dataset
+    where the train data $\bm{x}_i \sim \mathcal{N}(\bm{0}, \bm{I}_D)$
+    which has dimension $D=33$, $N=1$K and we used $T=11$ tasks (where the tasks basically set the size of $\bm{K}_T$).
+    We used conjugate gradients (CG) as the iterative method,
+    where we set the hyperparameters to a tolerance of $10^{-6}$ and
+    to a maximum number of iterations to $1$K.
+    We used the exact same hyperparameters for CoLA.
+
+    \item[(b)]
+    For the bi-poisson problem we set up the maximum grid to be $N=1000^2$.
+    Since this PDE problem involves solving a symmetric linear system, we used
+    CG as the iterative method with a tolerance of
+    $10^{-11}$ and a maximum number of iterations of $10$K.
+    The previous parameters also apply for CoLA.
+    We note that PDE problems are usually solved to higher tolerances as
+    the numerical error compounds as we advance the PDE.
+
+    \item[(c)]
+    For the EMLP experiment we consider solving the equivariance constraints to find the equivariant linear layers of a graph neural network with $5$ nodes. To solve this problem, we need to find the nullspace of a large structured constraint matrix. We use the uniformly channel heuristic from \citep{finzi2021practical} which distributes the $N$ channels across tensors of different orders. We consider our approach which exploits the block diagonal structure, separating the nullspaces into blocks, as opposed to the direct iterative approach exploiting only the fast MVMs of the constraint matrix. We use a tolerance of $10^{-5}$.
+\end{enumerate}
+
+\subsection{Sum structure experiments} \label{app:sum-exps}
+This section pertains to the experiments of \autoref{subsec:beyond}
+contained in \autoref{fig:rnla}.
+We now elaborate on each of \autoref{fig:rnla}'s panels.
+
+\begin{enumerate}
+    \item[(a)]
+    In this experiment we computed the first principal component of the
+    \emph{Buzz} dataset.
+    For the iterative method we used power iteration with a maximum number of
+    iterations of $300$ and a stop tolerance of $10^{-7}$.
+    CoLA used SVRG also with the same stop tolerance and maximum number of iterations.
+    Additionally, we set SVRG's batch size to $10$K and the learning rate to
+    $0.0008$.
+    We note that a single power iteration roughly contains $43 / 2 = 21.5$ times more MVMs
+    than a single iteration of SVRG.
+    In this particular case, the length of the sum is given by the number of
+    observations and therefore SVRG uses $430 / 10 = 43$ times less elements per iteration,
+    where $10$ comes from the $10$K batch size.
+    Finally, the $2$ is explained by noting that SVRG incurs in a full sum update on every epoch.
+
+    \item[(b)]
+    In this experiment we trained a GP by estimating the covariance RBF
+    kernel with $J=1$K random Fourier features (RFFs).
+    The hyperparameters for the RBF kernel are the following:
+    length scale ($\ell=0.1$), output scale ($a=1$) and likelihood noise ($\sigma^2=0.1$).
+    Moreover, we used CG as the iterative solver with a tolerance of $10^{-8}$
+    and $100$ as the maximum number of iterations (the convergence took much less iterations than the max).
+    For SVRG we used the same tolerance but set the maximum number of iterations to
+    $10$K, a batch size of $100$ and learning rate of $0.004$.
+    We note that a single CG iteration roughly contains $10 / 2 = 5$ times more MVMs
+    than a single iteration of SVRG.
+    In this particular case, the length of the sum is given by the number of
+    RFFs and therefore SVRG uses $1000 / 100 = 10$ times less elements per iteration,
+    where $100$ comes from the batch size.
+
+    \item[(c)]
+    In this experiment we implemented the Neural-IVP method from \citet{finzi2023nivp}.
+    We consider the time evolution of a wave equation in two spatial dimensions.
+    At each integrator step, a linear system $\bm M(\theta) \dot{\theta} = F(\theta)$ must be solved to find $\dot{\theta}$, for a $d=12\text{K}\times12$K dimensional matrix.
+    While \citet{finzi2023nivp} use conjugate gradients to solve the linear system,
+    we demonstrate the advantages of using SVRG,
+    as $\bm M(\theta) = \tfrac{1}{m}\sum_{i=1}^m M_i(\theta)$ is a sum over the evaluation at $m=50$K distinct sample locations within the domain.
+    In this experiment we use a batch size of $500$ for SVRG, and employ rank $250$ randomized Nystr\"{o}m preconditioning for both SVRG and the iterative CG baseline.
+\end{enumerate}
+
+\subsection{Hardware speed-up comparisons} \label{app:hardware}
+This section pertains to the experiments of \autoref{fig:hardware}.
+For all these experiments we computed the runtime reduction
+as a fraction between the time that it takes CoLA
+to run some linear algebra operation and PyTorch using the same hardware.
+As an example, assume that PyTorch takes 200 seconds to compute a solve using a CPU and 100 seconds to compute the same solve but now using a GPU.
+Moreover, assume that CoLA's iterative algorithm takes 100 seconds to compute the same solve on a CPU and 40 seconds on a GPU.
+Thus, the runtime reduction would be $100 / 200 = 0.5\%$ for the CPU column whereas $40 / 100 = 0.4$ for the GPU column.
+
+\begin{enumerate}
+    \item
+    \textbf{Solves}.
+    In this experiment we calculated the \% runtime reduction when running
+    \texttt{torch.linalg.solve} on the Trefethen $N=20K$ matrix market
+    sparse operator. In this experiment, CG was run with a tolerance of
+    $10^{-11}$ and a maximum number of iterations equal to the operator size.
+
+    \item
+    \textbf{Eigenvalue estimation}.
+    In this experiment we calculated the \% runtime reduction when running
+    \texttt{torch.linalg.eigh} on the mhd4800b $N=4.8K$ matrix market
+    sparse operator. In this experiment, Lanczos was run with a tolerance of
+    $10^{-9}$ and a maximum number of iterations equal to $100$.
+
+    \item
+    \textbf{Log determinant computation}.
+    In this experiment we calculated the \% runtime reduction when running
+    \texttt{torch.linalg.logdet} on the bcsstk18 $N=11.9K$ matrix market
+    sparse operator. In this experiment, the stochastic Lanczos quadrature was run using $30$ Lanczos probe estimates and $25$ samples.
+
+\end{enumerate}
+
+
+\subsection{Applications} \label{app:app-exps}
+This section pertains to the experiments of \autoref{sec:applications}
+displayed in \autoref{fig:results}.
+We now elaborate on each of \autoref{fig:results}'s panels.
+
+\begin{enumerate}
+    \item[(a)]
+    In this experiment we compute 5, 10 and 20 PCA components for the
+    \emph{Buzz} dataset.
+    We compared against \texttt{sklearn} which uses the Lanczos algorithm through the fast Fortran-based \texttt{ARPACK} numerical library.
+    In this case, CoLA uses randomized SVD \citep{martinsson2020rnla}
+    with a rank $3000$ approximation.
+
+    \item[(b)]
+    In this experiment we fit a Ridge regression on the
+    \emph{Song} dataset with a regularization coefficient set to $0.1$.
+    We compared against \texttt{sklearn} using their fastest least-square solver
+    \texttt{lsqr} with a tolerance of $10^{-4}$.
+    In this case, CoLA uses CG with the same tolerance and with a maximum number of iterations
+    set to $1$K. Additionally, we ran CoLA using CPU and GPU whereas we used only CPU for
+    \texttt{sklearn} as it has no GPU support.
+    We observe how in the arguably most popular ML method, CoLA is able to beat
+    a leading package such as \texttt{sklearn}.
+
+    \item[(c)]
+    In this experiment we fit a GP with a RBF kernel on two datasets:
+    \emph{Elevators} and \emph{Kin40K}.
+    We only used up to 20K observations from \emph{Kin40K} as that was the maximum number of
+    observations that would fit the GPU memory without needing to partition the MVMs.
+    We compare against \texttt{GPyTorch} which uses CG and stochastic Lanczos quadrature (SLQ)
+    to compute and optimize the negative log-marginal likelihood (loss function).
+    Both experiments were run on a GPU for $100$ iterations
+    using Adam as an optimizer with learning rate of
+    $0.1$ with the default values of $\beta_1 = 0.9$ and $\beta_2=0.999$.
+    Additionally, for both GPyTorch and CoLA, the CG tolerance was set to $10^{-4}$ with a maximum number of CG iterations of $250$ and $20$ probes were used for SLQ.
+    Note that both CoLA and GPyTorch have similar throughputs, for example
+    GPyTorch runs a 100 iterations on \emph{Elevators} on 43 seconds whereas
+    CoLA runs a 100 iterations on 49 seconds.
+    When training a GP, we solve a block of 11 linear systems (1 based on $\bm{y}$ and 10
+    based on random probes) where
+    one key difference is that the CG solver for GPyTorch has a stopping criteria
+    based on the convergence of the mean solves whereas CoLA has a stopping criteria
+    based on the convergence of all the solves.
+
+    \item[(d)]
+    In this experiment we run spectral clustering on the \emph{cit-HepPh} dataset
+    using an embedding size of 8 and also 8 clusters for k-means (with only 1 run of k-means after estimating the embeddings).
+    We compare against \texttt{sklearn} using two different solvers, one based on
+    Lanczos iterations using \texttt{ARPACK} and another using an
+    Algebraic Multi-Grid solver \texttt{AMG}.
+    In this case, CoLA also uses Lanczos iterations with a default tolerance of $10^{-6}$.
+    We see how \texttt{sklearn}'s \texttt{AMG} solver runs faster than CoLA's
+    but this is mostly the algorithmic constants as they have similar asymptotical behavior (similar slopes).
+
+    \item[(e)]
+    In this experiment we solve the Schr\"{o}dinger equation to find the energy levels of the hydrogen atom on a $3$-dimensional finite difference grid
+    with up to $N=5$K points. In order to handle the infinite spatial extent, we compactify the domain by applying the arctan function. Under this change of coordinates, the Laplacian has a different form, and hence the matrix forming the discretized Hamiltonian is no longer symmetric.
+    We compare against \texttt{SciPy}'s Arnoldi implementation with $20$ iterations where
+    CoLA also uses Arnoldi with the same number of iterations.
+    Surprisingly, CoLA's JAX jitted code has a competitive runtime when compare to
+    \texttt{SciPy}'s runtime using \texttt{ARPACK}.
+
+    \item[(f)]
+    In this experiment we solve a minimal surface problem on a grid of maximum size of
+    $N=100^2$ points.
+    To solve this problem we have to run Netwon-Rhapson where each inner step involves
+    a linear solve of an non-symmetric operator.
+    We compare against \texttt{SciPy}'s GMRES implementation as well as
+    \texttt{JAX}'s integrated version of \texttt{SciPy}.
+    The main difference between the two is that \texttt{SciPy} calls the
+    fast and highly-optimized \texttt{ARPACK} library whereas
+    \texttt{SciPy\,(JAX)} has its only \texttt{Python} implementation of GMRES
+    which only uses \texttt{JAX}'s primitives (equally as it is done in CoLA).
+    The tolerance for this experiment was 5e-3.
+    We see how CoLA's GMRES implementation is competitive with \texttt{SciPy\,(JAX)}
+    but it still does not beat \texttt{ARPACK} mostly due to the faster runtime of using a
+    lower level GMRES implementation.
+\end{enumerate}
+
+\end{document}

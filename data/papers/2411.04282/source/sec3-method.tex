@@ -1,0 +1,197 @@
+In this section, we describe how to optimize the reasoning rationale without external feedback. Specifically,
+we introduce the objective for optimizing the reasoning rationale in \Cref{sec:latro} from a variational perspective of LLM training;
+we derive the gradient estimation for the new objective in \Cref{sec:gradient}, and discuss the sampling procedure together with reward shaping in \Cref{sec:sampling_control}. 
+We summarize the proposed algorithm, \methodfull\ in \Cref{alg:latro_pseudocode}, and illustrate the overall procedure in \Cref{fig:overview}.
+ 
+\subsection{Latent Reasoning Optimization: A Variational Approach}
+\label{sec:latro}
+Suppose we are given a golden dataset $\train_{\text{Gold}}:=\{(\px_i, \py_i)\}_{i=1}^{N}$ consisting of $N$ query and answer pairs, 
+where $(\px, \py)$ denotes the query and the answer respectively.
+A standard finetuning procedure to fit the LLM $\pi_{\theta}$ to the dataset $\train_{\text{Gold}}$ is by likelihood maximization:
+\begin{align}
+    \max_{\theta} \E_{(\px, \py)\sim \train_{\text{Gold}}}\left[ \log \pi_\theta (\py~|~\px)\right]\,, \label{equ:standard_obj}
+\end{align}
+where $\theta$ are the parameters of the LLM $\pi_\theta$ to optimize. 
+Based on the discussion in \Cref{sec:background}, it is more feasible to optimize $\pi_\theta$ with additional reasoning rationale path $\pz$, 
+compared with standard finetuning objective in \Cref{equ:standard_obj}.
+Hence, we can introduce another ``reasoner'' $q(\pz | \px)$ to sample the latent reasoning rationales that can help the optimization procedure of $\pi_\theta$.
+This is achievable by optimizing the following lower bound:
+\begin{align}
+    \log \pi_\theta(\py | \px) &=  \log \int \pi_\theta(\py~|~\px \oplus \pz) \pi_0(\pz ~| ~\px) d\pz \notag \\ %\, ~~\text{//~~\textcolor{red}{sampling objective of self-consistency cot}}\\
+    & = \log \int \pi_\theta(\py~|~\px \oplus \pz) \frac{q(\pz | \px)}{q(\pz | \px)}\pi_{0}(\pz | \px)d\pz \notag \\  
+    & \geq \max_{q(\pz | \px)} \E_{q(\pz | \px)}\big[\log \pi_{\theta}(\py | ~\px\oplus \pz)\big]  - \KL[q(\pz |\px)|| \pi_0(\pz | \px)]\,, \label{equ:lower_bound}
+    %& = \underbrace{\E_{q_{\phi}(z | x)}\big[\log p_{\theta}(y | x\oplus z)\big]}_{\text{reward of $z$}} - \underbrace{\KL[q_\phi (z |x)|| p_0(z | x)]}_{\text{regularization }}\,. \tageq 
+\end{align}
+where $\pi_0$ is a prior reference LLM that regularizes the ``reasoner'' $q(\pz | \px)$, and the lower bound is achieved via Jensen's inequality \citep{higgins2017beta}. 
+Based on the literature of variational Bayes~\citep{kingma2013auto}, one can either learn and optimize $q(\pz|\px)$ via variational Expectation Maximization (EM)~\citep{abdolmaleki2018maximum,liu2022constrained}, 
+or introduce another parameterized LLM $q_{\phi}(\pz|\px)$ and optimize $\phi$ to amortize the cost.
+Additionally, from the discussion in \Cref{sec:background}, we know $\pi_\theta$ itself can also serve as a naive ``reasoner'', since $\pi_\theta$ is an autoregressive LLM.
+
+To simplify the learning procedure, we propose to use $\pi_\theta$ as the ``reasoner'' $q(\pz | \px)$. As a result, 
+we can jointly learn one single LLM $\pi_\theta$, that is capable of generating good reasoning rationale together with providing correct answers given the query and its own generated reasoning rationale. To be more specific, we can define the learning objective as follows:
+\begin{align}
+    \max_{\theta} J(\theta) :=  \E_{(\px, \py)\sim \train_{\text{Gold}}} \bigg[\E_{\pz \sim \pi_{\theta}(\cdot | \px)}\big[\underbrace{\log \pi_{\theta}(\py | ~\px\oplus \pz)}_{R_\theta(\pz, \py, \px)}\big]  - \KL[\pi_\theta(\pz |\px)|| \pi_0(\pz | \px)]  \bigg]\,, \label{equ:our_obj}
+\end{align}
+where we specify the reference LLM $\pi_{0}$ to be the original $\pi_{\theta}$ before the optimization. 
+Furthermore, $\log \pi_{\theta}(\py | ~\px\oplus \pz)$ in \Cref{equ:our_obj} can be viewed as the reward function $R_\theta(\pz, \py, \px)$ to evaluate the quality of the rationale $\pz $ given the pair $(\px, \py)$, since the reasoning rationale $\pz$ with higher likelihood $\log \pi_{\theta}(\py | ~\px\oplus \pz)$ indicates that it would provide a higher probability for the model to answer the question correctly. 
+
+\textbf{Remark}~~~ By substituting $\log \pi_{\theta}(\py | ~\px\oplus \pz)$ with $R_\theta(\pz, \py, \px)$, \Cref{equ:our_obj} exactly recovers the standard optimization objective defined in offline RL \citep{levine2020offline}, RLHF~\citep{ouyang2022training,rafailov2024direct} literature. 
+Though \Cref{equ:our_obj} unifies the learning procedure of the ``reasoner'' $\pi_{\theta}(\pz | \px)$ and the ``reward'' function $R_\theta(\pz, \py, \px):= \log \pi_{\theta}(\py | ~\px\oplus \pz)$, we can break down these two procedures to analyze them separately.
+When we fix  $R_\theta(\pz, \py, \px)$ and optimize the ``reasoner'' $\pi_{\theta}(\pz | \px)$, 
+the procedure can be interpreted as \emph{self-improvement} learning, where we improve $\pi_{\theta}(\pz | \px)$ on self-generated synthetic reasoning rationale. 
+When we fix $\pi_{\theta}(\pz | \px)$ and optimize $R_\theta(\pz, \py, \px)$, the procedure can be interpreted as \emph{self-reward} learning, where we learn the self-reward function $\log \pi_{\theta}(\py | ~\px\oplus \pz)$.
+The procedure can also be considered finetuning optimization given the learned reasoning rationale and query. 
+Fortunately, we can naturally enjoy the benefits of these two self-learning procedures with the new reasoning finetuning objective.
+
+\iffalse 
+Given an LLM $\llm$, and a golden dataset $\train_{\text{Gold}}$ containing the pairs of (prompt-templated) queries and desired response $(x,y)$ with no rationale to connect them in between, we want to optimize the LLM reasoning process so that it can give the desired response of the query. 
+Specifically, we want to solve the following optimization problem:
+\begin{align}
+    \label{eqn:latro_problem}
+    \min_{\theta} \E_{(x, y)\sim \train_{\text{Gold}}}\left[-\E_{z \sim \pi_{\theta}(\cdot | x)}\left[\log \pi_{\theta}(y~|x \oplus z)\right]\right]\,.
+\end{align}
+The LaTRO problem \cref{eqn:latro_problem} can be seen as maximizing the reward of self-synthesized rationales $z\sim \llm(\cdot|x)$ with the self-reward function: $\log \llm(y|x\oplus z)$.
+
+
+For simplicity, we restrict ourselves to the CoT template: $x = \texttt{query} \oplus \text{Let's think step by step}$.\footnote{Generalization to other templates such as ReAct is straightforward.}
+Let $R(x, y;\theta)$ be the per-sample loss of \cref{eqn:latro_problem}. The gradient of $R$ is given by:
+\begin{align*}
+    &\nabla_{\theta}R(x, y;\theta) = - \nabla_{\theta}\E_{z \sim \pi_{\theta}(\cdot | x)}\left[\log \pi_{\theta}(y~|~x \oplus z)\right] \\
+    & = - \nabla_{\theta}\int \pi_\theta(z~|~ x)\log \pi_{\theta}(y~|~x \oplus z)dz \\
+    & = - \left(\int \left(\nabla_{\theta}\pi_\theta(z | x)\right)\cdot \log \pi_{\theta}(y~|~x \oplus z)dz ~+~ \int \pi_{\theta}(z | x)\left(\nabla_{\theta}\log \pi_\theta(y | x \oplus z)\right)dz \right) \\
+    & = - \left(\E_{\pi_\theta(z | x)}\left[\nabla_\theta \log \pi_\theta(z | x)\cdot \log \pi_{\theta}(y~|~x \oplus z)\right] + \E_{\pi_\theta(z | x)}\left[\nabla_{\theta}\log \pi_\theta(y | x \oplus z)\right]\right) \tageq \label{eqn:gradient} \\
+\end{align*}
+Notice that the first term in \cref{eqn:gradient} is essentially a policy gradient (PG): $\llm$ is the policy model and $\llm(z|x)$ can be seen as the action distribution given state $x$ and $-\log \llm(y|x\oplus z)$ is then the reward the agent receives after taking the action $z$, while the second term comes from maximum likelihood estimation (MLE) given the query $x$, response $y$, with a latent rationale variable $z$. Thus we obtain:
+\begin{equation}
+    \label{eqn:gradient_decomposition}
+    \nabla_\theta R(x, y;\theta) = \nabla_\theta \Ls^{PG}(x,y ;\theta) + \nabla_\theta \Ls^{MLE}(x,y;\theta)
+\end{equation}
+
+Next, we show the relationship between our \methodfull (LaTRO) problem \labelcref{eqn:latro_problem} and the direct supervised fine-tuning on the pairs $(x,y)$.
+\paragraph{Interpretation as Optimizing ELBO}
+Suppose we are given a LLM $p_\theta$ with limited capabilities, and we want to optimize:
+\begin{align}
+    \max_\theta \log p_{\theta}(y | x)\,.
+\end{align}
+By introducing and marginalizing a latent variable $z \sim p(\cdot |x)$, we know
+\begin{equation}
+    \label{eqn:elbo}
+    \begin{split}
+            \log p_\theta(y | x) &= \log \E_{z \sim p(\cdot | x)} p_\theta(z \oplus y ~| x) \\
+            & = \log \int p_\theta(y|x \oplus z) p(z | x) dz\,,
+    \end{split}
+\end{equation}
+where $p(z | x)$ can be arbitrary distribution, and we can choose a fronzen copy of the original LLM, denoted as $p_0(z | x)$. Next, we introduce another distribution $q_\phi$ as our ``reasoner":
+\begin{align*}
+    \log p_\theta(y | x) &=  \log \int p_\theta(y|x \oplus z) p_0(z | x) dz \\ %\, ~~\text{//~~\textcolor{red}{sampling objective of self-consistency cot}}\\
+    & = \log \int p_\theta(y|x\oplus z) \frac{q_\phi(z | x)}{q_\phi(z | x)}p_{0}(z | x)dz \\  
+    & \geq \E_{q_{\phi}(z | x)}\big[\log p_{\theta}(y | x\oplus z) - \log q_\phi(z | x) + \log p_0(z | x)\big] \\
+    & = \underbrace{\E_{q_{\phi}(z | x)}\big[\log p_{\theta}(y | x\oplus z)\big]}_{\text{reward of $z$}} - \underbrace{\KL[q_\phi (z |x)|| p_0(z | x)]}_{\text{regularization }}\,. \tageq \label{eqn:latro_objective}
+\end{align*}
+We see that not only does \cref{eqn:latro_objective} fit in a reward modeling framework, but also it recovers the original objective \labelcref{eqn:latro_problem} with a Kullback-Leibler (KL) regularization when $p_\theta = q_\phi = \llm$. In this case, we fine-tune the entire LLM for better reasoning. There are a few other realizations of \cref{eqn:latro_objective} that we will discuss in \Cref{sec:conclusion_future_work} and will defer to future investigation. For clarity, we use \cref{eqn:latro_objective} as our objective function in the rest of the paper and distinguish the policy gradient and the MLE updates, while setting $p_\theta$ and $q_\phi$ to be the same LLM $\llm$ in implementation.
+% \haolincomment{and $r(a, x) = \E_{q_{\theta}(z | x)}\big[\log p_{\theta}(a | x\oplus z)\big]$ becomes the reward model of generating answer $a$ with $x$. Can we also use this to optimize with respect to $x$, in the sense of finding the best prompting tokens?}
+
+\fi 
+
+\subsection{Gradient estimation for LaTRO}
+\label{sec:gradient}
+From previous RL literature, we know that estimating $\nabla_{\theta} J(\theta)$ in \Cref{equ:our_obj} involves the use of policy gradient methods, 
+which usually suffers from high variances with the naive REINFORCE estimators~\citep{williams1992simple}. Inspired by the recent work on policy gradient for LLMs~\citep{ahmadian2024back}, 
+we also leverage the REINFORCE Leave-One-Out (RLOO)~\citep{DBLP:conf/iclr/KoolHW19a} to optimize the ``reasoner'' $\pi_\theta(\pz |\px)$, 
+where we can achieve lower variances of gradient estimation by sampling multiple rationales. 
+We summarize the empirical gradient estimation for solving LaTRO in \Cref{prop:ge}.
+
+
+\begin{proposition}(LaTRO Gradient Estimation) \label{prop:ge}
+    Suppose we are given a set of training data $\train_{\text{Gold}}:= \{\px_i, \py_i\}_{i=1}^{N}$, we sample $K$ \textit{i.i.d} reasoning rationales $\pz_1^{(i)}, \pz_2^{(i)}, \ldots, \pz_K^{(i)} \sim \pi_\theta(\cdot | \px_i)$ for each query and answer pair $(\px_i, \py_i)$. The empirical gradient estimator for $\nabla_{\theta} J(\theta)$ is expressed as 
+    \begin{align}
+       &~~~~~~~~\nabla_{\theta} \widehat{J}(\theta) := \frac{1}{NK}\sum_{i=1}^{N}\sum_{k=1}^{K}\bigg( \nabla_\theta \log \pi_{\theta}(\pz_k^{(i)} ~|~ \px_i)\cdot A_k^{(i)} + \nabla_\theta \log \pi_\theta (\py_i ~|~ \px_i \oplus \pz_k^{(i)} )  \bigg)\,, \label{equ:gradient} \\ 
+       &\text{with} ~A_k^{(i)} = r(\pz_k^{(i)}) - \frac{1}{K-1}\sum_{j \neq k}^{K} r(\pz_j^{(i)})\,, r(\pz_k^{(i)}) := \log \pi_\theta(\py_i~|~\px_i \oplus \pz_{k}^{(i)}) - \beta \log \frac{\pi_{\theta}(\pz_k^{(i)} ~|~\px_i )}{\pi_{0}(\pz_k^{(i)} ~|~ \px_i)} \,,\notag 
+    \end{align}
+where $\beta \geq 0$ is the coefficient to control the KL penalty. The proof can be found in \Cref{app:proof1}. 
+\end{proposition}
+The first gradient term in \Cref{equ:gradient} serves as policy gradient to improve
+the ability of the LLM $\pi_\theta$ to generate high-quality reasoning rationales,
+and $\log \pi_\theta (\py | \px \oplus \pz)$ can be viewed as the evaluator for reasoning rationale, which is further used to calculate the advantages. 
+The second gradient term in \Cref{equ:gradient},
+which is the gradient of supervised finetuning loss, essentially helps the LLM $\pi_\theta$ to leverage the reasoning rationales to produce correct answers. 
+
+\iffalse 
+
+Set $\Ls(x, y; \phi, \theta) := -\E_{q_{\phi}(z | x)}\big[\log p_{\theta}(y | x\oplus z)\big]$. Next, we introduce the method to estimate the gradient of $\Ls(x,y;\phi, \theta)$ such that the model is optimized via policy gradient. Following the same derivation as \cref{eqn:gradient_decomposition}, we obtain that
+\begin{equation}
+    \begin{split}
+        \nabla_\phi \Ls(x,y;\phi, \theta) & = \nabla_\phi \Ls^{PG}_\phi = -\E_{q_\phi(z|x)} \left[\nabla_\phi \log q_\phi(z|x) \cdot \log p_\theta(y | x\oplus z)\right] \\
+        \nabla_\theta \Ls(x,y;\phi, \theta) & = \nabla_\theta \Ls^{MLE}_\theta = - \E_{q_\phi(z|x)} \left[\nabla_\theta \log p_\theta(y|x\oplus z)\right]
+    \end{split}
+\end{equation}
+
+For the first policy gradient term: $\nabla_\phi \Ls^{PG}(\phi)$, a straightforward way is Monte Carlo (MC) sampling, where for each training sample, we sample $K$ rationales $z_1,\ldots, z_K \sim q_\phi(\cdot|x)$ and compute the average gradients as an estimate.
+Alternatively, an immediate improvement is to use the leave-one-out REINFORCE estimator, or RLOO~\citep{DBLP:conf/iclr/KoolHW19a}) to reduce the variance. Let $r(z)$ be the reward function of the reasoning process $z$. RLOO estimates the baseline in the advantage function for sample $i$ using the rest $K-1$ independent samples, yielding the following gradient estimation:
+\begin{equation}
+    \label{eqn:pg_estimator}
+    \hat{\nabla}_\phi \Ls^{PG}_\phi =  -\frac{1}{K} \sum^K_{i=1}\nabla_\phi \log q_\phi(z_i|x) \cdot A_i,
+\end{equation}
+where $A_i := r(z_i) - \frac{1}{K-1} \sum_{j\neq i} r(z_j)$ is the advantage of sample $i$ and $r(z) = \log p_\theta(y|x\oplus z)$. Notice that in \cref{eqn:latro_objective}, there is an extra KL divergence term. Instead of optimizing w.r.t the divergence, we omit it as a penalty term that doesn't need gradient computation in the advantage term in \cref{eqn:pg_estimator}. That said, $r(z)$ is given by:
+\begin{equation}
+\label{eqn:rationale_reward}
+r(z) := \log p_\theta(y|x \oplus z) - \beta \log \frac{q_\phi(z|x)}{p_0(z|x)},  
+\end{equation}
+where $\beta \geq 0$ is a hyperparameter controlling how much KL penalty is added.
+For the second term, it is simply from maximizing the log likelihood of producing the correct answer $y$, given the query $x$ and the rationale $z$. We therefore take the average gradient as an estimate:
+\begin{equation}
+    \label{eqn:mle_estimator}
+    \hat \nabla_\theta \Ls^{MLE}_{\theta} = -\frac{1}{K} \sum^K_{i=1} \nabla_\theta \log p_\theta (y|x\oplus z_i)
+\end{equation}
+
+\fi 
+
+\subsection{Practical Considerations}
+\label{sec:sampling_control}
+To reduce computation overhead and better control the sampling of reasoning rationales during training, we limit their maximum token length to $L$. The rationale ends either at the \texttt{EOS} token or at the start of a predefined answer template (e.g., "The answer is"). We then use the truncated rationale $\pz$, along with the query $\px$ and the answer $\pz$, for further computation.
+
+We also encourage the LLM to finish its reasoning process with $L$ tokens. 
+%given the limit of $L$ tokens, 
+Inspired by the implementation of the RLOO trainer in the TRL library~\citep{vonwerra2022trl} , we introduce a constant penalty for rationales truncated by the maximum token length $L$. This penalty encourages the generation of rationales that fit within the specified token limit.
+
+\begin{algorithm}[t]
+    \caption{\methodfull}
+    \label{alg:latro_pseudocode}
+    \KwIn{Language model $\llm$, learning rate $\eta$, KL penalty factor $\beta$, MC sample size $K$, maximum generation length $L$, sample temperature $T$, number of epochs $M$, training dataset $\train_{\text{Gold}}$.}
+    \KwOut{An optimized language model $\llm$.}
+    \hrulefill\\
+    \Fn{$\mathtt{generate}(\pi, \px, K, L, T)$}{
+        Given an autoregressive language model $\pi$, input $x$, sample $K$ sequences of length $L$ from\\the distribution $\pi(\cdot | \px)$ at temperature $T$.
+        
+        \Return $K$ sampled sequences
+    }
+    \vspace{0.1cm}
+    % \Fn{$\mathtt{truncate}(\px, t)$}{
+    %     Given the input sequence $\px$, truncation pattern $t$, truncate $\px$ at the first occurence of $t$.
+        
+    %     \Return truncated sequence
+    % }
+    % \vspace{0.1cm}
+    Intialize reference language model $\pi_0$ as $\llm$
+
+    \For{epoch \KwTo $\Range(M)$}{
+        \For{$\px_i, \py_i$ \KwTo $\train_{\text{Gold}}$}{
+            $\pz_1^{(i)},\ldots,\pz_K^{(i)} \gets \Generate(\llm, \px_i, K, L, T)$ \\
+            % $\pz_1^{(i)},\ldots,\pz_K^{(i)} \gets \Truncate(\pz_i^{(j)}, t)$ \textbf{for} $k$ \KwTo $\Range(K)$ \\
+            % $r(z_1), \ldots, r(z_K) \gets -\log p_\theta(y|x \oplus z_i) + \beta \log \frac{q_\phi(z_i|x)}{p_0(z_i|x)}$ \\
+            % \For{$i$ \KwTo $\Range(K)$}{
+            %     \If{$z_i$ \textnormal{is not finished}}{
+            %         $r(z_i) \gets \gamma \frac{1}{K} \sum^K_{j=1} r(z_j)$
+            %     }
+            % }
+            % $A_1, \ldots, A_K \gets r(z_i) - \frac{1}{K-1} \sum^K_{j=1}r(z_j)$ \\
+            % $\hat{\nabla}_{\phi} \Ls^{PG}_{\phi} \gets  -\frac{1}{K} \sum^K_{i=1} A_i \cdot \nabla_{\phi} \log q_\phi(z_i| x)$ \\
+            % $\hat{\nabla}_\theta\Ls^{MLE}_{\theta}\gets -\frac{1}{K} \sum^K_{i=1} \nabla_\theta \log p_\theta (y|x\oplus z_i)$ \\
+            % $\phi \gets \phi + \eta \hat{\nabla}_{\phi} \Ls^{PG}_{\phi}$ \\
+            % $\theta \gets \theta + \eta \hat{\nabla}_\theta\Ls^{MLE}_{\theta}$ \\
+        }
+        Estimate $\nabla_{\theta} \widehat{J}(\theta)$ with \Cref{prop:ge}\\
+        $\theta \gets \theta + \eta \nabla_{\theta} \widehat{J}(\theta)$ \\
+    }
+    \Return $\llm$
+\end{algorithm}
