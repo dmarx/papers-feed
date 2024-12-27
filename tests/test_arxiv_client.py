@@ -22,7 +22,8 @@ def client(test_dir):
 def arxiv_success_response():
     """Sample successful arXiv API response."""
     return '''<?xml version="1.0" encoding="UTF-8"?>
-        <feed xmlns="http://www.w3.org/2005/Atom">
+        <feed xmlns="http://www.w3.org/2005/Atom" 
+              xmlns:arxiv="http://arxiv.org/schemas/atom">
             <entry>
                 <title>Test Paper Title</title>
                 <summary>Test Abstract</summary>
@@ -32,7 +33,11 @@ def arxiv_success_response():
                 <author>
                     <name>Test Author Two</name>
                 </author>
+                <published>2024-01-01T00:00:00Z</published>
                 <link href="http://arxiv.org/abs/2401.00001" rel="alternate" type="text/html"/>
+                <arxiv:primary_category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+                <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+                <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
             </entry>
         </feed>'''
 
@@ -78,9 +83,9 @@ class TestArxivClient:
         assert status["has_source"]
         assert status["pdf_size"] > 0
         assert status["source_size"] > 0
-
+    
     def test_fetch_metadata_success(self, client, arxiv_success_response):
-        """Test successful metadata fetch."""
+        """Test successful metadata fetch with extended fields."""
         with patch('requests.get') as mock_get:
             mock_get.return_value.status_code = 200
             mock_get.return_value.text = arxiv_success_response
@@ -93,6 +98,10 @@ class TestArxivClient:
             assert paper.authors == "Test Author One, Test Author Two"
             assert paper.abstract == "Test Abstract"
             assert "arxiv.org/abs/2401.00001" in paper.url
+            
+            # Check new fields
+            assert paper.published_v1 == "2024-01-01T00:00:00Z"
+            assert paper.arxiv_tags == ["cs.LG", "cs.AI"]
             
             # Verify API call
             mock_get.assert_called_once()
