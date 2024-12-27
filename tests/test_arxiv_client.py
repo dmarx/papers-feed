@@ -100,7 +100,7 @@ class TestArxivClient:
             assert "arxiv.org/abs/2401.00001" in paper.url
             
             # Check new fields
-            assert paper.published_v1 == "2024-01-01T00:00:00Z"
+            assert paper.published_date == "2024-01-01T00:00:00Z"
             assert paper.arxiv_tags == ["cs.LG", "cs.AI"]
             
             # Verify API call
