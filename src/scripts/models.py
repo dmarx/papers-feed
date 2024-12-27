@@ -17,7 +17,10 @@ class Paper(BaseModel):
     last_read: str | None = None
     last_visited: str | None = None
     main_tex_file: str | None = None  # Path to main TeX file used for conversion
-
+    
+    published_date: str | None = None  # v1 publication date on arXiv
+    arxiv_tags: list[str] | None = None 
+    
     class Config:
         populate_by_name = True
 

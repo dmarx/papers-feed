@@ -100,7 +100,7 @@ class ArxivClient:
         except Exception as e:
             logger.error(f"Error fetching arXiv metadata for {arxiv_id}: {e}")
             raise
-    
+        
     def _parse_arxiv_response(self, xml_text: str, arxiv_id: str) -> Paper:
         """Parse ArXiv API response XML into Paper object."""
         import xml.etree.ElementTree as ET
@@ -110,13 +110,14 @@ class ArxivClient:
             root = ET.fromstring(xml_text)
             
             # ArXiv API uses Atom namespace
-            ns = {'atom': 'http://www.w3.org/2005/Atom'}
+            ns = {'atom': 'http://www.w3.org/2005/Atom',
+                  'arxiv': 'http://arxiv.org/schemas/atom'}
             
             # Find the entry element
             entry = root.find('.//atom:entry', ns)
             if entry is None:
                 raise ValueError(f"No entry found for {arxiv_id}")
-
+    
             # Extract metadata
             title = entry.find('atom:title', ns).text.strip()
             abstract = entry.find('atom:summary', ns).text.strip()
@@ -124,14 +125,29 @@ class ArxivClient:
                 author.text.strip() 
                 for author in entry.findall('.//atom:author/atom:name', ns)
             )
-
+    
             # Extract URLs
             urls = {
                 link.get('title', ''): link.get('href', '')
                 for link in entry.findall('atom:link', ns)
             }
             html_url = urls.get('abs', f"https://arxiv.org/abs/{arxiv_id}")
-
+    
+            # Extract published date (for v1)
+            published = entry.find('atom:published', ns)
+            published_date = published.text if published is not None else None
+    
+            # Extract arXiv categories/tags
+            primary_category = entry.find('arxiv:primary_category', ns)
+            categories = [
+                term.get('term') 
+                for term in entry.findall('atom:category', ns)
+            ]
+            if primary_category is not None:
+                primary = primary_category.get('term')
+                if primary and primary not in categories:
+                    categories.insert(0, primary)
+    
             # Construct Paper object
             return Paper(
                 arxivId=arxiv_id,
@@ -145,9 +161,11 @@ class ArxivClient:
                 state="open",
                 labels=["paper"],
                 total_reading_time_seconds=0,
-                last_read=None
+                last_read=None,
+                published_date=published_date,
+                arxiv_tags=categories
             )
-
+    
         except ET.ParseError as e:
             logger.error(f"XML parsing error for {arxiv_id}: {e}")
             raise ValueError(f"Invalid XML response from arXiv API: {e}")
