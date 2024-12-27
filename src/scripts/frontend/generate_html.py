@@ -19,14 +19,6 @@ def format_authors(authors: str | list[str]) -> str:
         return f"{', '.join(author_list[:3])} and {len(author_list) - 3} others"
     return ', '.join(author_list)
 
-def truncate_text(text: str, max_length: int = 300) -> str:
-    """Truncate text to specified length with ellipsis."""
-    if not text:
-        return ''
-    if len(text) <= max_length:
-        return text
-    return f"{text[:max_length-3]}..."
-
 def normalize_datetime(date_str: str | None) -> datetime | None:
     """Parse datetime string to UTC datetime and strip timezone info."""
     if not date_str:
@@ -64,7 +56,7 @@ def preprocess_paper(paper: Dict[str, Any]) -> Dict[str, Any]:
         'id': paper.get('arxivId', ''),
         'title': paper.get('title', '').replace('\n', ' '),
         'authors': format_authors(paper.get('authors', [])),
-        'abstract': truncate_text(paper.get('abstract', '').replace('\n', ' ')),
+        'abstract': paper.get('abstract', '').replace('\n', ' '),
         'url': paper.get('url', ''),
         'arxivId': paper.get('arxivId', ''),
         'last_visited': get_last_visited(paper),
