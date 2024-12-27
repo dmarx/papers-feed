@@ -32,12 +32,12 @@ Test content
 \end{document}
 """
 
-@pytest.fixture
-def paper_dir(tmp_path):
-    """Create a paper directory with necessary structure."""
-    paper_dir = tmp_path / "papers/2203.15556"
-    paper_dir.mkdir(parents=True)
-    return paper_dir
+# @pytest.fixture
+# def paper_dir(tmp_path):
+#     """Create a paper directory with necessary structure."""
+#     paper_dir = tmp_path / "papers/2203.15556"
+#     paper_dir.mkdir(parents=True)
+#     return paper_dir
 
 @pytest.fixture
 def source_dir(paper_dir, test_tex_content):  # Note: now properly using the fixture
