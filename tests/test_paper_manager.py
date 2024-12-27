@@ -8,10 +8,6 @@ from scripts.paper_manager import PaperManager
 from scripts.models import Paper, ReadingSession, PaperVisitEvent
 from scripts.arxiv_client import ArxivClient
 
-@pytest.fixture
-def test_dir(tmp_path):
-    """Create temporary directory for test data."""
-    return tmp_path / "papers"
 
 @pytest.fixture
 def manager(test_dir):
