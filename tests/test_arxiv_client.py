@@ -10,10 +10,6 @@ import xml.etree.ElementTree as ET
 from scripts.arxiv_client import ArxivClient
 from scripts.models import Paper
 
-@pytest.fixture
-def test_dir(tmp_path):
-    """Create temporary directory for all test files."""
-    return tmp_path
 
 @pytest.fixture
 def client(test_dir):

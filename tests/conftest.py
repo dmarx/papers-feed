@@ -1,7 +1,10 @@
 # tests/conftest.py
+from datetime import datetime
 import pytest
 from pathlib import Path
 from unittest.mock import Mock, patch
+from scripts.models import Paper
+
 
 @pytest.fixture
 def mock_pandoc():
@@ -29,7 +32,7 @@ def mock_pandoc():
 @pytest.fixture
 def test_dir(tmp_path):
     """Create a clean test directory."""
-    return tmp_path / "test_data"
+    return tmp_path / "papers"
 
 @pytest.fixture
 def paper_dir(test_dir):
@@ -37,6 +40,24 @@ def paper_dir(test_dir):
     paper_dir = test_dir / "2401.00001"
     paper_dir.mkdir(parents=True)
     return paper_dir
+
+@pytest.fixture
+def sample_paper():
+    """Create sample Paper object."""
+    return Paper(
+        arxivId="2401.00001",
+        title="Test Paper",
+        authors="Test Author",
+        abstract="Test Abstract",
+        url="https://arxiv.org/abs/2401.00001",
+        issue_number=1,
+        issue_url="https://github.com/user/repo/issues/1",
+        created_at=datetime.utcnow().isoformat(),
+        state="open",
+        labels=["paper"],
+        total_reading_time_seconds=0,
+        last_read=None
+    )
 
 @pytest.fixture
 def source_dir(paper_dir):
