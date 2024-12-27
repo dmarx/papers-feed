@@ -1,7 +1,10 @@
 # tests/conftest.py
+from datetime import datetime
 import pytest
 from pathlib import Path
 from unittest.mock import Mock, patch
+from scripts.models import Paper
+
 
 @pytest.fixture
 def mock_pandoc():
