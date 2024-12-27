@@ -218,11 +218,96 @@
             expandedCards[paperId] = card.classList.contains('expanded');
             localStorage.setItem('expandedCards', JSON.stringify(expandedCards));
         }
-
+        
+        function calculateFreshness(lastVisited, publishedDate) {
+            if (!lastVisited || !publishedDate) return null;
+            
+            const visitDate = new Date(lastVisited);
+            const pubDate = new Date(publishedDate);
+            const diffDays = Math.floor((visitDate - pubDate) / (1000 * 60 * 60 * 24));
+            
+            let color, label;
+            if (diffDays <= 30) {
+                color = 'text-green-600';
+                label = 'Fresh';
+            } else if (diffDays <= 90) {
+                color = 'text-yellow-600';
+                label = 'Moderate';
+            } else {
+                color = 'text-red-600';
+                label = 'Aged';
+            }
+            
+            return {
+                diffDays,
+                color,
+                label
+            };
+        }
+        
+        function renderPaperCard(paper, expanded) {
+            const readingTime = paper.total_reading_time_seconds 
+                ? `${Math.round(paper.total_reading_time_seconds / 60)} min read`
+                : '';
+        
+            const freshness = calculateFreshness(paper.last_visited, paper.published_date);
+            
+            const metaParts = [];
+            
+            // Add authors
+            metaParts.push(`<span>${paper.authors}</span>`);
+            
+            // Add reading time if available
+            if (readingTime) {
+                metaParts.push(`<span class="meta-divider">•</span><span>${readingTime}</span>`);
+            }
+            
+            // Add publication date if available
+            if (paper.published_date) {
+                const pubDate = new Date(paper.published_date).toLocaleDateString();
+                metaParts.push(`<span class="meta-divider">•</span><span>Published: ${pubDate}</span>`);
+            }
+            
+            // Add arXiv tags if available
+            if (paper.arxiv_tags && paper.arxiv_tags.length > 0) {
+                const tags = paper.arxiv_tags
+                    .map(tag => `<span class="inline-block bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full text-xs">${tag}</span>`)
+                    .join(' ');
+                metaParts.push(`<span class="meta-divider">•</span><span class="flex gap-1 flex-wrap">${tags}</span>`);
+            }
+            
+            // Add freshness score if available
+            if (freshness) {
+                metaParts.push(
+                    `<span class="meta-divider">•</span>` +
+                    `<span class="${freshness.color} text-sm font-medium">` +
+                    `${freshness.label} (${freshness.diffDays} days)</span>`
+                );
+            }
+            
+            return `
+                <article class="paper-card ${expanded ? 'expanded' : ''}" data-paper-id="${paper.id}">
+                    <div class="paper-header">
+                        <span class="expand-icon">▶</span>
+                        <a href="${paper.url}" class="arxiv-id" onclick="event.stopPropagation()">${paper.arxivId}</a>
+                        <span class="paper-title">${paper.title}</span>
+                    </div>
+                    <div class="paper-content">
+                        <div class="paper-content-inner">
+                            <div class="paper-meta flex flex-wrap gap-2 items-center">
+                                ${metaParts.join('')}
+                            </div>
+                            <div class="paper-abstract">${paper.abstract}</div>
+                        </div>
+                    </div>
+                </article>
+            `;
+        }
+        
         function renderPapers() {
             const container = document.getElementById('papers-container');
-            const collapsedDays = JSON.parse(localStorage.getItem('collapsedDays') || '{}');
             const expandedCards = JSON.parse(localStorage.getItem('expandedCards') || '{}');
+            const collapsedDays = JSON.parse(localStorage.getItem('collapsedDays') || '{}');
             
             const papersByDay = {};
             Object.entries(window.yamlData)
@@ -232,12 +317,12 @@
                     if (!papersByDay[date]) papersByDay[date] = [];
                     papersByDay[date].push({ ...paper, id });
                 });
-
+        
             Object.entries(papersByDay).forEach(([date, papers]) => {
                 const dayGroup = document.createElement('section');
                 dayGroup.className = `day-group ${collapsedDays[date] ? 'collapsed' : ''}`;
                 dayGroup.dataset.date = date;
-
+        
                 const dayHeader = document.createElement('div');
                 dayHeader.className = 'day-header';
                 dayHeader.onclick = () => toggleDayGroup(dayHeader);
@@ -245,43 +330,21 @@
                     <span class="day-title">${formatDate(date, 'group')}</span>
                     <span class="paper-count">${papers.length} paper${papers.length !== 1 ? 's' : ''}</span>
                 `;
-
+        
                 const papersContainer = document.createElement('div');
                 papersContainer.className = 'papers-container';
-
+        
                 const papersContainerInner = document.createElement('div');
                 papersContainerInner.className = 'papers-container-inner';
-
-                papers.forEach(paper => {
-                    const paperElement = document.createElement('article');
-                    paperElement.className = `paper-card ${expandedCards[paper.id] ? 'expanded' : ''}`;
-                    paperElement.dataset.paperId = paper.id;
-                    paperElement.onclick = (e) => togglePaperCard(paperElement, e);
-                    
-                    const readingTime = paper.total_reading_time_seconds 
-                        ? `${Math.round(paper.total_reading_time_seconds / 60)} min read`
-                        : '';
-
-                    paperElement.innerHTML = `
-                        <div class="paper-header">
-                            <span class="expand-icon">▶</span>
-                            <a href="${paper.url}" class="arxiv-id" onclick="event.stopPropagation()">${paper.arxivId}</a>
-                            <span class="paper-title">${paper.title}</span>
-                        </div>
-                        <div class="paper-content">
-                            <div class="paper-content-inner">
-                                <div class="paper-meta">
-                                    ${paper.authors}
-                                    ${readingTime ? `<span class="meta-divider">•</span>${readingTime}` : ''}
-                                </div>
-                                <div class="paper-abstract">${paper.abstract}</div>
-                            </div>
-                        </div>
-                    `;
-                    
-                    papersContainerInner.appendChild(paperElement);
+                papersContainerInner.innerHTML = papers
+                    .map(paper => renderPaperCard(paper, expandedCards[paper.id]))
+                    .join('');
+        
+                // Add click handlers for paper cards
+                papersContainerInner.querySelectorAll('.paper-card').forEach(card => {
+                    card.onclick = (e) => togglePaperCard(card, e);
                 });
-
+        
                 papersContainer.appendChild(papersContainerInner);
                 dayGroup.appendChild(dayHeader);
                 dayGroup.appendChild(papersContainer);
