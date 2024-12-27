@@ -23,22 +23,25 @@ class TestPaperManager:
 
     def test_create_and_get_paper(self, manager, sample_paper):
         """Test creating and retrieving a paper."""
-        manager.create_paper(sample_paper)
-        retrieved = manager.get_paper(sample_paper.arxiv_id)
-        assert retrieved.arxiv_id == sample_paper.arxiv_id
-        assert retrieved.title == sample_paper.title
+        with patch.object(manager, '_needs_hydration', return_value=False):
+            manager.create_paper(sample_paper)
+            retrieved = manager.get_paper(sample_paper.arxiv_id)
+            assert retrieved.arxiv_id == sample_paper.arxiv_id
+            assert retrieved.title == sample_paper.title
 
     def test_get_or_create_paper_existing(self, manager, sample_paper):
         """Test get_or_create with existing paper."""
-        manager.create_paper(sample_paper)
-        paper = manager.get_or_create_paper(sample_paper.arxiv_id)
-        assert paper.arxiv_id == sample_paper.arxiv_id
-        assert paper.title == sample_paper.title
+        with patch.object(manager, '_needs_hydration', return_value=False):
+            manager.create_paper(sample_paper)
+            paper = manager.get_or_create_paper(sample_paper.arxiv_id)
+            assert paper.arxiv_id == sample_paper.arxiv_id
+            assert paper.title == sample_paper.title
 
     def test_get_or_create_paper_new(self, manager):
         """Test get_or_create fetches new paper."""
         arxiv_id = "2401.00001"
-        with patch.object(ArxivClient, 'fetch_metadata') as mock_fetch:
+        with patch.object(ArxivClient, 'fetch_metadata') as mock_fetch, \
+             patch.object(manager, '_needs_hydration', return_value=False):
             mock_fetch.return_value = Paper(
                 arxivId=arxiv_id,
                 title="New Paper",
