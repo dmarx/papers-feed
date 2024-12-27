@@ -61,9 +61,9 @@ def preprocess_paper(paper: Dict[str, Any]) -> Dict[str, Any]:
         'arxivId': paper.get('arxivId', ''),
         'last_visited': get_last_visited(paper),
         'last_read': paper.get('last_read', ''),  # Keep for "Read on" display
-        'total_reading_time_seconds': paper.get('total_reading_time_seconds', 0)
+        'total_reading_time_seconds': paper.get('total_reading_time_seconds', 0),
         'published_date': paper.get('published_date'),
-        'arxiv_tags': paper.get('arxiv_tags', [])
+        'arxiv_tags': paper.get('arxiv_tags', []),
     }
 
 def preprocess_papers(papers: Dict[str, Any]) -> Dict[str, Any]:
