@@ -271,6 +271,7 @@ async function createReadingEvent(paperData, sessionDuration) {
     }
 }
 
+// Update parseXMLText function to extract publication date and categories
 async function parseXMLText(xmlText) {
     console.log('Parsing XML response...');
     try {
@@ -297,10 +298,38 @@ async function parseXMLText(xmlText) {
             return authors;
         };
 
+        // Extract categories/tags
+        const getCategories = (text) => {
+            const categories = new Set();
+            
+            // Get primary category
+            const primaryMatch = text.match(/<arxiv:primary_category[^>]*term="([^"]+)"/);
+            if (primaryMatch) {
+                categories.add(primaryMatch[1]);
+            }
+            
+            // Get all categories
+            const categoryRegex = /<category[^>]*term="([^"]+)"/g;
+            let match;
+            while (match = categoryRegex.exec(text)) {
+                categories.add(match[1]);
+            }
+            
+            return Array.from(categories);
+        };
+
+        // Get publication date (first version)
+        const getPublishedDate = (text) => {
+            const match = text.match(/<published>([^<]+)<\/published>/);
+            return match ? match[1].trim() : null;
+        };
+
         const parsed = {
             title: getTagContent('title', xmlText),
             summary: getTagContent('summary', xmlText),
-            authors: getAuthors(xmlText)
+            authors: getAuthors(xmlText),
+            published_date: getPublishedDate(xmlText),
+            arxiv_tags: getCategories(xmlText)
         };
         
         console.log('Parsed XML:', parsed);
@@ -311,6 +340,7 @@ async function parseXMLText(xmlText) {
     }
 }
 
+// Update processArxivUrl function to include new fields
 async function processArxivUrl(url) {
     console.log('Processing URL:', url);
     
@@ -358,7 +388,9 @@ async function processArxivUrl(url) {
             authors: parsed.authors.join(", "),
             abstract: parsed.summary,
             timestamp: new Date().toISOString(),
-            rating: 'novote'
+            rating: 'novote',
+            published_date: parsed.published_date,
+            arxiv_tags: parsed.arxiv_tags
         };
         
         console.log('Paper data processed:', paperData);
@@ -369,6 +401,7 @@ async function processArxivUrl(url) {
     }
 }
 
+// Update createGithubIssue to add tags to labels
 async function createGithubIssue(paperData) {
     if (!githubToken || !githubRepo) {
         console.error('GitHub credentials not set. Please configure extension options.');
@@ -379,6 +412,15 @@ async function createGithubIssue(paperData) {
         console.log('Creating GitHub issue for paper:', paperData.arxivId);
         const issueBody = JSON.stringify(paperData, null, 2);
 
+        // Create issue labels starting with paper and rating
+        const issueLabels = ['paper', `rating:${paperData.rating}`];
+        
+        // // Add arXiv tags as labels if they exist
+        // if (paperData.arxiv_tags && paperData.arxiv_tags.length > 0) {
+        //     // Add tags in format "arxiv:cs.AI", "arxiv:cs.LG", etc.
+        //     issueLabels.push(...paperData.arxiv_tags.map(tag => `arxiv:${tag}`));
+        // }
+
         const response = await fetch(`https://api.github.com/repos/${githubRepo}/issues`, {
             method: 'POST',
             headers: {
@@ -388,7 +430,7 @@ async function createGithubIssue(paperData) {
             body: JSON.stringify({
                 title: `[Paper] ${paperData.title || paperData.arxivId}`,
                 body: issueBody,
-                labels: ['paper', `rating:${paperData.rating}`]
+                labels: issueLabels
             })
         });
 
