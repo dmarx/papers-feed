@@ -18,7 +18,8 @@ def create_tex_file(directory: Path, name: str, content: str) -> Path:
     file_path.write_text(content)
     return file_path
 
-def test_score_tex_file(tex_dir):
+#def test_score_tex_file(tex_dir):
+def test_score_tex_file(source_dir):
     # Create test file with various indicators
     content = r"""
 \documentclass{article}
