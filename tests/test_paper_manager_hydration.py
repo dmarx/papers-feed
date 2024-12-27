@@ -5,6 +5,7 @@ from pathlib import Path
 from datetime import datetime
 from unittest.mock import Mock, patch
 
+from scripts.models import Paper
 from scripts.paper_manager import PaperManager
 
 
