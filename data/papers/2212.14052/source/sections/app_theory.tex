@@ -1,0 +1,223 @@
+\section{Proofs}
+\label{sec:proofs}
+
+We show parameterizations of \hthree and attention that solves the associative recall task.
+We prove~\cref{thm:h3_complexity} and~\cref{thm:statepassing_correctness}.
+
+\subsection{\hthree Expressivity}
+\label{sec:app_expressivity}
+
+This section formally describes a parameterization of \hthree that solves the associative recall task.
+
+\subsubsection{Example Language $\Lambda$}
+Consider a simple language with 4 keys and 4 values.
+For concreteness, we will use the keys $\{k_1, k_2, k_3, k_4\} = L_K$ and the values $\{v_1, v_2, v_3, v_4\} = L_V$, i.e. our language $L = L_K \cup L_V$.
+Given a sequence of key-value pairs with one key at the end, we want a model to generate the value associated with the key at the end.
+Assume that the key at the end appeared in the sequence.
+
+More formally, let $N+1$ be the length of the sequence, $N$ even.
+The language $\Lambda$ consists of sequences $x \in L^{N+1}$.
+Each sequence has an associated mapping $f_x : L_K \rightarrow L_V$.
+For each sequence, the odd indices are randomly sampled from $L_K$, for $x_1, x_3, \dots, x_{N-1}$.
+The even indices are defined by $f_x$: $x_{2*i} = f_x(x_{2*i-1})$, for $1 \leq i \leq N / 2$.
+The last item in the sequence $x_{N+1}$, is randomly drawn from the keys that have appeared in $x$ already, i.e. $x_{N+1} \in \cup{\{x_1, x_3, \dots, x_{N-1}\}}$.
+The goal of this language modeling task is to produce $f_x(x_{N+1})$ at the end of the sequence.
+
+\subsubsection{H3 Model to Solve $\Lambda$}
+We describe a toy \hthree model that can solve $\Lambda$.
+
+Consider a model consisting of an embedding layer, an \hthree model, and an output projection with softmax.
+Recall that $d$ is the dimension of the \hthree model, $m$ is the dimension of its hidden states, and $H$ is the number of heads.
+Let $d = 8, m = 2, H = 4$.
+Let the embedding layer map each key $k_i$ to the $e_i$ basis vector, and map each value $v_i$ to the $e_{4+i}$ basis vector.
+
+Let $\vB_{shift}$ and $\vC_{shift}$ denote the parameters of the shift SSM, and $\vA_{diag}$, $\vB_{diag}$, and $\vC_{diag}$ denote the parameters of the diagonal SSM (let $\vD$ be zero for both).
+Let $\vB_{shift} = \vB_{diag} = \vC_{diag} = e_1$.
+Let $\vC_{shift}$ = $[0 1]$.
+Let $\vA_{diag}$ be a diagonal matrix with $1$s along its diagonal for each \hthree.
+
+\begin{remark}
+The action of a diagonal SSM parameterized by $\vA_{diag}$, $\vB_{diag}$, and $\vC_{diag}$ is to act as a cumulative sum over all its input.
+The action of shift SSM parameterized by $\vB_{shift}$ and $\vC_{shift}$ is to shift its input by one time step.
+\end{remark}
+
+Recall that the \hthree layer maps its input to $Q$, $K$, and $V$ by applying $u\vW_Q$, $u\vW_K$, and $u\vW_V$.
+Let $\vW_Q$ and $\vW_K$ be the following:
+$$
+    \vW_Q = \vW_K = \begin{bmatrix}
+        1 & 1 & 0 & 0 & 0 & 0 & 0 & 0 \\
+        0 & 0 & 1 & 1 & 0 & 0 & 0 & 0 \\
+        0 & 0 & 0 & 0 & 1 & 1 & 0 & 0 \\
+        0 & 0 & 0 & 0 & 0 & 0 & 1 & 1 \\
+        0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 \\
+        0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 \\
+        0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 \\
+        0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 \\
+    \end{bmatrix}
+$$
+Recall that $Q$ and $K$ are split into $H$ heads ($\vQ^{(i)}, \vK^{(i)}$ for $i \in \{1, 2, 3, 4\}$), each of which is sent to an independent \hthree.
+
+\begin{remark}
+The action of $\vW_Q$ and $\vW_K$ are to ``assign'' each key to a different \hthree head, i.e., $\vQ^{(i)}_t$ is only non-zero when $x_t = k_i$.
+Similarly, $\overline{\vK}^{(i)}_t$ is only non-zero when $x_{t-1} = k_i$ (since $\overline{\vK}_t = \vK_{t-1}$ due to the time delay of the shift SSM).
+\end{remark}
+
+Let $\vW_V$ be the following:
+$$
+    \vW_V = \begin{bmatrix}
+        0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 \\
+        0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 \\
+        0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 \\
+        0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 \\
+        0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 \\
+        0 & 1 & 0 & 1 & 0 & 1 & 0 & 1 \\
+        1 & 0 & 1 & 0 & 1 & 0 & 1 & 0 \\
+        1 & 1 & 1 & 1 & 1 & 1 & 1 & 1 \\
+    \end{bmatrix}
+$$
+\begin{remark}
+The action of this matrix is to encode the input value (as ``binary''), and send it to all \hthree heads.
+E.g., $\vV_t^{(1)} = \vV_t^{(2)} = \vV_t^{(3)} = \vV_t^{(4)}$ for all $i$, and $\vV_t^{(i)} = [0, 0] \Leftrightarrow x_t = v_1$, $\vV_t^{(i)} = [0, 1] \Leftrightarrow x_t = v_2$, etc.
+\end{remark}
+
+We claim that for $x_{N+1} = k_i$, $\vO_{N+1}^{(i)}$ will be a multiple of the binary encoding of $f_x(k_i)$, and all the other heads of the output $\vO_{N+1}^{(j)}, 1 \leq j \leq 4, j \neq i$, will be zero.
+Let the output projection $\vW_O$ be such that, with a non-linearity afterwards, it inverts the binary encoding to produce the embedding of the desired output $f_x(k_i)$.
+We will assume such a projection exists, proof left to the reader.
+
+\begin{proposition}\label{thm:h3_expressivity}
+    The model described above solves the associative recall problem for the language $\Lambda$.
+\end{proposition}
+
+\begin{proof}
+Proof sketch.
+WLOG, let $x_{N+1} = k_i$.
+Then $\vQ^{(i)} = [1, 1]$, but $\vQ^{(j)} = [0, 0]$ for $j \neq i$.
+Thus, $\vO^{(j)} = [0, 0]$ for $j \neq i$ due to the multiplicative interaction.
+
+Since $\vQ^{(i)} = [1, 1]$, $\vO^{(i)}$ is the output of the diag SSMs in the \hthree head corresponding to $k_i$ (recall that each head has two independent shift SSMs and two independent diag SSMs).
+The output of the diag SSMs are the cumulative sum of all the inputs they have seen in the sequence.
+
+For one of the diag SSMs to see a non-zero input, its preceding shift SSM must have a non-zero output.
+The only times $t$ this can happen in the sequence are when $x_{t-1} = k_i$.
+But then $x_t = f_x(k_i)$.
+Thus, the input to the diag SSMs are precisely the binary encoding of $f_x(k_i)$.
+Then the output $\vO^{(i)}$ is a multiple of the binary encoding of $f_x(k_i)$, $\vW_O$ decodes this output to the embedding of $f_x(k_i)$.
+\end{proof}
+
+\subsection{Attention Expressivity}
+\label{sec:app_attention_expressivity}
+We provide an informal sketch of a two-layer attention model that can solve the associative recall task, inspired by the construction of~\citep{olsson2022context}.
+The first layer of the attention model outputs the embedding of the previous token in the sequence, and concatenates it with the current token in the sequence.
+The second layer compares the current token to the previous token embeddings, and outputs the paired embedding when there is a match---which is exactly the key-value lookup.
+
+The construction proceeds as follows:
+\begin{itemize}
+  \item In the first layer, let $Q_i$ be mapped to the positional embedding of token $x_{i-1}$ (e.g., $p_{i-1}$ if $p_i$ denotes the positional embedding of token $x_i$), and $K_i$ be mapped to the positional embedding of token $x_i$.
+  \item The attention matrix $A$ is computed as $QK^T$, with a causal mask (i.e., $A_{i, j} = 0$ if $j > i$).
+  \item Then, $softmax(A)$ approximates the shift matrix (see Section~\ref{sec:method}).
+  \item Let $V_i$ be an encoding of token $x_i$, constrained to the first half of the hidden dimension.
+  \item Then, for output $O = softmax(QK^T)V$, the first half of the vector $O_i$ is the encoding of token $x_{i-1}$.
+  \item In the second layer, assume that you have a skip connection, that maps the encoding of the input token $x_i$ to the second half of the vector $O_i$.
+  \item Then, the input to the second layer encodes both $x_{i-1}$ and $x_i$.
+  \item In the second layer, let $Q_i$ extract the encoding of $x_i$, and let $K_i$ extract the encoding of $x_{i-1}$.
+  \item Apply a causal mask on $QK^T$. Then, the value of $softmax(QK^T)_{i, j}$ is large if $x_i = x_{j-1}$, and $i > j - 1$.
+  \item Let $V_i$ extract the encoding of $x_i$.
+  \item Then, output $O_i$ is the sum of values $x_j$ such as $x_{j-1} = x_i$. But then $O_i$ is exactly a lookup of the token that came after $x_i$ when it appeared previously in the sequence---which exactly solves associative recall.
+\end{itemize}
+
+We note that the above construction requires the ability for the positional encodings to select the previous token based on the dot product and softmax, and for token comparisons through the dot product and softmax.
+
+\subsection{\hthree Complexity}
+\label{sec:app_h3_complexity}
+
+We prove~\cref{thm:h3_complexity}, which states that the \hthree layer takes
+$O(d^2N + d N \log N)$ time and $O(dN)$ space for sequence length $N$ and hidden
+dimension $d$.
+
+\begin{proof}
+  We first analyze the time complexity.
+  Consider the matrix multiplies in \hthree, where the input $u \in \mathbb{R}^{N \times d}$ is
+  multiplied by three weight matrices of size $d \times d$. These take time $O(d^2N)$.
+  The output $\vO$ is also multiplied with an output projection weight matrix of
+  size $d \times d$, also taking time $O(d^2N)$.
+  Therefore the matrix multiplies take time $O(d^2N)$.
+
+  Now consider the two SSMs in \hthree. The first SSM involves a convolution of
+  $\vK \in \mathbb{R}^{N \times d}$ (in the $N$-dimension) with a kernel of size $N \times d$.
+  This reduces to an FFT, a pointwise multiply, and an inverse FFT (in the
+  $N$-dimension).
+  This takes time $O(d N \log N)$.
+  The second SSM involves $H$ convolutions, inputs of size $N \times d_h \times d_h$,
+  along the $N$-dimension.
+  This takes time:
+  \begin{equation*}
+    O(H d_h^2 N \log N) = O(d d_h N \log N) = O(d N \log N),
+  \end{equation*}
+  where we use the fact that $d_h = d / H$ and that $d_h = O(1)$.
+  Therefore the two SSMs take total time $O(d N \log N)$.
+  As a result, the \hthree layer takes time:
+  \begin{equation*}
+    O(d^2N + d N \log N).
+  \end{equation*}
+
+  Now we analyze the space complexity.
+  The matrix multiplies all take space $O(dN)$.
+  The FFTs, pointwise multiplies, and inverse FFTs of the two SSMs takes $O(dN)$
+  space and $O(H d_h^2N) = O(dd_hN) = O(dN)$ space.
+  Therefore the overall space complexity is $O(dN)$.
+
+\end{proof}
+
+
+\subsection{State Passing Correctness}
+\label{sec:app_statepassing_correctness_proof}
+
+We prove~\cref{thm:statepassing_correctness}.
+We assume that the \textsc{BlockFFTConv} algorithm is correct, i.e., the output $y = $\textsc{BlockFFTConv}$(f, u)$ is equal to the output of an SSM with convolution kernel $f$ and input $u$.
+
+\begin{proof}  
+Proof by induction on $C$.
+
+\paragraph{Base case:} $C = 1$.
+WTS $y = [y^{(1)}]$, $\vM_{xx}x_{N'}^{(0)} + \vM_{ux}u^{(1)} = x_{N}$.
+
+In this case, note that $N = N'$.
+Then $y^{(1)} = \vM_{xy}x_{N'}^{(0)} + $\textsc{BlockFFTConv}$(f, u_1) = $\textsc{BlockFFTConv}$(f, u_1)$.
+But $u = u_1$, so $y = y^{(1)} = [y^{(1)}]$.
+
+Additionally, by the recursive definition of a state space,
+\begin{align*}
+ x_{N} &= \vA^{N-1}x_0 + \sum_{i=1}^N \vA^{N-i}\vB u_i \\
+ &= \vA^{N'-1}x_0 + \sum_{i=1}^{N'} \vA^{N'-i}\vB u^{(1)}_i \\
+ &= \vM_{xy}x_{N'}^{(0)} + [\vA^{N'-1}\vB, \vA^{N'-2}\vB, \dots, \vB]u^{(1)}. \\
+ &= \vM_{xy}x_{N'}^{(0)} + \vM_{ux}u^{(1)}.
+\end{align*}
+
+\paragraph{Inductive step:} $C > 1$.
+Assume that $[y^{(1)}, \dots, y^{(C-1)}] = y[:N'(C-1)]$, and $x_{N'}^{(C-1)} = x_{(C-1)N'}$.
+WTS that $y^{(C)} = y[N'(C-1):N'C]$, and $\vM_{xx}x_{N'}^{(C-1)} + \vM_{ux}u^{(C)} = x_{N}$.
+Let $t$ denote $N'(C-1)$.
+
+For $i > (C-1)N'$, we have:
+\begin{align*}
+y_i &= \vC\vA^{i-t}\vB x_{t} + (f \ast [u_{t}, u_{t+1}, \dots, u_{t+N'-1}])_{i-t} + \vD u_i \\
+&= \vC\vA^{i-t}\vB x_{t} + (f \ast u^{(C)})_{i-t} + \vD u_i \\
+&= \vC\vA^{i-t}\vB x_{t} + \textsc{BlockFFTConv}(f, u^{(C)})_{i-N'} \\
+&= (\vM_{xy}x_t + \textsc{BlockFFTConv}(f, u^{(C)}))_{i-N'} \\
+&= (\vM_{xy}x_{N'}^{(C-1)} + \textsc{BlockFFTConv}(f, u^{(C)}))_{i-N'} \\
+&= y^{(C)}_{i-N'}.
+\end{align*}
+Thus, $y^{(C)} = y[N'(C-1):N'C]$.
+
+Similarly,
+\begin{align*}
+x_N &= \vA^{N'-1}x_{(C-1)N'} + \sum_{i=1}^{N'} \vA^{N'-i}\vB u_{i+t} \\
+&= \vA^{N'-1}x_{N'}^{(C-1)} + \sum_{i=1}^{N'} \vA^{N'-i}\vB u^{(C)}_i \\
+&= \vM_{xx}x_{N'}^{(C-1)} + [\vA^{N'-1}\vB, \vA^{N'-2}\vB, \dots, \vB]u^{(C)} \\
+&= \vM_{xx}x_{N'}^{(C-1)} + \vM_{ux}u^{(C)}.
+\end{align*}
+\end{proof}
+%%% Local Variables:
+%%% mode: latex
+%%% TeX-master: "../main"
+%%% End:

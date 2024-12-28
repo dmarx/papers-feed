@@ -1,0 +1,81 @@
+\section{Introduction}
+\label{sec:intro}
+
+For the Transformer architecture~\citep{vaswani2017attention}, the attention mechanism constitutes the primary computational bottleneck, since computing the self-attention scores of queries and keys has quadratic scaling in the sequence length.
+Scaling attention to longer context will unlock new capabilities (modeling and
+reasoning over multiple long
+documents~\citep{guo2021longt5,shaham2022scrolls,peng2023yarn} and files in
+large codebases~\citep{roziere2023code, li2023starcoder}), new modalities (high-resolution
+images~\citep{chen2022scaling}, audio~\citep{gulati2020conformer}, video~\citep{ho2022video}), and new applications (user interaction with long history~\citep{sun2019bert4rec},
+agent workflow with long horizon~\citep{yao2022react}).
+This has generated significant interest in making attention faster in the long-context regime, including 
+by approximation~\citep{katharopoulos2020transformers,choromanski2020rethinking,
+tay2020efficient} and software optimization
+(\citep{rabe2021self,dao2022flashattention,kwon2023efficient}), or even alternative
+architectures~\citep{peng2023rwkv,sun2023retentive,gu2023mamba}.
+
+In this work, we build on the work of \citet{dao2022flashattention} on developing exact-attention algorithms that integrate knowledge of the GPU's execution model and hardware characteristics into their high-level design.
+In \citep{dao2022flashattention}, Dao et al. introduced \fa, a novel tiling strategy for parallelizing attention that eliminates intermediate reads/writes to slow global memory through fusing all of the attention operations into a single GPU kernel.
+\citet{dao2023flashattention2} restructured the algorithm as \faa to also parallelize over the sequence length dimension and perform the inner loop of the forward pass over blocks of the key and value matrices, thus improving the occupancy and distribution of work on the GPU.
+However, we observe that \faa nonetheless achieves poor utilization on newer GPUs relative to optimized matrix-multiplication (GEMM) kernels, such as 35\% vs. 80-90\% on the Hopper H100 GPU.
+Partially, this may be attributed to implementation-level differences, such as not using Hopper-specific instructions in place of Ampere ones when targeting the Tensor Cores.
+Several work such as ThunkerKitten~\citep{spector2024thunder} and cuDNN 9~\citep{cudnn9} has shown that
+with Hopper-specific instructions and tile-based abstractions, one can speedup
+attention computation and simplify the implementation.
+
+More fundamentally, \faa's algorithm adheres to a simplified synchronous model and
+makes no explicit use of asynchrony and low-precision in its design.
+Asynchrony is a result of hardware specialization to accelerate the most important
+operations in a ML workload: specific hardware
+units performing matrix multiplication (Tensor Cores) or memory loading
+(Tensor Memory Accelerator -- TMA), separate from the rest of the CUDA cores performing logic, integer, and floating
+point computation.
+Low precision such as FP8 in Hopper and FP4 in Blackwell, continuing the trend
+of FP16 (Pascal in 2017) and BF16 (Ampere in 2020), is a proven technique to get
+double or quadruple throughput for the same power and chip area.
+We review the capabilities afforded by Hopper in these directions in \cref{subsec:hardware}.
+The technical challenge is to redesign \faa to make use of these hardware
+features: asynchrony requires overlapping computation between matmul and softmax
+even though one depends on the output of the other, and low-precision requires
+care to minimize quantization error, especially in the case of outlier features
+in LLMs~\citep{dettmers2208llm, sun2024massive}.
+
+To this end, we propose \fat, which contributes and synthesizes three new ideas to further improve performance on newer GPU architectures:\footnote{We describe our results in the context of NVIDIA's Hopper architecture.
+However, our algorithm is operative for any GPU architecture with sufficiently robust asynchronous execution and low-precision capabilities.}
+
+\iftoggle{arxiv}{
+\begin{enumerate}
+}{
+\begin{enumerate}[itemsep=0pt,topsep=0pt,leftmargin=*]
+}
+\item \textbf{Producer-Consumer asynchrony:} We define a warp-specialized software pipelining scheme that exploits the asynchronous execution of data movement and Tensor Cores by splitting producers and consumers of data into separate warps, thereby extending the algorithm's ability to hide memory and instruction issue latencies.
+\item \textbf{Hiding softmax under asynchronous block-wise GEMMs:} We overlap the comparatively low-throughput non-GEMM operations involved in softmax, such as floating point multiply-add and exponential, with the asynchronous WGMMA instructions for GEMM.
+As part of this, we rework the \faa algorithm to circumvent certain sequential dependencies between softmax and the GEMMs.
+For example, in the 2-stage version of our algorithm, while softmax executes on one block of the scores matrix, WGMMA executes in the asynchronous proxy to compute the next block.
+\item \textbf{Hardware-accelerated low-precision GEMM:} We adapt the forward pass algorithm to allow for targeting the FP8 Tensor Cores for GEMM, nearly doubling the measured TFLOPs/s. 
+This requires bridging the different layout conformance requirements of WGMMA in terms of how blocks of FP32 accumulator and FP8 operand matrices are assumed to be laid out in memory.
+We use the techniques of block quantization and incoherent processing to mitigate the loss of accuracy that results from moving to FP8 precision.
+\end{enumerate}
+
+To validate our method empirically, we benchmark \fat on the H100 SXM5 GPU over
+a range of parameters and show that (1) FP16 achieves 1.5-2.0$\times$ speedup over
+\faa in the forward pass (reaching up to 740 TFLOPs/s) and 1.5-1.75$\times$ in the backward pass,
+(2) FP8 achieves close to 1.2 PFLOPs/s, and
+(3) for large sequence length, FP16 outperforms and FP8 is
+competitive\footnote{More precisely, for head dimension 64 \fat FP8 is ahead,
+while for head dimensions 128 and 256 it is at par for those cases
+without causal masking and behind with causal masking.}
+with a state-of-the-art implementation of attention from NVIDIA's cuDNN library.
+We also validate that FP16 \fat yields the same numerical error as \faa and is
+better than the standard attention implementation as intermediate results (e.g.,
+softmax rescaling) are kept in FP32.
+Moreover, FP8 \fat with block quantization and incoherent processing is 2.6$\times$ more accurate than standard
+attention with per-tensor quantization in cases with outlier features.
+
+We open-source \fat with a permissive license\footnote{\fat
+  is available at \url{https://github.com/Dao-AILab/flash-attention}} and plan
+to integrate it with
+PyTorch and Hugging Face libraries to benefit the largest number of researchers
+and developers.
+
+

@@ -1,0 +1,110 @@
+\section{Method details}
+\label{sec:method_details}
+
+Since we have described the forward pass in~\cref{sec:method}, we describe here
+the backward pass in details.
+
+\subsection{Backward Pass}
+We show how to compute the backward pass in a fused kernel.
+
+
+Let $y = f \ast u + \vD u$.
+In our case, we have $f$ and $u$ have the same length, so they are symmetric as far as the convolution is concerned.
+
+Suppose we are given $dy = \frac{\partial l}{\partial y}$ (where $l$ is some loss function).
+We wish to compute $du$, $df$, and $dD$ (which are $\frac{\partial l}{\partial u}$, $\frac{\partial l}{\partial f}$, and $\frac{\partial l}{\partial \vD}$, respectively).
+
+The most challenging part is computing the gradient through the convolution operator - but we'll see that we can re-use our FFT infrastructure for it.
+The rest of the operations are straightforward; we have $d\vD = dy u^T$.
+
+\paragraph{Gradient of the Convolution}
+
+Here, we'll discuss how to compute $df$ by integrating w.r.t. the convolution operator $\ast$.
+As an immediate consequence, we'll be able to compute $du$ as well.
+
+Since $f$ and $u$ are the same length $L$, $f \ast u$ and $u \ast f$ have the same result.
+%  (this is also clear from the FFT convolution rule, since multiplication is commutative).
+Thus, we'll start from $u \ast f$ here.
+
+For some notation, let $O = u \ast f$.
+Then, $dO = dy$.
+Recall that $O[i] = \sum_{j=0}^{i-1} u[i-j]f[j]$.
+
+We'll start by extending $u$ and $f$ with zeros, to give them length $2L$.
+Let $u' = [u[0], u[1], \dots, u[L-1], 0, \dots, 0]$, and $f'$ extended similarly.
+Let $O' = u' \ast f'$, and $O = O'[:N]$.
+Assume that we have all the values of $dO'$ (we only have them for the first half, but we'll see that it doesn't matter in the end).
+
+Let's construct a Toeplitz matrix $H_{u'}$ such that $u' \ast f' = H_{u'} f'$:
+$$
+H_{u'} = \begin{bmatrix}
+  u'[0] & 0     & \dots & 0 \\
+  u'[1] & u'[0] & \dots & 0 \\
+  \vdots & \vdots & \ddots & \vdots \\
+  u'[2L-1] & u'[2L-2] & \dots & u'[0]
+\end{bmatrix}
+$$
+Since, we have $u'[i] = f'[i] = 0$ for $i \geq L$, we can actually fill in the zeros of the above matrix as well:
+$$
+H_{u'} = \begin{bmatrix}
+  u'[0] & u'[2L-1] & \dots & u'[1] \\
+  u'[1] & u'[0] & \dots & u'[2] \\
+  \vdots & \vdots & \ddots & \vdots \\
+  u'[2L-1] & u'[2L-2] & \dots & u'[0]
+\end{bmatrix}
+$$
+Then, we can use the matrix multiplication chain rule to find that:
+\begin{align*}
+df' = H_{u'}^T dO' &= \begin{bmatrix}
+  u'[0] & u'[1] & \dots & u'[2L-1] \\
+  u'[2L-1] & u'[0] & \dots & u'[2L-2] \\
+  \vdots & \vdots & \ddots & \vdots \\
+  u'[1] & u'[2] & \dots & u'[0]
+\end{bmatrix} \\
+&= \begin{bmatrix}
+  u'[0] & u'[-(2L-1)] & \dots & u'[-1] \\
+  u'[-1] & u'[0] & \dots & u'[-2] \\
+  \vdots & \vdots & \ddots & \vdots \\
+  u'[-(2L-1)] & u'[-(2L-2)] & \dots & u'[0]
+\end{bmatrix},
+\end{align*}
+where we use $u'[-i]$ to mean $u'[2L - i]$.
+Notice that this matrix has the same format as $H_{u'}$!
+Let $u_*' = [u'[0], u'[-1], \dots, u'[-(2N-1)]]$.
+Then:
+$$
+df' = (u_*' \ast dO').
+$$
+So how do we compute $u_*'$ efficiently?
+Naively, we might incur some nasty memory access issues.
+But a nice property about the DFT saves us!
+
+Let $U[i]$ be the $i$-th element of the DFT of a signal $u$.
+Note that $U[i]$ is complex.
+We have:
+$$
+U^*[i] = U[-i],
+$$
+where here the $*$ represents the complex conjugate.
+We can use this property to compute $df'$ efficiently:
+$$df' = u_*' \ast dO'= iFFT(FFT^*(u')FFT(dO')) \Rightarrow df = df'[:N] = iFFT(FFT^*(u')FFT(dy'))[:N],$$
+where $FFT^*$ denotes taking the complex conjugate of the FFT, and $dy'$ denotes $dy$, padded with zeros.
+
+\paragraph{Computing $du$}
+We can use this same trick to compute $du$, except we need to add in the contribution from the original $\vD u$ term.
+We end up with:
+$$du = du'[:N] + \vD dy = iFFT(FFT^*(f')FFT(dy'))[:N] + \vD dy.$$
+
+\subsection{State-Passing Matrices}
+\label{sec:state-passing-matrices}
+
+We show how to derive $\vM_{ux}$ for the state update in our state-passing algorithm.
+
+We wish to construct a matrix $vM_{ux} \in \mathbb{R}^{m \times N'}$ such that $\vM_{ux}u = \sum_{i=1}^{N'} \vA^{N'-1}\vB u_i$.
+Note that $\vA^i \vB \in \mathbb{R}^{d \times 1}$ is a column vector.
+We can simply stack these column vectors to form a matrix:
+$\vM_{ux} = [\vA^{N'-1}\vB, \vA^{N'-2}\vB, \dots, \vB]$.
+%%% Local Variables:
+%%% mode: latex
+%%% TeX-master: "../main"
+%%% End:

@@ -1,0 +1,142 @@
+\section{Related Work and Background}
+%
+\subsection{Learning and Frequency Domain: A Short History}\label{subsec:history}
+%
+Links between frequency-domain signal processing and neural network architectures have been explored for decades, starting with the original CNN designs \citep{fukushima1982neocognitron}. \cite{mathieu2013fast,rippel2015spectral} proposed replacing convolutions in pixel space with element-wise multiplications in Fourier domain. In the context of learning to solve \textit{partial differential equations} (PDEs), \textit{Fourier Neural Operators} (FNOs) \citep{li2020fourier} popularized the state-of-the-art FDM layer structure: forward transform $\rightarrow$ learned layer $\rightarrow$ inverse transform. Similar architectures had been previously proposed for generic image classification tasks in \citep{pratt2017fcnn,chi2020fast}. Modifications to the basic FNO recipe are provided in \citep{tran2021factorized,guibas2021adaptive,wen2022u}. A frequency domain representation of convolutional weights has also been used for model compression \citep{chen2016compressing}. Fourier features of input \textit{domains} and periodic activation functions play important roles in deep implicit representations \citep{sitzmann2020implicit,dupont2021coin,poli2022self} and general-purpose models \citep{jaegle2021perceiver}.
+%
+
+\subsection{Learning to Solve Differential Equations}
+%
+A variety of deep learning approaches have been developed to solve differential equations: neural operators and physics-informed networks \citep{pmlr-v80-long18a,raissi2019physics,lu2019deeponet,karniadakis2021physics}, specialized architectures \citep{wang2020towards,lienen2022learning}, hybrid neural-numerical methods \citep{poli2020hypersolvers,kochkov2021machine,mathiesen2022hyperverlet, berto2022neural}, and FDMs \citep{li2020fourier,tran2021factorized}, the focus of this work.
+
+
+
+\subsection{Frequency-Domain Models}\label{subsec:background}
+Let $\cD_n$ ($n$-space) to be the set of real-valued discrete signals\footnote{For clarity of exposition, models and algorithms proposed in the paper are introduced without loss of generality for one-dimensional scalar signals (i.e. $\cD_n\equiv\R^n$).} of resolution $N$.
+Our objective is to develop efficient neural networks to process discrete signals $x\in\cD_n$,
+%
+\[
+    x_0, x_1, \dots,x_{N-1},\quad x_n\in\R.
+\]
+
+%
+We define a layer of FDMs mapping $x$ to an output signal $\hat y\in\cD_n$ as the structured operator:
+%
+
+%
+\begin{equation}\label{eq:1}
+    \tikzstyle{block} = [draw, fill=blue!20!white, rectangle, rounded corners]
+    \tikzstyle{sum} = [draw, fill=blue!20, circle, node distance=1cm]
+    \begin{tikzpicture}[>=latex', baseline=(current  bounding  box.center)]
+        % nodes
+        \node at (9,-0.3) {$
+        	\begin{aligned}
+                    X &= \mathcal T{(x})                  \quad &&\text{Forward Transform} \\ 
+            \hat X &= f_\theta(X)               \quad &&\text{Learned Map} \\ 
+             \hat x &= \mathcal T^{-1}{(\hat X)}        \quad && \text{Inverse Transform} \\
+                \hat y &= \hat x + g(x)   \quad && \text{Residual}
+        \end{aligned}
+        $};
+        \node (x) at (0, 0) {$x$};
+        \node (y) at (5.5,0) {$\hat y$};
+        \node [block, blur shadow={shadow blur steps=5}] (T) at (1, 0) {$\mathcal{T}$};
+        \node (X) at (1.5, .25) {$X$};
+        \node [block, blur shadow={shadow blur steps=5}, fill=green!20] (f) at (2, 0) {$f_\theta$};
+        \node (X_) at (2.6, .3) {$\hat X$};
+        \node [block, blur shadow={shadow blur steps=5}] (T_) at (3.3, 0) {$\mathcal{T}^{-1}$};
+        \node (x_) at (4, .26) {$\hat x$};
+        \node [sum, blur shadow={shadow blur steps=5}] (sum) at (4.5,0) {};
+        \node [block, blur shadow={shadow blur steps=5}, fill=red!20] (g) at (2, -1) {$g$};
+        \node [] at (4.5, 0) {$+$};
+        % lines
+        \draw [->] (x) -- (T);
+        \draw [->] (T) -- (f);
+        \draw [->] (f) -- (T_);    
+        \draw [->] (T_) -- (sum);
+        \draw [->] (x) |- (g);    
+        \draw [->] (g) -| (sum);
+        \draw [->] (sum) -- (y);
+    \end{tikzpicture}
+\end{equation}
+%
+where $\cT$ is an orthogonal (possibly \textit{complex}) linear operator. We denote the $\cT$-transformed $n$-space with $\cD_k$ ($k$-space) so that $\cT:\cD_n\rightarrow\cD_k$. Typically, we assume $\cT$ to be a \textit{Fourier-type} transform\footnote{e.g. \textit{discrete Fourier transform} (DFT), \textit{discrete cosine transform} (DCT), etc.} \citep[Chapter 8]{oppenheim1999discrete} so that the $k$-space corresponds to the \textit{frequency domain} and its elements form the \textit{spectrum} of the input signal $x$. 
+
+The learned parametric map $f_\theta:\cD_k\rightarrow\cD_k$ is the stem of a FDM layer: it maps the $k$-space into itself and is typically chosen to be rank-deficient in the linear case, e.g. $f_\theta(X) = S_m^\top A(\theta) S_m X, ~A(\theta) \in \bC^{m \times m}$ ($m \leq N)$. The matrix $S_m\in\R^{n\times m}$ selects $m$ desired elements of $X$, setting the rest to zero. In the case of frequency domain transforms, this allows \eqref{eq:1} to preserve or modify only specific frequencies of the input signal $x$. 
+
+Residual connections or residual convolutions $g$ \citep{li2020fourier,wen2022u} are optionally added to reintroduce frequency components filtered by $S_m$. A FDM mixes global transformations applied to coefficients of the chosen transform to local transformations $g$ i.e. convolutions with finite kernel sizes. To ensure that such models can approximate generic nonlinear functions, nonlinear activations are introduced after each inverse transform.
+
+\paragraph{Fourier Neural Operators}
+%
+Layers of the form \eqref{eq:1} appear in recent FDMs such as \textit{Fourier Neural Operators} (FNOs) \citep{li2020fourier} 
+%
+
+%
+and variants \citep{tran2021factorized, guibas2021adaptive, wen2022u}.
+%
+
+In example, an FNO is recovered from \eqref{eq:1} by letting $\cT$ be a \textit{Discrete Fourier Transform} (DFT)
+\begin{equation*}
+    % X_k = \frac{1}{\sqrt{N}}\sum_{n=0}^{N-1} x_n e^{-\frac{2\pi j}{N} nk}~~\mapsto ~~\hat X = \theta S_mX~~\mapsto~~\hat x_n = \frac{1}{\sqrt{m}} \sum_{k=0}^{m-1} \hat X_k e^{\frac{2\pi j}{N} kn}  
+    \hat x = \cT^{-1}\circ f_\theta\circ \cT (x) = W^* S^\top_m A(\theta) S_m W x
+\end{equation*}
+%
+
+%
+where $W\in\bC^{N\x N}$ is the standard $N$-dimensional DFT matrix and $W^*$ its conjugate transpose. The \textit{Discrete Fourier Transforms} (DFTs) is a natural choice of $\cT$ as it can be computed in $O(N\log N)$ via \textit{Fast Fourier Transform} (FFT) algorithms \citep[Chapter 9.2]{oppenheim1999discrete}.
+%
+
+We identify two major limitations of FDMs in the form \eqref{eq:1}; each layer performs $\cT$ and $\cT^{-1}$ and DFTs are complex-valued, resulting in overheads and a restriction of the design space for $f_\theta(X)$.   
+
+
+
+With \ourmethod{}, we aim to develop an FDM that does not require more than a single $\cT$, while preserving or improving on predictive accuracy. Ideally, the transform in \ourmethod{} should be (1) real-valued, to avoid restrictions in the design space of the architecture and thus retain compatibility with existing pretrained models, (2) universal, to allow the representation of target signals, and (3) approximately sparse or structured, to allow dimensionality reduction.  
+%
+\begin{tcolorbox}[enhanced, drop fuzzy shadow, frame hidden]
+    \[
+    \begin{tikzpicture}[baseline=(current  bounding  box.center)]
+        \def\ngon{5}
+        \node[draw=none, regular polygon,regular polygon sides=\ngon,minimum size=2.5cm] (p) {};
+        \node[] (p1) at (p.corner 1) {$\hat y$};
+        \node[] (p2) at (p.corner 2) {$x$};
+        \node[] (p3) at (p.corner 3) {$X$};
+        \node[] (p4) at (p.corner 4) {$\hat X$};
+        \node[] (p5) at (p.corner 5) {$\hat x$};
+        %
+        \path[-{Straight Barb[right]}] ([xshift=-1.4pt] p2.south) edge node [left] {$\cT$} ([xshift=-1.4pt] p3.north)
+        ([xshift=1.4pt] p3.north) edge node [right] {$\cT^{-1}$} ([xshift=1.4pt] p2.south);
+        %
+        \path[-stealth]
+        (p3) edge node [below] {$f_\theta$} (p4)
+        (p3.east) edge (p4.west);
+        %
+        \path[-{Straight Barb[right]}] ([xshift=-1.4pt] p5.south) edge node [left] {$\cT$} ([xshift=-1.4pt] p4.north)
+        ([xshift=1.4pt] p4.north) edge node [right] {$\cT^{-1}$} ([xshift=1.4pt] p5.south);
+        %
+        \draw[-stealth]
+        (p2) edge node [above left] {$g$} (p1)
+        (p5) edge (p1);
+    \end{tikzpicture}
+    %
+    \qquad\qquad
+    %
+    \begin{tikzpicture}[baseline=(current  bounding  box.center)]
+        \matrix (m) [matrix of math nodes,row sep=3em,column sep=4em,minimum width=2em]
+        {
+         x & \hat x \\
+         X & \hat X \\};
+        \path[-stealth]
+        (m-2-1.east|-m-2-2) edge node [below] {$S_m^\top A(\theta) S_m$} (m-2-2);
+        %(m-1-1) edge node [left] {$W$} (m-2-1)
+        %(m-2-2) edge node [right] {$W^*$} (m-1-2);
+        %
+        \path[-{Straight Barb[right]}] ([xshift=-1.4pt] m-1-1.south) edge node [left] {$W$} ([xshift=-1.4pt] m-2-1.north)
+        ([xshift=1.4pt] m-2-1.north) edge node [right] {$W^*$} ([xshift=1.4pt] m-1-1.south)
+        ([xshift=-1.4pt] m-1-2.south) edge node [left] {$W$} ([xshift=-1.4pt] m-2-2.north)
+        ([xshift=1.4pt] m-2-2.north) edge node [right] {$W^*$} ([xshift=1.4pt] m-1-2.south);
+    \end{tikzpicture}
+    %
+    \]
+    Commutative diagrams for FDM layers \eqref{eq:1} and linear FNOs (frequency domain part).
+\end{tcolorbox}
+%
+

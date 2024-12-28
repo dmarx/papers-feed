@@ -1,0 +1,91 @@
+%
+\subsection{Long Horizon Forecasting with Closed-loop SSMs}
+\label{sec:forecasting_ssm}
+
+We now discuss our second core contribution, which enables long horizon forcasting. Using a slight variation of the companion SSM, we allow the same constant size \ourmethod{} model to forecast over many horizons. This \emph{forecasting SSM} recovers the flexible and stateful inference of RNNs, while retaining the faster parallelizable training of computing SSMs as convolutions. 
+
+% We first describe challenges and limitations with forecasting for deep nets. We then show how introducing a \emph{closed-loop} view of SSMs enables \ourmethod{}'s decoder to dynamically forecast specified horizons in a multi-layer network. The key idea is to 
+% % (i) computing SSM outputs as a recurrence and (ii) 
+% explicitly train \ourmethod{}'s last-layer SSMs to predict future time-steps of both the observed time series sequence (as a standard open-loop system) and its \emph{layer-specific} inputs (as a closed-loop counterpart). 
+
+% Note: for related work, add a line that talks about how most sota time series neural networks use "direct multi-step forecasting", which is in contrast to what we do.We therefore get stateful, constant model size. But others scale to many more parameters.
+\header{Challenges and limitations} For forecasting, a model must process an input lag sequence of length $\ell$ and output a forecast sequence of length $h$, where $h \neq \ell$ necessarily. 
+%
+Many state-of-the-art neural nets thus train by specifically predicting $h$-long targets given $\ell$-long inputs. 
+%We could do the same by computing SSMs as convolutions. 
+% (after padding inputs \st{} $\ell \geq H$). 
+However, in Sec.~\ref{sec:empirical_horizons} we find this hurts transfer to new horizons in other models, as they only train to predict specific horizons. 
+%
+Alternatively, we could output horizons autoregressively through the network similar to stacked RNNs as in \textsc{SaShiMi}~\citep{goel2022s} or DeepAR \citep{salinas2020deepar}. However, we find this can still be relatively inefficient, as it requires passing states to each layer of a deep network.
+% we can save compute by not autoregressing through the entire network.
+% is not necessary, and can save computation with only a single layer.
+% inefficient for parallelizable training.
+% over long sequences.
+
+\header{Closed-loop SSM solution} Our approach is similar to autoregression, but \emph{only} applied at a single \ourmethodunit{}. We treat the inputs and outputs as \emph{distinct} processes in a multi-layer network, and add another matrix $\zK$  to each decoder SSM to model future \emph{input} time-steps explicitly.
+% ( distinct ``$C$'' matrices to model future time-steps of inputs and outputs explicitly.
+Letting $\bar{\boldsymbol{u}} = (\bar{u}_0, \ldots, \bar{u}_{\ell - 1})$ be the input sequence to a decoder SSM and $\boldsymbol{u} = (u_0, \ldots, u_{\ell - 1})$ be the original input sequence,
+we jointly train
+% add an additional parameter $K$ to each decoder layer SSM, 
+% and train $K$ to model future time-steps of $\bar{\boldsymbol{u}}$ (while still training $C$ to model future time-steps of the target output sequence $\boldsymbol{y}$). In other words, we
+% and jointly train
+% the SSM matrices 
+$\zA, \zB, \zC, \zK$ such that $x_{k + 1} = \zA x_{k} + \zB \bar{u}_{k}$, and
+% \(
+%  x_{k + 1} &= \zA x_{k} + \zB \bar{u}_{k} 
+%  % \label{eq:control_ssm_state} \\
+% \), and
+% and keeping output target time series sequence $\boldsymbol{y} = (y_0, \ldots, y_{\ell - 1})$
+%\label{eq:control_ssm_output}
+\begin{align}
+    \hat{y}_{k + 1} &= \zC x_{k + 1} 
+    \>\>\>\>\>\>\>\>\>\>\>\>\>\>\>\>\>\>\>\>\>\>\>\>\>\>\>
+    \text{(where $\hat{y}_{k + 1} = y_{k + 1} = u_{k + 1}$)} \label{eq:control_ssm_state}  \\
+    \hat{\bar{u}}_{k + 1} &= \zK x_{k + 1} 
+    \>\>\>\>\>\>\>\>\>\>\>\>\>\>\>\>\>\>\>\>\>\>\>\>\>\>
+    \text{(where $\hat{\bar{u}}_{k + 1} = \bar{u}_{k + 1}$)} \label{eq:control_ssm_next_input}
+\end{align}
+We thus train the decoder \ourmethodunit{} to explicitly model its own next time-step inputs with $\zA, \zB, \zK$, and model its next time-step outputs (\ie{} future time series samples) with $\zA, \zB, \zC$. 
+%
+For forecasting, we first process the lag terms via (\ref{eq:control_ssm_state}) and (\ref{eq:control_ssm_next_input}) as convolutions
+% efficiently process the available input sequence as a convolution 
+% (jointly updating $A, B, C, K$ during training), \ie{}
+% \MZ{note on clarity that we have $\bar{u}_k$ when we need it}
+% \vspace{-0.125cm}
+\begin{equation}
+    x_{k} =  \textstyle \sum_{j = 0}^{k - 1}\zA^{k - 1 - j} \zB u_j \;\;\;\text{and}\;\;\;
+    \hat{\bar{u}}_{k} = \zK \textstyle  \sum_{j = 0}^{k - 1}\zA^{k - 1 - j} \zB \bar{u}_j
+    % x_{k} =  \sum_{j = 0}^{k - 1}\zA^{k - 1 - j} \zB u_j \;\;\;\text{and}\;\;\;
+    % \hat{\bar{u}}_{k} = \zK \sum_{j = 0}^{k - 1}\zA^{k - 1 - j} \zB \bar{u}_j
+\label{eq:convolution_output_multilayer}
+\end{equation}
+% \vspace{-0.125cm}
+for $k \in [0,\ell - 1]$.
+%
+To forecast $h$ future time-steps, with last hidden state $x_{\ell}$ we first predict future input $\hat{\bar{u}}_{\ell}$ via (\ref{eq:control_ssm_next_input}). Plugging this back into the SSM and iterating for $h- 1$ future time-steps leads to
+% and output $H$ future samples $\hat{y}_{\ell}, \ldots, \hat{y}_{\ell + H- 1}$ efficiently as a Krylov-powered recurrence:
+% \[
+% \begin{aligned}
+%     x_{\ell + 1} 
+%     &= \zA x_{\ell} + B(Kx_\ell)\; & x_{\ell + 2} &= \zA x_{\ell +1} + B(Kx_{\ell + 1})\; \ldots  & x_{\ell + H- 1} &= \zA x_{\ell + H- 1} + B(Kx_{\ell + H- 1}) &\\
+%     &= (\zA + BK)x_\ell & &= (\zA + BK)^2 x_\ell &   &= (\zA + BK)^{H - 1}x_\ell & \\
+%     % y_{\ell + 1} &= C(A + BC)x_\ell &  y_{\ell + 2} &= C(A + BC)^2x_\ell &  y_{\ell + H- 1} &= C(A + BC)^{H - 1}x_\ell
+% \end{aligned}
+\begin{align}
+x_{\ell +i} &= (\zA+\zB \zK)^i x_\ell\;\; \text{ for }\;\; i = 1, \ldots, h-1 \\
+\Rightarrow (y_{\ell}, \ldots, y_{\ell + h- 1}) &= \big(\zC(\zA + \zB \zK)^ix_\ell \big)_{i \in [h - 1]} \label{eq:krylov_recurrent_output_multilayer} 
+\end{align}
+% \begin{equation}
+% \Rightarrow (y_{\ell}, \ldots, y_{\ell + H- 1}) &= \big(C(\zA + BK)^ix_\ell\big)_{i \in [H - 1]} \label{eq:krylov_recurrent_output_multilayer}     
+% \end{equation}
+We can thus use Eq. \ref{eq:krylov_recurrent_output_multilayer} to get future outputs without sequential recurrence, using the same FFT operation as for Eq.~\ref{eq:output_filter},~\ref{eq:convolution_output}.
+This flexibly recovers $\mathcal{O}(\ell + h)$ time complexity for forecasting $h$ future time-steps,
+% and can be computed efficiently with the FFT again 
+assuming that powers $(\zA + \zB \zK)^h$ are taken care of. 
+Next, we derive an efficient matrix powering algorithm to take care of this powering and enable fast training and inference in practice. 
+
+% We also show empirically in Sec.~\ref{} that the closed-loop SSM generalizes to arbitrary horizons better than alternatives.
+
+
+
+% Finally we note that while do not explicitly model the SSM as a control system, training the decoder SSM to model its next time-step input separately from its output introduces a ``closed-loop'' view to the \ellSS\ell framework, which previously only drew parallels to ``open-loop'' systems. While this may enable new capabilities such as stabilization and reference tracking useful long-horizon forecasting, we leave these connections for future work. \MZ{needs passes}

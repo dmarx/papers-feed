@@ -1,0 +1,172 @@
+\section{Experimental Details}
+\label{sec:exp-details}
+
+\subsection{MQAR Details}
+\label{sec:exp-details:mqar}
+
+We use a harder version of the task introduced in Based \citep{arora2024simple} where tokens that are not query/key/values are replaced with random tokens.
+We also use more key-value pairs, longer sequences, and smaller model sizes than the usual variant of MQAR used by prior work, all of which make the task harder.
+
+For each sequence length $T \in \{256, 512, 1024\}$, we use $T/4$ key-value pairs. %
+The total vocab size is 8192.
+
+We use a form of curriculum training where training cycles through datasets using $(T/32, T/16, T/8, T/4)$ key-value pairs, where each dataset has $2^{18} \approx 250000$ examples, for a total of $8$ epochs through each dataset (total of $2^{28} \approx 270M$ examples).
+The total batch size is $2^{18} \approx 0.25M$ tokens (e.g. for $T=1024$, the batch size is $256$).
+
+All methods use $2$ layers with default settings; the attention baseline additionally receives positional embeddings.
+For each method, we sweep over model dimensions $\mathtt{D} = \{32, 64, 128, 256\}$ and learning rates $\{10^{-3.5}, 10^{-2}, 10^{-2.5}\}$.
+We use a linear decay schedule that drops on every epoch (e.g. the last epoch would have a learning rate $1/8$ of the maximum/starting learning rate).
+
+\subsection{Scaling Law Details}
+\label{sec:exp-details:lm:scaling}
+
+All models were trained on the Pile.
+For the scaling law experiments, we use the GPT2 tokenizer.
+
+\paragraph{Model Sizes.}
+
+\cref{tab:gpt3} specifies the model sizes we use for scaling laws following GPT3~\citep{brown2020language},
+First, we changed the batch size of the 1.3B model from 1M tokens to 0.5M tokens
+for uniformity.
+Second, we changed the number of training steps and total tokens to roughly match Chinchilla scaling laws~\citep{hoffmann2022empirical}, which specify that training tokens should increase proportionally to model size.
+
+\begin{table}
+  \caption{
+    (\textbf{Scaling Law Model Sizes}.)
+    Our model sizes and hyperparameters for scaling experiments.
+    (Model dimension and number of heads applies only to Transformer models.)
+  }
+  \centering
+  \small
+  \begin{tabular}{@{}llllllll@{}}
+    \toprule
+    \sc{Params} & $\mathtt{n\_layers}$ & $\mathtt{d\_model}$ & $\mathtt{n\_heads}$ / $\mathtt{d\_head}$ & \sc{Training steps}  & \sc{Learning Rate}  & \sc{Batch Size} & \sc{Tokens} \\
+    \midrule
+    125M   & 12                   & 768                 & 12 / 64                                  & 4800            & 6e-4           & 0.5M tokens & 2.5B       \\
+    350M   & 24                   & 1024                & 16 / 64                                  & 13500           & 3e-4           & 0.5M tokens & 7B         \\
+    760M   & 24                   & 1536                & 16 / 96                                  & 29000           & 2.5e-4         & 0.5M tokens & 15B       \\
+    1.3B   & 24                   & 2048                & 32 / 64                                  & 50000           & 2e-4           & 0.5M tokens & 26B       \\
+    \bottomrule
+  \end{tabular}
+  \label{tab:gpt3}
+\end{table}
+
+\paragraph{Training Recipes.}
+
+All models used the AdamW optimizer with
+\begin{itemize}
+  \item gradient clip value $1.0$
+  \item weight decay $0.1$
+  \item no dropout
+  \item linear learning rate warmup with cosine decay
+\end{itemize}
+By default, the peak learning rate is the GPT3 specification.
+
+Compared to GPT3 recipe, we use an ``improved recipe'', inspired by changes adopted by popular large language models such as PaLM~\citep{chowdhery2022palm} and LLaMa~\citep{touvron2023llama}.
+These include:
+\begin{itemize}
+  \item linear learning rate warmup with cosine decay to $1e-5$, with a peak value of $5\times$ the GPT3 value
+  \item no linear bias terms
+  \item RMSNorm instead of LayerNorm
+  \item AdamW hyperparameter $\beta=(.9, .95)$ (the GPT3 value) instead of the PyTorch default of $\beta=(.9, .999)$
+\end{itemize}
+
+\subsection{Downstream Evaluation Details}
+
+To evaluate downstream performance of fully trained, we train Mamba-2 on 300B tokens on the Pile, using the GPT-NeoX~\citep{black2022gpt} tokenizer.
+
+We use the same hyperparameters as the scaling experiments, except with batch
+size 1M for the 1.3B and 2.7B model.
+For the 2.7B model, we also follow GPT3 specification (32 layers, dimension 2560).
+
+For all models, we use 5x the learning rate of the corresponding GPT3 model.
+
+
+For downstream evaluation, we use the LM evaluation harness from EleutherAI~\citep{eval-harness}, on the same tasks as Mamba~\citep{gu2023mamba} with one additional one:
+\begin{itemize}
+  \item LAMBADA~\citep{paperno2016lambada}
+  \item HellaSwag~\citep{zellers2019hellaswag}
+  \item PIQA~\citep{bisk2020piqa}
+  \item ARC-challenge~\citep{clark2018think}
+  \item ARC-easy: an easy subset of ARC-challenge
+  \item WinoGrande~\citep{sakaguchi2021winogrande}
+  \item OpenBookQA~\citep{mihaylov2018can}
+\end{itemize}
+
+
+\begin{table*}[ht]
+  \small
+  \centering
+  \captionsetup{font=small}
+  \caption{
+    (\textbf{Zero-shot Evaluations}.) Best results for each size in bold, second best unlined.
+    We compare against open source LMs with various tokenizers, trained for up to 300B tokens.
+    Pile refers to the validation split, comparing only against models trained on the same dataset and tokenizer (GPT-NeoX-20B).
+    For each model size, Mamba-2 outperforms Mamba, and generally matches Pythia at twice the model size.
+  }
+  \resizebox{0.99\linewidth}{!}
+  {
+    \begin{tabular}{@{}llllllllllll@{}}
+      \toprule
+      \sc{Model}            & \sc{Token.} & \sc{Pile}                  & \sc{LAMBADA}               & \sc{LAMBADA}              & \sc{HellaSwag}             & \sc{PIQA}                 & \sc{Arc-E}                & \sc{Arc-C}                            & \sc{WinoGrande}                         & \sc{OpenbookQA}                         & \sc{Average} \\
+                            &             & \sc{ppl $\downarrow$}      & \sc{ppl $\downarrow$}      & \sc{acc $\uparrow$}       & \sc{acc $\uparrow$}        & \sc{acc $\uparrow$}       & \sc{acc $\uparrow$}       & \sc{acc $\uparrow$}                   & \sc{acc $\uparrow$}                     & \sc{acc $\uparrow$}                     & \sc{acc $\uparrow$} \\
+                                         \midrule
+      Hybrid H3-130M        & GPT2        & ---                        & 89.48                      & 25.8                      & 31.7                       & 64.2                      & 44.4                      & \textbf{24.2}                         & 50.6                                    & 27.0                                    & 38.2 \\
+      Pythia-160M           & NeoX        & 29.64                      & 38.10                      & 33.0                      & 30.2                       & 61.4                      & 43.2                      & 24.1                                  & \underline{51.9}                        & \underline{29.2}                        & 39.0 \\
+      Mamba-130M            & NeoX        & \underline{10.56}          & \textbf{16.07}             & \textbf{44.3}             & \underline{35.2}           & \underline{64.5}          & \textbf{48.0}             & \textbf{24.2}                         & \underline{51.9}                        & 28.8                                    & \underline{42.4} \\
+      \textbf{Mamba-2-130M} & NeoX        & \textbf{10.48}             & \underline{16.86}          & \underline{43.9}          & \textbf{35.3}              & \textbf{64.9}             & \underline{47.4}          & \textbf{24.2}                         & \textbf{52.1}                           & \textbf{30.6}                           & \textbf{42.6} \\
+      \midrule
+      Hybrid H3-360M        & GPT2        & ---                        & 12.58                      & 48.0                      & 41.5                       & 68.1                      & 51.4                      & 24.7                                  & 54.1                                    & \underline{31.6}                        & 45.6 \\
+      Pythia-410M           & NeoX        & 9.95                       & 10.84                      & 51.4                      & 40.6                       & 66.9                      & 52.1                      & 24.6                                  & 53.8                                    & 30.0                                    & 45.6 \\
+      Mamba-370M            & NeoX        & \underline{8.28}           & \underline{8.14}           & \underline{55.6}          & \underline{46.5}           & \underline{69.5}          & \textbf{55.1}             & \textbf{28.0}                         & \underline{55.3}                        & 30.8                                    & \underline{48.7} \\
+      \textbf{Mamba-2-370M} & NeoX        & \textbf{8.21}              & \textbf{8.02}              & \textbf{55.8}             & \textbf{46.9}              & \textbf{70.5}             & \underline{54.9}          & \underline{26.9}                      & \textbf{55.7}                           & \textbf{32.4}                           & \textbf{49.0} \\
+      \midrule
+      Pythia-1B             & NeoX        & 7.82                       & 7.92                       & 56.1                      & 47.2                       & 70.7                      & 57.0                      & 27.1                                  & 53.5                                    & 31.4                                    & 49.0 \\
+      Mamba-790M            & NeoX        & \underline{7.33}           & \underline{6.02}           & \textbf{62.7}             & \textbf{55.1}              & \textbf{72.1}             & \textbf{61.2}             & \textbf{29.5}                         & \underline{56.1}                        & \underline{34.2}                        & \underline{53.0} \\
+      \textbf{Mamba-2-780M} & NeoX        & \textbf{7.26}              & \textbf{5.86}              & \underline{61.7}          & \underline{54.9}           & \underline{72.0}          & \underline{61.0}          & \underline{28.5}                      & \textbf{60.2}                           & \textbf{36.2}                           & \textbf{53.5} \\
+      \midrule
+      GPT-Neo 1.3B          & GPT2        & ---                        & 7.50                       & 57.2                      & 48.9                       & 71.1                      & 56.2                      & 25.9                                  & 54.9                                    & 33.6                                    & 49.7 \\
+      Hybrid H3-1.3B        & GPT2        & ---                        & 11.25                      & 49.6                      & 52.6                       & 71.3                      & 59.2                      & 28.1                                  & 56.9                                    & 34.4                                    & 50.3 \\
+      OPT-1.3B              & OPT         & ---                        & 6.64                       & 58.0                      & 53.7                       & 72.4                      & 56.7                      & 29.6                                  & 59.5                                    & 33.2                                    & 51.9 \\
+      Pythia-1.4B           & NeoX        & 7.51                       & 6.08                       & 61.7                      & 52.1                       & 71.0                      & 60.5                      & 28.5                                  & 57.2                                    & 30.8                                    & 51.7 \\
+      RWKV4-1.5B            & NeoX        & 7.70                       & 7.04                       & 56.4                      & 52.5                       & 72.4                      & 60.5                      & 29.4                                  & 54.6                                    & 34.0                                    & 51.4 \\
+      Mamba-1.4B            & NeoX        & \underline{6.80}           & \underline{5.04}           & \underline{65.0}          & \underline{59.1}           & \textbf{74.2}             & \textbf{65.5}             & \underline{32.8}                      & \textbf{61.5}                           & \underline{36.4}                        & \textbf{56.4} \\
+      \textbf{Mamba-2-1.3B} & NeoX        & \textbf{6.66}              & \textbf{5.02}              & \textbf{65.7}             & \textbf{59.9}              & \underline{73.2}          & \underline{64.3}          & \textbf{33.3}                         & \underline{60.9}                        & \textbf{37.8}                           & \textbf{56.4} \\
+      \midrule
+      GPT-Neo 2.7B          & GPT2        & ---                        & 5.63                       & 62.2                      & 55.8                       & 72.1                      & 61.1                      & 30.2                                  & 57.6                                    & 33.2                                    & 53.2 \\
+      Hybrid H3-2.7B        & GPT2        & ---                        & 7.92                       & 55.7                      & 59.7                       & 73.3                      & 65.6                      & 32.3                                  & 61.4                                    & 33.6                                    & 54.5 \\
+      OPT-2.7B              & OPT         & ---                        & 5.12                       & 63.6                      & 60.6                       & 74.8                      & 60.8                      & 31.3                                  & 61.0                                    & 35.2                                    & 55.3 \\
+      Pythia-2.8B           & NeoX        & 6.73                       & 5.04                       & 64.7                      & 59.3                       & 74.0                      & 64.1                      & 32.9                                  & 59.7                                    & 35.2                                    & 55.7 \\
+      RWKV4-3B              & NeoX        & 7.00                       & 5.24                       & 63.9                      & 59.6                       & 73.7                      & 67.8                      & 33.1                                  & 59.6                                    & 37.0                                    & 56.4 \\
+      Mamba-2.8B            & NeoX        & \underline{6.22}           & \underline{4.23}           & \underline{69.2}          & \underline{66.1}           & \underline{75.2}          & \textbf{69.7}             & \underline{36.3}                      & \underline{63.5}                        & \textbf{39.6}                           & \underline{59.9} \\
+      \textbf{Mamba-2-2.7B} & NeoX        & \textbf{6.09}              & \textbf{4.10}              & \textbf{69.7}             & \textbf{66.6}              & \textbf{76.4}             & \underline{69.6}          & \textbf{36.4}                         & \textbf{64.0}                           & \underline{38.8}                        & \textbf{60.2} \\
+      \midrule
+      GPT-J-6B              & GPT2        & --                         & 4.10                       & 68.3                      & 66.3                       & 75.4                      & 67.0                      & 36.6                                  & 64.1                                    & 38.2                                    & 59.4 \\
+      OPT-6.7B              & OPT         & --                         & 4.25                       & 67.7                      & 67.2                       & 76.3                      & 65.6                      & 34.9                                  & 65.5                                    & 37.4                                    & 59.2 \\
+      Pythia-6.9B           & NeoX        & 6.51                       & 4.45                       & 67.1                      & 64.0                       & 75.2                      & 67.3                      & 35.5                                  & 61.3                                    & 38.0                                    & 58.3 \\
+      RWKV4-7.4B            & NeoX        & 6.31                       & 4.38                       & 67.2                      & 65.5                       & 76.1                      & 67.8                      & 37.5                                  & 61.0                                    & 40.2                                    & 59.3 \\
+      \bottomrule
+    \end{tabular}
+  }
+  \label{table:downstream_zeroshot_full}
+\end{table*}
+
+\iftoggle{arxiv}{
+\subsection{Ablation Details}
+
+\paragraph{(Re)Based Details.}
+Our ablations in \cref{sec:experiments:ablations:kernels} considered the Based~\citep{arora2024simple} and ReBased~\citep{aksenov2024linear} models.
+
+Based approximates the $\exp$ kernel with a quadratic Taylor expansion $\exp(x) \approx 1 + x + x^2/2$,
+which can be accomplished by the feature map
+$$\psi_{\text{Taylor}}(x) = \mathsf{concatenate}(1, x, 1/\sqrt{2} x \otimes x).$$
+ReBased proposes to use the simpler feature map $\psi_{\text{Quadratic}}(x) = x \otimes x$ corresponding to the kernel transformation $x^2$, but also applies a layer normalization beforehand.
+We view the layer normalization as an alternative non-linear activation to our default Swish activation,
+and ablate combinations of these.
+
+Note that because these expand the feature dimension, we must project to smaller $B, C$ dimensions;
+in \cref{tab:ablations-kernel-based}, use state size $N=64$ for 130M models and $N=256$ for 380M models.
+For the (Re)Based methods, we project to 8 and 16 dimensions respectively before applying their feature maps;
+this results in a total state size of $8^2 = 64$ for ReBased and $1+8+8^2=73$ for Based in the 130M model case.
+Because the $B$ and $C$ projections are smaller, these methods use fewer parameters, and we adjust the layer count appropriately.
+}{}
