@@ -28,9 +28,16 @@ jobs:
         with:
           node-version: '20'
       
-      # Install dependencies from package.json
+      # Check for package-lock.json and install dependencies accordingly
       - name: Install dependencies
-        run: npm ci
+        run: |
+          if [ -f "package-lock.json" ]; then
+            echo "Found package-lock.json, using npm ci for faster, reliable installation"
+            npm ci
+          else
+            echo "No package-lock.json found, using npm install to generate it"
+            npm install
+          fi
       
       # Build TypeScript files
       - name: Build tests
@@ -39,11 +46,18 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
       
+      # Similarly adapt extension build based on lock file presence
       - name: Build extension (if needed)
-        working-directory: extension
+        working-directory: ../../extension
         run: |
           if [ -f "package.json" ]; then
-            npm ci
+            if [ -f "package-lock.json" ]; then
+              echo "Using npm ci for extension"
+              npm ci
+            else
+              echo "Using npm install for extension"
+              npm install
+            fi
             npm run build
           fi
       
@@ -57,3 +71,18 @@ jobs:
           name: playwright-report
           path: tests/extension/playwright-report/
           retention-days: 30
+
+      # Commit package-lock.json if it was created (only on push to main)
+      - name: Check for new package-lock.json
+        if: |
+          success() && 
+          github.event_name == 'push' && 
+          github.ref == 'refs/heads/main'
+        run: |
+          if [ -f "package-lock.json" ] && git status --porcelain package-lock.json | grep -q "??" ; then
+            git add package-lock.json
+            git config --local user.email "github-actions[bot]@users.noreply.github.com"
+            git config --local user.name "github-actions[bot]"
+            git commit -m "chore: Add package-lock.json for extension tests"
+            git push
+          fi
