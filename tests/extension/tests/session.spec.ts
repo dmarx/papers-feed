@@ -1,23 +1,24 @@
 import { test, expect } from './setup';
 import type { Page } from '@playwright/test';
 
-let testLogs: string[] = [];
-
 test.beforeAll(async ({ backgroundPage }) => {
   // Set up logging capture in background page
   await backgroundPage.evaluate(() => {
-    const logs: string[] = [];
-    // @ts-ignore - window.testLogs is fine for testing
-    window.testLogs = logs;
+    window.testLogs = [];
     const originalConsoleLog = console.log;
-    console.log = (...args: unknown[]) => {
-      logs.push(args.join(' '));
+    console.log = function(...args: unknown[]) {
+      window.testLogs.push(args.join(' '));
       originalConsoleLog.apply(console, args);
     };
   });
 });
 
-test.beforeEach(async ({ page }) => {
+test.beforeEach(async ({ page, backgroundPage }) => {
+  // Clear logs before each test
+  await backgroundPage.evaluate(() => {
+    window.testLogs = [];
+  });
+
   // Mock arxiv.org responses
   await page.route('**/*', async route => {
     const url = route.request().url();
@@ -48,7 +49,7 @@ test.describe('Reading Session Tests', () => {
     await page.goto('https://arxiv.org/abs/2401.00001');
     await page.waitForTimeout(1000);
 
-    const logs = await backgroundPage.evaluate(() => window.testLogs);
+    const logs: string[] = await backgroundPage.evaluate(() => window.testLogs);
     expect(logs).toContainEqual(expect.stringContaining('Starting new session for: 2401.00001'));
   });
 
@@ -62,14 +63,19 @@ test.describe('Reading Session Tests', () => {
     await page.goto('https://example.com');
     await page.waitForTimeout(1000);
 
-    const logs = await backgroundPage.evaluate(() => window.testLogs);
-    const durationLog = logs.find(log => 
+    const logs: string[] = await backgroundPage.evaluate(() => window.testLogs);
+    const durationLog = logs.find((log: string) => 
       log.includes('Creating reading event with duration:')
     );
     expect(durationLog).toBeDefined();
     
-    const duration = parseInt(durationLog!.match(/duration: (\d+)/)![1]);
-    expect(duration).toBeGreaterThanOrEqual(4000); // At least 4 seconds
+    if (durationLog) {
+      const durationMatch = durationLog.match(/duration: (\d+)/);
+      expect(durationMatch).toBeDefined();
+      
+      const duration = parseInt(durationMatch![1], 10);
+      expect(duration).toBeGreaterThanOrEqual(4000); // At least 4 seconds
+    }
   });
 
   test('should handle tab switching without ending session', async ({ page, context, backgroundPage }) => {
@@ -86,8 +92,8 @@ test.describe('Reading Session Tests', () => {
     await page.bringToFront();
     await page.waitForTimeout(1000);
 
-    const logs = await backgroundPage.evaluate(() => window.testLogs);
-    const endSessionLogs = logs.filter(log => 
+    const logs: string[] = await backgroundPage.evaluate(() => window.testLogs);
+    const endSessionLogs = logs.filter((log: string) => 
       log.includes('Ending session for: 2401.00001')
     );
     expect(endSessionLogs).toHaveLength(0);
