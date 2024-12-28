@@ -1,23 +1,33 @@
-import { test as base } from '@playwright/test';
+import { test as base, BrowserContext, chromium, type Page } from '@playwright/test';
 import path from 'path';
 
-// Extend basic test with extension context
-export const test = base.extend({
-  context: async ({ context }, use) => {
-    // Load extension
+// Define custom fixture types
+interface ExtensionFixtures {
+  extensionContext: BrowserContext;
+  backgroundPage: Page;
+}
+
+// Create test with extension fixtures
+export const test = base.extend<ExtensionFixtures>({
+  extensionContext: async ({ }, use) => {
     const extensionPath = path.join(__dirname, '../../extension');
-    const context = await browser.newContext({
-      viewport: { width: 1280, height: 720 },
-      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/88.0.4324.96',
-      permissions: ['tabs'],
-      // Load extension under test
+    const context = await chromium.launchPersistentContext('', {
+      headless: false,
       args: [
         `--disable-extensions-except=${extensionPath}`,
-        `--load-extension=${extensionPath}`,
-      ],
+        `--load-extension=${extensionPath}`
+      ]
     });
 
     await use(context);
     await context.close();
   },
+
+  backgroundPage: async ({ extensionContext }, use) => {
+    // Wait for the background page to be available
+    const backgroundPage = await extensionContext.waitForEvent('backgroundpage');
+    await use(backgroundPage);
+  },
 });
+
+export { expect } from '@playwright/test';
