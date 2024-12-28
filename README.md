@@ -11,3 +11,8 @@ System which monitors what I'm reading via a browser extension and publishes a f
 # How to set this up to monitor your own reading
 
 (coming soon)
+
+# Acknowledgements
+
+* Thank you to anthropic for making a decent LLM (I made claude write nearly all of this)
+* Thank you also to https://github.com/utterance/utterances, which inspired how this project uses the github issues feature
