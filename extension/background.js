@@ -1,4 +1,13 @@
 // background.js
+
+// For test logging
+window.testLogs = [];
+const originalConsoleLog = console.log;
+console.log = (...args) => {
+    window.testLogs.push(args.join(' '));
+    originalConsoleLog.apply(console, args);
+};
+
 import { loadSessionConfig, getConfigurationInMs } from './config/session.js';
 
 let githubToken = '';
