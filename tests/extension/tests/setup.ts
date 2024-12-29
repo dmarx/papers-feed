@@ -1,12 +1,12 @@
 // tests/extension/tests/setup.ts
-import { test as base, chromium, type BrowserContext, type Page } from '@playwright/test';
+import { test as base, chromium, type BrowserContext, type Page, type Worker } from '@playwright/test';
 import path from 'path';
-import { getBackgroundServiceWorker, initializeTestLogging } from './helpers';
+import { getServiceWorker, initializeTestLogging } from './helpers';
 
 interface ExtensionFixtures {
   context: BrowserContext;
   extensionId: string;
-  backgroundPage: Page;
+  backgroundWorker: Worker;
 }
 
 export const test = base.extend<ExtensionFixtures>({
@@ -25,15 +25,15 @@ export const test = base.extend<ExtensionFixtures>({
   },
 
   extensionId: async ({ context }, use) => {
-    const backgroundPage = await getBackgroundServiceWorker(context);
-    const extensionId = backgroundPage.url().split('/')[2];
+    const worker = await getServiceWorker(context);
+    const extensionId = worker.url().split('/')[2];
     await use(extensionId);
   },
 
-  backgroundPage: async ({ context }, use) => {
-    const backgroundPage = await getBackgroundServiceWorker(context);
-    await initializeTestLogging(backgroundPage);
-    await use(backgroundPage);
+  backgroundWorker: async ({ context }, use) => {
+    const worker = await getServiceWorker(context);
+    await initializeTestLogging(worker);
+    await use(worker);
   },
 });
 
