@@ -1,3 +1,4 @@
+# File: tests/extension/tests/setup.ts
 import { test as base, BrowserContext, chromium, type Page } from '@playwright/test';
 import path from 'path';
 
@@ -12,10 +13,12 @@ export const test = base.extend<ExtensionFixtures>({
   extensionContext: async ({ }, use) => {
     const extensionPath = path.join(__dirname, '../../extension');
     const context = await chromium.launchPersistentContext('', {
-      headless: false,
+      headless: true,  // Required for CI
       args: [
         `--disable-extensions-except=${extensionPath}`,
-        `--load-extension=${extensionPath}`
+        `--load-extension=${extensionPath}`,
+        '--no-sandbox',  // Required for CI
+        '--disable-setuid-sandbox',  // Required for CI
       ]
     });
 
