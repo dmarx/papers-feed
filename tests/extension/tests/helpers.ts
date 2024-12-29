@@ -20,14 +20,24 @@ export async function getServiceWorker(context: BrowserContext, timeout = 5000):
  */
 export async function initializeTestLogging(worker: Worker): Promise<void> {
   await worker.evaluate(() => {
-    // @ts-ignore - testLogs is added to window for testing
-    window.testLogs = [];
+    // @ts-ignore
+    self.testLogs = [];
     const originalConsoleLog = console.log;
     console.log = function(...args) {
-      // @ts-ignore - testLogs is added to window for testing
-      window.testLogs.push(args.join(' '));
+      // @ts-ignore
+      self.testLogs.push(args.join(' '));
       originalConsoleLog.apply(console, args);
     };
+  });
+}
+
+/**
+ * Get test logs from the worker
+ */
+export async function getTestLogs(worker: Worker): Promise<string[]> {
+  return await worker.evaluate(() => {
+    // @ts-ignore
+    return self.testLogs || [];
   });
 }
 
