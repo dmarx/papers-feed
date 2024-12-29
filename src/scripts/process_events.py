@@ -155,6 +155,9 @@ class EventProcessor:
                 commit_and_push(list(self.paper_manager.get_modified_files()))
                 for issue_number in self.processed_issues:
                     self.github.close_issue(issue_number)
+                logger.info("Git operations successful and processed issues closed.")
+                logger.info("Setting EVENTS_PROCESSED variable to trigger deploy-and-publish workflow.")
+                os.environ["EVENTS_PROCESSED"]="true"
             except Exception as e:
                 logger.error(f"Failed to commit changes: {e}")
             finally:
