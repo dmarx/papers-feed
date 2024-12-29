@@ -7,15 +7,18 @@ test.describe('Reading Session Tests', () => {
     await mockArxivAPI(page);
   });
 
-  test('should start new session on arxiv page load', async ({ page, backgroundPage }) => {
+  test('should start new session on arxiv page load', async ({ page, backgroundWorker }) => {
     await page.goto('https://arxiv.org/abs/2401.00001');
     await page.waitForTimeout(1000);
 
-    const logs = await backgroundPage.evaluate(() => window.testLogs);
+    const logs = await backgroundWorker.evaluate(() => {
+      // @ts-ignore - testLogs is added to window for testing
+      return window.testLogs;
+    });
     expect(logs.some(log => log.includes('Starting new session for: 2401.00001'))).toBeTruthy();
   });
 
-  test('should track minimum reading duration', async ({ page, backgroundPage }) => {
+  test('should track minimum reading duration', async ({ page, backgroundWorker }) => {
     // Navigate to arXiv page and wait for minimum session duration
     await page.goto('https://arxiv.org/abs/2401.00001');
     await page.waitForTimeout(31000); // Wait just over 30s minimum duration
@@ -24,7 +27,10 @@ test.describe('Reading Session Tests', () => {
     await page.goto('https://example.com');
     await page.waitForTimeout(1000);
 
-    const logs = await backgroundPage.evaluate(() => window.testLogs);
+    const logs = await backgroundWorker.evaluate(() => {
+      // @ts-ignore - testLogs is added to window for testing
+      return window.testLogs;
+    });
     const durationLog = logs.find(log => log.includes('Creating reading event:'));
     expect(durationLog).toBeDefined();
     
@@ -36,14 +42,17 @@ test.describe('Reading Session Tests', () => {
     }
   });
 
-  test('should handle idle timeout', async ({ page, backgroundPage }) => {
+  test('should handle idle timeout', async ({ page, backgroundWorker }) => {
     await page.goto('https://arxiv.org/abs/2401.00001');
     await page.waitForTimeout(1000);
 
     // Simulate idle period longer than threshold (5 minutes by default)
     await page.waitForTimeout(301000); // 5 minutes + 1 second
 
-    const logs = await backgroundPage.evaluate(() => window.testLogs);
+    const logs = await backgroundWorker.evaluate(() => {
+      // @ts-ignore - testLogs is added to window for testing
+      return window.testLogs;
+    });
     expect(logs.some(log => 
       log.includes('Session too short to log:') || 
       log.includes('duration: 0')
