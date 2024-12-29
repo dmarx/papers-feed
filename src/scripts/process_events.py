@@ -157,7 +157,9 @@ class EventProcessor:
                     self.github.close_issue(issue_number)
                 logger.info("Git operations successful and processed issues closed.")
                 logger.info("Setting EVENTS_PROCESSED variable to trigger deploy-and-publish workflow.")
-                os.environ["EVENTS_PROCESSED"]="true"
+                #os.environ["EVENTS_PROCESSED"]="true"
+                with open(os.environ['GITHUB_ENV'], 'a') as f:
+                    f.write('EVENTS_PROCESSED=true\n')
             except Exception as e:
                 logger.error(f"Failed to commit changes: {e}")
             finally:
