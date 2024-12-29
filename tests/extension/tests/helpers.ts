@@ -38,6 +38,34 @@ export async function initializeTestLogging(worker: Worker): Promise<void> {
 }
 
 /**
+ * Set up Chrome API mocks in the page context
+ */
+export async function setupChromeApiMocks(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    window.chrome = {
+      storage: {
+        sync: {
+          get: async () => ({ githubToken: 'fake-token', githubRepo: 'test/test' }),
+          set: async () => {}
+        }
+      }
+    };
+  });
+}
+
+/**
+ * Initialize storage in service worker
+ */
+export async function initializeStorage(worker: Worker): Promise<void> {
+  await worker.evaluate(() => {
+    // @ts-ignore
+    self.githubToken = 'fake-token';
+    // @ts-ignore
+    self.githubRepo = 'test/test';
+  });
+}
+
+/**
  * Get test logs from the worker
  */
 export async function getTestLogs(worker: Worker): Promise<string[]> {
