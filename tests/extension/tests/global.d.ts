@@ -1,8 +1,8 @@
 // tests/extension/tests/global.d.ts
 
-// Extend Window interface for test logging
+// Extend ServiceWorkerGlobalScope interface for test logging
 declare global {
-  interface Window {
+  interface ServiceWorkerGlobalScope {
     testLogs?: string[];
   }
 }
