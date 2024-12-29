@@ -13,6 +13,10 @@ declare global {
       logPartialSessions: boolean;
     };
   }
+
+  interface Window {
+    chrome: typeof chrome;
+  }
 }
 
 export {};
