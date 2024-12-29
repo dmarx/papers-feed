@@ -14,16 +14,15 @@ export const test = base.extend<ExtensionFixtures>({
     const pathToExtension = path.join(__dirname, '../../../extension');
     const userDataDir = '/tmp/test-user-data-dir';
     
-    // Launch browser with specific arguments to enable extensions
     const context = await chromium.launchPersistentContext(userDataDir, {
-      headless: true,
       args: [
+        '--headless=new', // Use new headless mode
         `--disable-extensions-except=${pathToExtension}`,
         `--load-extension=${pathToExtension}`,
         '--no-sandbox',
       ],
-      // Enable permissions that the extension needs
       permissions: ['storage'],
+      executablePath: process.env.CHROME_PATH || undefined
     });
 
     await use(context);
