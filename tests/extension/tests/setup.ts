@@ -1,33 +1,62 @@
-import { test as base, BrowserContext, chromium, type Page } from '@playwright/test';
+# File: tests/extension/tests/setup.ts
+import { test as base, chromium, type BrowserContext, type Page } from '@playwright/test';
 import path from 'path';
 
 // Define custom fixture types
 interface ExtensionFixtures {
-  extensionContext: BrowserContext;
+  context: BrowserContext;
+  extensionId: string;
   backgroundPage: Page;
 }
 
 // Create test with extension fixtures
 export const test = base.extend<ExtensionFixtures>({
-  extensionContext: async ({ }, use) => {
-    const extensionPath = path.join(__dirname, '../../extension');
+  context: async ({}, use) => {
+    const pathToExtension = path.join(__dirname, '../../../extension');
     const context = await chromium.launchPersistentContext('', {
-      headless: true,  // Required for CI
+      headless: true,
       args: [
-        `--disable-extensions-except=${extensionPath}`,
-        `--load-extension=${extensionPath}`,
-        '--no-sandbox',  // Required for CI
-        '--disable-setuid-sandbox',  // Required for CI
+        `--disable-extensions-except=${pathToExtension}`,
+        `--load-extension=${pathToExtension}`,
+        '--no-sandbox',
       ]
     });
-
     await use(context);
     await context.close();
   },
 
-  backgroundPage: async ({ extensionContext }, use) => {
-    // Wait for the background page to be available
-    const backgroundPage = await extensionContext.waitForEvent('backgroundpage');
+  extensionId: async ({ context }, use) => {
+    // Wait for the background page
+    let backgroundPage: Page;
+    try {
+      backgroundPage = await context.waitForEvent('backgroundpage', { timeout: 5000 });
+    } catch (e) {
+      throw new Error('Extension background page not found. Make sure the extension is loaded correctly.');
+    }
+
+    // Get extension ID from background page URL
+    const extensionId = backgroundPage.url().split('/')[2];
+    await use(extensionId);
+  },
+
+  backgroundPage: async ({ context }, use) => {
+    let backgroundPage: Page;
+    try {
+      backgroundPage = await context.waitForEvent('backgroundpage', { timeout: 5000 });
+
+      // Initialize logging
+      await backgroundPage.evaluate(() => {
+        window.testLogs = [];
+        const originalConsoleLog = console.log;
+        console.log = function(...args) {
+          window.testLogs.push(args.join(' '));
+          originalConsoleLog.apply(console, args);
+        };
+      });
+    } catch (e) {
+      throw new Error('Failed to setup background page: ' + e.message);
+    }
+
     await use(backgroundPage);
   },
 });
