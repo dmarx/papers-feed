@@ -29,8 +29,9 @@ export const test = base.extend<ExtensionFixtures>({
     let backgroundPage: Page;
     try {
       backgroundPage = await context.waitForEvent('backgroundpage', { timeout: 5000 });
-    } catch (e) {
-      throw new Error('Extension background page not found. Make sure the extension is loaded correctly.');
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      throw new Error('Extension background page not found. Make sure the extension is loaded correctly: ' + errorMessage);
     }
 
     // Get extension ID from background page URL
@@ -52,8 +53,9 @@ export const test = base.extend<ExtensionFixtures>({
           originalConsoleLog.apply(console, args);
         };
       });
-    } catch (e) {
-      throw new Error('Failed to setup background page: ' + e.message);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      throw new Error('Failed to setup background page: ' + errorMessage);
     }
 
     await use(backgroundPage);
