@@ -7,7 +7,7 @@ export default defineConfig({
   workers: 1,
   reporter: 'html',
   use: {
-    headless: false,
+    headless: true, // Changed to true for CI
     viewport: { width: 1280, height: 720 },
     trace: 'on-first-retry',
   },
@@ -16,7 +16,6 @@ export default defineConfig({
     port: 8080,
     reuseExistingServer: !process.env.CI,
   },
-  // Add timeouts
   timeout: 360000, // 6 minutes for the whole test
   expect: {
     timeout: 10000, // 10 seconds for expect assertions
