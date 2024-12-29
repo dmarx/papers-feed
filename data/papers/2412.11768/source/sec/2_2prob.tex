@@ -1,0 +1,58 @@
+\section{Problem Setting}
+\textbf{Notations.} 
+A neural network is defined based on a set of trainable parameters in specific architectures. We denote the neural network's parameters as $\theta \in \mathbb{R}^d$, where 
+$d$ is the total number of parameters. The training loss function $L(\theta)$ defines the objective to be minimized. The parameter space is partitioned into $B$ blocks based on the definition of network architectures, denoted as $\theta^{(i)} \in \mathbb{R}^{d_i}$ for $i \in \{1, 2, \dots, B\}$, where $d = \sum_{i=1}^{B}d_i$. Each parameter $\theta^{(i)}_j$ within block $i$ for $j\in[d_i]$ is associated with its own gradient $g^{(i)}_j = \nabla_{\theta^{(i)}_j} L(\theta)$.
+
+Key notations used throughout the paper are as follows: We denote $t\in\mathbb{N}$ as the index for the training step, $\eta > 0$ as the global learning rate, $\lambda \geq 0$ as the weight decay coefficient, $\mu$ as the momentum coefficient, $g^{(i)}_t \in \mathbb{R}^{d_i}$ as the gradient of the loss w.r.t. $\theta^{(i)}$ at step $t$. $[d_i]$ is the index set $\{1, 2, 3, \dots, d_i\}$ corresponding to the parameters in block $i$. And $\mathcal{O}(*)$ means the complexity, here we use it to measure the storage.
+
+
+\textbf{Stochastic Gradient-based Optimization:} 
+Given the loss function $L(\theta)$, the goal of a general optimization process is to update $\theta$ in the following form iteratively:
+\begin{equation}
+    \theta_{t+1} = \theta_t - \eta_t \mathbb{D}_t,
+\end{equation}
+where $\mathbb{D}_t$ denotes the update direction at step $t$. The choice of $\mathbb{D}_t$ defines the specific optimization algorithm. For SGD, the update direction is defined as the negative gradient of the loss with respect to $\theta_t$:
+\begin{align}
+    \mathbb{D}_t = g_t
+    \textit{, where }
+    g_t = \nabla L(\theta_t)
+\end{align}
+
+The first-order momentum term was introduced to SGD to enhance the optimisation process, and it is called SGD with momentum(SGDM)~\cite{Nes83}. The momentum $m$ can be defined as:
+\begin{align}
+    m_t = \beta_1 m_{t-1} + (1-\beta_1) g_t
+\end{align}
+The update becomes:
+\begin{align}
+    \mathbb{D}_t&= m_t
+\end{align}
+This addition helps accelerate convergence by incorporating information from previous gradients to smooth out the update steps. Specifically, it reduces oscillations in the optimization trajectory, particularly in scenarios with steep or narrow ravines in the loss landscape. By maintaining a running average of past gradients, the momentum term allows SGD to move more consistently in directions that lead to faster convergence, addressing challenges like slow progress on flat regions of the loss surface.
+
+\textbf{Adaptive Gradient Methods:} Adaptive gradient methods like Adam adopted first-order momentum \(m_t\) as we mentioned above while introducing the second-order momentum \(v_t\), which tracks squared gradients to adjust the learning rate for each parameter, the \(v_t\) defined as:
+\begin{align}
+    v_t = \beta_2 v_{t-1} + (1-\beta_2) g_t^2.
+\end{align}
+The update direction for Adam is as follows:
+% In classical Adam, the local learning rate (local gain) for parameter $\theta^{(i)}$ is computed as:
+\begin{align}
+    \mathbb{D}_t&= \alpha_t m_t,
+    \textit{ where }
+    \alpha_t = \frac{1}{\sqrt{\hat{v}_t} + \epsilon}.
+\end{align}
+$\hat{v}_t$ term is the $v_t$ with bias correction.
+Notably, $\alpha_t$ is the local learning rate gain (aka. adaptive learning rate). The key computational challenge is the storage and updating of 
+$v_t$, which requires $\mathcal{O}(d)$ additional memory.
+
+
+\textbf{Memory Efficient Adam:}
+As Scaling Law ~\cite{kaplan2020scaling} introduced, Transformer model sizes in recent days have significantly increased compared to the model size when Adam was introduced. Consequently, the memory overhead of the Adam optimizer has become a significant issue, as it requires at least 3x times of memory compared to parameter size. 
+Several approaches have been proposed to reduce the memory overhead of the second-order momentum $v_t$, including (a) Adafactor~\cite{shazeer2018adafactor} shares the $v$ across dimensions, reducing storage from $\mathcal{O}(d)$ to $\mathcal{O}(\sqrt{d})$. However, Adafactor trades off memory savings for lower update precision. (b) Low-bit optimisers quantize~\cite{DBLP:journals/corr/abs-2110-02861} the storage of $v_t$ to low-precision formats (e.g., 8-bit) to save memory. While effective, quantization introduces additional implementation complexity. (c) Adam-mini~\cite{zhang2024adamminiusefewerlearning} partitions the block and uses the moving average of the estimated $v_t$ for each block, thereby reducing storage from $\mathcal{O}(d)$ to $\mathcal{O}(B)$. However, Adam-mini not only introduces additional computational costs compared to the Adam update process, but its complex partition policy is also incompatible with the default PyTorch partitioning; for example, in default PyTorch partitioning, the attention QKV considered the same group of parameters,  while Adam-mini requires further partitioning them with based on heads or neurons. Furthermore, it adaptively calculates and updates $\alpha_t$ over time, highlighting its intensive computational complexity. While these approaches reduce memory usage, they all retain the second-momentum term $v_t$ with a trade-off to either performance or update speed.
+
+\textbf{Problem Statements.} We aim to eliminate the need for the explicit second-order momentum $v_t$ entirely while maintaining effective learning rate adaptation. Instead of using $\alpha^{(i)}_t = \frac{\eta}{\sqrt{\hat{v}^{(i)}_t} + \epsilon}$, we aim to design a new rescaling factor $\alpha^{(i)}_t$ that adapts to the loss landscape without requiring the computation or storage of $v^{(i)}_t$.
+
+Given a block-wise parameter $\theta^{(i)}$, we seek a new function $\mathcal{F}$ such that:
+\begin{equation}
+    \alpha^{(i)}_t = \mathcal{F}(g^{(i)}_1, g^{(i)}_2, \dots, g^{(i)}_t).
+\end{equation}
+where $\mathcal{F}$ determines the local learning rate gain for each parameter block using the gradient history $[g^{(i)}_1, g^{(i)}_2, \dots, g^{(i)}_t]$. 
+
