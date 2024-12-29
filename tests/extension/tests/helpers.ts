@@ -5,7 +5,6 @@ import { Page, BrowserContext, Worker } from '@playwright/test';
  * Get the service worker for the extension
  */
 export async function getServiceWorker(context: BrowserContext, timeout = 5000): Promise<Worker> {
-  // Get current service workers
   const workers = context.serviceWorkers();
   if (workers.length > 0) {
     console.log('Found existing service worker');
@@ -42,14 +41,31 @@ export async function initializeTestLogging(worker: Worker): Promise<void> {
  */
 export async function setupChromeApiMocks(page: Page): Promise<void> {
   await page.addInitScript(() => {
+    const mockStorage: chrome.storage.SyncStorageArea = {
+      get: async () => ({ githubToken: 'fake-token', githubRepo: 'test/test' }),
+      set: async () => {},
+      remove: async () => {},
+      clear: async () => {},
+      getBytesInUse: async () => 0,
+      onChanged: {
+        addListener: () => {},
+        removeListener: () => {},
+        hasListener: () => false,
+        hasListeners: () => false
+      },
+      QUOTA_BYTES: 102400,
+      QUOTA_BYTES_PER_ITEM: 8192,
+      MAX_ITEMS: 512,
+      MAX_WRITE_OPERATIONS_PER_HOUR: 1800,
+      MAX_WRITE_OPERATIONS_PER_MINUTE: 120,
+      MAX_SUSTAINED_WRITE_OPERATIONS_PER_MINUTE: 1000000
+    };
+
     window.chrome = {
       storage: {
-        sync: {
-          get: async () => ({ githubToken: 'fake-token', githubRepo: 'test/test' }),
-          set: async () => {}
-        }
+        sync: mockStorage
       }
-    };
+    } as typeof chrome;
   });
 }
 
