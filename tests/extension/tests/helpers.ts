@@ -37,6 +37,25 @@ export async function initializeTestLogging(worker: Worker): Promise<void> {
 }
 
 /**
+ * Create a mock Chrome Event implementation
+ */
+function createMockChromeEvent<T extends (...args: any[]) => void>(): chrome.events.Event<T> {
+  const listeners: T[] = [];
+  return {
+    addListener: (callback: T) => { listeners.push(callback); },
+    removeListener: (callback: T) => {
+      const index = listeners.indexOf(callback);
+      if (index > -1) listeners.splice(index, 1);
+    },
+    hasListener: (callback: T) => listeners.includes(callback),
+    hasListeners: () => listeners.length > 0,
+    addRules: async () => [],
+    getRules: async () => [],
+    removeRules: async () => {}
+  };
+}
+
+/**
  * Set up Chrome API mocks in the page context
  */
 export async function setupChromeApiMocks(page: Page): Promise<void> {
@@ -47,11 +66,15 @@ export async function setupChromeApiMocks(page: Page): Promise<void> {
       remove: async () => {},
       clear: async () => {},
       getBytesInUse: async () => 0,
+      // @ts-ignore - Chrome types are not perfectly aligned
       onChanged: {
         addListener: () => {},
         removeListener: () => {},
         hasListener: () => false,
-        hasListeners: () => false
+        hasListeners: () => false,
+        addRules: async () => [],
+        getRules: async () => [],
+        removeRules: async () => {}
       },
       QUOTA_BYTES: 102400,
       QUOTA_BYTES_PER_ITEM: 8192,
@@ -63,7 +86,9 @@ export async function setupChromeApiMocks(page: Page): Promise<void> {
 
     window.chrome = {
       storage: {
-        sync: mockStorage
+        sync: mockStorage,
+        // Mock the storage.onChanged event
+        onChanged: createMockChromeEvent<(changes: { [key: string]: chrome.storage.StorageChange }) => void>()
       }
     } as typeof chrome;
   });
