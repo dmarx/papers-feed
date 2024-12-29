@@ -5,6 +5,14 @@ import { Page, BrowserContext, Worker } from '@playwright/test';
  * Get the service worker for the extension
  */
 export async function getServiceWorker(context: BrowserContext, timeout = 5000): Promise<Worker> {
+  const extensions = await context.evaluate(() => {
+    return new Promise((resolve) => {
+      chrome.management.getAll((extensions) => {
+        resolve(extensions.map(e => ({id: e.id, enabled: e.enabled})));
+      });
+    });
+  });
+  console.log('Loaded extensions:', extensions);
   const workers = context.serviceWorkers();
   if (workers.length > 0) {
     console.log('Found existing service worker');
