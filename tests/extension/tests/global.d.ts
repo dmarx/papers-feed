@@ -1,9 +1,17 @@
 // tests/extension/tests/global.d.ts
 
-// Extend ServiceWorkerGlobalScope interface for test logging
 declare global {
   interface ServiceWorkerGlobalScope {
     testLogs?: string[];
+    githubToken?: string;
+    githubRepo?: string;
+    sessionConfig?: {
+      idleThreshold: number;
+      minSessionDuration: number;
+      activityUpdateInterval: number;
+      requireContinuousActivity: boolean;
+      logPartialSessions: boolean;
+    };
   }
 }
 
