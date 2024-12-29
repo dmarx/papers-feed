@@ -5,23 +5,18 @@ import { Page, BrowserContext, Worker } from '@playwright/test';
  * Get the service worker for the extension
  */
 export async function getServiceWorker(context: BrowserContext, timeout = 5000): Promise<Worker> {
-  const extensions = await context.evaluate(() => {
-    return new Promise((resolve) => {
-      chrome.management.getAll((extensions) => {
-        resolve(extensions.map(e => ({id: e.id, enabled: e.enabled})));
-      });
-    });
-  });
-  console.log('Loaded extensions:', extensions);
+  console.log('Looking for service worker...');
+  
+  // Get current service workers
   const workers = context.serviceWorkers();
   if (workers.length > 0) {
-    console.log('Found existing service worker');
+    console.log('Found existing service worker:', workers[0].url());
     return workers[0];
   }
   
-  console.log('Waiting for service worker to be created...');
+  console.log('No existing service worker, waiting for one to be created...');
   const worker = await context.waitForEvent('serviceworker', { timeout });
-  console.log('Service worker created');
+  console.log('Service worker created:', worker.url());
   return worker;
 }
 
@@ -95,5 +90,18 @@ export async function mockArxivAPI(page: Page): Promise<void> {
           </entry>
         </feed>`
     });
+  });
+}
+
+/**
+ * Set up test credentials in storage
+ */
+export async function setupTestCredentials(worker: Worker): Promise<void> {
+  console.log('Setting up test credentials...');
+  await worker.evaluate(() => {
+    // @ts-ignore
+    self.githubToken = 'fake-token';
+    // @ts-ignore
+    self.githubRepo = 'test/test';
   });
 }
