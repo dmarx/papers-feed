@@ -1,10 +1,10 @@
 // tests/extension/tests/helpers.ts
-import { Page, BrowserContext } from '@playwright/test';
+import { Page, BrowserContext, Worker } from '@playwright/test';
 
 /**
- * Wait for and get the background service worker page
+ * Get the service worker for the extension
  */
-export async function getBackgroundServiceWorker(context: BrowserContext, timeout = 5000): Promise<Page> {
+export async function getServiceWorker(context: BrowserContext, timeout = 5000): Promise<Worker> {
   // Get current service workers
   const workers = context.serviceWorkers();
   if (workers.length > 0) {
@@ -12,18 +12,19 @@ export async function getBackgroundServiceWorker(context: BrowserContext, timeou
   }
   
   // Wait for service worker to be created
-  const worker = await context.waitForEvent('serviceworker', { timeout });
-  return worker;
+  return await context.waitForEvent('serviceworker', { timeout });
 }
 
 /**
- * Initialize test logging for the background page
+ * Initialize test logging for the given worker
  */
-export async function initializeTestLogging(page: Page): Promise<void> {
-  await page.evaluate(() => {
+export async function initializeTestLogging(worker: Worker): Promise<void> {
+  await worker.evaluate(() => {
+    // @ts-ignore - testLogs is added to window for testing
     window.testLogs = [];
     const originalConsoleLog = console.log;
     console.log = function(...args) {
+      // @ts-ignore - testLogs is added to window for testing
       window.testLogs.push(args.join(' '));
       originalConsoleLog.apply(console, args);
     };
