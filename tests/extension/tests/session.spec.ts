@@ -1,6 +1,6 @@
 // tests/extension/tests/session.spec.ts
 import { test, expect } from './setup';
-import { mockArxivAPI, mockGitHubAPI, getTestLogs } from './helpers';
+import { mockArxivAPI, mockGitHubAPI, getTestLogs, setupTestCredentials } from './helpers';
 
 test.describe('Reading Session Tests', () => {
   test.beforeEach(async ({ page, backgroundWorker }) => {
@@ -8,15 +8,10 @@ test.describe('Reading Session Tests', () => {
     await mockArxivAPI(page);
     await mockGitHubAPI(page);
 
-    // Set test credentials directly in storage
-    await page.evaluate(() => {
-      chrome.storage.sync.set({
-        githubToken: 'fake-token',
-        githubRepo: 'test/test'
-      });
-    });
+    // Set test credentials
+    await setupTestCredentials(backgroundWorker);
 
-    // Wait for any initialization to complete
+    // Wait for initialization to complete
     await page.waitForTimeout(1000);
   });
 
