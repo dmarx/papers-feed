@@ -1,6 +1,6 @@
 // tests/extension/tests/session.spec.ts
 import { test, expect } from './setup';
-import { mockArxivAPI } from './helpers';
+import { mockArxivAPI, getTestLogs } from './helpers';
 
 test.describe('Reading Session Tests', () => {
   test.beforeEach(async ({ page }) => {
@@ -11,10 +11,7 @@ test.describe('Reading Session Tests', () => {
     await page.goto('https://arxiv.org/abs/2401.00001');
     await page.waitForTimeout(1000);
 
-    const logs = await backgroundWorker.evaluate(() => {
-      // @ts-ignore - testLogs is added to window for testing
-      return window.testLogs;
-    });
+    const logs = await getTestLogs(backgroundWorker);
     expect(logs.some(log => log.includes('Starting new session for: 2401.00001'))).toBeTruthy();
   });
 
@@ -27,10 +24,7 @@ test.describe('Reading Session Tests', () => {
     await page.goto('https://example.com');
     await page.waitForTimeout(1000);
 
-    const logs = await backgroundWorker.evaluate(() => {
-      // @ts-ignore - testLogs is added to window for testing
-      return window.testLogs;
-    });
+    const logs = await getTestLogs(backgroundWorker);
     const durationLog = logs.find(log => log.includes('Creating reading event:'));
     expect(durationLog).toBeDefined();
     
@@ -49,10 +43,7 @@ test.describe('Reading Session Tests', () => {
     // Simulate idle period longer than threshold (5 minutes by default)
     await page.waitForTimeout(301000); // 5 minutes + 1 second
 
-    const logs = await backgroundWorker.evaluate(() => {
-      // @ts-ignore - testLogs is added to window for testing
-      return window.testLogs;
-    });
+    const logs = await getTestLogs(backgroundWorker);
     expect(logs.some(log => 
       log.includes('Session too short to log:') || 
       log.includes('duration: 0')
