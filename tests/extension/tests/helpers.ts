@@ -8,26 +8,32 @@ export async function getServiceWorker(context: BrowserContext, timeout = 5000):
   // Get current service workers
   const workers = context.serviceWorkers();
   if (workers.length > 0) {
+    console.log('Found existing service worker');
     return workers[0];
   }
   
-  // Wait for service worker to be created
-  return await context.waitForEvent('serviceworker', { timeout });
+  console.log('Waiting for service worker to be created...');
+  const worker = await context.waitForEvent('serviceworker', { timeout });
+  console.log('Service worker created');
+  return worker;
 }
 
 /**
  * Initialize test logging for the given worker
  */
 export async function initializeTestLogging(worker: Worker): Promise<void> {
+  console.log('Initializing test logging...');
   await worker.evaluate(() => {
     // @ts-ignore
     self.testLogs = [];
     const originalConsoleLog = console.log;
     console.log = function(...args) {
+      const message = args.join(' ');
       // @ts-ignore
-      self.testLogs.push(args.join(' '));
+      self.testLogs.push(message);
       originalConsoleLog.apply(console, args);
     };
+    console.log('Test logging initialized');
   });
 }
 
@@ -35,9 +41,30 @@ export async function initializeTestLogging(worker: Worker): Promise<void> {
  * Get test logs from the worker
  */
 export async function getTestLogs(worker: Worker): Promise<string[]> {
-  return await worker.evaluate(() => {
+  const logs = await worker.evaluate(() => {
     // @ts-ignore
     return self.testLogs || [];
+  });
+  console.log('Current test logs:', logs);
+  return logs;
+}
+
+/**
+ * Mock GitHub API responses
+ */
+export async function mockGitHubAPI(page: Page): Promise<void> {
+  await page.route('**/api.github.com/**', async route => {
+    const url = route.request().url();
+    console.log('Mocking GitHub API request:', url);
+    
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        html_url: 'https://github.com/test/test/issues/1',
+        number: 1
+      })
+    });
   });
 }
 
@@ -46,6 +73,7 @@ export async function getTestLogs(worker: Worker): Promise<string[]> {
  */
 export async function mockArxivAPI(page: Page): Promise<void> {
   await page.route('**/api/query*', async route => {
+    console.log('Mocking arXiv API request:', route.request().url());
     await route.fulfill({
       status: 200,
       contentType: 'application/xml',
