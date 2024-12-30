@@ -415,13 +415,23 @@
             }
         }
 
+        .coloring-controls {
+            margin-top: 1rem;
+            padding-top: 1rem;
+            border-top: 1px solid var(--panel-border);
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+        
         .toggle-switch {
             display: flex;
             align-items: center;
             gap: 0.5rem;
-            margin-top: 1rem;
-            padding-top: 1rem;
-            border-top: 1px solid var(--panel-border);
+        }
+
+        .coloring-type {
+            margin-left: 0.5rem;
         }
 
         .toggle-label {
@@ -513,12 +523,27 @@
                             </label>
                         </div>
                     </div>
-                    <div class="toggle-switch">
-                        <span class="toggle-label">Show freshness colors</span>
-                        <label class="switch">
-                            <input type="checkbox" id="freshnessToggle" checked>
-                            <span class="slider"></span>
-                        </label>
+                    <div class="coloring-controls">
+                        <div class="toggle-switch">
+                            <span class="toggle-label">Enable ID coloring</span>
+                            <label class="switch">
+                                <input type="checkbox" id="coloringToggle" checked>
+                                <span class="slider"></span>
+                            </label>
+                        </div>
+                        <div class="radio-group coloring-type">
+                            <div class="radio-label">Color by:</div>
+                            <div class="radio-options">
+                                <label class="radio-option">
+                                    <input type="radio" name="colorBy" value="freshness" checked>
+                                    Freshness
+                                </label>
+                                <label class="radio-option">
+                                    <input type="radio" name="colorBy" value="readingTime">
+                                    Reading Time
+                                </label>
+                            </div>
+                        </div>
                     </div>
                     <button id="executeAction" class="control-button">Apply</button>
                 </div>
@@ -598,18 +623,30 @@
             localStorage.setItem('expandedCards', JSON.stringify(expandedCards));
         }
         
-        function calculateFreshnessColor(lastVisited, publishedDate, showFreshness = true) {
-            if (!showFreshness) return 'rgb(255, 255, 255)';  // White when freshness is disabled
-            if (!lastVisited || !publishedDate) return 'rgb(255, 255, 255)';  // White for unknown
+        function calculateColor(paper, coloringEnabled = true) {
+            if (!coloringEnabled) return 'rgb(255, 255, 255)';  // White when coloring is disabled
             
-            const visitDate = new Date(lastVisited);
-            const pubDate = new Date(publishedDate);
-            const diffDays = Math.floor((visitDate - pubDate) / (1000 * 60 * 60 * 24));
+            const colorBy = document.querySelector('input[name="colorBy"]:checked').value;
             
-            const maxAge = 365;
-            const freshness = Math.max(0, Math.min(1, 1 - (diffDays / maxAge)));
-            const value = Math.round(255 - (freshness * 55));
-            return `rgb(${value}, 255, ${value})`;
+            if (colorBy === 'freshness') {
+                if (!paper.last_visited || !paper.published_date) return 'rgb(255, 255, 255)';
+                
+                const visitDate = new Date(paper.last_visited);
+                const pubDate = new Date(paper.published_date);
+                const diffDays = Math.floor((visitDate - pubDate) / (1000 * 60 * 60 * 24));
+                
+                const maxAge = 365;
+                const freshness = Math.max(0, Math.min(1, 1 - (diffDays / maxAge)));
+                const value = Math.round(255 - (freshness * 55));
+                return `rgb(${value}, 255, ${value})`; // Green gradient
+            } else {
+                // Reading time coloring
+                const readingTime = paper.total_reading_time_seconds || 0;
+                const maxReadingTime = 30 * 60; // 30 minutes
+                const intensity = Math.max(0, Math.min(1, readingTime / maxReadingTime));
+                const value = Math.round(255 - (intensity * 55));
+                return `rgb(255, ${value}, ${value})`; // Red gradient
+            }
         }
         
         function renderPaperCard(paper, expanded) {
@@ -618,8 +655,8 @@
                 : '';
         
             // Get freshness toggle state
-            const showFreshness = document.getElementById('freshnessToggle')?.checked ?? true;
-            const freshnessBg = calculateFreshnessColor(paper.last_visited, paper.published_date, showFreshness);
+            const coloringEnabled = document.getElementById('coloringToggle')?.checked ?? true;
++           const bgColor = calculateColor(paper, coloringEnabled);
             
             const metaParts = [];
             
@@ -648,7 +685,7 @@
                     <div class="paper-header">
                         <span class="expand-icon">▶</span>
                         <a href="${paper.url}" class="arxiv-id" onclick="event.stopPropagation()" 
-                           style="background-color: ${freshnessBg}; padding: 4px 8px; border-radius: 4px;">
+                           style="background-color: ${bgColor}; padding: 4px 8px; border-radius: 4px;">
                             ${paper.arxivId}
                         </a>
                         <span class="paper-title">${paper.title}</span>
@@ -805,19 +842,32 @@
         }
 
         function initializeEventListeners() {
-            // Add freshness toggle listener
-            const freshnessToggle = document.getElementById('freshnessToggle');
-            if (freshnessToggle) {
-                // Load saved preference
-                const savedFreshness = localStorage.getItem('showFreshness');
-                if (savedFreshness !== null) {
-                    freshnessToggle.checked = savedFreshness === 'true';
+            // Add coloring controls listeners
+            const coloringToggle = document.getElementById('coloringToggle');
+            if (coloringToggle) {
+                // Load saved preferences
+                const savedColoring = localStorage.getItem('coloringEnabled');
+                if (savedColoring !== null) {
+                    coloringToggle.checked = savedColoring === 'true';
                 }
                 
-                freshnessToggle.addEventListener('change', () => {
-                    // Save preference
-                    localStorage.setItem('showFreshness', freshnessToggle.checked);
-                    handleFreshnessToggle();
+                const savedColorBy = localStorage.getItem('colorBy');
+                if (savedColorBy) {
+                    const radio = document.querySelector(`input[name="colorBy"][value="${savedColorBy}"]`);
+                    if (radio) radio.checked = true;
+                }
+                
+                // Add listeners
+                coloringToggle.addEventListener('change', () => {
+                    localStorage.setItem('coloringEnabled', coloringToggle.checked);
+                    renderPapers();
+                });
+                
+                document.querySelectorAll('input[name="colorBy"]').forEach(radio => {
+                    radio.addEventListener('change', () => {
+                        localStorage.setItem('colorBy', radio.value);
+                        renderPapers();
+                    });
                 });
             }
             
