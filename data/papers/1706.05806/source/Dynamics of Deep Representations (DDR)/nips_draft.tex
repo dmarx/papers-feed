@@ -1,0 +1,868 @@
+\documentclass{article} % For LaTeX2e
+\PassOptionsToPackage{nonatbib}{nips_2017}
+\usepackage[final]{nips_2017}
+\usepackage{amsfonts}
+\usepackage{ownstyles}
+%\usepackage{hyperref}
+\usepackage{graphicx}
+\usepackage{url}
+\usepackage{bm}
+\usepackage[export]{adjustbox}
+\usepackage{amsmath}
+\usepackage{amsbsy}
+\usepackage{calc}
+
+
+% Commenting highlights
+\newif\ifcomments
+
+%Uncomment one of the two lines below to turn todos on/off
+\commentsfalse
+% \commentstrue
+
+\ifcomments
+\newcommand{\comments}[1]{#1}
+\else
+\newcommand{\comments}[1]{}
+\fi
+% Commenting highlights
+
+
+\definecolor{darkgreen}{rgb}{0,0.6,0}
+\definecolor{blue}{rgb}{0,0.0,0.6}
+\newcommand{\jcom}[1]{\comments{\textcolor{darkgreen}{[jascha: #1]}}}
+\newcommand{\jgcom}[1]{\comments{\textcolor{blue}{[justin: #1]}}}
+% NOTE: to turn off comments, uncomment \commentsfalse above
+%%% Network, Layer, Unit %%%
+\newcommand{\net}[1]{\ensuremath{\mathsf{#1}\xspace}}
+\newcommand{\layer}[1]{\ensuremath{\mathsf{#1}\xspace}}
+\newcommand{\unit}[1]{\ensuremath{\mathsf{#1}\xspace}}
+\newcommand{\layerunit}[2]{\ensuremath{\mathsf{#1_{#2}}\xspace}}
+\newcommand{\thinplus}{\hspace*{-.3ex}+\hspace*{-.3ex}}
+\newcommand{\thinminus}{\hspace*{-.3ex}-\hspace*{-.3ex}}
+\newcommand{\thineq}{\hspace*{-.3ex}=\hspace*{-.3ex}}
+\newcommand{\textatsign}{\includegraphics[trim=0 .3ex 0 0,width=1.2ex]{text_atsign.pdf}}
+\newcommand{\textdot}{\hspace{.3ex}\includegraphics[width=.45ex]{text_dot.pdf}\hspace{.3ex}}
+
+\newcommand{\dd}{{\mathrm{d}}}
+\newcommand{\pd}[2]{\frac{\partial #1}{\partial #2}}
+\newcommand{\pdn}[3]{\frac{\partial^#1 #2}{\partial #3^#1}}
+\newcommand{\od}[2]{\frac{\dd #1}{\dd #2}}
+\newcommand{\odn}[3]{\frac{\dd^#1 #2}{\dd #3^#1}}
+\newcommand{\avg}[1]{\left< #1 \right>}
+\newcommand{\pp}[1]{\left( #1 \right)}
+\newcommand{\mb}{\mathbf}
+\newcommand{\mx}{\mathbf x}
+\newcommand{\mc}{\mathcal}
+%\newcommand{\min}{\operatorname{min}}
+\newcommand{\argmin}{\operatornamewithlimits{argmin}}
+\newcommand{\argmax}{\operatornamewithlimits{argmax}}
+\newcommand{\median}{\operatornamewithlimits{median}}
+\newcommand{\norm}[1]{\left|\left| #1 \right|\right|}
+\newcommand{\expect}[2]{\mathbb{E}_{#1}\left[ #2 \right]}
+
+
+% math commands
+\usepackage{amsthm}
+
+\newtheorem{theorem}{Theorem}
+\newtheorem{corollary}{Corollary}
+\newtheorem{lemma}{Lemma}
+\newtheorem{proposition}{Proposition}
+\newtheorem{conjecture}{Conjecture}
+\newtheorem{cor}{Corollary}
+\newtheorem{question}{Question}
+\newtheorem{definition}{Definition}
+\newtheorem{obs}{Observation}
+
+
+
+% \title{Bottom-up or top-down? Dynamics of Deep Representations via Canonical-Correlation Analysis}
+% \title{Deciphering Deep Representations}
+% \title{Analyzing and comparing representations in deep networks}
+%\title{Analyzing and comparing whole-layer representations in deep networks}
+%\title{Understanding and Speedi
+% \title{SVCCA: Deep Understanding }
+\title{SVCCA: Singular Vector Canonical Correlation Analysis for Deep Learning Dynamics and Interpretability}
+% \title{Deep Understanding: Improving Neural Networks with Singular Value Canonical Correlation Analysis}
+
+\author{Maithra Raghu,$^{1,2}$ Justin Gilmer,$^1$ Jason Yosinski,$^3$ \& Jascha Sohl-Dickstein$^1$ \\
+  %\thanks{ Use footnote for providing further information
+  %about author (webpage, alternative address)---\emph{not} for acknowledging
+  %funding agencies.  Funding acknowledgements go at the end of the paper.} \\
+  $^1$Google Brain  $^2$Cornell  University  $^3$Uber AI Labs \\
+  \texttt{maithrar\textatsign gmail\textdot com,
+  gilmer\textatsign google\textdot com,
+    yosinski\textatsign uber\textdot com,
+    jaschasd\textatsign google\textdot com} \\
+}
+
+% The \author macro works with any number of authors. There are two commands
+% used to separate the names and addresses of multiple authors: \And and \AND.
+%
+% Using \And between authors leaves it to \LaTeX{} to determine where to break
+% the lines. Using \AND forces a linebreak at that point. So, if \LaTeX{}
+% puts 3 of 4 authors names on the first line, and the last on the second
+% line, try using \AND instead of \And before the third author name.
+
+\newcommand{\fix}{\marginpar{FIX}}
+\newcommand{\new}{\marginpar{NEW}}
+
+\begin{document}
+
+
+\maketitle
+
+\begin{abstract}
+  We propose a new technique, Singular Vector Canonical Correlation Analysis
+  (SVCCA), a tool for quickly comparing two representations in a way
+  that is both invariant to affine transform 
+  (allowing comparison
+  between different layers and networks) and fast to compute (allowing
+  more comparisons to be calculated than with previous methods).  We
+  deploy this tool to measure the intrinsic dimensionality of layers,
+  showing in some cases needless over-parameterization; to probe
+  learning dynamics throughout training, finding that networks
+  converge to final representations from the bottom up; to show where
+  class-specific information in networks is formed; and to suggest new
+  training regimes that simultaneously save computation and overfit
+  less.
+\end{abstract}
+
+\section{Introduction}
+
+As the empirical success of deep neural networks (\cite{hinton2012deep,krizhevsky2012imagenet,wu2016google}) become an indisputable fact, the goal of better understanding these models escalates in importance. Central to this aim is a core issue of deciphering learned representations. Facets of this key question have been explored empirically, particularly for image models, in \cite{alain2016understanding,eigen2013understanding,lenc2015understanding,li2015convergent,mahendran2015understanding,montavon2011kernel,simonyan2013deep,yosinski2015understanding,zeiler2014visualizing}. Most of these approaches are motivated by interpretability of learned representations. More recently, \cite{li-2016-arXivICLR-convergent-learning:-do-different} studied the similarities of representations learned by multiple networks by finding permutations of neurons with maximal correlation. 
+
+In this work we introduce a new approach to the study of network representations, based on an analysis of each neuron's {\em activation vector} -- the scalar outputs it emits on input datapoints. With this interpretation of neurons as vectors (and layers as subspaces, spanned by neurons), we introduce SVCCA, Singular Vector Canonical Correlation Analysis, an amalgamation of Singular Value Decomposition and Canonical Correlation Analysis (CCA) \cite{ccapaper}, as a powerful method for analyzing deep representations. 
+% Related contexts in which 
+Although CCA has not previously been used to compare deep representations, it has been used for related tasks such as 
+computing the similarity between modeled and measured brain activity \cite{sussillo2015neural}, 
+and training multi-lingual word embeddings in language models \cite{faruqui2014improving}.
+
+The main contributions resulting from the introduction of SVCCA are the following:
+\begin{enumerate}  
+    \item We ask: is the dimensionality of a layer's learned representation the same as the number of neurons in the layer? \textit{Answer: No.} We show that %the trained network performs
+    trained networks perform equally well with a number of directions just a fraction of the number of neurons with no additional training, provided they are carefully chosen with SVCCA (Section~\ref{sec:distrib_rep}). We explore the consequences for model compression (Section~\ref{sec-model-compression}).
+    \item We ask: what do deep representation learning dynamics look like? \textit{Answer: Networks broadly converge bottom up.} Using SVCCA, we compare layers across time and find they solidify from the bottom up. This suggests a simple, computationally more efficient method of training networks, \textit{Freeze Training}, where lower layers are sequentially frozen after a certain number of timesteps (Sections~\ref{sec:dynamics}, \ref{sec:freeze}).
+    \item We develop a method based on the discrete Fourier transform which greatly speeds up the application of SVCCA to convolutional neural networks (Section~\ref{sec:scaling_svcca}).
+    \item We also explore an interpretability question, of when an architecture becomes sensitive to different classes. We find that SVCCA captures the semantics of different classes, with similar classes having similar sensitivities, and vice versa. (Section~\ref{sec:class_svcca}).
+\end{enumerate}
+
+
+\paragraph{Experimental Details}
+\label{sec-exp-details}
+Most of our experiments are performed on CIFAR-10 (augmented with random translations). The main architectures we use are a convolutional network and a residual network\footnote{Convnet layers: \texttt{\footnotesize conv-conv-bn-pool-conv-conv-conv-bn-pool-fc-bn-fc-bn-out}. Resnet layers: \texttt{conv-(x10 c/bn/r block)-(x10 c/bn/r block)-(x10 c/bn/r block)-bn-fc-out}.\jcom{should also give layer sizes / num channels, possibly in appendix}}. To produce a few figures, we also use a toy regression task: training a four hidden layer fully connected network with 1D input and 4D output, to regress on four different simple functions.
+
+
+\section{Measuring Representations in Neural Networks}
+\seclabel{method}
+
+\begin{figure}[t]
+   \centering
+   %\includegraphics[width=0.31\columnwidth]{figures_nips/SVCCA_schematic/Neurons_of_neural_nets_crop.pdf}
+   %\hspace*{0.3cm}
+   %\includegraphics[width=0.31\columnwidth]{figures_nips/SVCCA_schematic/Top_SVDs_of_nets_crop.pdf}
+   %\hspace*{0.3cm}
+   %\includegraphics[width=0.31\columnwidth]{figures_nips/SVCCA_schematic/Top_SVCCAs_of_nets_crop.pdf}
+   \includegraphics[width=1.0\columnwidth]{figures_nips/SVCCA_schematic/schematic_and_plots_crop.pdf}
+   \label{fig-SVCCA-schematic}
+   \caption{\small
+     To demonstrate SVCCA, we consider a toy regression task (regression target as in Figure \ref{fig-SVCCA-importance}).
+     \textbf{(a)} We train two networks with four fully connected hidden layers starting from different random initializations, and examine the representation learned by the penultimate (shaded) layer in each network.
+     \textbf{(b)} The neurons with the highest activations in net 1 (maroon) and in net 2 (green). The x-axis indexes over the dataset: in our formulation, the \emph{representation} of a neuron is simply its value over a dataset (Section~\ref{sec:method}).
+     \textbf{(c)} The SVD directions --- i.e. the directions of maximal variance --- for each network.
+     \textbf{(d)} The top SVCCA directions. We see that each pair of maroon/green lines (starting from the top) are almost visually identical (up to a sign).
+     Thus, although looking at just neurons (b) seems to indicate that the networks learn very different representations, looking at the SVCCA subspace (d) shows that the information in the representations are (up to a sign) nearly identical.}
+   \label{fig_svcca_toy}
+   \vspace*{-0.9em}
+ \end{figure}
+
+Our goal in this paper is to analyze and interpret the representations learned by neural networks. The critical question from which our investigation departs is: how should we define the representation of a neuron?
+Consider that a neuron at a particular layer in a network computes a real-valued function over the network's input domain. 
+% For any input example, the neuron outputs a specific value.
+% %\footnote{In general networks may be stochastic, and single neurons may produce a distribution over possible outputs rather than a single output. In this paper, for simplicity, we consider only deterministic networks.}
+% In an abstract but computationally inconvenient sense, we can consider the function a neuron computes to be equivalent to its outputs on all of the infinitely many possible inputs that may be given to a network. 
+In other words, if we had a lookup table of all possible $\mathrm{input} \rightarrow \mathrm{output}$ mappings for a neuron, it would be a complete portrayal of that neuron's functional form.
+
+However, such infinite tables are not only practically infeasible, but are also problematic to process into a set of conclusions. 
+Our primary interest is not in the neuron's response to random data, but rather in how it represents features of a specific dataset (e.g. natural images).
+Therefore, in this study we take \emph{a neuron's representation to be its set of responses over a finite set of inputs} 
+--- those drawn from some training or validation set.
+% , i.e. we restrict the network's input domain to a finite dataset $X$.
+
+%However, such infinite tables are not only tricky to fit into memory but also problematic to process into a set of conclusions,
+%so in this study we instead take \emph{a neuron's representation to be its set of responses over a finite set of inputs} --- those drawn from some training or validation set.
+%The assumption is that the set of responses over the training set represents much of the important structure of the neuron's response while being computationally tractable.
+
+More concretely,
+for a given dataset $X = \{ x_1, \cdots x_m \}$ and a neuron $i$ on layer $l$, $\pmb{z}^l_i$, we \textit{define} $\pmb{z}^l_i$ to be the \textit{vector} of outputs on $X$, i.e.
+\[ \pmb{z}^l_i = (\pmb{z}^l_i(x_1), \cdots , \pmb{z}^l_i(x_m)) \]
+Note that this is a different vector from the often-considered vector of the ``representation at a layer of a single input.''  Here $\pmb{z}^l_i$ is a \textit{single} neuron's response over the entire dataset, not an entire layer's response for a single input.
+In this view, a neuron's representation can be thought of as a single vector in a high-dimensional space.
+Broadening our view from a single neuron to the collection of neurons in a layer, the layer can be thought
+of as the set of neuron vectors contained within that layer. This set of vectors will span some subspace.
+To summarize:
+
+\begin{center}
+  \textit{Considered over a dataset $X$ with $m$ examples, a neuron is a vector in $\mathbb{R}^m$. \\
+    A layer is the subspace of
+    $\mathbb{R}^m$ spanned by its neurons' vectors.}
+\end{center}
+
+%Extending this, we see that as layer $l$ can output different linear combinations of its neurons, the representation of layer $l$ is the \textit{subspace} spanned by the vectors that make up its neurons. To summarize (\textit{see also a Figure})
+
+Within this formalism, we introduce \textit{Singular Vector Canonical Correlation Analysis} (SVCCA) as a method for analysing representations. SVCCA proceeds as follows:
+\begin{itemize}
+\item \textbf{Input:} SVCCA takes as input two (not necessarily different) sets of neurons (typically layers of a network) $l_1 = \{ \pmb{z}^{l_1}_1,..., \pmb{z}^{l_1}_{m_1} \}$ and $  l_2 = \{  \pmb{z}^{l_2}_1,..., \pmb{z}^{l_2}_{m_2} \}$
+\item \textbf{Step 1} First SVCCA performs a singular value decomposition of each subspace to get sub-subspaces $l_1' \subset l_1, l_2' \subset l_2 $ which comprise of the most important directions of the original subspaces $l_1, l_2$. In general we  take enough directions to explain 99\% of variance in the subspace. This is especially important in neural network representations, where as we will show many low variance directions (neurons) are primarily noise.
+\item \textbf{Step 2} Second, compute the Canonical Correlation similarity (\cite{ccapaper}) of $l_1', l_2'$: linearly transform $l_1', l_2'$ to be as aligned as possible and compute correlation coefficients. In particular, given the output of step 1, $l_1' = \{ {\pmb{z}'}^{l_1}_1,..., {\pmb{z}'}^{l_1}_{m'_1} \}, l_2' = \{ {\pmb{z}'}^{l_2}_1,..., {\pmb{z}'}^{l_2}_{m'_2} \}$, CCA linearly transforms these subspaces $\tilde{l}_1= W_X l_1'$, $\tilde{l}_2 = W_Y l_2'$ such as to maximize the correlations $corrs = \{\rho_1, \dots \rho_{\min(m'_1, m'_2)} \}$ between the transformed subspaces.
+\item \textbf{Output:} With these steps, SVCCA outputs pairs of aligned directions, $(\tilde{\pmb{z}}^{l_1}_i, \tilde{\pmb{z}}^{l_2}_i)$ and how well they correlate, $\rho_i$. Step 1 also produces intermediate output in the form of the top singular values and directions.
+\end{itemize}
+
+For a more detailed description of each step, see the Appendix.
+SVCCA can be used to analyse any two sets of neurons. In our experiments, we utilize this flexibility to compare representations across different random initializations, architectures, timesteps during training, and specific classes and layers.
+
+%\begin{enumerate}
+%    \item Different random initializations
+%    \item Different architectures
+%    \item Timesteps during training
+%    \item Specific classes and layers
+%\end{enumerate}
+
+Figure~\ref{fig_svcca_toy} shows a simple, intuitive demonstration of
+SVCCA. We train a small network on a toy regression task and show each
+step of SVCCA, along with the resulting very similar representations.
+SVCCA is able to find hidden similarities in the representations.
+
+
+\subsection{Distributed Representations}
+\label{sec:distrib_rep}
+
+An important property of SVCCA is that it is truly a \textit{subspace} method: both SVD and CCA work with $\mathrm{span}( \pmb{z}_1, \ldots, \pmb{z}_m )$ instead of being axis aligned to the $\pmb{z}_i$ directions. SVD finds singular vectors  $\pmb{z}_i' = \sum_{j=1}^m s_{ij}\pmb{z}_j$, and the subsequent CCA finds a linear transform $W$, giving orthogonal canonically correlated directions $\{ \tilde{\pmb{z}}_1, \ldots, \tilde{\pmb{z}}_m \} = \{ \sum_{j=1}^m w_{1j} \pmb{z}_j', \ldots, \sum_{j=1}^m w_{mj} \pmb{z}_j' \}$. In other words, SVCCA has no preference for representations that are neuron (axes) aligned.
+
+If representations are distributed across many dimensions, then
+this is a desirable property of a representation analysis method.
+Previous studies have reported that representations may be more complex than either
+fully distributed or axis-aligned \cite{szegedy2013intriguing,zhou-2014-arXiv-object-detectors-emerge,li-2016-arXivICLR-convergent-learning:-do-different} but this question remains open.
+%, if,
+%as suggested by the mathematical formulation (weight matrices multiplying all neurons) representations are indeed %distributed. But is this true in practice? In particular, we might ask
+%\begin{center}
+%Is the representation of a layer truly distributed across neurons? (\textit{Answer: yes})
+%\end{center}
+
+\begin{figure}[t]
+  \centering
+  %\begin{tabular}{cc}
+  %(a)\adjincludegraphics[width=0.45\columnwidth]{figures_nips/CIFAR10_directions_importance_new.pdf}
+  %&
+  %(b)\adjincludegraphics[width=0.45\columnwidth]{figures_nips/CIFAR10_directions_distributed.pdf}
+  %\end{tabular}
+  \includegraphics[width=0.45\columnwidth]{figures_nips/CIFAR10_directions_importance_new.pdf}
+  \includegraphics[width=0.45\columnwidth]{figures_nips/CIFAR10_directions_distributed.pdf} \\
+  \vspace*{-.03\columnwidth}
+  (a)\hspace{.45\columnwidth}(b)
+  \caption{\small Demonstration of {\em (a)} disproportionate importance of SVCCA directions, and {\em (b)} distributed nature of some of these directions. For both panes, we first find the top $k$ SVCCA directions by training two conv nets on CIFAR-10 and comparing corresponding layers. {\em (a)} We project the output of the top three layers, pool1, fc1, fc2, onto this top-$k$ subspace. We see accuracy rises rapidly with increasing $k$, with even $k \ll \mathrm{num~neurons}$ giving reasonable performance, with \textit{no} retraining. Baselines of random $k$ neuron subspaces and max activation neurons require larger $k$ to perform as well. {\em (b)}: after projecting onto top $k$ subspace (like left), dotted lines then project again onto $m$ neurons, chosen to correspond highly to the top $k$-SVCCA subspace. Many more neurons are needed than $k$ for better performance, suggesting distributedness of SVCCA directions.}
+  %\label{fig:converge}
+  \vspace*{-1.4em}
+  \label{fig-SVCCA-distributed}
+\end{figure}
+
+We use SVCCA as a tool to probe the nature of representations via two experiments:
+%We demonstrate that this is the case with two steps
+
+\begin{enumerate}
+    \item[(a)] We find that the subspace directions found by SVCCA are disproportionately important to the representation learned by a layer, relative to neuron-aligned directions.
+    \item[(b)] We show that at least some of these directions are distributed across many neurons.
+\end{enumerate}
+
+%Putting the two together, we see that meaningful learned directions (extracted by SVCCA) are spread over multiple neurons -- i.e. representations are distributed in practice.
+
+Experiments for (a), (b) are shown in Figure \ref{fig-SVCCA-distributed} as (a), (b) respectively. For both experiments, we first acquire two different representations, $l_1, l_2$, for a layer $l$ by training two different random initializations of a convolutional network on CIFAR-10. We then apply SVCCA to $l_1$ and $l_2$ to get directions $\{ \tilde{\pmb{z}}_1^{l_1},..., \tilde{\pmb{z}}_m^{l_1} \}$ and $\{\tilde{\pmb{z}}_1^{l_2},..., \tilde{\pmb{z}}_m^{l_2} \}$, ordered according to importance by SVCCA, with each $\tilde{\pmb{z}}_j^{l_i}$ being a linear combination of the original neurons, i.e. $\tilde{\pmb{z}}_j^{l_i} = \sum_{r=1}^m \alpha^{(l_i)}_{jr}\pmb{z}^{l_i}_r $.
+
+For different values of $k < m$, we can then restrict layer $l_i$'s output to lie in the subspace of $\mathrm{span}(\tilde{\pmb{z}}_1^{l_i}, \ldots, \tilde{\pmb{z}}_k^{l_i})$, the most useful $k$-dimensional subspace as found by SVCCA, done by projecting each neuron into this $k$ dimensional space.
+
+We find --- somewhat surprisingly --- that very few SVCCA directions are required
+for the network to perform the task well. As shown in Figure~\ref{fig-SVCCA-distributed}(a),
+for a network trained on CIFAR-10, the first 25 dimensions provide nearly the same accuracy as using all 512 dimensions of a fully connected layer with 512 neurons.
+The accuracy curve rises rapidly with the first few SVCCA directions, and plateaus quickly afterwards, for $k \ll m$. This suggests that the useful information contained in $m$ neurons is well summarized by the subspace formed by the top $k$ SVCCA directions. Two baselines for comparison are picking random and maximum activation neuron aligned subspaces and projecting outputs onto these. Both of these baselines require far more directions (in this case: neurons) before matching the accuracy achieved by the SVCCA directions.
+These results also suggest approaches to model compression, which are explored in more detail in Section \ref{sec-model-compression}. 
+
+Figure \ref{fig-SVCCA-distributed}(b) next demonstrates that these useful SVCCA directions are at least somewhat distributed over neurons rather than axis-aligned. First, the top $k$ SVCCA directions are picked and the representation is projected onto this subspace. Next, the representation is further projected onto $m$ neurons, where the $m$ are chosen as those most important to the SVCCA directions \jcom{need to make this precise. how are these $m$ directions chosen?}.
+The resulting accuracy is plotted for different choices of $k$ (given by x-axis) and different choices of $m$ (different lines). That, for example, keeping even 100 fc1 neurons (dashed green line) cannot maintain the accuracy of the first 20 SVCCA directions (solid green line at x-axis 20) suggests that those 20 SVCCA directions are distributed across 5 or more neurons each, on average.
+Figure~\ref{fig-SVCCA-importance} shows a further demonstration of the effect on the output of projecting onto top SVCCA directions, here for the toy regression case.
+
+\begin{figure}[ht]
+  \centering
+  %\begin{tabular}{c}
+  %  \hspace*{-1cm}\includegraphics[width=0.9\columnwidth,left]{figures_nips/Toy_case_outputs.pdf}
+  %\end{tabular}
+  \includegraphics[width=1.0\columnwidth]{figures_nips/Toy_case_outputs_crop.pdf}
+  \caption{\small
+  The effect on the output of a latent representation being projected onto top SVCCA directions in the toy regression task. Representations of the penultimate layer are projected onto $2, 6, 15, 30$ top SVCCA directions (from second pane). By $30$, the output looks very similar to the full $200$ neuron output (left).}
+  %\label{fig:converge}
+  \vspace*{-0.9em}
+  \label{fig-SVCCA-importance}
+\end{figure}
+
+
+
+%\subsection{Why the two step SV + CCA method is needed}
+\paragraph{Why the two step SV + CCA method is needed.}
+\label{sec-cca-invariances}
+Both SVD and CCA have important properties for analysing network representations and SVCCA consequently benefits greatly from being a two step method. CCA is \textbf{invariant} to affine transformations,
+enabling comparisons without natural alignment (e.g. different architectures, Section \ref{sec-diff-architectures}). See Appendix~\ref{app-invariances} for proofs and a demonstrative figure. While CCA is a powerful method, it also suffers from certain shortcomings, particularly in determining how many directions were important to the original space $X$, which is the strength of SVD. See Appendix for an example where naive CCA performs badly. 
+Both the SVD and CCA steps are critical to the analysis of learning dynamics in Section \ref{sec:dynamics}.
+
+
+
+\section{Scaling SVCCA for Convolutional Layers}
+\label{sec:scaling_svcca}
+
+%\subsection{SVCCA for Convolution Layers}
+Applying SVCCA to convolutional layers can be done in two natural ways:
+\begin{enumerate}
+\item[(1)] \textit{Same layer comparisons:} If $X, Y$ are the same layer (at different timesteps or across random initializations) receiving the same input we can concatenate along the pixel (height $h$, width $w$) coordinates to form a vector: a conv layer $h \times w \times c$ maps to $c$ vectors, each of dimension $hwd$, where $d$ is the number of datapoints. This is a natural choice because neurons at different pixel coordinates see \textit{different} image data patches to each other. When $X, Y$ are two versions of the same layer, these $c$ different views correspond perfectly. 
+
+\item[(2)]\textit{Different layer comparisons:} When $X, Y$ are not the same layer, the image patches seen by different neurons have no natural correspondence. But we can flatten an $h \times w \times c$ conv into $h w c$ neurons, each of dimension $d$. This approach is valid for convs in different networks or at different depths.%: as neurons in the lower (closer to input) layer see much more localised patches than neurons in the higher layer, we expect that multiple neurons in the lower layer may canonically correlate to higher layer neurons.
+
+\end{enumerate}
+
+\subsection{Scaling SVCCA with Discrete Fourier Transforms}
+\label{sec-SVCCA-scale}
+
+Applying SVCCA to convolutions introduces a computational challenge: the number of neurons ($h \times w \times c$) in convolutional layers, especially early ones, is very large, making SVCCA prohibitively expensive due to the large matrices involved. Luckily the problem of approximate dimensionality reduction of large matrices is well studied, and efficient algorithms exist, e.g. \cite{tropp2009randommatrices}.
+
+
+For convolutional layers however, we can avoid dimensionality reduction and perform {\em exact} SVCCA, even for large networks. 
+This is achieved by preprocessing each channel with a Discrete Fourier Transform (which preserves CCA due to invariances, see Appendix), causing all (covariance) matrices to be block-diagonal. This allows all matrix operations to be performed block by block, and only over the diagonal blocks, vastly reducing computation. We show:
+
+\begin{theorem}
+\label{thm_block_cov}
+Suppose we have a translation invariant (image) dataset $X$ and convolutional layers $l_1$, $l_2$. Letting $DFT(l_i)$ denote the discrete fourier transform applied to each channel of $l_i$, the covariance $cov(DFT(l_1), DFT(l_2))$ is block diagonal, with blocks of size $c \times c$.
+\end{theorem}
+
+We make only two assumptions: 1) all layers below $l_1$, $l_2$ are either conv or pooling layers with circular boundary conditions (translation equivariance) 2) The dataset $X$ has all translations of the images $X_i$. This is necessary in the proof for certain symmetries in neuron activations, but these symmetries typically exist in natural images even without translation invariance, as shown in Figure~\ref{fig-Imagenet-dft} in the Appendix. Below are key statements, with proofs in Appendix.
+
+\begin{definition}
+Say a single channel image dataset $X$ of images is \textit{translation invariant} if for any (wlog $n \times n$) image $X_i \in X$, with pixel values $\{ \pmb{z}_{11},...\pmb{z}_{nn} \}$, $X^{(a,b)}_i = \{ \pmb{z}_{\sigma_a(1)\sigma_b(1)},...\pmb{z}_{\sigma_a(n)\sigma_b(n)} \}$ is also in $X$, for all $ 0 \leq a,b \leq n-1$, where $\sigma_a(i) = a + i \mod n$ (and similarly for $b$).
+
+For a multiple channel image $X_i$, an $(a,b)$ translation is an $(a,b)$ height/width shift on every channel separately. $X$ is then translation invariant as above.
+\end{definition}
+
+To prove Theorem \ref{thm_block_cov}, we first show another theorem:
+\begin{theorem}
+\label{thm_diag_cov}
+Given a translation invariant dataset $X$, and a convolutional layer $l$ with channels $\{c_1, \dots c_k\}$ applied to $X$
+\begin{enumerate}
+  \vspace*{-.5em}
+\item[(a)] the DFT of $c_i$, $FcF^T$ has diagonal covariance matrix (with itself).
+  \vspace*{-.5em}
+\item[(b)] the DFT of $c_i, c_j$, $Fc_iF^T$, $Fc_jF^T$ have diagonal covariance with each other.
+  \vspace*{-.5em}
+\end{enumerate}
+\end{theorem}
+
+Finally, both of these theorems rely on properties of \textit{circulant matrices} and their DFTs:
+\begin{lemma}
+\label{lemma_circulant}
+The covariance matrix of $c_i$ applied to translation invariant $X$ is \textit{circulant} and \textit{block circulant}.
+\end{lemma}
+\begin{lemma}
+\label{lemma_dft_diag}
+The DFT of a circulant matrix is diagonal.
+\end{lemma}
+
+
+\section{Applications of SVCCA}
+
+\subsection{Learning Dynamics with SVCCA}
+\label{sec:dynamics}
+
+We can use SVCCA as a window into learning dynamics by comparing
+the representation at a layer at different points during training to its final representation.
+Furthermore, as the SVCCA computations are relatively cheap to compute compared to methods that require training an auxiliary network for each comparison \cite{alain2016understanding,lenc2015understanding,li-2016-arXivICLR-convergent-learning:-do-different}, we can compare all layers during training at all timesteps to all layers at the final time step, producing a rich view into the learning process.
+
+The outputs of SVCCA are the aligned directions $(\tilde{x}_i, \tilde{y}_i)$, how well they align, $\rho_i$, as well as intermediate output from the first step, of singular values and directions, $\lambda_X^{(i)}, {x'}^{(i)}$, $\lambda_Y^{(j)}, {y'}^{(j)}$. 
+We condense these outputs into a single value, the {\em SVCCA similarity} $\bar{\rho}$, that encapsulates how well the representations of two layers are aligned with each other,
+\begin{align}
+\bar{\rho} = \frac{1}{\min\left(m_1, m_2\right)}\sum_i \rho_i
+,
+\end{align}
+where $\min\left(m_1, m_2\right)$ is the size of the smaller of the two layers being compared. 
+The SVCCA similarity $\bar{\rho}$ is the average correlation across aligned directions, and is a direct multidimensional analogue of Pearson correlation.
+
+The SVCCA similarity for all pairs of layers, and all time steps, is shown in Figure \ref{fig-single-pane} for a convnet and a resnet architecture trained on CIFAR10.
+
+% In order to condense these properties into a single number that encapsulates how well the representations of two layers are aligned with each other.
+
+% We use Weighted SVCCA to combine these outputs to produce a single number that encapsulates how well the representations of two layers are aligned with each other.
+
+% \paragraph{Weighted SVCCA}
+% Weighted SVCCA condenses the similarity of the representations of two layers into one number, using the output of SVCCA. It computes how well the important directions (singular directions) of two layers $X, Y$, are preserved by the aligned subspaces $\tilde{X}, \tilde{Y}$. 
+% In more detail, letting ${x'}^{(1)}, \dots, {x'}^{(n)}$ be the singular directions for $X$, with associated singular values $\lambda^{(i)}_X$, and $\tilde{X}, \tilde{Y}$ being the aligned directions, we first project the ${x'}^{(i)}$ directions into the aligned, $\tilde{X}$, subspace. Then, we  weight by the canonical correlation coefficients $\rho_i$ and multiply the norm of the resulting projection. In particular, we compute:
+% \[  \frac{1}{\sum \lambda^{(i)}_X}\sum_{i=1}^n \lambda^{(i)}_X  || (\rho \tilde{X}^T){x'}^{(i)}|| \]
+% where $\rho \tilde{X}^T$ weights row $i$ (the $i$th SVCCA direction with coefficient $\rho_i$ -- ie $\rho$ acts as a diagonal matrix).
+% This tells us how well the top $99\%$ of SVD (maximal variance) directions of $X$ are preserved by the aligned (by CCA) directions of $X$ with respect to $Y$, also weighted by their respective correlations. Applying Weighted SVCCA, we get a single number for the representation alignment for every pair of layers across all timesteps, pictured with pane plots in Figure \ref{fig-single-pane}.
+
+\begin{figure}[ht]
+  \centering
+  %\begin{tabular}{cccc}
+  %  \hspace*{-3cm}
+  %  \includegraphics[width=0.34\columnwidth]{figures_nips/conv_single_pane/Step000000.pdf}
+  %  &
+  %  \hspace*{-0.5cm} \includegraphics[width=0.34\columnwidth]{figures_nips/conv_single_pane/Step053402.pdf}
+  %  &
+  %  \hspace*{-0.5cm} \includegraphics[width=0.34\columnwidth]{figures_nips/conv_single_pane/Step115111.pdf}
+  %  &
+  %  \hspace*{-0.5cm} \includegraphics[width=0.34\columnwidth]{figures_nips/conv_single_pane/Step156250.pdf} \vspace*{-2cm}\\
+  %  \hspace*{-3cm}
+  %  \includegraphics[width=0.34\columnwidth]{figures_nips/resnet_single_pane/Step000000.pdf}
+  %  &
+  %  \hspace*{-0.5cm} \includegraphics[width=0.34\columnwidth]{figures_nips/resnet_single_pane/Step053402.pdf}
+  %  &
+  %  \hspace*{-0.5cm} \includegraphics[width=0.34\columnwidth]{figures_nips/resnet_single_pane/Step115111.pdf}
+  %  &
+  %  \hspace*{-0.5cm} \includegraphics[width=0.34\columnwidth]{figures_nips/resnet_single_pane/Step156250.pdf}
+  %\end{tabular}
+  \includegraphics[width=1.0\columnwidth]{figures_nips/dynamics/dynamics_plots_crop.pdf}
+
+  %\begin{tabular}{cc}
+  %  \hspace*{-1.5cm}
+  %  \includegraphics[width=0.3\columnwidth]{figures_nips/diag_dynamics_plt.pdf}
+  %  &
+  %  \hspace*{-0.2cm} \includegraphics[width=0.3\columnwidth]{figures_nips/diag_dynamics_resnet_plt.pdf}
+  %\end{tabular}
+
+  \vspace*{0.5cm}
+  %\includegraphics[width=0.4\columnwidth]{figures_nips/diag_dynamics_convnet_mean.pdf}
+  %\includegraphics[width=0.4\columnwidth]{figures_nips/diag_dynamics_resnet_mean.pdf}
+
+  \caption{\small Learning dynamics plots for conv (top) and res (bottom) nets trained on CIFAR-10. Each pane is a matrix of size layers $\times$ layers, with each entry showing the SVCCA similarity $\bar{\rho}$ between the two layers. Note that learning broadly happens `bottom up' -- layers closer to the input seem to solidify into their final representations with the exception of the very top layers. Per layer plots are included in the Appendix. Other patterns are also visible -- batch norm layers maintain nearly perfect similarity to the layer preceding them due to scaling invariance (with a slight reduction since batch norm changes the SVD directions which capture 99\% of the variance). In the resnet plot, we see a stripe like pattern due to skip connections inducing high similarities to previous layers.
+}
+   \label{fig-single-pane}
+   \vspace*{-0.9em}
+ \end{figure}
+
+
+\subsection{Freeze Training}
+\label{sec:freeze}
+
+Observing in Figure \ref{fig-single-pane} that networks broadly converge from the bottom up, we propose a training method where we successively \textit{freeze} lower layers during training, only updating higher and higher layers, saving \textit{all} computation needed for deriving gradients and updating in lower layers. 
+
+ \begin{figure}
+    \begin{center}
+      \includegraphics[width=0.8\columnwidth]{figures_nips/Freeze_plots.pdf}
+      \vspace*{-0.7em}
+   \end{center}
+   \caption{ \small Freeze Training reduces training cost and improves generalization. We apply Freeze Training to a convolutional network on CIFAR-10 and a residual network on CIFAR-10. As shown by the grey dotted lines (which indicate the timestep at which another layer is frozen), both networks have a `linear' freezing regime: for the convolutional network, we freeze individual layers at evenly spaced timesteps throughout training. For the residual network, we freeze entire residual blocks at each freeze step. The curves were averaged over ten runs.}
+   \label{fig-freeze-training}
+   \vspace*{-1.0em}
+ \end{figure}
+
+ We apply this method to convolutional and residual networks trained on CIFAR-10, Figure \ref{fig-freeze-training}, using a linear freezing regime: in the convolutional network, each layer is frozen at a fraction (layer number/total layers) of total training time, while for resnets, each residual block is frozen at a fraction (block number/total blocks). The vertical grey dotted lines show which steps have another set of layers frozen. Aside from saving computation,
+ Freeze Training appears to actively \textit{help} generalization accuracy, like early stopping but with different layers requiring different stopping points.
+ 
+ \subsection{Interpreting Representations: when are classes learned?}
+
+\begin{figure}
+
+   \centering
+   %\begin{tabular}{ccc}
+   %  \hspace*{-1.5cm}
+   %  \includegraphics[width=0.4\columnwidth]{figures_nips/conv_corr.pdf}
+   %  &
+   %  \hspace*{-1cm}
+   %  \includegraphics[width=0.4\columnwidth]{figures_nips/resnet_corr.pdf}
+   %  &
+   %  \hspace{-0.5cm}
+   %  \includegraphics[width=0.25\columnwidth]{figures_nips/Conv_resnet_comparison.pdf} 
+   %\end{tabular}
+   %\includegraphics[width=0.37\columnwidth]{figures_nips/conv_corr.pdf}
+   %\includegraphics[width=0.37\columnwidth]{figures_nips/resnet_corr.pdf}
+   %\includegraphics[width=0.22\columnwidth]{figures_nips/Conv_resnet_comparison_mean.pdf}
+   \includegraphics[scale=0.4]{camera_ready_plots/imagenet_interpretability.pdf}
+   \vspace*{-5mm}
+   \caption{\small We plot the CCA similarity using the Discrete Fourier Transform between the logits of five classes and layers in the Imagenet Resnet. The classes are firetruck and two pairs of dog breeds (terriers and husky like dogs: husky and eskimo dog) that are chosen to be similar to each other. These semantic properties are captured in CCA similarity, where we see that the line corresponding to firetruck is clearly distinct from the two pairs of dog breeds, and the two lines in each pair are both very close to each other, reflecting the fact that each pair consists of visually similar looking images. Firetruck also appears to be \textit{easier} for the network to learn, with greater sensitivity displayed much sooner.}
+   \label{fig-layer-corrs}
+   \centering   
+ \end{figure}
+
+\label{sec:class_svcca}
+    We also can use SVCCA to compare how correlated representations in each layer are with the logits of each class in order to measure how knowledge about the target evolves throughout the network. In Figure~\ref{fig-layer-corrs} we apply the DFT CCA technique on the Imagenet Resnet \cite{resnet2015he}. We take five different classes and for different layers in the network, compute the DFT CCA similarity between the logit of that class and the network layer. The results successfully reflect semantic aspects of the classes: the firetruck class sensitivity line is clearly distinct from the two pairs of dog breeds, and network develops greater sensitivity to firetruck earlier on. The two pairs of dog breeds, purposefully chosen so that each pair is similar to the other in appearance, have cca similarity lines that are very close to each other through the network, indicating these classes are similar to each other.
+
+\begin{figure}
+   \centering
+   %\begin{tabular}{ccc}
+   %  \hspace*{-1.5cm}
+   %  \includegraphics[width=0.4\columnwidth]{figures_nips/conv_corr.pdf}
+   %  &
+   %  \hspace*{-1cm}
+   %  \includegraphics[width=0.4\columnwidth]{figures_nips/resnet_corr.pdf}
+   %  &
+   %  \hspace{-0.5cm}
+   %  \includegraphics[width=0.25\columnwidth]{figures_nips/Conv_resnet_comparison.pdf} 
+   %\end{tabular}
+   %\includegraphics[width=0.37\columnwidth]{figures_nips/conv_corr.pdf}
+   %\includegraphics[width=0.37\columnwidth]{figures_nips/resnet_corr.pdf}
+   %\includegraphics[width=0.22\columnwidth]{figures_nips/Conv_resnet_comparison_mean.pdf}
+   \includegraphics[scale=0.35]{camera_ready_plots/conv_resnet.pdf}
+   \caption{\small We plot the CCA similarity using the Discrete Fourier Transform between convolutional layers of a Resnet and Convnet trained on CIFAR-10. We find that the lower layrs of both models are noticeably similar to each other, and get progressively less similar as we compare higher layers. Note that the highest layers of the resnet are least similar to the lower layers of the convnet.}
+   \label{fig-diff-architectures}
+   \centering   
+ \end{figure}
+
+\subsection{Other Applications: Cross Model Comparison and compression} \label{sec-diff-architectures}
+\label{sec-model-compression}
+SVCCA similarity can also be used to compare the similarity of representations across different random initializations, and even different architectures. We compare convolutional networks on CIFAR-10 across random initializations (Appendix) and also a convolutional network to a residual network in Figure~\ref{fig-diff-architectures}, using the DFT method described in \ref{sec:scaling_svcca}. 
+
+In Figure \ref{fig-SVCCA-importance}, we saw that projecting onto the subspace of the top few SVCCA directions resulted in comparable accuracy. This observations motivates an approach to model compression. In particular, letting the output vector of layer $l$ be $\pmb{x}^{(l)} \in \mathbb{R}^{n\times 1}$, and the weights $W^{(l)}$, we replace the usual $W^{(l)} \pmb{x}^{(l)}$ with  $(W^{(l)} P_x^T) (P_x \pmb{x}^{(l)})$ where $P_x$ is a $k \times n$ projection matrix, projecting  $\pmb{x}$ onto the top SVCCA directions. This bottleneck reduces both parameter count and inference computational cost for the layer by a factor $\sim \frac{k}{n}$. In Figure~\ref{fig-SVCCA-compression} in the Appendix, 
+we show that we can \textit{consecutively} compress top layers with SVCCA by a significant amount (in one case reducing each layer to $0.35$ original size) and hardly affect performance. 
+
+\vspace*{-0.2em}
+\section{Conclusion}
+\vspace*{-0.4em}
+  In this paper we present SVCCA, a general method which allows for comparison of the learned distributed representations between different neural network layers and architectures. Using SVCCA we obtain novel insights into the learning dynamics and learned representations of common neural network architectures. These insights motivated a new Freeze Training technique which can reduce the number of flops required to train networks and potentially even increase generalization performance. We observe that CCA similarity can be a helpful tool for interpretability, with sensitivity to different classes reflecting their semantic properties. This technique also motivates a new algorithm for model compression. Finally, the ``lower layers learn first'' behavior was also observed for recurrent neural networks as shown in Figure~\ref{fig-SVCCA-LSTM} in the Appendix.
+
+
+% \jcom{wrong bibstyle!}
+\bibliographystyle{plain}
+\bibliography{references}
+% \bibliographystyle{iclr2017_workshop}
+
+\newpage
+\clearpage
+
+\appendix
+\part*{Appendix}
+
+\setcounter{figure}{0} \renewcommand{\thefigure}{App.\arabic{figure}}
+\setcounter{table}{0} \renewcommand{\thetable}{App.\arabic{table}}
+
+ \section{Mathematical details of CCA and SVCCA}
+ \label{app-CCA-details}
+ 
+ \paragraph{Canonical Correlation of $X, Y$}
+ 
+  Finding maximal correlations between $X, Y$ can be expressed as finding   $a, b$ to maximise:
+\[ \frac{a^T \Sigma_{XY}b}{\sqrt{a^T \Sigma_{XX}a}\sqrt{b^T \Sigma_{YY}b}}\]
+where  $\Sigma_{XX}, \Sigma_{XY}, \Sigma_{YX}, \Sigma_{YY}$ are the covariance and cross-covariance terms. By performing the change of basis $\pmb{\tilde{x}}_1 = \Sigma_{xx}^{1/2} a$ and $\pmb{\tilde{y}}_1 = \Sigma_{YY}^{1/2} b$ and using Cauchy-Schwarz we recover an eigenvalue problem:
+\[ \pmb{\tilde{x}}_1 = \argmax \left[ \frac{ x^T\Sigma_{XX}^{-1/2}\Sigma_{XY}\Sigma_{YY}^{-1}\Sigma_{YX} \Sigma_{XX}^{-1/2}x}{ ||x||} \right] \tag{*} \]
+
+
+\paragraph{SVCCA}
+ 
+ Given two subspaces $ X = \{ \pmb{x}_1,..., \pmb{x}_{m_1} \} , Y = \{  \pmb{y}_1,..., \pmb{y}_{m_2} \}$, SVCCA first performs a singular value decomposition on $X, Y$. This results in singular vectors $\{ {\pmb{x'}}_1,..., {\pmb{x'}}_{m_1} \} $ with associated singular values $\{ \lambda_1,...,\lambda_{m_1} \}$ (for $X$, and similarly for $Y$). Of these $m_1$ singular vectors, we keep the top $m'_1$ where $m'_1$ is the smallest value that $\sum_{i=1}^{m'_1} |\lambda_i| (\geq 0.99 \sum_{i=1}^{m_1} | \lambda_i |) $. That is, $99\%$ of the variation of $X$ is explainable by the top $m'_1$ vectors. This helps remove directions/neurons that are constant zero, or noise with small magnitude.
+
+Then, we apply Canonical Correlation Analysis (CCA) to the sets $\{ {\pmb{x'}}_1,..., {\pmb{x'}}_{m'_1} \},  \{ {\pmb{y'}}_1,..., {\pmb{y'}}_{m'_2} \} $ of top singular vectors.
+
+CCA is a well established statistical method for understanding the similarity of two different sets of random variables -- given our two sets of vectors $\{ {\pmb{x'}}_1,..., {\pmb{x'}}_{m'_1} \}, \{ {\pmb{y'}}_1,..., {\pmb{y'}}_{m'_2} \} $, we wish to find linear transformations, $W_X, W_Y$ that maximally correlate the subspaces. This can be reduced to an eigenvalue problem. Solving this results in linearly transformed subspaces $\tilde{X}, \tilde{Y}$ with directions $\tilde{\pmb{x}}_i, \tilde{\pmb{y}}_i$ that are maximally correlated with each other, and orthogonal to $\tilde{\pmb{x}}_j , \tilde{\pmb{y}}_j, j < i$. We let $\rho_i = corr(\tilde{\pmb{x}}_i, \tilde{\pmb{y}}_i)$. In summary, we have:
+ 
+
+\paragraph{SVCCA Summary}
+\begin{enumerate}
+    \item Input: $X, Y$
+    \item Perform: SVD(X), SVD(Y). Output: ${X'} = UX, {Y'} = VY$
+    \item Perform CCA(${X'}$, ${Y'}$). Output: $\tilde{X}= W_X{X'}$, $\tilde{Y} = W_Y{Y'}$ and $corrs = \{\rho_1, \dots \rho_{\min(m_1, m_2)} \}$
+\end{enumerate}
+
+
+\section{Additional Proofs and Figures from Section \ref{sec-cca-invariances}}
+\label{app-invariances}
+
+Proof of Orthonormal and Scaling Invariance of CCA:
+
+We can see this using equation (*) as follows: suppose $U, V$ are orthonormal transforms applied to the sets $X, Y$. Then it follows that $\Sigma^a_{XX}$ becomes $U \Sigma^a_{XX} U^T$, for $a = \{1, -1, 1/2, -1/2\}$, and similarly for $Y$ and $V$. Also note $\Sigma_{XY}$ becomes $U \Sigma_{XY} V^T$. Equation (*) then becomes
+\[ \tilde{x}_1 = \argmax \left[ \frac{ x^T U \Sigma_{XX}^{-1/2}\Sigma_{XY}\Sigma_{YY}^{-1}\Sigma_{YX} \Sigma_{XX}^{-1/2}U^T x}{ ||x||} \right]  \]
+So if $\tilde{u}$ is a solution to equation (*), then $U\tilde{u}$ is a solution to the equation above, which results in the same correlation coefficients.
+
+\begin{figure}[ht]
+   \centering
+   \begin{tabular}{cc}
+\includegraphics[width=0.5\columnwidth]{figures_nips/Signal_and_Distorted.pdf}
+ &
+\includegraphics[width=0.5\columnwidth]{figures_nips/Aligned_by_CCA.pdf}
+\end{tabular}
+   \caption{This figure shows the ability of CCA to deal with orthogonal and scaling transforms. In the first pane, the maroon plot shows one of the highest activation neurons in the penultimate layer of a network trained on CIFAR-10, with the x-axis being (ordered) image ids and the y-axis being activation on that image. The green plots show two resulting distorted directions after this and two of the other top activation neurons are permuted, rotated and scaled. Pane two shows the result of applying CCA to the distorted directions and the original signal, which succeeds in recovering the original signal.
+}
+   \label{fig-CCA-invariances}
+   \vspace*{-0.9em}
+ \end{figure}
+ 
+ \subsubsection{The importance of SVD: how many directions matter?}
+While CCA is excellent at identifying useful learned directions that correlate, independent of certain common transforms, it doesn't capture the full picture entirely. Consider the following setting: suppose we have subspaces $A, B, C$, with $A$ being $50$ dimensions, $B$ being $200$ dimensions, $50$ of which are perfectly aligned with $A$ and the other $150$ being noise, and C being $200$ dimensions, $50$ of which are aligned with $A$ (and $B$) and the other $150$ being useful, but different directions. 
+
+Then looking at the canonical correlation coefficients of $(A,B)$ and $(A,C)$ will give the \textit{same} result, both being $1$ for $50$ values and $0$ for everything else. But these are two very different cases -- the subspace $B$ is indeed well represented by the $50$ directions that are aligned with $A$. But the subspace $C$ has $150$ more useful directions. 
+
+This distinction becomes particularly important when aggregating canonical correlation coefficients as a measure of similarity, as used in analysing network learning dynamics. However, by first applying SVD to determine the number of directions needed to explain $99\%$ of the observed variance, we can distinguish between pathological cases like the one above.
+
+
+ 
+%\section{Additional material from Section \ref{sec-SVCCA-scale}}
+
+
+\section{Proof of Theorem~\ref{thm_block_cov}}
+\label{app-fourier-proofs}
+
+
+\begin{figure}[ht]
+\newlength{\imgwidth}
+\setlength{\imgwidth}{0.28\linewidth}
+\newlength{\lwidth}
+\settowidth{\lwidth}{\widthof{(a)}}
+  \centering
+  \begin{tabular}{cccc}
+  \hspace*{-1.3cm}
+\includegraphics[width=\imgwidth]{figures_nips/raw_imagenet_cov.png}
+    % by writing the letter *second*, but shifting it left so it's in the lower left of the image, we guarantee it's always in the foreground relative to the image
+    \hspace{-\imgwidth}
+        (a)
+    \hspace{\imgwidth}\hspace{-\lwidth}
+ &
+\hspace*{-0.8cm} \includegraphics[width=\imgwidth]{figures_nips/raw_imagenet_fourier.png}
+    \hspace{-\imgwidth}
+        (b)
+    \hspace{\imgwidth}\hspace{-\lwidth}
+&
+\hspace*{-0.8cm} \includegraphics[width=\imgwidth]{figures_nips/trans_imagenet_cov.pdf}
+    \hspace{-\imgwidth}
+        (c)
+    \hspace{\imgwidth}\hspace{-\lwidth}
+&
+ \hspace*{-0.8cm} \includegraphics[width=\imgwidth]{figures_nips/trans_imagenet_fourier.pdf}
+    \hspace{-\imgwidth}
+        (d)
+    \hspace{\imgwidth}\hspace{-\lwidth}
+%  \\
+%  {\em (a)} &
+%  {\em (b)} &
+%  {\em (c)} &
+%  {\em (d)}
+\end{tabular}
+  \caption{
+  \jcom{label the axes. ie, `Pixels' for (a) and (c), and `Fourier components' or just 'Fourier' for (b) and (d).}
+    \jcom{make axis numerical labels larger (it's better to adjust figsize than to adjust the fontsize, tick spacing, etc. all independently to achieve the same effect)}  
+  This figure visualizes the covariance matrix of one of the channels \jcom{say which channel -- e.g. first conv in block two} of a resnet trained on Imagenet. Black correspond to large values and white to small values. {\em (a)} we compute the covariance without a translation invariant dataset and without first preprocessing the images by DFT. We see that the covariance matrix is dense. 
+    % -- with nontrivial off diagonal values.
+   {\em (b)} We compute the covariance after applying DFT, but without augmenting the dataset with translations. Even without enforcing translation invariance, we see that the covariance in the DFT basis is approximately diagonal.
+   {\em (c)} Same as (a), but the dataset is augmented to be fully translation invariant. The covariance in the pixel basis is still dense.
+   {\em (d)}
+   Same as (c), but with dataset augmented to be translation invariant. The covariance matrix is exactly diagonal for a translation invariant dataset in a DFT basis.}
+   \label{fig-Imagenet-dft}
+   \vspace*{-0.9em}
+ \end{figure}
+
+
+Here we provide the proofs for Lemma \ref{lemma_circulant}, Lemma \ref{lemma_dft_diag}, Theorem \ref{thm_diag_cov} and finally Theorem~\ref{thm_block_cov}.
+
+A preliminary note before we begin:
+
+When we consider a (wlog) $n$ by $n$ channel $c$ of a convolutional layer, we assume it has shape
+\[
+\begin{bmatrix}
+    \pmb{z}_{0,0} & \pmb{z}_{1,2} &  \dots  & \pmb{z}_{0,n-1} \\
+    \pmb{z}_{1,0} & \pmb{z}_{2,2} & \dots  & \pmb{z}_{1,n-1} \\
+    \vdots & \vdots & \ddots & \vdots \\
+   \pmb{z}_{n-1,0} & \pmb{z}_{n-1,1} & \dots  &\pmb{z}_{n-1,n-1}
+\end{bmatrix}
+\]
+
+When computing the covariance matrix however, we vectorize $c$ by stacking the columns under each other, and call the result $vec(c)$:
+\[
+vec(c) =
+\begin{bmatrix}
+    \pmb{z}_{0,0} \\
+    \pmb{z}_{1,0} \\
+    \vdots \\
+    \pmb{z}_{n-1,0} \\
+    \pmb{z}_{0,1} \\
+    \vdots \\
+    \pmb{z}_{n-1,n-1}
+\end{bmatrix}
+:=
+\begin{bmatrix}
+    \pmb{z}_{0} \\
+    \pmb{z}_{1} \\
+    \vdots \\
+    \pmb{z}_{n-1} \\
+    \pmb{z}_{n} \\
+    \vdots \\
+    \pmb{z}_{n^2 - 1}
+\end{bmatrix}
+\]
+
+One useful identity when switching between these two notations (see e.g. \cite{matrixanalysis}) is
+\[ vec(AcB) = (B^T \otimes A) vec(c) \]
+where $A, B$ are matrices and $\otimes$ is the Kronecker product. A useful observation arising from this is:
+
+\begin{lemma}
+The CCA vectors of $DFT(c_i), DFT(c_j)$ are the same (up to a rotation by $F$) as the CCA of $c_i, c_j$.
+\end{lemma}
+
+\textit{Proof:} From Section \ref{app-invariances} we know that unitary transforms only rotate the $CCA$ directions. But while DFT pre and postmultiplies by $F, F^T$ -- unitary matrices, we cannot directly apply this as the result is for unitary transforms on $vec(c_i)$.  But, using the identity above, we see that $ vec(DFT(c_i)) = vec(F c_i F^T ) = (F \otimes F) vec(c_i)$, which is unitary as $F$ is unitary. Applying the same identity to $c_j$, we can thus conclude that the DFT preserves CCA (up to rotations).
+
+As Theorem~\ref{thm_block_cov} preprocesses the neurons with DFT, it is important to note that by the Lemma above, we do not change the CCA vectors (except by a rotation).
+
+\subsection{Proof of Lemma~\ref{lemma_circulant}}
+
+\begin{proof}
+
+\textit{Translation invariance is preserved} We show inductively that any translation invariant input to a convolutional channel results in a translation invariant output: Suppose the input to channel $c$, ($n$ by $n$) is translation invariant. It is sufficient to show that for inputs $X_i, X_j$ and $0 \leq a,b, \leq n-1$, $c(X_i) + (a,b) \mod n = c(X_j)$. But an $(a,b)$ shift in neuron coordinates in $c$ corresponds to a $(\text{height stride}\cdot a, \text{width stride}\cdot b)$ shift in the input. And as $X$ is translation invariant, there is some $X_j = X_i + (\text{height stride}\cdot a, \text{width stride}\cdot b)$.
+
+\textit{$cov(c)$ is circulant:}
+
+Let $X$ be (by proof above) a translation invariant input to a channel $c$ in some convolution or pooling layer. The empirical covariance, $cov(c)$ is the $n^2$ by $n^2$ matrix computed by (assuming $c$ is centered)
+\[ \frac{1}{|X|} \sum_{X_i \in X} vec(c(X_i)) \cdot vec(c(X_i))^T \]
+
+So, $cov(c)_{ij} = \frac{1}{|X|} \pmb{z}_{i}^T \pmb{z}_j = \frac{1}{|X|} \sum_{X_l \in X} \pmb{z}_{i}^T(X_l) \pmb{z}_j(X_l) $, i.e. the inner products of the neurons $i$ and $j$.
+
+The indexes $i$ and $j$ refer to the neurons in their vectorized order in $vec(c)$. But in the matrix ordering of neurons in $c$, $i$ and $j$ correspond to some $(a_1, b_1)$ and $(a_2, b_2)$. If we applied a translation $(a,b)$, to both, we would get new neuron coordinates $(a_1 +a, b_1 + b), (a_2 + a, b_2 + b)$ (all coordinates $\mod n$) which would correspond to $i + an + b \mod n^2 $ and $j + an + b \mod n^2$, by our stacking of columns and reindexing.
+
+Let $\tau_{a,b}$ be the translation in inputs corresponding to an $(a,b)$ translation in $c$, i.e. $\tau_{a,b} = (\text{height stride}\cdot a, \text{width stride}\cdot b)$. Then clearly $\pmb{z}_{(a_1, b_1)}(X_i) = \pmb{z}_{(a_1 + a, b_1 + b)}(\tau_{(a,b)}(X_i) $, and similarly for $\pmb{z}_{(a_2, b_2)}$
+
+It follows that $\frac{1}{|X|} \pmb{z}_{(a_1, b_1)}^T \pmb{z}_{(a_2, b_2)} = \frac{1}{|X|} \pmb{z}_{(a_1 + b, b_1 + b)}^T \pmb{z}_{(a_2 +a , b_2 + b)}$, or, with $vec(c)$ indexing
+\[ \frac{1}{|X|} \pmb{z}_{i}^T \pmb{z}_j = \frac{1}{|X|} \pmb{z}_{(i + an + b \mod n^2)}^T \pmb{z}_{(j + an + b \mod n^2)} \]
+
+This gives us the circulant structure of $cov(c)$.
+
+\textit{$cov(c)$ is block circulant:}
+Let $\pmb{z}^{(i)}$ be the ith column of $c$, and $\pmb{z}^{(j)}$ the jth. In $vec(c)$, these correspond to $\pmb{z}_{(i-1)n}, \dots \pmb{z}_{in - 1}$ and $\pmb{z}_{(j-1)n}, \dots \pmb{z}_{jn - 1}$, and the $n$ by $n$ submatrix at those row and column indexes of $cov(vec(c))$ corresponds to the covariance of column $i, j$. But then we see that the covariance of columns $i+k, j+k$, corresponding to the covariance of neurons $\pmb{z}_{(i-1)n + k \cdot n}, \dots \pmb{z}_{in - 1 + k \cdot n}$, and $\pmb{z}_{(j-1)n + k\cdot n}, \dots \pmb{z}_{jn - 1 + k \cdot n}$, which corresponds to the 2-d shift $(1, 0)$, applied to every neuron. So by an identical argument to above, we see that for all $0 \leq k \leq n-1$
+\[ cov(\pmb{z}^{(i)}, \pmb{z}^{(j)}) = cov(\pmb{z}^{(i + k)}, \pmb{z}^{(j + k)}) \]
+
+In particular, $cov(vec(c))$ is block circulant.
+\end{proof}
+
+An example $cov(vec(c))$ with $c$ being $3$ by $3$ look like below:
+
+\[
+\begin{bmatrix}
+    A_0 & A_1 &  A_2 \\
+    A_2 & A_0 & A_1 \\
+   A_1 & A_2 & A_0
+\end{bmatrix}
+\]
+where each $A_i$ is itself a circulant matrix.
+
+\subsection{Proof of Lemma \ref{lemma_dft_diag}}
+
+\begin{proof}
+This is a standard result, following from expressing a circulant matrix $A$ in terms of its diagonal form , i.e. $A = V \Sigma V^T$ with the columns of $V$ being its eigenvectors. Noting that $V = F$, the DFT matrix, and that vectors of powers of $\omega_k = \exp(\frac{2\pi i k}{n})$, $\omega_j = \exp(\frac{2\pi i k}{n})$ are orthogonal gives the result.
+\end{proof}
+
+
+\subsection{Proof of Theorem \ref{thm_diag_cov}}
+
+\begin{proof}
+Starting with (a), we need to show that $cov(vec(DFT(c_i)), vec(DFT(c_i))$ is diagonal. But by the identity above, this becomes:
+
+\[ cov(vec(DFT(c_i)), vec(DFT(c_i)) = (F \otimes F) vec(c_i) vec(c_i)^T (F \otimes F)^* \]
+By Lemma \ref{lemma_circulant}, we see that
+\[
+cov(vec(c_i)) = vec(c_i) vec(c_i)^T =
+\begin{bmatrix}
+    A_0 & A_1  &  \hdots & A_{n-1} \\
+    A_{n-1} & A_0 & \hdots & A_{n-2} \\
+    \vdots & \vdots & \ddots & \vdots \\
+     A_1 & A_2 & \hdots & A_0
+\end{bmatrix}
+\]
+with each $A_i$ circulant.
+
+And so $cov(vec(DFT(c_i)), vec(DFT(c_i))$ becomes
+\[
+\begin{bmatrix}
+    f_{00}F & f_{01}F  &  \hdots & f_{0,n-1}F \\
+    f_{10} F & f_{11} F & \hdots & f_{1,n-1}F \\
+    \vdots & \vdots & \ddots & \vdots \\
+     f_{n-1, 0}F & f_{n-1,1}F & \hdots & f_{n-1,n-1}F
+\end{bmatrix}
+\begin{bmatrix}
+    A_0 & A_1  &  \hdots & A_{n-1} \\
+    A_{n-1} & A_0 & \hdots & A_{n-2} \\
+    \vdots & \vdots & \ddots & \vdots \\
+     A_1 & A_2 & \hdots & A_0
+\end{bmatrix}
+\begin{bmatrix}
+    f_{00}^*F^* & f_{10}^*F^*  &  \hdots & f_{n-1,0}^*F^* \\
+    f_{01}^* F^* & f_{11}^* F^* & \hdots & f_{n-1,1}^*F^* \\
+    \vdots & \vdots & \ddots & \vdots \\
+     f_{ 0,n-1}^*F^* & f_{1,n-1}^*F^* & \hdots & f_{n-1,n-1}^*F^*
+\end{bmatrix}
+\]
+
+From this, we see that the $sj$th entry has the form
+\[ \sum_{l=0}^{n-1} \left( \sum_{k=0}^{n-1} f_{sk} F A_{l -k} \right)f^*_{lj} F^* = \sum_{k, l} f_{sk}f^*_{lj} F A_{l-k} F^* \]
+Letting $[FA_r F^*]$ denote the coefficient of the term $FA_rF^*$, we see that (addition being $\mod n$)
+\[ [FA_r F^*] = \sum_{k=0}^{n-1} f_{sk}f^*_{(k+r)j} = \sum_k e^{\frac{2 \pi i s k}{n}} \cdot e^{\frac{ - 2 \pi ij (k + r)}{n}} =  e^{\frac{ - 2 \pi ij r}{n}} \sum_{k=0}^{n-1} e^{\frac{2 \pi i k(s - j) }{n}} =  e^{\frac{ - 2 \pi ij r}{n}} \cdot \delta_{sj}   \]
+with the last step following by the fact that the sum of powers of non trivial roots of unity are $0$.
+
+In particular, we see that only the diagonal entries (of the $n$ by $n$ matrix of matrices) are non zero. The diagonal elements are linear combinations of terms of form $FA_r F^*$, and by Lemma \ref{lemma_dft_diag} these are diagonal. So the covariance of the DFT is diagonal as desired.
+
+Part (b) follows almost identically to part (a), but by first noting that exactly by the proof of Lemma \ref{lemma_circulant}, $cov(c_i, c_j)$ is also a circulant and block circulant matrix.
+
+\end{proof}
+
+\subsection{Proof of Theorem \ref{thm_block_cov}}
+
+
+\begin{proof}
+This Theorem now follows easily from the previous. Suppose we have a layer $l$, with channels $c_1,...,c_k$. And let $vec(DFT(c_i))$ have directions $\tilde{\pmb{z}}^{(i)}_{0}, \cdots \tilde{\pmb{z}}^{(i)}_{n^2 - 1}$. By the previous theorem, we know that the covariance of all of these neurons only has non-zero terms $cov(\tilde{\pmb{z}}^{(i)}_{k}, \tilde{\pmb{z}}^{(j)}_{k}$.
+
+So arranging the full covariance matrix to have row and column indexes being $\tilde{\pmb{z}}^{(1)}_{0}, \tilde{\pmb{z}}^{(1)}_{0}, \dots \tilde{\pmb{z}}^{(k)}_{0}, \tilde{\pmb{z}}^{(1)}_{1} \dots \tilde{\pmb{z}}^{(k)}_{n^2} $ the nonzero terms all live in the $n^2$ $k$ by $k$ blocks down the diagonal of the matrix, proving the theorem.
+\end{proof}
+
+\subsection{Computational Gains}
+As the covariance matrix is block diagonal, our more efficient algorithm for computation is as follows: take the DFT of every channel ($n\log n$ due to FFT) and then compute covariances according to blocks: partition the $k^n$ directions into the $n^2$ $k$ by $k$ matrices that are non-zero, and compute the covariance, inverses and square roots along these.
+
+A rough computational budget for the covariance is therefore $kn \log n + n^2k^{2.5}$, while the naive computation would be of order $(kn^2)^{2.5}$, a polynomial difference. Furthermore, the DFT method also makes for easy parallelization as each of the $n^2$ blocks does not interact with any of the others.
+
+\section{Per Layer Learning Dynamics Plots from Section \ref{sec:dynamics}}
+
+\begin{figure}[ht]
+  \centering
+  \vspace*{0.5cm}
+  \includegraphics[width=0.4\columnwidth]{figures_nips/diag_dynamics_convnet_mean.pdf}
+  \includegraphics[width=0.4\columnwidth]{figures_nips/diag_dynamics_resnet_mean.pdf}
+
+  \caption{\small Learning dynamics per layer plots for conv (left pane) and res (right pane) nets trained on CIFAR-10. Each line plots the SVCCA similarity of each layer with its final representation, as a function of training step, for both the conv (left pane) and res (right pane) nets. Note the bottom up convergence of different layers
+}
+   \label{fig-dynamics-per-layer}
+   \vspace*{-0.9em}
+ \end{figure}
+ 
+ 
+ \section{Additional Figure from Section~\ref{sec-diff-architectures}}
+Figure \ref{fig-SVCCA-conv-nets} compares the converged representations of two different initializations of the same convolutional network on CIFAR-10. 
+
+\begin{figure}[ht]
+   \centering
+   \hspace*{-1.5cm}
+   \includegraphics[width=0.5\columnwidth]{figures_nips/Two_conv_nets_mean.pdf}
+   \caption{Comparing the converged representations of two different initializations of the same convolutional architecture. The results support findings in~\cite{li2015convergent}, where initial and final layers are found to be similar, with middle layers differing in representation similarity.}
+   \label{fig-SVCCA-conv-nets}
+   \vspace*{-0.9em}
+ \end{figure}
+
+\section{Experiment from Section \ref{sec-model-compression}}
+
+\vspace*{-0.4em}
+\begin{figure}
+   \centering
+   \includegraphics[width=0.5\columnwidth]{figures_nips/CIFAR10_model_compression_plot.pdf}
+   \caption{\small Using SVCCA to perform model compression on the fully connected layers in a CIFAR-10 convnet. The two gray lines indicate the original train (top) and test (bottom) accuracy. The two sets of representations for SVCCA are obtained through 1) two different initialization and training of convnets on CIFAR-10 2) the layer activations and the activations of the logits. The latter provides better results, with the final five layers: pool1, fc1, bn3, fc2 and bn4 all being compressed to $0.35$ of their original size. }
+   \label{fig-SVCCA-compression}
+   \vspace*{-0.9em}
+ \end{figure}
+ 
+ \section{Learning Dynamics for an LSTM}\label{sec:LSTM}
+
+\begin{figure}[ht]
+   \centering
+   \hspace*{-1.5cm}
+   \includegraphics[width=0.5\columnwidth]{figures/LSTM_Learning_dynamics_plot.png}
+   \caption{Learning dynamics of the different layers of a stacked LSTM trained on the Penn Tree Bank language modeling task. We observe a similar pattern to that of convolutional architectures trained on image data: lower layer converge faster than upper layers. }
+   \label{fig-SVCCA-LSTM}
+   \vspace*{-0.9em}
+ \end{figure}
+
+
+\end{document}

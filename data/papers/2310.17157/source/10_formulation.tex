@@ -1,0 +1,214 @@
+\section{Related Work and Problem Formulation}
+We first briefly discuss the rich literature on efficient inference. Then, we introduce the latency breakdown in our setting. Last, we provide a formal problem formulation. 
+% We first introduce the LLM inference bottlenecks and the problem we aim to solve in this paper. Then we briefly discuss the rich literature on efficient inference.
+\label{sec:obs_computation}
+
+
+
+\subsection{Quantization, Pruning, Distillation for Inference}
+Various relaxations have been studied for decades for model inference in machine learning. There are three main techniques: quantization~\cite{han2015deep, jacob2018quantization,nagel2019data,zhao2019improving}, pruning or sparsity~\cite{molchanov2016pruning,liu2018rethinking,hoefler2021sparsity}, and distillation~\cite{hinton2015distilling,tang2019distilling,touvron2021training}. They are orthogonal areas and usually excel in different settings. Recently, there is active research attempting to apply one or a combination of such techniques in LLM inference~\cite{yao2022zeroquant,park2022nuqmm,dettmers2022llm,frantar2022gptq,frantar2023massive,bansal2022rethinking,xiao2022smoothquant}. More discussion is presented in Appendix~\ref{appendix:related_work}.
+
+\subsection{LLM Inference Latency Breakdown}
+The generative procedure of LLMs consists of two phases: (i) the \textit{prompt} phase takes an input sequence to generate the keys and values (KV cache) for each transformer block of LLMs, which is similar to the forwarding pass of LLMs training; and (ii) the \textit{token generation} phase utilizes and updates the KV cache to generate tokens step by step, where the current token generation depends on previously generated tokens. 
+
+This paper studies the setting where the token generation phase easily dominates the end-to-end inference time. As shown in Table~\ref{table:obs_break_down_stage}, generating a sequence of length 128 takes much longer time than processing a sequence of length 128 as prompt due to I/O latency of loading model parameters. In addition, Table~\ref{table:obs_break_down_block} shows that attention and MLP are both bottlenecks in LLMs, e.g., in 175B models, loading MLP parameters takes around $\frac{2}{3}$ of the total I/O and attention heads take the other $\frac{1}{3}$. Further, in the tensor-parallel regime, there are two communications between GPUs, one after the attention block, and the other one after the MLP block. As shown in Table~\ref{table:obs_break_down_allreduce}, communication between GPUs takes around 15 \% token generation latency. This paper focuses on making attention and MLP more efficient. Communication cost implies that the upper bound of such speed-up is around 6$\times$ when skipping all transformer blocks. 
+
+% Therefore, the problem we tackle in this paper is reducing the I/O in both attention and MLP during the token generation phase to speed up LLM inference. We present the details in Appendix~\ref{appendix:related_work}.
+
+\begin{table}[H]
+\vspace{-4mm}
+\scriptsize
+\centering
+\caption{Theoretical breakdown for prompting versus token generation (tensor model parallelism on 8 A100-80G GPUs).}
+\vspace{2mm}
+\resizebox{0.9\linewidth}{!}{
+\centering
+\Huge
+\begingroup
+\setlength{\tabcolsep}{10pt}
+\renewcommand{\arraystretch}{1.4}
+% \vspace{2mm}
+\begin{tabular}{c|c|c|c|c}
+\toprule
+  & TFLOPs & I/O & Compute Latency (ms) & I/O Latency (ms)	\\
+\hline
+% Prompting 1 & 0.34 &  324 GB & 23.82 &    27.5 \\
+  Prompting 128 & 44.6 &  330 GB & 17.87 &    20.6 \\
+ \hline
+% Token Generation 1 & 0.34  & 324 GB  & 0.18 & 27   \\
+%  \hline
+ Token Generation 128 & 44.6  & 41 TB  & 17.87 & 2600   \\
+ \bottomrule
+\end{tabular}
+\endgroup
+}
+\vspace{-4mm}
+\label{table:obs_break_down_stage}
+\end{table}
+
+\begin{table}[H]
+\vspace{-4mm}
+\scriptsize
+\centering
+\caption{Theoretical breakdown for Attention block versus MLP block in one transformer layer when generating one token (tensor model parallelism on 8 A100-80G GPUs).}
+% \vspace{2mm}
+\resizebox{0.9\linewidth}{!}{
+\centering
+\Huge
+\begingroup
+\setlength{\tabcolsep}{10pt}
+\renewcommand{\arraystretch}{1.4}
+\begin{tabular}{c|c|c|c|c}
+\toprule
+  & GFLOPs & I/O (GB) & Compute Latency (ms) & I/O Latency (ms)	\\
+\hline
+ Attention Block   & 1.21 & 1.12  & 0.00048 & 0.07 \\
+ \hline
+ MLP Block  & 2.41 & 2.25 & 0.00096 & 0.14 \\
+ \bottomrule
+\end{tabular}
+\endgroup
+}
+\vspace{-4mm}
+\label{table:obs_break_down_block}
+\end{table}
+
+\begin{table}[H]
+\vspace{-4mm}
+\scriptsize
+\centering
+\caption{Latency breakdown of generating 1 token under the setting of batch size 1 and prompt length 128 on 8 A100-80GB. }
+% \vspace{2mm}
+\resizebox{0.7\linewidth}{!}{
+\centering
+\Huge
+\begingroup
+\setlength{\tabcolsep}{10pt}
+\renewcommand{\arraystretch}{1.4}
+\begin{tabular}{c|c|c|c}
+\toprule
+  All Reduce & MLP Block & Attention Block (ms) & Others	\\
+\hline
+    6 ms & 19ms  & 13ms & 2ms \\
+ 
+ \bottomrule
+\end{tabular}
+\endgroup
+}
+\vspace{-4mm}
+\label{table:obs_break_down_allreduce}
+\end{table}
+
+
+
+\subsection{Problem Formulation}
+\label{sec:formulation}
+The goal is to reduce the generation latency of LLMs by exploiting contextual sparsity. In the following, we formally define the sparsified attention and MLP blocks.
+
+\textbf{Sparsified MLP:} There are two linear layers in one MLP block, $W^1$, $W^2 \in \R^{ d \times 4d}$.  Denote $y\in \R^{1 \times d}$ as the input to the MLP block in the current generation step.
+% \begin{equation*}
+%     \mathrm{MLP}(y) = \sigma( y W^{1} ) (W^{2})^T,
+% \end{equation*} 
+Let each column (the weight of $i$-th neuron) of linear layers be $W^{1}_{i}$, $W^{2}_{i}\in \R^{d\times 1}$. With contextual sparsity, only a small set of them are required for computation. Let  $S_M \subseteq [4d]$ denote such set of neurons for input $y$. The sparsified MLP computation is
+\begin{align}\label{eq:MLP_S_y}
+    \mathsf{MLP}_{S_M}(y) = \sigma( y W^{1}_{S_M} ) (W^{2}_{S_M})^{\top}, %W'
+\end{align} 
+
+where $\sigma$ is the activation function, e.g., ReLU, GeLU.  
+Note that since the computation in the first linear results in sparse activations, the second linear layer is also sparsified.
+
+\textbf{Sparsified  Attention:}  Let $X \in \R^{n \times d}$ denote the embeddings of all tokens (e.g., prompts and previously generated tokens). Let $y \in \R^{1 \times d}$ be the input to the Multi-Head-Attention (MHA) in the current generation step. Suppose there are $h$ heads. For each $i\in [h]$, we use $W^K_i, W^Q_i, W^V_i \in \R^{d \times d_h}$ to denote key, query, value projections for the $i$-th head, and $W_i^O \in \R^{d_h \times d}$ for output projections. With contextual sparsity, we denote $S_A$ as a small set of attention heads leading to approximately the same output as the full attention for input $y$.
+% There are $h$ self-attention heads, and $H_i(y) \in \R^{1 \times n}$ corresponds to the $i$-th head, for each $i \in [h]$.
+Following the notation system in \cite{as23}, sparsified MHA computation can be formally written as 
+% Multi-Head-Attention can be written as $\mathrm{MHA} : \R^{1 \times d} \rightarrow \R^{1 \times d}$
+\begin{equation*}
+    \mathsf{MHA}_{S_A} (y) = \sum_{i\in S_A} \underbrace{ H_i(y) }_{1 \times d_h} \underbrace{ W^O_i }_{d_h \times d}, 
+\end{equation*} 
+
+% \begin{equation*}
+%     \mathrm{MHA} (y) = \sum_{i=1}^h \underbrace{\mathrm{Softmax(y W^Q_S (W^K_S)^\top X^\top)} }_{1 \times d_h} \underbrace{ W^O_i }_{d_h \times d} 
+% \end{equation*} 
+where $H_i(y) : \R^{d} \rightarrow \R^{d_h}$ and $D_i(y) \in \R$ can be written as
+\begin{align}\label{eq:H_i_y}
+H_i(y) := D_i(y)^{-1} \exp( y W^Q_i (W^K_i)^\top X^\top ) X W^V_i,
+\end{align}
+\begin{align*}
+D_i(y) :=  \exp( y W^Q_i (W^K_i)^\top X^\top ) {\bf 1}_n. 
+\end{align*}
+
+% All I/O and computations for heads that do not belong to $S$ can be avoided.
+For both MLP and Attention, given a compute budget, the goal is to find $S_M$ and $S_A$ that minimize the error between the sparse approximation and full computation.
+
+% \begin{equation*}
+%     \mathrm{MHA}_S(y) = \sum_{i\in S} H_i(y) W_i^O.
+% \end{equation*} 
+%with $H_i(x) = {\bf 0}_{1 \times n}$ if $i \notin S^H_x $. 
+% All I/O and computations for heads that do not belong to $S$ can be avoided.
+
+\iffalse
+\Zhao{The following is previous one}
+%%%%Zhao: I don't quite understand the old and below discussion. I feel the notation being used here is a bit buggy..
+Let $x\in \R^{d}$ denote the input to the Multi-Head-Attention (MHA).  There are $N$ self-attention heads, and $H_n(x)$ corresponds to the $n$-th head.
+Multi-Head-Attention can be written as
+\begin{equation*}
+    \mathrm{MHA} (x) = [H_1(x), H_2(x), \cdots, H_n(x)]W^O
+\end{equation*} where 
+$H_n(x) = \mathrm{Softmax} (\dfrac{xW^K_n (xW^Q_n)^T}{\sqrt{d_h}})xW^V_n $. 
+
+$W^k_n, W^Q_n, W^v_n \in \R^{d \times d_h}$ are key, query, value projection weight parameters for the $n$-th head, and $W^O$ is output projection weight parameters for MHA. 
+\fi
+
+
+
+
+
+
+
+
+% \begin{table}[H]
+% \scriptsize
+% \centering
+% \caption{ Inference breakdown for prompting ( sequence length 128) versus generating one token.}
+% \resizebox{1.0\linewidth}{!}{
+% \centering
+% \Huge
+% \begingroup
+% \setlength{\tabcolsep}{10pt}
+% \renewcommand{\arraystretch}{1.3}
+% \begin{tabular}{c|c|c|c|c}
+% \toprule
+%   & GFLOPs & Byte Access & Compute Latency (ms) & IO Latency (ms)	\\
+% \hline
+%  Prompting   &  464.6618 & 3.6994 & 0.6507& 3.6080  \\
+%  \hline
+%  Token Generation   &  3.6302 & 3.6307 & 0.1136 &  3.6541 \\
+%  \bottomrule
+% \end{tabular}
+% \endgroup
+% }
+% \label{table:obs_break_down_stage}
+% \end{table}
+
+% \begin{table}[H]
+% \scriptsize
+% \centering
+% \caption{Inference breakdown for Attention Block vs MLP Block for generating a single token.}
+% \resizebox{1.0\linewidth}{!}{
+% \centering
+% \Huge
+% \begingroup
+% \setlength{\tabcolsep}{10pt}
+% \renewcommand{\arraystretch}{1.3}
+% \begin{tabular}{c|c|c|c|c}
+% \toprule
+%   & GFLOPs & IO (GB) & Compute Latency (ms) & IO Latency (ms)	\\
+% \hline
+%  Attention Block   & 1.2143 & 1.2145 & 0.0798 & 1.2505 \\
+%  \hline
+%  MLP Block   & 2.4159 & 2.4162 & 0.0338 & 2.4036 \\
+%  \bottomrule
+% \end{tabular}
+% \endgroup
+% }
+% \label{table:obs_break_down_block}
+% \end{table}
