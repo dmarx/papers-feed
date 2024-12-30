@@ -1,6 +1,6 @@
 # arxiv-archive
 
-System which monitors what I'm reading via a browser extension and publishes a feed: https://dmarx.github.io/arxiv-archive/
+System which monitors what I'm reading via a browser extension and publishes a feed: https://dmarx.github.io/papers-feed/
 
 # How it works
 
