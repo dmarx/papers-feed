@@ -1,4 +1,4 @@
-# arxiv-archive
+# Arxiv Papers Feed
 
 System which monitors what I'm reading via a browser extension and publishes a feed: https://dmarx.github.io/papers-feed/
 
@@ -10,9 +10,19 @@ System which monitors what I'm reading via a browser extension and publishes a f
 
 # How to set this up to monitor your own reading
 
-(coming soon)
+1. Create a new repository from this template: https://github.com/dmarx/papers-feed-template
+2. Configure repository settings
+  * Configure github pages to deploy from the `gh-pages` branch
+  * Give actions write permissions on your repo
+5. Install the browser extension located in `papers-feed-src/extension`
+6. Createa a github PAT with permission to create issues on your papers-feed repo
+7. Register the PAT in the browser extension's options
+8. visit an arxiv /abs/ or /pdf/ page to test that everything is set up correctly. Shortly after visiting:
+  * an issue with the label "paper" should be created
+  * opening that issue should trigger the process-events.yml workflow, which in turn should trigger but build-and-deploy.yml workflow
+  * after a few minutes, the frontend should be available via gh-pages
 
 # Acknowledgements
 
 * Thank you to anthropic for making a decent LLM (I made claude write nearly all of this)
-* Thank you also to https://github.com/utterance/utterances, which inspired how this project uses the github issues feature
+* Thank you also to https://github.com/utterance/utterances, which inspired how this project (ab)uses github issues as a database
