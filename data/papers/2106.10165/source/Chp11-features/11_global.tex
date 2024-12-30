@@ -1,0 +1,1538 @@
+
+
+\chapter{Representation Learning}\label{ch:features}
+
+\epigraph{It can scarcely be denied that the supreme goal of all theory is to make the irreducible basic elements as simple and as few as possible without having to surrender the adequate representation of a single datum of experience.}{Albert Einstein\index{Einstein, Albert} in 
+a 1933 lecture, ``On the Method of Theoretical Physics,''  
+\cite{einstein-simple}.}
+\noindent{}Last chapter,  we understood that
+linear models
+cannot learn features from data. Thus, the infinite-width limit is too simple to provide an adequate representation of deep learning; in order to include its irreducible basic element -- representation learning -- it is \emph{qualitatively} important to study finite-width networks.
+
+
+In the first half of this chapter,  we'll analyze the leading correction to the gradient-descent update to the network output by extending its Taylor expansion to second order in the global learning rate $\eta$. After further seeing that a similar contribution arises in the first-order Taylor expansion of the update to the NTK,  we'll then
+show that this correction is a finite-width effect.
+ This upgrade of the NTK from fixed to dynamical indicates that for finite-width networks, the feature functions that comprise the NTK are themselves learning from the data over the course of training.
+
+Unfortunately, the complete $\o{1/n}$ contribution to the dynamics further includes terms that arise from Taylor expanding the update to the network output to third order in the global learning rate $\eta$, and similarly Taylor expanding the update to the NTK to second order in $\eta$. While it's \emph{necessary} to include these contributions in order to actually compute the distribution of fully-trained finite-width networks, the $\o{\eta^2}$ expansion of the network output and the $\o{\eta}$ expansion of the NTK is \emph{sufficient} to qualitatively investigate the mechanism for representation learning in these models.
+
+With that in mind, in order to separate the pedagogy of representation learning from the messy phenomenological details of the real MLP, we'll spend the second half of this chapter focusing on a simplified model that's equivalent to this $\o{\eta^2}$ truncation and gives a minimal qualitative picture of representation learning. 
+These minimal models that we discuss form a valid and potentially useful class of machine learning models that perform representation learning, though annoyingly finite-width MLPs are not in this class.
+Listening carefully to these real MLPs, we'll spend all of next chapter (\S\ref{ch:eot}) working out their  $\o{1/n}$ training dynamics in full intricate detail.
+
+To begin, in  \S\ref{sec:dNTK} we'll work out this second-order-in-$\eta$ contribution to the update to preactivations and the first-order-in-$\eta$ contribution to the update to the NTK.
+This lets us source all representation learning from a single irreducible basic element, 
+the \neo{differential of the neural tangent kernel}\index{differential of the neural tangent kernel|seealso{meta kernel}} (dNTK)\index{dNTK|see{differential of the neural tangent kernel}}: just as the NTK governs the leading-order-in-$\eta$ dynamics of the preactivations, the dNTK governs the leading-order-in-$\eta$ dynamics of the NTK. %
+
+
+
+
+After thusly identifying the dNTK as a driver of representation learning, in \S\ref{sec:dNTK-RG} we'll recursively determine its correlation with the preactivations as a function of network layer $\ell$. In detail, we'll first derive a stochastic forward equation for the dNTK and then evaluate the remaining recursions needed to determine the statistics of the joint preactivation-NTK-dNTK distribution at initialization. As such, this section mirrors the structure of our  \emph{RG-flow}\index{representation group flow} analysis in \S\ref{ch:ngp} and \S\ref{ch:NTKa}.
+ Importantly, we'll see that all the statistics involving the dNTK are $\o{1/n}$ and thus only contribute  at finite width.
+
+In \S\ref{sec:dNTK-criticality}, we'll apply the principles of criticality and universality to analyze the new dNTK recursions.
+Since all of our hyperparameters have already been fixed by the parallel analysis of the preactivations in \S\ref{ch:eft-mlp} -- fixing the \terminate{initialization hyperparameters} --  and the NTK in \S\ref{ch:eft-ntk} -- fixing the training hyperparameters -- our focus here will be on evaluating the depth and width scaling of the dNTK statistics with these fixed hyperparameters. As you might guess, we'll find across our two universality classes (\S\ref{subsec:dntk_criticality_scale_invariant} and \S\ref{subsec:dntk_criticality_tanh_univ}) that the effect of the dNTK -- and therefore one source of representation learning -- is proportional to our effective theory cutoff\index{cutoff, effective theory}, the depth-to-width ratio $L/n$.
+
+
+
+
+Having now firmly established that the NTK evolves at finite width -- and having worked out an important contribution to its dynamics -- in  \S\ref{sec:nonlinear-model},  we'll take a step back and look for a broader context, mirroring our discussion in \S\ref{sec:lazy-kernel} for infinite-width networks.
+To that end, in  \S\ref{subsec:nonlinear-models} we'll introduce a class of \emph{nonlinear models}\index{nonlinear model} -- with a particular focus on the \emph{quadratic model}\index{nonlinear model!quadratic model} -- and thus minimally extend the traditional workhorse of machine learning, the linear model. This quadratic model provides a \emph{minimal model} of representation learning\index{representation learning!minimal model}\index{representation learning!minimal model}, 
+independent of any neural-network abstraction. Moreover, these models are simple and completely analyzable, and yet are able to capture the essence of representation learning.
+
+After solving the implied \emph{nearly-linear quadratic regression} problem, in \S\ref{subsec:nearly-kernel-methods} we'll further provide a dual description of the quadratic model solution, which we'll call \neo{nearly-kernel methods}. This will let us identify an object that corresponds to the dNTK in this minimal setting, and show us how to make test-set predictions with a \emph{trained} kernel that learns from the data. 
+Overall, we hope this framework will be of further theoretical and practical interest as a new class of nearly-simple machine learning models that learn representations.  
+
+
+
+
+At this point, the connection between these nearly-kernel methods and finite-width networks -- at least at order $\eta^2$ -- will be nearly manifest, and in  \S\ref{subsec:nonlinear-at-finite} we'll make it explicit.
+By doing so, we'll understand precisely how deep learning is a \emph{non-minimal} model of representation learning. Ultimately, we'll conclude that the power of deep learning is the \emph{deep} -- the inductive bias of the network architecture induced by the layer-to-layer RG flow -- providing a particularly good choice of initial features as a starting point for \emph{learning}. These observations will be quite helpful for us in interpreting our somewhat messy finite-width solution in the following chapter. 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+\section{Differential of the Neural Tangent Kernel}\label{sec:dNTK}
+ \index{differential of the neural tangent kernel}
+Recall that in the first step of gradient descent, the change in the $\ell$-th-layer parameters of any particular network is given by \eqref{eq:gd-update-lambda}
+\be\label{eq:gd-update-theta-for-one-last-time}
+\dtheta^{(\ell)}_{\mu}\equiv\theta^{(\ell)}_{\mu}(t=1)- \theta^{(\ell)}_{\mu}(t=0)=-\eta\sum_{\nu}\lambda_{\mu\nu}^{(\ell)}\le(\sum_{k=1}^{n_{L}}\sum_{\tra\in\A}\frac{\partial\L_{\A}}{\partial \z{k}{\tra}{L}}\frac{d\z{k}{\tra}{L}}{d\theta_{\nu}^{(\ell)}}\ri)\, .
+\ee
+In this section, it will be helpful to  specify explicitly which layer each parameter comes from.
+In particular, here $\theta^{(\ell)}_{\mu}$ denotes either an $\ell$-th-layer bias $\theta_\mu^{(\ell)} \equiv \bias{i}{\ell}$ or an $\ell$-th-layer weight $\theta_\mu^{(\ell)} \equiv \W{ij}{\ell}$, and the $\ell$-th-layer model-parameter indices $\mu, \nu$  run over all the components of the bias vector $\bias{i}{\ell}$ \emph{and} the weight matrix $\W{ij}{\ell}$ in the $\ell$-th layer \emph{only}. Additionally, to emphasize that the learning-rate tensor\index{learning rate!learning-rate tensor} $\lambda_{\mu\nu}^{(\ell)}$ only connects the parameters within a given layer $\ell$, we've decorated it with a layer index for clarity. For now we'll let $\lambda_{\mu\nu}^{(\ell)}$ act arbitrarily within a layer, though ultimately we'll be interested in the case where it's diagonal,
+with two \terminate{training hyperparameters} per layer, $\Lb{\ell}$ and $\LW{\ell}$, as usual.
+
+As a further reminder, quantities without any explicit step argument are taken to be evaluated at initialization -- though sometimes we may also explicitly denote $t=0$ for extra emphasis -- and our sample-index notation is \emph{alpha-with-tilde} for the inputs in the training set, $\tra \in\A$, \emph{beta-with-dot} for inputs in the test set, $\tea\in\B$, and \emph{delta-with-no-decoration}
+ for inputs that could be in either set, $\delta\in\D=\A\cup\B$. %
+
+Now, to go beyond 
+the infinite-width limit,
+we'll need to expand the change in $\ell$-th-layer preactivations to \emph{second order} in the parameter update:
+\begin{align}\label{eq:preactivation-change-second-order-in-model-parameter}
+\dz{i}{\delta}{\ell}\equiv&\z{i}{\delta}{\ell}(t=1)-\z{i}{\delta}{\ell}(t=0)\, \\
+=&\sum_{\ell_1=1}^{\ell} \sum_{\mu}\frac{d\z{i}{\delta}{\ell}}{d\theta_{\mu}^{(\ell_1)}}\dtheta_{\mu}^{(\ell_1)}+\frac{1}{2}\sum_{\ell_1, \ell_2 = 1}^\ell \sum_{\mu_1,\mu_2}\frac{d^2\!\z{i}{\delta}{\ell}}{d\theta^{(\ell_1)}_{\mu_1}d\theta_{\mu_2}^{(\ell_2)}}\dtheta_{\mu_1}^{(\ell_1)}\dtheta_{\mu_2}^{(\ell_2)}+\ldots\, .\notag
+\end{align}
+Note that the $\ell$-th-layer preactivations $\z{i}{\delta}{\ell}$ cannot depend on model parameters $\theta_{\mu}^{(\ell')}$ from layers $\ell'$ that are deeper than the $\ell$-th layer.  Thus, when $\ell' > \ell$, we have $d\z{i}{\delta}{\ell}/d\theta_{\mu}^{(\ell')}=0$, and so we truncated our layer sums in the above expression at $\ell$.
+
+
+Next, we are going to slightly rewrite the parameter update equation \eqref{eq:gd-update-theta-for-one-last-time} for the parameters $\theta_{\mu}^{(\ell_a)}$ appearing in our preactivation expansion \eqref{eq:preactivation-change-second-order-in-model-parameter}, i.e.~for those parameters in layers $\ell_a\leq\ell$ that contribute. To do so, we'll make use of the chain rule to decompose the derivative of the output-layer preactivations $\z{k}{\tra}{L}$ with respect to the $\ell_a$-th-layer model parameters as
+\be\label{eq:chain-rule-rules}
+\frac{d\z{k}{\tra}{L}}{d\theta_{\nu}^{(\ell_a)}} =\sum_{j}\frac{\td\z{k}{\tra}{L}}{\td \z{j}{\tra}{\ell}}\frac{d\z{j}{\tra}{\ell}}{d\theta_{\nu}^{(\ell_a)}} \, ,
+\ee
+for an intermediate layer $\ell$ such that
+$\ell_a \leq \ell$.
+Using this decomposition, we can rewrite our parameter update \eqref{eq:gd-update-theta-for-one-last-time} as
+\be\label{eq:parameter-update-rewritten-error-factor}
+\dtheta_{\mu}^{(\ell_a)}=-\eta\sum_{\nu}\lambda_{\mu\nu}^{(\ell_a)}\le(\sum_{j,k,\tra}\frac{\partial\L_{\A}}{\partial \z{k}{\tra}{L}}\frac{\td\z{k}{\tra}{L}}{\td \z{j}{\tra}{\ell}}\frac{d\z{j}{\tra}{\ell}}{d\theta_{\nu}^{(\ell_a)}}\ri)=-\eta\sum_{\nu,j,\tra}\lambda_{\mu\nu}^{(\ell_a)}\,\Tia{\epsilon}{j}{\tra}{\ell}\frac{d\z{j}{\tra}{\ell}}{d\theta_{\nu}^{(\ell_a)}}\, ,
+\ee
+where in the last equality we
+introduced an \emph{$\ell$-th-layer error factor}\index{error factor!$\ell$-th-layer}:
+\be\label{eq:ellth-error-chain}
+\Tia{\epsilon}{j}{\tra}{\ell}\equiv \sum_{k=1}^{n_{L}}\frac{\partial\L_{\A}}{\partial \z{k}{\tra}{L}}\frac{d\z{k}{\tra}{L}}{d\z{j}{\tra}{\ell}}= \frac{\td\L_{\A}}{\td \z{j}{\tra}{\ell}}\, .
+\ee
+Substituting this form of the parameter update \eqref{eq:parameter-update-rewritten-error-factor} into the $\ell$-th-layer preactivation update \eqref{eq:preactivation-change-second-order-in-model-parameter},
+our second-order expansion becomes
+\begin{align}\label{eq:preactivation-change-second-order-in-model-parameter-II}
+\dz{i}{\delta}{\ell}=&-\eta\sum_{j,\tra}\le(\sum_{\ell_1=1}^\ell\sum_{\mu,\nu}\lambda_{\mu\nu}^{(\ell_1)}\frac{d\z{i}{\delta}{\ell}}{d\theta_{\mu}^{(\ell_1)}}\frac{d\z{j}{\tra}{\ell}}{d\theta_{\nu}^{(\ell_1)}}\ri)\Tia{\epsilon}{j}{\tra}{\ell}\, \\
+&+\frac{\eta^2}{2}\sum_{j_1,j_2,\tra_1,\tra_2}\le(\sum_{\ell_1, \ell_2=1}^\ell\,\, \sum_{\substack{\mu_1,\nu_1, \\ \mu_2,\nu_2} }\lambda_{\mu_1\nu_1}^{(\ell_1)}\lambda_{\mu_2\nu_2}^{(\ell_2)}\frac{d^2\!\z{i}{\delta}{\ell}}{d\theta^{(\ell_1)}_{\mu_1}d\theta^{(\ell_2)}_{\mu_2}}\frac{d\z{j_1}{\tra_1}{\ell}}{d\theta^{(\ell_1)}_{\nu_1}}\frac{d\z{j_2}{\tra_2}{\ell}}{d\theta^{(\ell_2)}_{\nu_2}}\ri)\Tia{\epsilon}{j_1}{\tra_1}{\ell}\Tia{\epsilon}{j_2}{\tra_2}{\ell} \, \notag \\ 
+&+\ldots\, ,\notag
+\end{align}
+which is \emph{quadratic} in such error factors.
+Here, it was essential that we treated the parameters in a per-layer manner and that each learning-rate tensor\index{learning rate!learning-rate tensor!layer-independence} $\lambda_{\mu\nu}^{(\ell_a)}$ was restricted to a single layer $\ell_a$; 
+had we not done that, our decomposition \eqref{eq:parameter-update-rewritten-error-factor} and update equation \eqref{eq:preactivation-change-second-order-in-model-parameter-II} would have been far more complicated.
+
+
+Naturally, the object in the first parenthesis of the update equation \eqref{eq:preactivation-change-second-order-in-model-parameter-II} is the stochastic \emph{$\ell$-th-layer NTK}\index{neural tangent kernel!defined in conjunction with dNTK}\eqref{eq:midNTH-definition} 
+\be\label{eq:ell-layer-ntk-def-with-layer-indices}
+\Tia{\NTK}{i_1i_2}{\delta_1\delta_2}{\ell} \equiv \sum_{\ell_1=1}^\ell\sum_{\mu,\nu}\lambda_{\mu\nu}^{(\ell_1)}\frac{d\z{i_1}{\delta_1}{\ell}}{d\theta_{\mu}^{(\ell_1)}}\frac{d\z{i_2}{\delta_2}{\ell}}{d\theta_{\nu}^{(\ell_1)}} \, ,
+\ee
+as you know quite well by now,
+though in this version of the definition we represent the sum over layers explicitly and the sum over parameter indices $\mu, \nu$ runs per layer.
+
+In contrast, the object in the second parenthesis is new.\footnote{This object first appeared, unnamed, in both \cite{boris-nica} and \cite{dyer2019asymptotics} around the same time.
+Here, we'll compute its recursion, determine its scaling with depth, and emphasize its physical importance by highlighting its connection to representation learning.
+}
+Let's call this object the stochastic \textbf{$\ell$-th-layer differential of the neural tangent kernel} (dNTK)\index{differential of the neural tangent kernel} and symbolize it as
+\be\label{eq:dNTK-definition}
+\Tia{\dNTK}{i_0i_1i_2}{\delta_0 \delta_1\delta_2}{\ell}\equiv\sum_{\ell_1, \ell_2=1}^\ell\,\, \sum_{\substack{\mu_1,\nu_1, \\ \mu_2,\nu_2} }\lambda_{\mu_1\nu_1}^{(\ell_1)}\lambda_{\mu_2\nu_2}^{(\ell_2)}\frac{d^2\!\z{i_0}{\delta_0}{\ell}}{d\theta^{(\ell_1)}_{\mu_1}d\theta^{(\ell_2)}_{\mu_2}}\frac{d\z{i_1}{\delta_1}{\ell}}{d\theta^{(\ell_1)}_{\nu_1}}\frac{d\z{i_2}{\delta_2}{\ell}}{d\theta^{(\ell_2)}_{\nu_2}} \, .
+\ee
+Here, the hats on both the NTK and the dNTK remind us that these objects are stochastic, depending on the particular realization of the model parameters at initialization.
+Also, from its definition note that the dNTK is symmetric in its second and third paired set of indices $(i_1, \delta_1) \leftrightarrow (i_2, \delta_2)$, while the first neural-sample index $(i_0, \delta_0)$ is distinguished from the other two.
+
+Using both definitions \eqref{eq:ell-layer-ntk-def-with-layer-indices} and \eqref{eq:dNTK-definition},  
+our second-order expansion \eqref{eq:preactivation-change-second-order-in-model-parameter-II} can be more compactly written as
+\be\label{eq:preactivation-updated-finite-width}
+\dz{i}{\delta}{\ell}=-\eta\sum_{j,\tra}\Tia{\NTK}{ij}{\delta\tra}{\ell}\Tia{\epsilon}{j}{\tra}{\ell}+\frac{\eta^2}{2}\sum_{j_1,j_2,\tra_1,\tra_2}\Tia{\dNTK}{i j_1j_2}{\delta\tra_1\tra_2}{\ell}  \Tia{\epsilon}{j_1}{\tra_1}{\ell}\Tia{\epsilon}{j_2}{\tra_2}{\ell}+\ldots\, .
+\ee
+In other words, we have a power series in error factors. To ultimately understand how the preactivations evolve under gradient descent  at leading order in $1/n$, we'll actually need to extend this expansion to order $\eta^3$, which in turn will require that we introduce a few additional tensors. Rather than worry about that now, we'll put it off to \S\ref{ch:eot}. Regardless of those additional higher-order terms, from \eqref{eq:preactivation-updated-finite-width} we already see that we'll need to know the joint statistics of the preactivations -- encoding the error factors $\Tia{\epsilon}{j}{\tra}{\ell}$ -- the NTK $\Tia{\NTK}{ij}{\delta\tra}{\ell}$, and the dNTK $\Tia{\dNTK}{i j_1j_2}{\delta\tra_1\tra_2}{\ell}$.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Finally, as an explanation for our choice of name and symbol for the dNTK\index{differential of the neural tangent kernel!name},  consider the leading-order update to the $\ell$-th-layer NTK after a step of gradient descent: 
+\begin{align}
+\dbar\Tia{\NTKM}{i_1i_2}{\delta_1\delta_2}{\ell}\equiv&\Tia{\NTKM}{i_1i_2}{\delta_1\delta_2}{\ell}(t=1)-\Tia{\NTKM}{i_1i_2}{\delta_1\delta_2}{\ell}(t=0)\, \label{eq:dNTK-naming}\\
+=&\sum_{\ell_1=1}^\ell \sum_{\mu_1}\frac{d\Tia{\NTKM}{i_1i_2}{\delta_1\delta_2}{\ell}}{d\theta_{\mu_1}^{(\ell_1)}}\dtheta_{\mu_1}^{(\ell_1)}+\ldots\, \nonumber\\
+=&-\eta \sum_{\ell_1=1}^\ell \sum_{\mu_1}\le[\frac{d}{d\theta^{(\ell_1)}_{\mu_1}}\le(\sum_{\ell_2=1}^\ell\sum_{\mu_2,\nu_2}\lambda_{\mu_2\nu_2}^{(\ell_2)}\frac{d\z{i_1}{\delta_1}{\ell}}{d\theta_{\mu_2}^{(\ell_2)}}\frac{d\z{i_2}{\delta_2}{\ell}}{d\theta^{(\ell_2)}_{\nu_2}}\ri)\ri]\le[\sum_{\nu_1}\lambda_{\mu_1\nu_1}^{(\ell_1)}\sum_{j,\tra}\frac{d\z{j}{\tra}{\ell}}{d\theta_{\nu_1}^{(\ell_1)}}\Tia{\epsilon}{j}{\tra}{\ell}\ri]+\ldots\, \nonumber\\
+=&-\eta\sum_{j,\tra}\le[ \sum_{\ell_1, \ell_2=1}^\ell\,\, \sum_{\substack{\mu_1,\nu_1, \\ \mu_2,\nu_2} }\lambda_{\mu_1\nu_1}^{(\ell_1)}\lambda_{\mu_2\nu_2}^{(\ell_2)}\frac{d^2\!\z{i_1}{\delta_1}{\ell}}{d\theta^{(\ell_1)}_{\mu_1}d\theta_{\mu_2}^{(\ell_2)}}\frac{d\z{i_2}{\delta_2}{\ell}}{d\theta^{(\ell_2)}_{\nu_2}}\frac{d\z{j}{\tra}{\ell}}{d\theta^{(\ell_1)}_{\nu_1}}\ri]\Tia{\epsilon}{j}{\tra}{\ell}\, \nonumber\\
+&-\eta\sum_{j,\tra}\le[ \sum_{\ell_1, \ell_2=1}^\ell\,\, \sum_{\substack{\mu_1,\nu_1, \\ \mu_2,\nu_2} } \lambda_{\mu_1\nu_1}^{(\ell_1)}\lambda_{\mu_2\nu_2}^{(\ell_2)}\frac{d\z{i_1}{\delta_1}{\ell}}{d\theta_{\mu_2}^{(\ell_2)}}\frac{d^2\!\z{i_2}{\delta_2}{\ell}}{d\theta_{\mu_1}^{(\ell_1)}d\theta_{\nu_2}^{(\ell_2)}}\frac{d\z{j}{\tra}{\ell}}{d\theta_{\nu_1}^{(\ell_1)}}\ri]\Tia{\epsilon}{j}{\tra}{\ell}+\ldots\, \nonumber\\
+=&-\eta\sum_{j,\tra}\le(\Tia{\dNTK}{i_1 i_2j}{\delta_1\delta_2\tra}{\ell}+\Tia{\dNTK}{i_2i_1j}{\delta_2\delta_1\tra}{\ell}\ri)\Tia{\epsilon}{j}{\tra}{\ell}+\ldots\, .\nonumber
+\end{align}
+Here, in the third line we inserted the definition of NTK \eqref{eq:ell-layer-ntk-def-with-layer-indices} and the parameter update \eqref{eq:parameter-update-rewritten-error-factor} for $\ell_1\leq\ell$, 
+and on the final line we used the definition of the dNTK \eqref{eq:dNTK-definition}.
+Thus we see that the dNTK -- when multiplied by the global learning rate and contracted with an $\ell$-th-layer error factor --  gives the update to the $\ell$-th-layer NTK after a step of gradient descent.\footnote{
+    Please don't confuse our italicized, crossed, and unhatted notation, $\dbar\Tia{\NTKM}{i_1i_2}{\delta_1\delta_2}{\ell}$, representing the first update to the NTK, with our unitalicized, uncrossed, and hatted notation, $\Tia{\dNTK}{i_0i_1i_2}{\delta_0 \delta_1\delta_2}{\ell}$, representing the dNTK. In this chapter we will focus on the statistics of the dNTK, and we will not use this notation when evaluating the NTK dynamics in the following chapter.}
+
+Since we know that the infinite-width NTK is \emph{frozen} $\NTK^{(\ell)} \to \NTKI^{(\ell)}$, the relation between the NTK update and the dNTK implies that the dNTK must be a finite-width effect, vanishing in the strict infinite-width limit $\dNTK^{(\ell)} \to 0$. Similarly, at infinite width we truncated the preactivation updates \eqref{eq:preactivation-updated-finite-width} to be linear in the global learning rate $\eta$, cf.~\eqref{eq:GD-preactivation-at-infty}. In the next section, we will verify all of this by computing the dNTK recursively and showing explicitly that $\dNTK^{(\ell)} = \o{1/n}$.
+
+
+
+
+\section{RG Flow of the dNTK}\label{sec:dNTK-RG}
+\index{representation group flow!of the dNTK}
+As its title suggests, the structure of this section parallels \S\ref{ch:ngp} -- where we worked out the layer-to-layer representation group (RG) flow of the preactivation distribution $p\!\le(z^{(\ell)}\Big\vert \D\ri)$ -- and \S\ref{ch:NTKa} -- where we worked out the layer-to-layer RG flow of the NTK-preactivation joint distribution $p\!\le(z^{(\ell)}, \NTK^{(\ell)}\Big\vert \D\ri)$. Specifically, we will now work out the effective $\ell$-th-layer joint distribution of the preactivations, the NTK, and the dNTK:
+\be
+p\Big(z^{(\ell)}, \, \NTK^{(\ell)},\, \dNTK^{(\ell)}\Big\vert \D\Big)\, .
+\ee 
+This analysis is important for two reasons: \emph{(i)} firstly, understanding the statistics of this $\ell$-th-layer joint distribution at order $1/n$ is a necessary prerequisite for understanding the leading nontrivial finite-width corrections for deep neural networks trained with gradient-based learning; \emph{(ii)} secondly, in \S\ref{sec:nonlinear-model} we will see that a nonvanishing dNTK is sufficient for a network to exhibit representation learning, and  thus by showing that the dNTK is of order $1/n$, we will firmly establish that the leading-order finite-width effective theory is able to describe this essential property of deep learning.
+
+
+
+
+
+Zeroth, we'll establish the stochastic iteration equation for the dNTK (\S\ref{subsec:dNTK-recursions}). Then, beginning our statistical analysis, first we'll see that the dNTK vanishes identically in the first layer (\S\ref{subsec:first-layer-zero-dNTK}). Second, we'll see that there's a nontrivial cross correlation between the dNTK and the preactivations in the second layer (\S\ref{subsec:second-layer-nonzero-dNTK}). Third and finally, we'll work out a general recursion that controls the accumulation of such dNTK-preactivation cross correlations in deeper layers (\S\ref{subsec:deeper-layer-growing-dNTK}).
+
+
+
+\setcounter{subsection}{-1}
+\subsection{Forward Equation for the dNTK}\label{subsec:dNTK-recursions}
+Just as we needed to derive a stochastic forward iteration equation for the NTK \eqref{eq:NTH-recursion-without-expectation}  in \S\ref{sec:NTH-recursions} before working out recursions for its statistics, here we'll derive such an equation for the dNTK.
+
+Let's start by writing out the definition of the dNTK\index{differential of the neural tangent kernel!iteration equation}\index{differential of the neural tangent kernel!iteration equation|seealso{forward equation}}~\eqref{eq:dNTK-definition} at layer $(\ell+1)$:
+\be\label{eq:dNTK-definition-again}
+\Tia{\dNTK}{i_0i_1i_2}{\delta_0 \delta_1\delta_2}{\ell+1}\equiv\sum_{\ell_1,\ell_2=1}^{\ell+1}\le[\sum_{\substack{\mu_1,\nu_1, \\ \mu_2,\nu_2} }\lambda_{\mu_1\nu_1}^{(\ell_1)}\lambda_{\mu_2\nu_2}^{(\ell_2)}\frac{d^2\!\z{i_0}{\delta_0}{\ell+1}}{d\theta_{\mu_1}^{(\ell_1)}d\theta_{\mu_2}^{(\ell_2)}}\frac{d\z{i_1}{\delta_1}{\ell+1}}{d\theta_{\nu_1}^{(\ell_1)}}\frac{d\z{i_2}{\delta_2}{\ell+1}}{d\theta_{\nu_2}^{(\ell_2)}}\ri]\, .
+\ee
+To determine its forward equation, we need to explicitly evaluate the derivatives with respect to the  $(\ell+1)$-th-layer parameters and also rewrite all the $(\ell+1)$-th-layer quantities in terms of the $\ell$-th-layer quantities using the chain rule. Depending on the values of $\ell_1$ and $\ell_2$, there are thus three cases to consider 
+for the double summation over layers. 
+
+First, when both layers are maximal $\ell_1=\ell_2=\ell+1$ there is no contribution. Recalling 
+for one final time the preactivation forward equation, %
+\be\label{eq:mlp-foward-pass-reprint-lol}
+\z{i}{\delta}{\ell+1} = \bias{i}{\ell+1} + \sum_{j=1}^{n_\ell}\W{ij}{\ell+1} \s{j}{\delta}{\ell} \, ,
+\ee
+we see that the $(\ell+1)$-th-layer preactivations are always linear in 
+the $(\ell+1)$-th-layer model parameters $\theta^{(\ell+1)}_{\mu}$.
+Thus, in this case the second derivative in the dNTK definition \eqref{eq:dNTK-definition-again} will vanish.
+
+Second, when $\ell_1=\ell+1$ and $\ell_2 < \ell +1$, there is a contribution from the $(\ell+1)$-th-layer weights but not from the $(\ell+1)$-th-layer biases. Considering the bias $\theta_{\mu_1}^{(\ell_1)}=\bias{j}{\ell+1}$, the $(\ell+1)$-th-layer derivative gives a Kronecker delta
+\be
+\frac{\td \z{i}{\delta}{\ell+1}}{\td \bias{j}{\ell+1}}=\delta_{ij}\, ,
+\ee
+and so the second derivative again vanishes
+\be
+\frac{\td^2 \z{i}{\delta}{\ell+1}}{\td \bias{j}{\ell+1} d\theta_{\mu_2}^{(\ell_2)}}= 0\, .
+\ee
+Instead considering the weight matrix $\theta_{\mu_1}^{(\ell_1)}=\W{jk}{\ell+1}$, the $(\ell+1)$-th-layer derivative is not a constant
+\begin{align}\label{eq:first-derivative-mundane-other}
+\frac{\td \z{i}{\delta}{\ell+1}}{\td \W{jk}{\ell+1}}=&\delta_{ij}\s{k}{\delta}{\ell}\, .
+\end{align}
+Thus, the second derivative evaluates to something nontrivial
+\begin{align}\label{eq:second-derivative-mundane}
+\frac{\td^2 \z{i}{\delta}{\ell+1}}{\td \W{jk}{\ell+1}\td \theta_{\mu_2}^{(\ell_2)}}=&\delta_{ij}\ds{k}{\delta}{\ell}\frac{\td \z{k}{\delta}{\ell}}{\td \theta_{\mu_2}^{(\ell_2)}}\, ,
+\end{align}
+while the remaining first derivative
+gives
+\be
+\frac{\td \z{i}{\delta}{\ell+1}}{\td \theta_{\nu_2}^{(\ell_2)}}=\sum_{k}\W{ik}{\ell+1}\ds{k}{\delta}{\ell}\frac{\td \z{k}{\delta}{\ell}}{\td \theta_{\nu_2}^{(\ell_2)}}\, ,\label{eq:first-derivative-mundane}
+\ee
+with the use of the chain rule.
+Plugging in these three derivative evaluations \eqref{eq:first-derivative-mundane-other}, \eqref{eq:second-derivative-mundane}, and \eqref{eq:first-derivative-mundane} to evaluate terms in the dNTK definition \eqref{eq:dNTK-definition-again} with $\ell_1=\ell+1$ and $\ell_2< \ell+1$, we find
+\begin{align}\label{eq:dNTK-mid-one-final-layer-term}
+&\sum_{\ell_2=1}^\ell \sum_{j,k}\lambda_{\W{jk}{\ell+1} \W{j k}{\ell+1}}\sum_{\mu_2,\nu_2} \lambda_{\mu_2\nu_2}^{(\ell_2)}\frac{\td^2 \z{i_0}{\delta_0}{\ell+1}}{\td \W{jk}{\ell+1}\td \theta_{\mu_2}^{(\ell_2)}}\frac{\td \z{i_1}{\delta_1}{\ell+1}}{\td \W{jk}{\ell+1}}\frac{\td \z{i_2}{\delta_2}{\ell+1}}{\td \theta_{\nu_2}^{(\ell_2)}}\, \notag \\
+=&\frac{\LW{\ell+1}}{n_{\ell}}\sum_{\ell_2=1}^\ell\sum_{j,k}\sum_{\mu_2,\nu_2} \lambda_{\mu_2\nu_2}^{(\ell_2)}\le(\delta_{i_0j}\, \ds{k}{\delta_0}{\ell}\frac{\td \z{k}{\delta_0}{\ell}}{\td \theta_{\mu_2}^{(\ell_2)}}\ri)\le(\delta_{i_1j}\,\s{k}{\delta_1}{\ell}\ri)\le(\sum_{k_2}\W{i_2k_2}{\ell+1}\ds{k_2}{\delta_2}{\ell}\frac{\td \z{k_2}{\delta_2}{\ell}}{\td \theta_{\nu_2}^{(\ell_2)}}\ri)\, \notag\\
+=&\frac{\LW{\ell+1}}{n_{\ell}}\delta_{i_0i_1}\sum_{k_0,k_2}\W{i_2k_2}{\ell+1}\ds{k_0}{\delta_0}{\ell}\s{k_0}{\delta_1}{\ell}\ds{k_2}{\delta_2}{\ell}\Tia{\NTK}{k_0k_2}{\delta_0\delta_2}{\ell}\, .
+\end{align}
+To get this result, on the second line we implemented
+our choice of a single intralayer learning rate for the weights \eqref{eq:diag_LR},
+\be
+\lambda_{\W{j_1k_1}{\ell+1} \W{j_2 k_2}{\ell+1}}=\delta_{j_1 j_2}\delta_{k_1 k_2} \frac{\LW{\ell+1}}{n_{\ell}} \, ,
+\ee
+importantly rescaled by $n_{\ell}$, and on the third line we used the definition of the stochastic NTK \eqref{eq:ell-layer-ntk-def-with-layer-indices} and relabeled a dummy index. %
+By symmetry, there must be a similar contribution when instead  $\ell_2=\ell+1$ and $\ell_1 < \ell+1$. This term is given by \eqref{eq:dNTK-mid-one-final-layer-term} after swapping neural-sample index pairs $(i_1,\delta_1)\leftrightarrow(i_2,\delta_2)$.
+
+
+Third and finally, when both $\ell_1 < \ell+1$ and $\ell_2 < \ell+1$ both the biases and the weights contribute to the second derivative. When $\theta_\mu^{(\ell_1)}$ and $\theta_\nu^{(\ell_2)}$ are not from the $(\ell+1)$-th layer, we computed their first derivative in~\eqref{eq:first-derivative-mundane}, and their second derivative is given by
+\be\label{eq:second-derivative-all-previous}
+\frac{\td^2 \z{i}{\delta}{\ell+1}}{\td \theta_{\mu_1}^{(\ell_1)}\td \theta_{\mu_2}^{(\ell_2)}}=\sum_{k}\W{ik}{\ell+1}\dds{k}{\delta}{\ell}\frac{\td \z{k}{\delta}{\ell}}{\td \theta_{\mu_1}^{(\ell_1)}}\frac{\td \z{k}{\delta}{\ell}}{\td \theta_{\mu_2}^{(\ell_2)}}+\sum_{k}\W{ik}{\ell+1}\ds{k}{\delta}{\ell}\frac{\td^2 \z{k}{\delta}{\ell}}{\td \theta_{\mu_1}^{(\ell_1)}\td \theta_{\mu_2}^{(\ell_2)}} \, .
+\ee
+Multiplying these second derivative terms by the learning-rate tensors $\lambda_{\mu_1\nu_1}^{(\ell_1)}\,\lambda_{\mu_2\nu_2}^{(\ell_2)}$ and by the appropriate first derivatives~\eqref{eq:first-derivative-mundane},  and implementing all the sums over  $\ell_1$, $\ell_2$, $\mu_1$, $\nu_1$, $\mu_2$, $\nu_2$ in the dNTK definition \eqref{eq:dNTK-definition-again}, the first term from  \eqref{eq:second-derivative-all-previous} gives a contribution of
+\be\label{eq:dNTK-mid-no-final-layer-term-1}
+\sum_{k_0,k_1,k_2}\Ti{W}{i_0 k_0}{\ell+1}\Ti{W}{i_1 k_1}{\ell+1}\Ti{W}{i_2 k_2}{\ell+1}\dds{k_0}{\delta_0}{\ell}\ds{k_1}{\delta_1}{\ell}\ds{k_2}{\delta_2}{\ell}\Tia{\NTK}{k_0k_1}{\delta_0\delta_1}{\ell}\Tia{\NTK}{k_0k_2}{\delta_0\delta_2}{\ell}\, ,
+\ee
+where we made use of the NTK definition \eqref{eq:ell-layer-ntk-def-with-layer-indices}  twice, 
+while the second term from \eqref{eq:second-derivative-all-previous} gives a contribution of
+\be\label{eq:dNTK-mid-no-final-layer-term-2}
+\sum_{k_0,k_1,k_2}\Ti{W}{i_0 k_0}{\ell+1}\Ti{W}{i_1 k_1}{\ell+1}\Ti{W}{i_2 k_2}{\ell+1}\ds{k_0}{\delta_0}{\ell}\ds{k_1}{\delta_1}{\ell}\ds{k_2}{\delta_2}{\ell}\Tia{\dNTK}{k_0k_1k_2}{\delta_0\delta_1\delta_2}{\ell}\, ,
+\ee
+where we made use of the dNTK definition \eqref{eq:dNTK-definition} once.
+
+
+
+
+
+
+
+Combining our three types of contributions \eqref{eq:dNTK-mid-one-final-layer-term}, \eqref{eq:dNTK-mid-no-final-layer-term-1}, and \eqref{eq:dNTK-mid-no-final-layer-term-2}, we get a rather involved stochastic iteration equation:
+\begin{align}\label{eq:forward-eq-for-dNTK}
+\Tia{\dNTK}{i_0i_1i_2}{\delta_0\delta_1\delta_2}{\ell+1}=&\sum_{k_0,k_1,k_2}\Ti{W}{i_0 k_0}{\ell+1}\Ti{W}{i_1 k_1}{\ell+1}\Ti{W}{i_2 k_2}{\ell+1}\ds{k_0}{\delta_0}{\ell}\ds{k_1}{\delta_1}{\ell}\ds{k_2}{\delta_2}{\ell}\Tia{\dNTK}{k_0k_1k_2}{\delta_0\delta_1\delta_2}{\ell}\, \\
+&+\sum_{k_0,k_1,k_2}\Ti{W}{i_0 k_0}{\ell+1}\Ti{W}{i_1 k_1}{\ell+1}\Ti{W}{i_2 k_2}{\ell+1}\dds{k_0}{\delta_0}{\ell}\ds{k_1}{\delta_1}{\ell}\ds{k_2}{\delta_2}{\ell}\Tia{\NTK}{k_0k_1}{\delta_0\delta_1}{\ell}\Tia{\NTK}{k_0k_2}{\delta_0\delta_2}{\ell}\, \nonumber\\
+&+\frac{\lambda_{W}^{(\ell+1)}}{n_{\ell}}\delta_{i_0i_1}\sum_{k_0,k_2}\Ti{W}{i_2 k_2}{\ell+1}\ds{k_0}{\delta_0}{\ell}\s{k_0}{\delta_1}{\ell}\ds{k_2}{\delta_2}{\ell}\Tia{\NTK}{k_0k_2}{\delta_0\delta_2}{\ell}\, \nonumber\\
+&+\frac{\lambda_{W}^{(\ell+1)}}{n_{\ell}}\delta_{i_0i_2}\sum_{k_0,k_1}\Ti{W}{i_1 k_1}{\ell+1}\ds{k_0}{\delta_0}{\ell}\ds{k_1}{\delta_1}{\ell}\s{k_0}{\delta_2}{\ell}\Tia{\NTK}{k_0k_1}{\delta_0\delta_1}{\ell}\, .\nonumber
+\end{align}
+This is the \textbf{forward equation for the dNTK}\index{forward equation!dNTK}, and we're next going to work out the recursions that determine its statistics.
+
+
+\subsection{First Layer: Zero dNTK}
+\label{subsec:first-layer-zero-dNTK}
+Recall from~\S\ref{sec:first-layer-gaussian} and~\S\ref{sec:first-layer-deterministic-NTK} that at initialization the first-layer preactivations,
+\be\label{eq:first-layer-preactivation-def-reprint-for-one-last-time}\index{forward equation!MLP preactivations}
+\z{i}{\delta}{1} \equiv \bias{i}{1}+\sum_{k=1}^{n_{0}}\W{ik}{1}\x{k}{\delta}\, , %
+\ee
+are distributed according to a zero-mean \terminate{Gaussian distribution}~\eqref{eq:first-layer-distribution-HS-derivation} and that the NTK $\Tia{\NTK}{i_1i_2}{\delta_1\delta_2}{1}=\delta_{i_1i_2}\Ti{\NTKM}{\delta_1\delta_2}{1}$ is deterministic~\eqref{eq:NTHinitial}. 
+
+As we discussed just before, since the preactivations are linear in the model parameters, their second derivative must vanish. Thus, the dNTK trivially vanishes in the first layer:
+\be\label{eq:dNTK-initial}
+\Tia{\dNTK}{i_0i_1i_2}{\delta_0\delta_1\delta_2}{1}\equiv\sum_{\substack{\mu_1,\nu_1, \\ \mu_2,\nu_2} }\lambda_{\mu_1\nu_1}^{(1)}\lambda_{\mu_2\nu_2}^{(1)}\frac{d^2\!\z{i_0}{\delta_0}{1}}{d\theta_{\mu_1}^{(1)}d\theta_{\mu_2}^{(1)}}\frac{d\z{i_1}{\delta_1}{1}}{d\theta_{\nu_1}^{(1)}}\frac{d\z{i_2}{\delta_2}{1}}{d\theta_{\nu_2}^{(1)}}=0\, .
+\ee
+This gives the initial condition for our recursions.
+
+Note that this result should have been expected as the first-layer NTK~\eqref{eq:NTHinitial} is independent of the model parameters, and thus cannot change with any training. As we saw before for the first-layer preactivations and first-layer NTK -- zero-mean Gaussian and fixed, respectively -- this first-layer result for the dNTK will be representative of its infinite-width limit for all layers.
+
+
+\subsection{Second Layer: Nonzero dNTK}
+\label{subsec:second-layer-nonzero-dNTK}
+Now, let's analyze the 
+dNTK~\eqref{eq:forward-eq-for-dNTK} in the second layer.
+Remembering again that the first-layer NTK~\eqref{eq:NTHinitial} is deterministic and diagonal in its neural indices as $\Tia{\NTK}{i_1i_2}{\delta_1\delta_2}{1}=\delta_{i_1i_2}\Ti{\NTKM}{\delta_1\delta_2}{1}$, and remembering for the first time
+that the dNTK vanishes in the first layer
+$\Tia{\dNTK}{i_0i_1i_2}{\delta_0\delta_1\delta_2}{1}=0$ from  \eqref{eq:dNTK-initial}, the forward equation~\eqref{eq:forward-eq-for-dNTK} in the second layer simplifies to
+\begin{align}\label{eq:forward-eq-for-dNTK-second-layer}
+\Tia{\dNTK}{i_0i_1i_2}{\delta_0\delta_1\delta_2}{2}=&\Ti{\NTKM}{\delta_0\delta_1}{1}\Ti{\NTKM}{\delta_0\delta_2}{1}\sum_{k=1}^{n_{1}}\Ti{W}{i_0 k}{2}\Ti{W}{i_1 k}{2}\Ti{W}{i_2 k}{2}\dds{k}{\delta_0}{1}\ds{k}{\delta_1}{1}\ds{k}{\delta_2}{1}\, \nonumber\\
+&+\delta_{i_0i_1}\frac{\lambda_{W}^{(2)}}{n_1}\Ti{\NTKM}{\delta_0\delta_2}{1}\sum_{k=1}^{n_{1}}\Ti{W}{i_2 k}{2}\ds{k}{\delta_0}{1}\s{k}{\delta_1}{1}\ds{k}{\delta_2}{1}\, \nonumber\\
+&+\delta_{i_0i_2}\frac{\lambda_{W}^{(2)}}{n_1}\Ti{\NTKM}{\delta_0\delta_1}{1}\sum_{k=1}^{n_{1}}\Ti{W}{i_1 k}{2}\ds{k}{\delta_0}{1}\ds{k}{\delta_1}{1}\s{k}{\delta_2}{1}\, .
+\end{align}
+Interestingly, since each term has an odd number of weights, the mean of the dNTK will vanish, and we'll have to look at cross correlations to find leading dNTK statistics that are non-vanishing.
+
+The simplest cross correlation is with a single preactivation.
+Considering the product of the second-layer dNTK~\eqref{eq:forward-eq-for-dNTK-second-layer} with second-layer preactivations,
+\be\label{eq:second-layer-preactivations-reprint-for-one-last-time}\index{forward equation!MLP preactivations}
+\z{i}{\delta}{2}=\bias{i}{2}+\sum_{k=1}^{n_{1}}\W{ik}{2}\s{k}{\delta}{1}\, ,%
+\ee
+and taking an expectation, we find
+\begin{align}\label{eq:second-layer-dNTK-mid}
+&\E{\Tia{\dNTK}{i_0i_1i_2}{\delta_0\delta_1\delta_2}{2}\z{i_3}{\delta_3}{2}} \notag \\ %
+=&\Ti{\NTKM}{\delta_0\delta_1}{1}\Ti{\NTKM}{\delta_0\delta_2}{1}\le(\frac{\CW{2}}{n_1}\ri)^2\le(\delta_{i_0 i_3}\delta_{i_1i_2}+\delta_{i_0 i_1}\delta_{i_2 i_3}+\delta_{i_0 i_2}\delta_{i_1 i_3}\ri)\sum_{k=1}^{n_1}\E{\dds{k}{\delta_0}{1}\ds{k}{\delta_1}{1}\ds{k}{\delta_2}{1}\s{k}{\delta_3}{1}}\, \notag\\
+&+\frac{\lambda_{W}^{(2)}}{n_1}\Ti{\NTKM}{\delta_0\delta_2}{1}\delta_{i_0i_1}\delta_{i_2i_3}\frac{\CW{2}}{n_1} \sum_{k=1}^{n_{1}}\E{\ds{k}{\delta_0}{1}\s{k}{\delta_1}{1}\ds{k}{\delta_2}{1}\s{k}{\delta_3}{1}}\, \notag\\
+&+\frac{\lambda_{W}^{(2)}}{n_1}\Ti{\NTKM}{\delta_0\delta_1}{1}\delta_{i_0i_2}\delta_{i_1i_3}\frac{\CW{2}}{n_1} \sum_{k=1}^{n_{1}}\E{\ds{k}{\delta_0}{1}\ds{k}{\delta_1}{1}\s{k}{\delta_2}{1}\s{k}{\delta_3}{1}}\, \notag \\
+=&\frac{1}{n_1}\le(\delta_{i_0 i_3}\delta_{i_1i_2}+\delta_{i_0 i_1}\delta_{i_2 i_3}+\delta_{i_0 i_2}\delta_{i_1 i_3}\ri)\CW{2}\Ti{\NTKM}{\delta_0\delta_1}{1}\CW{2}\Ti{\NTKM}{\delta_0\delta_2}{1}\bra \sigma''_{\delta_0}\sigma'_{\delta_1}\sigma'_{\delta_2}\sigma_{\delta_3}\ket_{G^{(1)}}\, \notag\\
+&+\frac{1}{n_1}\delta_{i_0i_1}\delta_{i_2i_3}\lambda_{W}^{(2)}\CW{2}\Ti{\NTKM}{\delta_0\delta_2}{1} \bra \sigma'_{\delta_0}\sigma_{\delta_1}\sigma'_{\delta_2}\sigma_{\delta_3}\ket_{G^{(1)}}\, \notag\\
+&+\frac{1}{n_1}\delta_{i_0i_2}\delta_{i_1i_3}\lambda_{W}^{(2)}\CW{2}\Ti{\NTKM}{\delta_0\delta_1}{1} \bra \sigma'_{\delta_0}\sigma'_{\delta_1}\sigma_{\delta_2}\sigma_{\delta_3}\ket_{G^{(1)}}\, 
+\end{align}
+To get this final result, in the first equality we dropped the bias term from~\eqref{eq:second-layer-preactivations-reprint-for-one-last-time}, since it vanishes under the expectation,  and performed various Wick contractions of the weights using
+$\E{W^{(2)}_{i_1 j_1}W^{(2)}_{i_2 j_2}} =\delta_{i_1 i_2} \delta_{j_1 j_2}C_{W}^{(2)}/n_{1}$~\eqref{eq:weight-variance-def-naive}.
+For the second equality, we remembered that the first-layer preactivation distribution is a zero-mean Gaussian with a two-point correlator that's diagonal in neural indices, $\E{\z{i_1}{\delta_1}{1}\z{i_2}{\delta_2}{1}} = \delta_{i_1i_2}G_{\delta_1\delta_2}^{(1)}$~\eqref{eq:first-layer-distribution-HS-derivation}, and used this to swap full expectations for Gaussian expectations and then performed the sums.
+
+As we did before for the NTK variance \eqref{eq:NTH-variance-decomposition-second} and the NTK-preactivation cross correlation \eqref{eq:F-and-D-decomposition}, it is convenient to decompose this dNTK-preactivation cross correlation~\eqref{eq:second-layer-dNTK-mid} into two tensors with sample indices only:\index{tensor decomposition!dNTK-preactivation $P$/$Q$}
+\begin{align}\label{eq:dntk-second-layer-decomposition}
+\E{\Tia{\dNTK}{i_0i_1i_2}{\delta_0\delta_1\delta_2}{2}\z{i_3}{\delta_3}{2}}\equiv&\frac{1}{n_1}\le[\delta_{i_0 i_3}\delta_{i_1i_2}\dNTKP{\delta_0\delta_1\delta_2\delta_3}{2}+\delta_{i_0i_1}\delta_{i_2i_3}\dNTKQ{\delta_0\delta_1\delta_2\delta_3}{2}+\delta_{i_0i_2}\delta_{i_1i_3}\dNTKQ{\delta_0\delta_2\delta_1\delta_3}{2}\ri]\, .
+\end{align}
+Comparing with our explicit formula for the second-layer cross correlation~\eqref{eq:second-layer-dNTK-mid}, we see that these tensors have the following definitions,
+\begin{align}
+\dNTKP{\delta_0\delta_1\delta_2\delta_3}{2}\equiv&\le( \CW{2}\ri)^2 \Ti{\NTKM}{\delta_0\delta_1}{1}\Ti{\NTKM}{\delta_0\delta_2}{1}\bra \sigma''_{\delta_0}\sigma'_{\delta_1}\sigma'_{\delta_2}\sigma_{\delta_3}\ket_{G^{(1)}}\, ,\label{eq:dNTKP-second-layer}\\
+\dNTKQ{\delta_0\delta_1\delta_2\delta_3}{2}\equiv&\le( \CW{2}\ri)^2 \Ti{\NTKM}{\delta_0\delta_1}{1}\Ti{\NTKM}{\delta_0\delta_2}{1}\bra \sigma''_{\delta_0}\sigma'_{\delta_1}\sigma'_{\delta_2}\sigma_{\delta_3}\ket_{G^{(1)}} \label{eq:dNTKQ-second-layer}+\lambda_{W}^{(2)}\CW{2}\Ti{\NTKM}{\delta_0\delta_2}{1} \bra \sigma'_{\delta_0}\sigma_{\delta_1}\sigma'_{\delta_2}\sigma_{\delta_3}\ket_{G^{(1)}}\, ,
+\end{align}
+and that they are manifestly of order one.\footnote{The cross-correlation tensor $\dNTKP{\delta_0\delta_1\delta_2\delta_3}{2}$~\eqref{eq:dNTKP-second-layer} -- and more generally $\dNTKP{\delta_0\delta_1\delta_2\delta_3}{\ell}$ in deeper layers
+-- is only symmetric under the exchange of its middle samples indices $\delta_1\leftrightarrow \delta_2$.
+Meanwhile, it's manifestly clear from~\eqref{eq:dNTKQ-second-layer} that the other cross-correlation tensor $\dNTKQ{\delta_0\delta_1\delta_2\delta_3}{2}$ has no symmetry whatsoever.} Overall, the dNTK-preactivation cross correlation \eqref{eq:dntk-second-layer-decomposition} is of order $1/n_1$, vanishing in the strict infinite-width limit $n_1 \to \infty$.
+
+These tensors \eqref{eq:dNTKP-second-layer} and \eqref{eq:dNTKQ-second-layer} -- and their deeper-layer siblings -- control all the leading finite-width correlation between the preactivations and the dNTK, and in fact encapsulate the entire effect of the dNTK at order $1/n$. As we'll show next, any other dNTK-preactivation cross correlators, e.g.~$\E{\Tia{\dNTK}{i_0i_1i_2}{\delta_0\delta_1\delta_2}{\ell}\z{j_3}{\delta_3}{\ell}\z{j_4}{\delta_4}{\ell}\z{j_5}{\delta_5}{\ell}}$, can always be expressed in terms of a combination of $\dNTKP{}{\ell}$ and $\dNTKQ{}{\ell}$ at this order. %
+
+
+
+
+
+
+\subsection{Deeper Layers: Growing dNTK}
+\label{subsec:deeper-layer-growing-dNTK}
+As before with~\S\ref{sec:first-layer-gaussian}$\,\parallel\,$\S\ref{sec:first-layer-deterministic-NTK}$\,\parallel\,$\S\ref{subsec:first-layer-zero-dNTK} and~\S\ref{sec:second-layer-non-gaussian}$\,\parallel\,$\S\ref{sec:second-layer-fluctuating-NTK}$\,\parallel\,$\S\ref{subsec:second-layer-nonzero-dNTK}, this section parallels our other sections analyzing the RG flow in deeper layers (\S\ref{sec:deeper-layer-accumulation}$\,\parallel\,$\S\ref{sec:deeper-layer-accumulation-NTK}). %
+
+To proceed forward, we'll first need to evaluate an interlayer formula with three weight insertions (extending
+our work in \S\ref{subsec:interlayer-interlude}), and then we'll immediately put it to use
+in order to obtain
+recursions for the dNTK-preactivation cross correlation. 
+
+
+\subsubsection{\emph{Inter}lude 2: \emph{Inter}layer Correlations Reloaded}\index{interlayer correlation!for dNTK evaluation}
+Since the forward equation for the dNTK \eqref{eq:forward-eq-for-dNTK} has terms with one or three $(\ell+1)$-th-layer weight matrices, we'll need interlayer formulae with one or three weight insertions. 
+
+Let's start by recalling our \terminate{generating function} for interlayer correlations\index{interlayer correlation}~\eqref{eq:master-weight-insertion}: 
+\begin{align}\label{eq:master-weight-insertion-reprint}
+&\E{\mathcal{O}\!\le(z^{(\ell+1)}\ri)e^{\sum_{i,j} \JW{ij}W^{(\ell+1)}_{ij}}\mathcal{Q}\!\le(z^{(\ell)},  \NTK^{(\ell)}, \dNTK^{(\ell)} \ri)}\, \\
+=&\exp\!\le(\frac{\CW{\ell+1}}{2n_\ell}\sum_{i,j}\JW{ij}^2\ri)\! \E{\!\bra\!\!\!\bra\mathcal{O}\Big(z^{(\ell+1)}_{i;\delta}+\frac{\CW{\ell+1}}{n_{\ell}}\sum_{j=1}^{n_{\ell}}\JW{ij}\s{j}{\delta}{\ell}\Big)\ket\!\!\!\ket_{\widehat{G}^{(\ell+1)}}\!\!\!\!\!\!\!\mathcal{Q}\!\le(z^{(\ell)},  \NTK^{(\ell)}, \dNTK^{(\ell)}\ri) }\, .\notag 
+\end{align}
+In this formula, $\O$ is a generic function of $(\ell+1)$-th-layer preactivations only, and $\mathcal{Q}$ is a function of any of our $\ell$-th-layer objects; in particular, since the original derivation of this formula didn't depend on specifics of $\mathcal{Q}$,
+we've also included the $\ell$-th-layer dNTK as part of its argument. 
+
+
+
+With that in mind, we first wrote down an interlayer formula with one insertion as \eqref{eq:one-weight-insertion} when analyzing (the lack of) representation learning in the infinite-width limit. To save you the need to flip back and refresh your memory, we'll reprint it here after making some minor notational adjustments:
+\begin{align}\label{eq:one-weight-insertion-reprint-ish}
+&\E{\O\!\le(z^{(\ell+1)}\ri) \W{ij}{\ell+1} \mathcal{Q}\!\le(z^{(\ell)}, \NTK^{(\ell)}, \dNTK^{(\ell)} \ri)}\, \\
+=&\frac{\CW{\ell+1}}{n_{\ell}}\sum_{\delta\in\D}\E{\bra\!\!\!\bra\frac{\partial \O}{\partial \z{i}{\delta}{\ell+1}} \ket\!\!\!\ket_{\!\!\!\widehat{G}^{(\ell+1)}}\!\!\!\!  \s{j}{\delta}{\ell}\,\, \mathcal{Q}\!\le(z^{(\ell)}, \NTK^{(\ell)}, \dNTK^{(\ell)} \ri)}\, .\notag
+\end{align}
+This can be readily rederived by differentiating  the \terminate{generating function} \eqref{eq:master-weight-insertion-reprint} with respect to the source as $\frac{d}{d\JW{ij}}$ once and then setting the source to zero. %
+
+In contrast, three-weight insertion formula will be new.  Thrice-differentiating  the \terminate{generating function} \eqref{eq:master-weight-insertion-reprint} with respect to the source as $\frac{d}{d\JW{i_0j_0}}\frac{d}{d\JW{i_1j_1}}\frac{d}{d\JW{i_2j_2}}$ and then setting the source to zero $\JW{}=0$, we find
+\begin{align}\label{eq:three-weight-insertions}
+&\E{\O\!\le(z^{(\ell+1)}\ri) \W{i_0j_0}{\ell+1}\W{i_1j_1}{\ell+1}\W{i_2j_2}{\ell+1} \mathcal{Q}\!\le(z^{(\ell)},  \NTK^{(\ell)}, \dNTK^{(\ell)}\ri)}\, \\
+=&\le(\frac{\CW{\ell+1}}{n_{\ell}}\ri)^2\delta_{i_0i_1}\delta_{j_0j_1}\sum_{\delta\in\D}\E{\bra\!\!\!\bra\frac{\partial \O}{\partial \z{i_2}{\delta}{\ell+1}} \ket\!\!\!\ket_{\!\!\!\widehat{G}^{(\ell+1)}}\!\!  \s{j_2}{\delta}{\ell}\, \mathcal{Q}\!\le(z^{(\ell)},  \NTK^{(\ell)}, \dNTK^{(\ell)}\ri)}\, \notag\\
+&+\le(\frac{\CW{\ell+1}}{n_{\ell}}\ri)^2\delta_{i_0i_2}\delta_{j_0j_2}\sum_{\delta\in\D}\E{\bra\!\!\!\bra\frac{\partial \O}{\partial \z{i_1}{\delta}{\ell+1}} \ket\!\!\!\ket_{\!\!\!\widehat{G}^{(\ell+1)}}\!\!  \s{j_1}{\delta}{\ell}\, \mathcal{Q}\!\le(z^{(\ell)},  \NTK^{(\ell)}, \dNTK^{(\ell)}\ri)}\, \notag\\
+&+\le(\frac{\CW{\ell+1}}{n_{\ell}}\ri)^2\delta_{i_1i_2}\delta_{j_1j_2}\sum_{\delta\in\D}\E{\bra\!\!\!\bra\frac{\partial \O}{\partial \z{i_0}{\delta}{\ell+1}} \ket\!\!\!\ket_{\!\!\!\widehat{G}^{(\ell+1)}}\!\!  \s{j_0}{\delta}{\ell}\, \mathcal{Q}\!\le(z^{(\ell)},  \NTK^{(\ell)}, \dNTK^{(\ell)}\ri)}\, \notag\\
+&+\le(\frac{\CW{\ell+1}}{n_{\ell}}\ri)^3\!\!\!\! \sum_{\delta_0,\delta_1,\delta_2\in\D}\!\!\!\! \E{\bra\!\!\!\bra\frac{\partial^3 \O}{\partial \z{i_0}{\delta_0}{\ell+1}\partial \z{i_1}{\delta_1}{\ell+1}\partial \z{i_2}{\delta_2}{\ell+1}} \ket\!\!\!\ket_{\!\!\!\widehat{G}^{(\ell+1)}}\!\!\!\! \!\!  \s{j_0}{\delta_0}{\ell} \s{j_1}{\delta_1}{\ell} \s{j_2}{\delta_2}{\ell}\mathcal{Q}\!\le(z^{(\ell)},  \NTK^{(\ell)}, \dNTK^{(\ell)}\ri)}\, .\notag
+\end{align}
+Intuitively, we can understand this formula as follows: each of the first three terms comes from forming one Wick contraction with two of the weight insertions
+and then forming another contraction between the remaining weight
+and a weight hidden inside the $z^{(\ell+1)}$ in $\O$,
+while the final term comes from all three
+weight insertions each forming a contraction with other weights inside the observable $\O$. 
+
+
+
+
+\subsubsection{dNTK-Preactivation Cross Correlations}\index{cross correlation!dNTK-preactivation}
+Let's first use the interlayer formulae derived above to show that all of the dNTK's contributions to the statistics of the joint distribution $p\Big(z^{(\ell)}, \, \NTK^{(\ell)},\, \dNTK^{(\ell)}\Big\vert \D\Big)$ at order $1/n$  are captured by the cross correlation of the dNTK with a single preactivation, $\E{\Tia{\dNTK}{i_0i_1i_2}{\delta_0\delta_1\delta_2}{\ell}\, \z{i_3}{\delta_3}{\ell+1}}$. 
+To that end, we'll examine a dNTK-preactivation cross correlator of a very general form:
+\begin{align}\label{eq:cross-dNTK-general}
+&\E{\O\!\le(z^{(\ell+1)}\ri)\, \Tia{\dNTK}{i_0i_1i_2}{\delta_0\delta_1\delta_2}{\ell+1}}\, \\
+=&\delta_{i_0i_1}\frac{\lambda_{W}^{(\ell+1)}}{n_{\ell}}\sum_{k_0,k_2}\E{\O\!\le(z^{(\ell+1)}\ri)\Ti{W}{i_2 k_2}{\ell+1}\ds{k_0}{\delta_0}{\ell}\s{k_0}{\delta_1}{\ell}\ds{k_2}{\delta_2}{\ell}\Tia{\NTK}{k_0k_2}{\delta_0\delta_2}{\ell}}\, \notag\\
+&+\delta_{i_0i_2}\frac{\lambda_{W}^{(\ell+1)}}{n_{\ell}}\sum_{k_0,k_1}\E{\O\!\le(z^{(\ell+1)}\ri)\Ti{W}{i_1 k_1}{\ell+1}\ds{k_0}{\delta_0}{\ell}\ds{k_1}{\delta_1}{\ell}\s{k_0}{\delta_2}{\ell}\Tia{\NTK}{k_0k_1}{\delta_0\delta_1}{\ell}}\, \notag\\
+&+\sum_{k_0,k_1,k_2}\E{\O\!\le(z^{(\ell+1)}\ri)\Ti{W}{i_0 k_0}{\ell+1}\Ti{W}{i_1 k_1}{\ell+1}\Ti{W}{i_2 k_2}{\ell+1}\dds{k_0}{\delta_0}{\ell}\ds{k_1}{\delta_1}{\ell}\ds{k_2}{\delta_2}{\ell}\Tia{\NTK}{k_0k_1}{\delta_0\delta_1}{\ell}\Tia{\NTK}{k_0k_2}{\delta_0\delta_2}{\ell}}\, \notag\\
+&+\sum_{k_0,k_1,k_2}\E{\O\!\le(z^{(\ell+1)}\ri)\Ti{W}{i_0 k_0}{\ell+1}\Ti{W}{i_1 k_1}{\ell+1}\Ti{W}{i_2 k_2}{\ell+1}\ds{k_0}{\delta_0}{\ell}\ds{k_1}{\delta_1}{\ell}\ds{k_2}{\delta_2}{\ell}\Tia{\dNTK}{k_0k_1k_2}{\delta_0\delta_1\delta_2}{\ell}}\, .\notag
+\end{align}
+Here, we took the expectation of the dNTK forward equation~\eqref{eq:forward-eq-for-dNTK} multiplied by a generic observable $\O\!\le(z^{(\ell+1)}\ri)$ of $(\ell+1)$-th-layer preactivations. We also ordered the four terms to reflect the order in which we will subsequently evaluate them.
+
+
+First, let's simplify the first two terms. %
+Using our interlayer formula with one weight insertion \eqref{eq:one-weight-insertion-reprint-ish} on the first term in \eqref{eq:cross-dNTK-general}, we get 
+\begin{align}\label{eq:dNTK-cross-correlation-contribution-1}
+&\frac{\lambda_{W}^{(\ell+1)}}{n_{\ell}}\delta_{i_0i_1}\sum_{k_0,k_2}\E{\O\!\le(z^{(\ell+1)}\ri)\Ti{W}{i_2 k_2}{\ell+1}\ds{k_0}{\delta_0}{\ell}\s{k_0}{\delta_1}{\ell}\ds{k_2}{\delta_2}{\ell}\Tia{\NTK}{k_0k_2}{\delta_0\delta_2}{\ell}}\, \\
+=&\frac{\lambda_{W}^{(\ell+1)} \CW{\ell+1}}{n_{\ell}^2}\sum_{k_0,k_2}\sum_{\delta_{}\in\D}\delta_{i_0i_1}\E{\bra\!\!\!\bra\frac{\partial \O}{\partial \z{i_2}{\delta_{}}{\ell+1}} \ket\!\!\!\ket_{\!\!\!\widehat{G}^{(\ell+1)}}\!\!  \s{k_2}{\delta_{}}{\ell} \ds{k_0}{\delta_0}{\ell}\s{k_0}{\delta_1}{\ell}\ds{k_2}{\delta_2}{\ell}\Tia{\NTK}{k_0k_2}{\delta_0\delta_2}{\ell}}\, \notag\\
+=&\frac{\lambda_{W}^{(\ell+1)} \CW{\ell+1}}{n_{\ell}^2}\sum_{k,m}\sum_{\delta_{}\in\D}\delta_{i_0i_1}\bra\!\!\!\bra\frac{\partial \O}{\partial \z{i_2}{\delta_{}}{\ell+1}} \ket\!\!\!\ket_{\!\!\!G^{(\ell+1)}}\!\!\E{\s{k}{\delta_1}{\ell}\s{m}{\delta_{}}{\ell}\ds{k}{\delta_0}{\ell}\ds{m}{\delta_2}{\ell}\Tia{\NTK}{km}{\delta_0\delta_2}{\ell}}+\o{\frac{1}{n^2}}\, \notag\\
+=&\frac{1}{n_{\ell}}\frac{\lambda_{W}^{(\ell+1)}}{\CW{\ell+1}}\sum_{\delta_{}\in\D}\delta_{i_0i_1}\bra\!\!\!\bra\frac{\partial \O}{\partial \z{i_2}{\delta_{}}{\ell+1}} \ket\!\!\!\ket_{\!\!\!G^{(\ell+1)}}\NTHF{\delta_1\delta_0\delta_3\delta_2}{\ell+1}+\o{\frac{1}{n^2}}\, ,\notag
+\end{align}
+where in the third line we used the Schwinger-Dyson formula \eqref{eq:SD-again} to expand the metric fluctuation around its mean $G^{(\ell+1)}$, noting that the second term with the fluctuating is subleading, 
+and in the last line we identified the remaining expectation as the definition of the NTK-preactivation cross correlation tensor $F^{(\ell+1)}$ from \eqref{eq:F-recursion-almost-there} up to constants.\footnote{
+    Note that this is an $(\ell+1)$-th-layer quantity, rather than an $\ell$-th-layer quantity as we typically have on the right-hand side of recursions. %
+    If you prefer, you can use the $F$-recursion \eqref{eq:F-recursion} to re-express it in terms of a more complicated collection of $\ell$-th-layer quantities.
+}
+
+Similarly, for the second term in \eqref{eq:cross-dNTK-general} we get an identical contribution up to the swapping of neural-sample index pairs as $(i_1,\delta_1)\leftrightarrow(i_2,\delta_2)$.
+
+
+Next, let's tackle the third term in \eqref{eq:cross-dNTK-general}. Applying our interlayer formula with three weight insertions \eqref{eq:three-weight-insertions}, we get
+\begin{align}\label{eq:dNTK-cross-correlation-contribution-2}
+&\sum_{k_0,k_1,k_2}\!\!\!\!\E{\O\!\le(z^{(\ell+1)}\ri)\Ti{W}{i_0 k_0}{\ell+1}\Ti{W}{i_1 k_1}{\ell+1}\Ti{W}{i_2 k_2}{\ell+1}\dds{k_0}{\delta_0}{\ell}\ds{k_1}{\delta_1}{\ell}\ds{k_2}{\delta_2}{\ell}\Tia{\NTK}{k_0k_1}{\delta_0\delta_1}{\ell}\Tia{\NTK}{k_0k_2}{\delta_0\delta_2}{\ell}}\, \notag \\
+=&\frac{\le(\CW{\ell+1}\ri)^2}{n_{\ell}}\delta_{i_0i_1}\sum_{\delta_{}\in\D}\bra\!\!\!\bra\frac{\partial \O}{\partial \z{i_2}{\delta_{}}{\ell+1}} \ket\!\!\!\ket_{\!\!\!G^{(\ell+1)}}\!\! \le\{\frac{1}{n_{\ell}}\sum_{k,m}\E{  \s{m}{\delta_{}}{\ell} \dds{k}{\delta_0}{\ell}\ds{k}{\delta_1}{\ell}\ds{m}{\delta_2}{\ell}\Tia{\NTK}{kk}{\delta_0\delta_1}{\ell}\Tia{\NTK}{k m}{\delta_0\delta_2}{\ell}}\ri\}\, \notag\\
+&+\frac{\le(\CW{\ell+1}\ri)^2}{n_{\ell}}\delta_{i_0i_2}\sum_{\delta_{}\in\D}\bra\!\!\!\bra\frac{\partial \O}{\partial \z{i_1}{\delta_{}}{\ell+1}} \ket\!\!\!\ket_{\!\!\!G^{(\ell+1)}}\!\! \le\{\frac{1}{n_{\ell}}\sum_{k,m}\E{ \s{m}{\delta_{}}{\ell} \dds{k}{\delta_0}{\ell}\ds{k}{\delta_2}{\ell}\ds{m}{\delta_1}{\ell}\Tia{\NTK}{kk}{\delta_0\delta_2}{\ell}\Tia{\NTK}{km}{\delta_0\delta_1}{\ell}}\ri\}\, \notag\\
+&+\frac{\le(\CW{\ell+1}\ri)^2}{n_{\ell}}\delta_{i_1i_2}\sum_{\delta_{}\in\D}\bra\!\!\!\bra\frac{\partial \O}{\partial \z{i_0}{\delta_{}}{\ell+1}} \ket\!\!\!\ket_{\!\!\!G^{(\ell+1)}}\!\! \le\{\frac{1}{n_{\ell}}\sum_{k,m}\E{ \s{m}{\delta_{}}{\ell}\dds{m}{\delta_0}{\ell}\ds{k}{\delta_1}{\ell}\ds{k}{\delta_2}{\ell}\Tia{\NTK}{mk}{\delta_0\delta_1}{\ell}\Tia{\NTK}{mk}{\delta_0\delta_2}{\ell}}\ri\}\, \notag\\
+&+\o{\frac{1}{n^2}}\, ,
+\end{align}
+where for each term we again used the Schwinger-Dyson formula \eqref{eq:SD-again} to expand the metric fluctuation around its mean $G^{(\ell+1)}$, picking up the leading contribution from 
+mean metric, and then took the Gaussian expectation outside the full $\ell$-th-layer expectation. Note that the final would-be term proportional to $\partial^3\O$ is subleading:
+\begin{align}
+&\le(\CW{\ell+1}\ri)^3\sum_{\delta_{},\delta_4,\delta_5\in\D}\bra\!\!\!\bra\frac{\partial^3 \O}{\partial \z{i_0}{\delta_{}}{\ell+1}\partial \z{i_1}{\delta_4}{\ell+1}\partial \z{i_2}{\delta_5}{\ell+1}} \ket\!\!\!\ket_{\!\!\!G^{(\ell+1)}}\, \\
+&\quad\quad\times\frac{1}{n_{\ell}^3}\sum_{k_0,k_1,k_2}\E{\s{k_0}{\delta_{}}{\ell} \s{k_1}{\delta_4}{\ell} \s{k_2}{\delta_5}{\ell}\dds{k_0}{\delta_0}{\ell}\ds{k_1}{\delta_1}{\ell}\ds{k_2}{\delta_2}{\ell}\Tia{\NTK}{k_0k_1}{\delta_0\delta_1}{\ell}\Tia{\NTK}{k_0k_2}{\delta_0\delta_2}{\ell}}=\o{\frac{1}{n^2}}\, .\notag
+\end{align}
+ To see why, decompose each stochastic NTK into a mean and fluctuation as $\Tia{\NTK}{i_1i_2}{\delta_1\delta_2}{\ell}=\delta_{i_1i_2}\Ti{\NTKM}{\delta_1\delta_2}{\ell}+\DNTK{i_1i_2}{\delta_1\delta_2}{\ell}$ \eqref{eq:NTK-fluc-decomposition} and evaluate resulting four terms. In each case, you'll find the terms are $\o{1/n^2}$ suppressed due to the  Kronecker deltas constraining the triple sum and/or the additional $1/n$ suppression coming from the fluctuations.
+
+
+
+
+
+
+Lastly, let's process the fourth and final term in our general cross correlation \eqref{eq:cross-dNTK-general}. Again applying our interlayer formula with three weight insertions \eqref{eq:three-weight-insertions} and taking only the leading-order pieces,
+we get
+\begin{align}\label{eq:dNTK-cross-correlation-contribution-3}
+&\sum_{k_0,k_1,k_2}\E{\O\!\le(z^{(\ell+1)}\ri)\Ti{W}{i_0 k_0}{\ell+1}\Ti{W}{i_1 k_1}{\ell+1}\Ti{W}{i_2 k_2}{\ell+1}\ds{k_0}{\delta_0}{\ell}\ds{k_1}{\delta_1}{\ell}\ds{k_2}{\delta_2}{\ell}\Tia{\dNTK}{k_0k_1k_2}{\delta_0\delta_1\delta_2}{\ell}}\, \notag \\
+=&\frac{\le(\CW{\ell+1}\ri)^2}{n_{\ell}}\sum_{\delta_{}\in\D}\delta_{i_0i_1}\bra\!\!\!\bra\frac{\partial \O}{\partial \z{i_2}{\delta_{}}{\ell+1}} \ket\!\!\!\ket_{\!\!\!G^{(\ell+1)}}\le\{\frac{1}{n_{\ell}}\sum_{k,m}\E{\ds{k}{\delta_0}{\ell}\ds{k}{\delta_1}{\ell}\ds{m}{\delta_2}{\ell}\s{m}{\delta_{}}{\ell} \Tia{\dNTK}{kkm}{\delta_0\delta_1\delta_2}{\ell}}\ri\}\, \notag\\
+&+\frac{\le(\CW{\ell+1}\ri)^2}{n_{\ell}}\sum_{\delta_{}\in\D}\delta_{i_0i_2}\bra\!\!\!\bra\frac{\partial \O}{\partial \z{i_1}{\delta_{}}{\ell+1}} \ket\!\!\!\ket_{\!\!\!G^{(\ell+1)}}\le\{\frac{1}{n_{\ell}}\sum_{k,m}\E{\ds{k}{\delta_0}{\ell}\ds{m}{\delta_1}{\ell}\ds{k}{\delta_2}{\ell}\s{m}{\delta_{}}{\ell}\Tia{\dNTK}{kmk}{\delta_0\delta_1\delta_2}{\ell}}\ri\}\, \notag\\
+&+\frac{\le(\CW{\ell+1}\ri)^2}{n_{\ell}}\sum_{\delta_{}\in\D}\delta_{i_1i_2}\bra\!\!\!\bra\frac{\partial \O}{\partial \z{i_0}{\delta_{}}{\ell+1}} \ket\!\!\!\ket_{\!\!\!G^{(\ell+1)}}\le\{\frac{1}{n_{\ell}}\sum_{k,m}\E{\ds{m}{\delta_0}{\ell}\ds{k}{\delta_1}{\ell}\ds{k}{\delta_2}{\ell}\s{m}{\delta_{}}{\ell}\Tia{\dNTK}{mkk}{\delta_0\delta_1\delta_2}{\ell}}\ri\}\, \notag\\
+&+\o{\frac{1}{n^2}}\, .
+\end{align}
+Note that the factors in the curly brackets are actually of order one since -- as we saw in the second layer and will recursively show next for general layers $\ell$ -- the leading dNTK-preactivation cross correlation is of order $1/n$. 
+Meanwhile, again the final would-be term proportional to $\partial^3\O$ is subleading:
+\begin{align}
+&\le(\CW{\ell+1}\ri)^3\sum_{\delta_3,\delta_4,\delta_5\in\D}\bra\!\!\!\bra\frac{\partial^3 \O}{\partial \z{i_0}{\delta_3}{\ell+1}\partial \z{i_1}{\delta_4}{\ell+1}\partial \z{i_2}{\delta_5}{\ell+1}} \ket\!\!\!\ket_{\!\!\!\ker^{(\ell+1)}}\, \\
+&\quad\quad\times\frac{1}{n_{\ell}^3}\sum_{k_0,k_1,k_2}\E{\le(\ds{k_0}{\delta_0}{\ell}\s{k_0}{\delta_3}{\ell}\ri)\le(\ds{k_1}{\delta_1}{\ell}\s{k_1}{\delta_4}{\ell} \ri)\le(\ds{k_2}{\delta_2}{\ell}\s{k_2}{\delta_5}{\ell}\ri)\Tia{\dNTK}{k_0k_1k_2}{\delta_0\delta_1\delta_2}{\ell}} = \o{\frac{1}{n^2}} \, \notag .
+\end{align}
+To see why, note that the expectation is another dNTK-preactivation cross correlator and thus is at most of order $1/n$. 
+Further, we only get such an order-$1/n$ contribution  when two out of three neural indices $k_0, k_1, k_2$ coincide: this should be clear from the pattern of Kronecker deltas that arise when we evaluate such dNTK-preactivation cross correlations in terms of our 
+$P$-$Q$ decomposition; cf.~\eqref{eq:dntk-second-layer-decomposition} for the second layer, or look ahead a paragraph to \eqref{eq:cross-dNTK-general-leading} for deeper layers.
+This means that the sum over all three neural indices will be restricted to be only two independent sums and, taking the prefactor of $1/n^3$ into account, the overall contribution of this term will thus go as $\sim(1/n^3)(n^2)(1/n)\sim 1/n^2$.
+
+
+
+
+
+
+Substituting all our evaluated contributions \eqref{eq:dNTK-cross-correlation-contribution-1} (twice), \eqref{eq:dNTK-cross-correlation-contribution-2}, and \eqref{eq:dNTK-cross-correlation-contribution-3} into our expression for a general dNTK-preactivation cross correlator \eqref{eq:cross-dNTK-general}, we get
+\begin{align}\label{eq:cross-dNTK-general-leading}
+&\E{\O\!\le(z^{(\ell+1)}\ri)\, \Tia{\dNTK}{i_0i_1i_2}{\delta_0\delta_1\delta_2}{\ell+1}}\, \\
+=&\frac{1}{n_{\ell}}\sum_{\delta_{}\in\D}\Bigg[\delta_{i_1i_2}\bra\!\!\!\bra\frac{\partial \O}{\partial \z{i_0}{\delta_{}}{\ell+1}} \ket\!\!\!\ket_{\!\!\!G^{(\ell+1)}}\!\!\!\!\! \dNTKP{\delta_0\delta_1\delta_2\delta_{}}{\ell+1}\, \notag\\
+&\quad\quad\quad\quad+\delta_{i_0i_1}\bra\!\!\!\bra\frac{\partial \O}{\partial \z{i_2}{\delta_{}}{\ell+1}} \ket\!\!\!\ket_{\!\!\!G^{(\ell+1)}}\!\!\!\!\!  \dNTKQ{\delta_0\delta_1\delta_2\delta_{}}{\ell+1}+\delta_{i_0i_2}\bra\!\!\!\bra\frac{\partial \O}{\partial \z{i_1}{\delta_{}}{\ell+1}} \ket\!\!\!\ket_{\!\!\!G^{(\ell+1)}}\!\!\!\!\!  \dNTKQ{\delta_0\delta_2\delta_1\delta_{}}{\ell+1}\Bigg] + \o{\frac{1}{n^2}}, \notag
+\end{align}
+where we've introduced the $(\ell+1)$-th-layer generalizations of the second-layer tensors $P^{(2)}$~\eqref{eq:dNTKP-second-layer} and $Q^{(2)}$~\eqref{eq:dNTKQ-second-layer}:
+\begin{align}
+\dNTKP{\delta_0\delta_1\delta_2\delta_3}{\ell+1}\equiv&\le(\CW{\ell+1}\ri)^2 \frac{1}{n_{\ell}}\sum_{k,m=1}^{n_{\ell}}\E{\dds{m}{\delta_0}{\ell}\ds{k}{\delta_1}{\ell}\ds{k}{\delta_2}{\ell} \s{m}{\delta_3}{\ell}\Tia{\NTK}{mk}{\delta_0\delta_1}{\ell}\Tia{\NTK}{mk}{\delta_0\delta_2}{\ell}}\,\label{eq:dNTKP-recursion-implicit} \\
+&+\le(\CW{\ell+1}\ri)^2\frac{1}{n_{\ell}}\sum_{k,m=1}^{n_{\ell}}\E{\ds{m}{\delta_0}{\ell}\ds{k}{\delta_1}{\ell}\ds{k}{\delta_2}{\ell}\s{m}{\delta_3}{\ell}\Tia{\dNTK}{mkk}{\delta_0\delta_1\delta_2}{\ell}}+ \oninv\, ,\notag \\
+\dNTKQ{\delta_0\delta_1\delta_2\delta_3}{\ell+1}\equiv&\le(\CW{\ell+1}\ri)^2 \frac{1}{n_{\ell}}\sum_{k,m=1}^{n_{\ell}}\E{\dds{k}{\delta_0}{\ell}\ds{k}{\delta_1}{\ell}\ds{m}{\delta_2}{\ell}\s{m}{\delta_3}{\ell}\Tia{\NTK}{kk}{\delta_0\delta_1}{\ell}\Tia{\NTK}{k m}{\delta_0\delta_2}{\ell}}+\frac{\lambda_{W}^{(\ell+1)}}{\CW{\ell+1}}\NTHF{\delta_1\delta_0\delta_3\delta_2}{\ell+1}\, \notag\\
+&+\le(\CW{\ell+1}\ri)^2\frac{1}{n_{\ell}}\sum_{k,m=1}^{n_{\ell}}\E{\ds{k}{\delta_0}{\ell}\ds{k}{\delta_1}{\ell}\ds{m}{\delta_2}{\ell}\s{m}{\delta_3}{\ell} \Tia{\dNTK}{kkm}{\delta_0\delta_1\delta_2}{\ell}} + \oninv\, . \label{eq:dNTKQ-recursion-implicit}
+\end{align}
+To see how these general expressions reduce to the ones we had for $\dNTKP{\delta_0\delta_1\delta_2\delta_3}{2}$  and $ \dNTKQ{\delta_0\delta_1\delta_2\delta_3}{2}$ in the second layer, \eqref{eq:dNTKP-second-layer} and \eqref{eq:dNTKQ-second-layer}, recall that
+the first-layer NTK is deterministic and diagonal in neural indices $\Tia{\NTK}{i_1i_2}{\delta_1\delta_2}{1}=\delta_{i_1i_2}\Ti{\NTKM}{\delta_1\delta_2}{1}$, that the first-layer dNTK vanishes $\Tia{\dNTK}{i_0i_1i_2}{\delta_0\delta_1\delta_2}{1}=0$, and that in the second layer we had for the NTK-preactivation cross correlation tensor $\NTHF{\delta_1\delta_0\delta_3\delta_2}{2}=\le(\CW{2}\ri)^2\Ti{\NTKM}{\delta_0\delta_2}{1}\bra\sigma_{\delta_1}\sigma_{\delta_3}\sigma^{\prime}_{\delta_0}\sigma^{\prime}_{\delta_2}\ket_{G^{(1)}}$ \eqref{eq:F-recursion-second}.
+
+
+
+
+
+Finally, note that by setting our observable to $\O = \z{i_3}{\delta_3}{\ell+1}$, we get
+\begin{align}\label{eq:dntk-ell-layer-decomposition}
+\E{\Tia{\dNTK}{i_0i_1i_2}{\delta_0\delta_1\delta_2}{\ell+1}\z{i_3}{\delta_3}{\ell+1}}=&\frac{1}{n_{\ell}}\le[\delta_{i_0 i_3}\delta_{i_1i_2}\dNTKP{\delta_0\delta_1\delta_2\delta_3}{\ell+1}+\delta_{i_0i_1}\delta_{i_2i_3}\dNTKQ{\delta_0\delta_1\delta_2\delta_3}{\ell+1}+\delta_{i_0i_2}\delta_{i_1i_3}\dNTKQ{\delta_0\delta_2\delta_1\delta_3}{\ell+1}\ri]\, .
+\end{align}
+Importantly, this means that at leading non-vanishing order in $1/n$, the tensors in the decomposition\index{tensor decomposition!dNTK-preactivation $P$/$Q$} of our elementary dNTK-preactivation cross correlator with a single preactivation \eqref{eq:dntk-ell-layer-decomposition} completely fix the general dNTK-preactivation cross correlation 
+with more complicated observables \eqref{eq:cross-dNTK-general-leading}.\footnote{In other words, at our order in $1/n$
+we can always replace the $\ell$-th-layer dNTK inside any expectations by the following differential operator
+\begin{align}\label{eq:cross-dNTK-general-leading-operator}
+\Tia{\dNTK}{i_0i_1i_2}{\delta_0\delta_1\delta_2}{\ell}\to \frac{1}{n_{\ell-1}}\sum_{\delta_{}\in\D}\Bigg[\delta_{i_1i_2}\dNTKP{\delta_0\delta_1\delta_2\delta_{}}{\ell}\frac{\partial}{\partial \z{i_0}{\delta_{}}{\ell}}+\delta_{i_0i_1}\dNTKQ{\delta_0\delta_1\delta_2\delta_{}}{\ell}\frac{\partial}{\partial \z{i_2}{\delta_{}}{\ell}}+\delta_{i_0i_2} \dNTKQ{\delta_0\delta_2\delta_1\delta_{}}{\ell}\frac{\partial}{\partial \z{i_1}{\delta_{}}{\ell}}\Bigg]\, ,
+\end{align}
+with non-fluctuating coefficients $P^{(\ell)}$ and $Q^{(\ell)}$. When we use this replacement, we must remember that the derivatives act on all of the $\ell$-th-layer preactivations multiplying the dNTK; i.e.~move the dNTK all the way to the left side of the expectation before making such a replacement.}
+Thus, to completely incorporate the leading effects of the dNTK in our analysis we only need to evaluate recursions for $P^{(\ell)}$ and $Q^{(\ell)}$.\footnote{
+     Any preactivation-NTK-dNTK cross correlators such as $\E{\DNTK{i_1i_2}{\delta_1\delta_2}{\ell} \Tia{\dNTK}{i_3i_4i_5}{\delta_3\delta_4\delta_5}{\ell}\z{i_6}{\delta_6}{\ell}}$     
+      and any higher-order dNTK correlators such as  $\E{ \Tia{\dNTK}{i_0i_1i_2}{\delta_0\delta_1\delta_2}{\ell} \Tia{\dNTK}{i_3i_4i_5}{\delta_3\delta_4\delta_5}{\ell}}$ are subleading. We won't show this explicitly, but you may find additional tranquility in working it out for yourself;
+     both examples are relatively simple to work out for the second layer, $L = 2$.
+}
+
+\subsubsection{$P$-recursion}\index{differential of the neural tangent kernel!dNTK-preactivation cross correlation|see{cross correlation}}\index{cross correlation!dNTK-preactivation!P-recursion@$P$-recursion}
+To find a recursion for $P^{(\ell)}$, we need to evaluate the two expectations in \eqref{eq:dNTKP-recursion-implicit}.
+
+\index{tensor decomposition!NTK mean and fluctuation}
+For the first expectation, making a decomposition of the NTK into a mean and fluctuation as $\Tia{\NTK}{i_1i_2}{\delta_1\delta_2}{\ell}=\delta_{i_1i_2}\Ti{\NTKM}{\delta_1\delta_2}{\ell}+\DNTK{i_1i_2}{\delta_1\delta_2}{\ell}$, we get
+\begin{align}\label{eq:P-recursion-piece-1}
+&\frac{1}{n_{\ell}^2}\sum_{k,m}\E{\dds{m}{\delta_0}{\ell}\ds{k}{\delta_1}{\ell}\ds{k}{\delta_2}{\ell}\s{m}{\delta_3}{\ell}\Tia{\NTK}{mk}{\delta_0\delta_1}{\ell}\Tia{\NTK}{mk}{\delta_0\delta_2}{\ell}}\, \\
+=&\frac{1}{n_{\ell}}\bra\sigma^{\prime\prime}_{\delta_0}\sigma^{\prime}_{\delta_1}\sigma^{\prime}_{\delta_2}\sigma_{\delta_3} \ket_{G^{(\ell)}}\Ti{\NTKM}{\delta_0\delta_1}{\ell}\Ti{\NTKM}{\delta_0\delta_2}{\ell}+\frac{1}{n_{\ell-1}}\bra\sigma^{\prime\prime}_{\delta_0} \sigma_{\delta_3} \ket_{G^{(\ell)}}\bra\sigma^{\prime}_{\delta_1} \sigma^{\prime}_{\delta_2}  \ket_{G^{(\ell)}} \NTHB{\delta_0\delta_0\delta_1\delta_2}{\ell}+\o{\frac{1}{n^2}}\, .\notag
+\end{align}
+In particular, the cross terms consisting of an NTK mean and an NTK fluctuation dropped out because the Kronecker delta from the mean constrained the double sum and the fluctuation gave an additional $1/n$ suppression.
+If this explanation was a little too fast, you should review our slower derivation of the $B$-recursion from \eqref{eq:Bstart} to \eqref{eq:B-recursion}, which is identical in form to \eqref{eq:P-recursion-piece-1} above up to where the sample indices and the derivatives go.
+
+
+For the second expectation in \eqref{eq:dNTKP-recursion-implicit}, we can just apply our general cross-correlation formula \eqref{eq:cross-dNTK-general-leading} for layer $\ell$, letting us simplify it as
+\begin{align}
+&\frac{1}{n_{\ell}}\sum_{k,m=1}^{n_{\ell}}\E{\ds{m}{\delta_0}{\ell}\ds{k}{\delta_1}{\ell}\ds{k}{\delta_2}{\ell}\s{m}{\delta_3}{\ell}\Tia{\dNTK}{mkk}{\delta_0\delta_1\delta_2}{\ell}}\, \\
+=&\frac{1}{n_{\ell}n_{\ell-1}}\!\sum_{k,m=1}^{n_{\ell}}\sum_{\delta_4\in\D}\Bigg[\bra\!\!\!\bra\frac{\partial}{\partial \z{m}{\delta_4}{\ell}}\le(\ds{m}{\delta_0}{\ell}\ds{k}{\delta_1}{\ell}\ds{k}{\delta_2}{\ell}\s{m}{\delta_3}{\ell}\ri)\ket\!\!\!\ket_{G^{(\ell)}}\!\!\!\!\!\!\dNTKP{\delta_0\delta_1\delta_2\delta_4}{\ell}+\delta_{mk}\times\o{1}\!\Bigg]+\o{\frac{1}{n}}\, \notag\\
+=&\le(\frac{n_{\ell}}{n_{\ell-1}}\ri)\le[\bra\sigma^{\prime\prime}_{\delta_0}\sigma_{\delta_3}\ket_{G^{(\ell)}}\bra\sigma^{\prime}_{\delta_1}\sigma^{\prime}_{\delta_2}\ket_{G^{(\ell)}}\dNTKP{\delta_0\delta_1\delta_2\delta_0}{\ell}+\bra\sigma^{\prime}_{\delta_0}\sigma^{\prime}_{\delta_3}\ket_{\ker^{(\ell)}}\bra\sigma^{\prime}_{\delta_1}\sigma^{\prime}_{\delta_2}\ket_{\ker^{(\ell)}}\dNTKP{\delta_0\delta_1\delta_2\delta_3}{\ell}\ri]+\o{\frac{1}{n}}\, .\notag
+\end{align}
+Here in the second line, we've simply written the $Q^{(\ell)}$ terms proportional to $\delta_{mk}$ as $\o{1}$; the details of these terms do not matter because when we perform the double sum with the restriction  $m=k$, they will be subleading. As for the term proportional to $P^{(\ell)}$, the diagonal contribution with $k=m$ is similarly subleading; the leading contribution comes from the $(n_{\ell}^2-n_{\ell})$ off-diagonal pieces with $k\ne m$, for which the derivative acts only on two activations out of the four, and then we can further use Gaussian factorization to write each term as a product of single-neuron Gaussian expectations. 
+
+
+Plugging these two simplified expectations back into our expression for  $P^{(\ell+1)}$ \eqref{eq:dNTKP-recursion-implicit}, we get a recursion:
+\begin{align}
+\dNTKP{\delta_0\delta_1\delta_2\delta_3}{\ell+1}=&\le(\CW{\ell+1}\ri)^2\!\!\bra\sigma^{\prime\prime}_{\delta_0}\sigma^{\prime}_{\delta_1}\sigma^{\prime}_{\delta_2}\sigma_{\delta_3} \ket_{G^{(\ell)}}\Ti{\NTKM}{\delta_0\delta_1}{\ell}\Ti{\NTKM}{\delta_0\delta_2}{\ell}\, \label{eq:dNTKP-recursion-explicit}\\
+&+\le(\frac{n_{\ell}}{n_{\ell-1}}\ri)\le(\CW{\ell+1}\ri)^2\bra\sigma^{\prime}_{\delta_1}\sigma^{\prime}_{\delta_2}\ket_{G^{(\ell)}}\, \notag\\
+&\quad \times\!\!\Bigg[\!\!\bra\sigma^{\prime\prime}_{\delta_0}\sigma_{\delta_3}\ket_{\!G^{(\ell)}}\!\dNTKP{\delta_0\delta_1\delta_2\delta_0}{\ell}\!\!+\!\bra\sigma^{\prime}_{\delta_0}\sigma^{\prime}_{\delta_3}\ket_{\!G^{(\ell)}}\!\dNTKP{\delta_0\delta_1\delta_2\delta_3}{\ell}\!\!+\!\bra\sigma^{\prime\prime}_{\delta_0} \sigma_{\delta_3} \ket_{\!G^{(\ell)}}\!\NTHB{\delta_0\delta_0\delta_1\delta_2}{\ell} \!\Bigg]\!\!+\!\o{\frac{1}{n}}\, . \notag
+\end{align}
+Interestingly, we see that this dNTK tensor $P^{(\ell)}$ mixes with the NTK mean $\NTKM^{(\ell)}$ as well as the NTK-variance tensor $B^{(\ell)}$.
+Since $\NTKM^{(\ell)}$ and $B^{(\ell)}$ are of order one, and since $P^{(1)}=0$, this recursion shows that $P^{(\ell)}$ will recursively stay of order one for all layers $\ell$.
+
+
+
+
+
+
+\subsubsection{$Q$-recursion}\index{cross correlation!dNTK-preactivation!Q-recursion@$Q$-recursion}
+To find a recursion for $Q^{(\ell)}$, we need to work out the two expectations in \eqref{eq:dNTKQ-recursion-implicit}. 
+
+\index{tensor decomposition!NTK mean and fluctuation}
+For the  first expectation, again  making a decomposition of the NTK into a mean and fluctuation as $\Tia{\NTK}{i_1i_2}{\delta_1\delta_2}{\ell}=\delta_{i_1i_2}\Ti{\NTKM}{\delta_1\delta_2}{\ell}+\DNTK{i_1i_2}{\delta_1\delta_2}{\ell}$, we get
+\begin{align}
+&\frac{1}{n_{\ell}^2}\sum_{k,m}\E{\dds{k}{\delta_0}{\ell}\ds{k}{\delta_1}{\ell}\ds{m}{\delta_2}{\ell} \s{m}{\delta_3}{\ell} \Tia{\NTK}{kk}{\delta_0\delta_1}{\ell}\Tia{\NTK}{k m}{\delta_0\delta_2}{\ell}}\, \\
+=&\frac{1}{n_{\ell}^2}\sum_{k}\E{\dds{k}{\delta_0}{\ell}\ds{k}{\delta_1}{\ell}\ds{k}{\delta_2}{\ell}\s{k}{\delta_3}{\ell} }\Ti{\NTKM}{\delta_0\delta_1}{\ell}\Ti{\NTKM}{\delta_0\delta_2}{\ell}+\frac{1}{n_{\ell}^2}\sum_{k}\E{  \s{k}{\delta_3}{\ell} \dds{k}{\delta_0}{\ell}\ds{k}{\delta_1}{\ell}\ds{k}{\delta_2}{\ell}\DNTK{kk}{\delta_0\delta_1}{\ell}}\Ti{\NTKM}{\delta_0\delta_2}{\ell}\, \notag\\
+&+\frac{1}{n_{\ell}^2}\sum_{k,m}\E{\dds{k}{\delta_0}{\ell}\ds{k}{\delta_1}{\ell}\ds{m}{\delta_2}{\ell}\s{m}{\delta_3}{\ell} \DNTK{k m}{\delta_0\delta_2}{\ell}}\Ti{\NTKM}{\delta_0\delta_1}{\ell}\, \notag\\
+&+\frac{1}{n_{\ell}^2}\sum_{k,m}\E{\dds{k}{\delta_0}{\ell}\ds{k}{\delta_1}{\ell}\ds{m}{\delta_2}{\ell}\s{m}{\delta_3}{\ell} \DNTK{kk}{\delta_0\delta_1}{\ell}\DNTK{k m}{\delta_0\delta_2}{\ell}}\, \notag\\
+=&\frac{1}{n_{\ell}}\bra\sigma^{\prime\prime}_{\delta_0}\sigma^{\prime}_{\delta_1}\sigma^{\prime}_{\delta_2}\sigma_{\delta_3} \ket_{G^{(\ell)}}\Ti{\NTKM}{\delta_0\delta_1}{\ell}\Ti{\NTKM}{\delta_0\delta_2}{\ell}\, \notag\\
+&+\frac{1}{n_{\ell-1}}\sum_{\delta_4,\delta_5, \delta_6, \delta_7} \Ti{\NTKM}{\delta_0\delta_1}{\ell}\bra z_{\delta_4}\sigma^{\prime\prime}_{\delta_0}\sigma^{\prime}_{\delta_1} \ket_{G^{(\ell)}}\bra z_{\delta_5}\sigma^{\prime}_{\delta_2}\sigma_{\delta_3} \ket_{G^{(\ell)}}\TI{G}{\delta_4\delta_6}{\ell}\TI{G}{\delta_5\delta_7}{\ell}\NTHF{\delta_6\delta_0\delta_7\delta_2}{\ell}+\o{\frac{1}{n^2}}\, .\notag
+\end{align}
+Here, to go from the second expression to the third expression, we had to evaluate four expectations: the first expectation gives a single-neuron Gaussian expectation at leading order; the second expectation is subleading, cf.~\eqref{eq:most-general}; the third expectation can also be evaluated with that same general NTK-preactivation cross-correlation formula \eqref{eq:most-general}, but in this case gives a leading term proportional to $F^{(\ell)}$; and the final expectation vanishes due to the unpaired $m$ neural index, cf.~similar manipulations in \eqref{eq:correlator-paradise} and then the decomposition~\eqref{eq:NTH-variance-decomposition}.
+
+
+
+
+
+
+
+
+To simplify the second expectation in \eqref{eq:dNTKQ-recursion-implicit}, we can again apply our general cross-correlation formula \eqref{eq:cross-dNTK-general-leading} for layer $\ell$:
+\begin{align}
+&\frac{1}{n_{\ell}}\sum_{k,m=1}^{n_{\ell}}\E{\ds{k}{\delta_0}{\ell}\ds{k}{\delta_1}{\ell}\ds{m}{\delta_2}{\ell}\s{m}{\delta_3}{\ell} \Tia{\dNTK}{kkm}{\delta_0\delta_1\delta_2}{\ell}}\, \\
+=&\frac{1}{n_{\ell}n_{\ell-1}}\sum_{k,m=1}^{n_{\ell}}\sum_{\delta_4\in\D}\Bigg[\bra\!\!\!\bra\frac{\partial}{\partial \z{m}{\delta_4}{\ell}}\le(\ds{k}{\delta_0}{\ell}\ds{k}{\delta_1}{\ell}\ds{m}{\delta_2}{\ell}\s{m}{\delta_3}{\ell}\ri)\ket\!\!\!\ket_{G^{(\ell)}}\dNTKQ{\delta_0\delta_1\delta_2\delta_4}{\ell}\Bigg]+\o{\frac{1}{n}}\, \notag\\
+=&\le(\frac{n_{\ell}}{n_{\ell-1}}\ri)\le[\bra\sigma^{\prime\prime}_{\delta_2}\sigma_{\delta_3}\ket_{\ker^{(\ell)}}\bra\sigma^{\prime}_{\delta_0}\sigma^{\prime}_{\delta_1}\ket_{G^{(\ell)}}\dNTKQ{\delta_0\delta_1\delta_2\delta_2}{\ell}+\bra\sigma^{\prime}_{\delta_2}\sigma^{\prime}_{\delta_3}\ket_{G^{(\ell)}}\bra\sigma^{\prime}_{\delta_1}\sigma^{\prime}_{\delta_2}\ket_{G^{(\ell)}}\dNTKQ{\delta_0\delta_1\delta_2\delta_3}{\ell}\ri]+\o{\frac{1}{n}}\, .\notag
+\end{align}
+Here in the second line, this time we didn't even write the terms proportional to $\delta_{mk}$; just as we saw before when working out the $P$-recursion, the restriction $k=m$ for the double sum will make such terms
+subleading.
+In the final equality -- again similarly to the $P$-recursion -- we kept the off-diagonal terms with $k\ne m$, took the derivative, used Gaussian factorization, and performed the double sum.
+
+
+Plugging these two simplified expectations back into our expression for  $Q^{(\ell+1)}$ \eqref{eq:dNTKQ-recursion-implicit}, we get our final recursion of the book:
+\begin{align}
+\dNTKQ{\delta_0\delta_1\delta_2\delta_3}{\ell+1}=&\le(\CW{\ell+1}\ri)^2\!\!\bra\sigma^{\prime\prime}_{\delta_0}\sigma^{\prime}_{\delta_1}\sigma^{\prime}_{\delta_2}\sigma_{\delta_3} \ket_{G^{(\ell)}}\Ti{\NTKM}{\delta_0\delta_1}{\ell}\Ti{\NTKM}{\delta_0\delta_2}{\ell}+\frac{\lambda_{W}^{(\ell+1)}}{\CW{\ell+1}}\NTHF{\delta_1\delta_0\delta_3\delta_2}{\ell+1}\, \label{eq:dNTKQ-recursion-explicit} \notag \\
+&+\!\le(\frac{n_{\ell}}{n_{\ell-1}}\ri)\!\le(\CW{\ell+1}\ri)^2\!\!\bra\sigma^{\prime}_{\delta_0}\sigma^{\prime}_{\delta_1}\ket_{G^{(\ell)}}\!\!\le[\bra\sigma^{\prime\prime}_{\delta_2}\sigma_{\delta_3}\ket_{G^{(\ell)}}\dNTKQ{\delta_0\delta_1\delta_2\delta_2}{\ell}+\bra\sigma^{\prime}_{\delta_2}\sigma^{\prime}_{\delta_3}\ket_{G^{(\ell)}}\dNTKQ{\delta_0\delta_1\delta_2\delta_3}{\ell}\ri]\, \notag\\
+&+\!\le(\frac{n_{\ell}}{n_{\ell-1}}\ri)\!\le(\CW{\ell+1}\ri)^2 \!\!\Ti{\NTKM}{\delta_0\delta_1}{\ell}\!\!\!\!\!\!\sum_{\delta_4,\ldots,\delta_7\in\D}\!\! \!\!\!\!\bra z_{\delta_4}\sigma^{\prime\prime}_{\delta_0}\sigma^{\prime}_{\delta_1} \ket_{G^{(\ell)}}\!\!\bra z_{\delta_5}\sigma^{\prime}_{\delta_2}\sigma_{\delta_3} \ket_{G^{(\ell)}}\!\TI{G}{\delta_4\delta_6}{\ell}\TI{G}{\delta_5\delta_7}{\ell}\NTHF{\delta_6\delta_0\delta_7\delta_2}{\ell} \,\notag  \\
+&+\o{\frac{1}{n}}\, . 
+\end{align}
+Interestingly, in this case we see that this dNTK tensor $Q^{(\ell)}$ mixes with the NTK mean $\NTKM^{(\ell)}$ as well as the NTK-preactivation cross-correlation tensor $F^{(\ell)}$.\footnote{Also of possible interest, while the recursions for $F^{(\ell)}$ \eqref{eq:F-recursion} and $B^{(\ell)}$ \eqref{eq:B-recursion} were sourced by the NTK mean $\NTKM^{(\ell)}$, but otherwise didn't mix with any finite-width tensors, the recursion for  NTK-preactivation cross-correlation tensor $D^{(\ell)}$ \eqref{eq:D-recursion} mixed with the four-point vertex $V^{(\ell)}$, and the recursion for NTK-variance tensor $A^{(\ell)}$ \eqref{eq:A-recursion} mixed with both $V^{(\ell)}$ and $D^{(\ell)}$. Thus, at least at this order, it seems like the correlations and fluctuations of the type $F^{(\ell)}$ and $B^{(\ell)}$ are potentially useful for the representation learning that the dNTK induces, while $V^{(\ell)}$, $D^{(\ell)}$ and $A^{(\ell)}$ may be more associated with instantiation-to-instantiation fluctuations.}
+Again, since $\NTKM^{(\ell)}$ and $F^{(\ell)}$ are both of order one, and since $Q^{(1)}=0$, this recursion shows that $Q^{(\ell)}$ will also recursively stay of order one for all layers $\ell$.\\
+
+
+
+
+
+
+In conclusion, together with the general dNTK-preactivation cross-correlation formula \eqref{eq:cross-dNTK-general-leading}, the $P$-$Q$ recursions, \eqref{eq:dNTKP-recursion-explicit} and \eqref{eq:dNTKQ-recursion-explicit}, show that the leading dNTK-preactivation cross correlation is $1/n$-suppressed. In other words, the effects of the dNTK are visible \emph{at finite width only}.
+
+
+
+\section{Effective Theory of the dNTK at Initialization}\label{sec:dNTK-criticality}
+This section parallels our previous effective theory work on preactivation statistics and NTK-preactivation joint statistics (\S\ref{ch:eft-mlp}$\,\parallel\,$\S\ref{ch:eft-ntk}). In particular, 
+since we already know so many different reasons why criticality is essential, cf.~\S\ref{ch:eft-mlp}, \S\ref{ch:bayesian-inference}, \S\ref{ch:eft-ntk}, and \S\ref{ch:NTHb}, we'll spend less time on the disastrous consequences of not picking critical initialization hyperparameters and more time on finding asymptotic solutions to the $P$- and $Q$-recursions at criticality.\index{criticality}
+
+
+As we did in our discussion of preactivation criticality in~\S\ref{ch:eft-mlp} and NTK criticality in~\S\ref{ch:eft-ntk}, throughout this section we'll set the bias variance $C_b^{(\ell)}$ and the rescaled weight variance $C_W^{(\ell)}$ to be uniform across layers
+\be\label{eq:ntk-chapter-initialziation-hyperparameters-dropped-layer-dependence-reprint}
+C_b^{(\ell)}=C_b\, , \qquad C_W^{(\ell)}=C_W\, .
+\ee
+Further mirroring \S\ref{sec:signal_prop_finite_width} and \S\ref{sec:ntk_criticality}--\S\ref{sec:ntk_criticality_tanh_univ}, we'll consider MLPs with uniform hidden layer widths
+\be\label{eq:ntk-chapter-layer-widths-equalized-reprint}
+n_1=\ldots=n_{L-1}\equiv n\, .
+\ee
+Finally, analogous to \S\ref{ch:eft-ntk},  we're only going to focus on single-input statistics, leaving the evaluation of the multi-input recursions as an \terminate{adventure for thrill seekers}.\footnote{\label{foot:thrill-seekers-guide}You'll have to generalize the $\gamma^{[a]}$ into a tensor product $\gamma^{[a]} \otimes \gamma^{[b]}$ and then further decompose such a basis according to the symmetries of the finite-width tensors you'll want to expand.
+}
+
+
+With these choices made, let's write down the leading single-input 
+recursions for  $\dNTKP{}{\ell}$ and $\dNTKQ{}{\ell}$. Dropping the sample indices and contributions that are subleading in $1/n$, in particular replacing the mean metric by the kernel $G^{(\ell)} \to \ker^{(\ell)}$ and the NTK mean by the frozen NTK $\NTKM^{(\ell)} \to \NTKI^{(\ell)}$,
+the recursions \eqref{eq:dNTKP-recursion-explicit} and \eqref{eq:dNTKQ-recursion-explicit} reduce to 
+\begin{align}
+\dNTKP{}{\ell+1}=&C_W^2\bra\sigma^{\prime\prime}\sigma^{\prime}\sigma^{\prime}\sigma\ket_{\ker^{(\ell)}}\le( \Ti{\NTKI}{}{\ell} \ri)^2 + C_W \Ti{\chi}{\perp}{\ell}\bra\sigma^{\prime\prime}\sigma\ket_{\ker^{(\ell)}} \NTHB{}{\ell} \, \notag \\
+ &+\le[C_W \Ti{\chi}{\perp}{\ell} \bra\sigma^{\prime\prime}\sigma\ket_{\ker^{(\ell)}}+ \le(\Ti{\chi}{\perp}{\ell}\ri)^2 \ri]\dNTKP{}{\ell}  \, , \label{eq:dNTKP-recursion-single-input}\\
+\dNTKQ{}{\ell+1}=&C_W^2\bra\sigma^{\prime\prime}\sigma^{\prime}\sigma^{\prime}\sigma\ket_{\ker^{(\ell)}}\le( \Ti{\NTKI}{}{\ell}\ri)^2
++\frac{\lambda_{W}^{(\ell+1)}}{C_W} \NTHF{}{\ell+1}
++ 2 h^{(\ell)} \Ti{\chi}{\parallel}{\ell} \Ti{\NTKI}{}{\ell}\NTHF{}{\ell}
+\, \label{eq:dNTKQ-recursion-single-input} \notag \\
+&+ \le[C_W \Ti{\chi}{\perp}{\ell} \bra\sigma^{\prime\prime}\sigma\ket_{\ker^{(\ell)}}+\le(\Ti{\chi}{\perp}{\ell}\ri)^2 \ri]\dNTKQ{}{\ell}\, , 
+\end{align}
+with the initial conditions (cf.~\S\ref{subsec:first-layer-zero-dNTK})
+\be\label{eq:dntk-initial-conditions}
+\dNTKP{}{1}=\dNTKQ{}{1}=0\, .
+\ee
+To simplify these expressions, we have recalled our two susceptibilities, the \terminate{parallel susceptibility} \eqref{eq:chi-parallel} and the \terminate{perpendicular susceptibility} \eqref{eq:chi-perp}, 
+which are given by
+\begin{align}
+\Ti{\chi}{\parallel}{\ell}  &\equiv \frac{C_W}{\ker^{(\ell)}} \bra \sigma^\prime \sigma  z \ket_{\ker^{(\ell)}} \, , \\
+\Ti{\chi}{\perp}{\ell} 
+&\equiv  C_W\bra\sigma^{\prime}\sigma^{\prime}\ket_{\ker^{(\ell)}}\, , 
+\end{align}
+and we have also recalled our least favorite helper function \eqref{eq:h-function},
+\begin{align}
+h^{(\ell)}&\equiv \frac{1}{2}\frac{\td }{\td K^{(\ell)}}\chi_{\perp}^{(\ell)} = \frac{C_W}{2K^{(\ell)}} \bra   \sigma^{\prime\prime} \sigma^\prime  z \ket_{K^{(\ell)}} \, ,\label{eq:h-function-reprint-new}
+\end{align}
+though we've given a new expression for it on the right-hand side, obtained through integration by parts, cf.~\eqref{eq:gaussian-integration-by-parts-formula}.
+
+
+
+
+To solve these recursions at criticality, we need to remember our \terminate{scaling ansatz} for observables \eqref{eq:master-scaling-ansatz},
+\begin{align}\label{eq:master-scaling-ansatz-reprint-the-second}
+\Ti{\O}{}{\ell} &= \le( \frac{1}{\ell} \ri)^{p_\O} \le[c_{0,0}+  c_{1,1} \le( \frac{\log \ell}{\ell} \ri) + c_{1,0}\le( \frac{ 1}{\ell}\ri) +  c_{2,2} \le(  \frac{\log^2 \ell}{\ell^2} \ri)+  \dots \ri]\, .%
+\end{align}
+Here, solving the dNTK recursions will yield new critical exponents $p_P$ and $p_Q$ that describe the asymptotic depth scaling of $\dNTKP{}{\ell}$ and $\dNTKQ{}{\ell}$, respectively.
+
+
+\index{differential of the neural tangent kernel!scaling laws}
+Additionally,  in order to understand the relative size of the dNTK-preactivation cross correlation, we will need to identify appropriate dimensionless quantities just as we did before in \S\ref{sec:signal_prop_finite_width} and \S\ref{sec:ntk_criticality}. 
+In this case, it will turn out that we should normalize by 
+two factors of the (frozen) NTK 
+\be\label{eq:scaling-relations-dNTK}
+\frac{\dNTKP{}{\ell}}{n \le( \Ti{\NTKI}{}{\ell} \ri)^2 } \sim \frac{1}{n}\le( \frac{1}{\ell} \ri)^{p_P - 2p_\Theta} \,, \qquad \frac{\dNTKQ{}{\ell}}{n \le( \Ti{\NTKI}{}{\ell} \ri)^2} \sim \frac{1}{n}\le( \frac{1}{\ell} \ri)^{p_Q - 2p_\Theta}\, ,
+\ee
+where on the right-hand side $p_\Theta$ is the \terminate{critical exponent} for the frozen NTK\index{frozen NTK}. 
+
+To see why these are the appropriate quantities to consider, 
+recall our discussion of \neo{dimensional analysis} in footnote~\ref{foot:dimensional-analysis} of \S\ref{sec:perturbation} and that our notation of $[z]$ means ``$z$ is measured in units of $[z]$.'' Looking at our second-order update for preactivations in \eqref{eq:preactivation-updated-finite-width}, and remembering that we can only add terms that have the same dimensions, we must have
+\be\label{eq:dNTK-dimensional-analysis}
+[z]=[\eta]\, [\epsilon] \,[\NTK]=[\eta]^2\,[\epsilon]^2\,[\dNTK] \,,
+\ee 
+from which it's clear that $[\eta]\,[\epsilon]=[z]\,[\NTK]^{-1}$, and subsequently we see that $P$ and $Q$ have dimensions of  NTK squared:
+\be\label{eq:dimensions-of-P-Q}
+[P]=[Q] \equiv [z]\,[\dNTK]=[\NTK]^{2} \, . 
+\ee
+If this still seems a little counterintuitive, the utility of considering these particular ratios \eqref{eq:scaling-relations-dNTK} will become even more apparent when we analyze the stochastic prediction of a fully-trained finite-width network in \S\ref{subsec:prediction-at-finite-width}.
+
+
+
+
+
+After solving the $P$- and $Q$-recursions for both universality classes and looking at these dimensionless quantities \eqref{eq:scaling-relations-dNTK}, we'll again find \emph{scaling laws}\index{scaling law} that transcend universality class:
+\be\label{eq:dNTK-scaling-laws}
+p_P - 2 p_\Theta=-1\, , \quad p_Q- 2 p_\Theta=-1\, .
+\ee
+Specifically, we'll see that these laws hold for both the scale-invariant and $K^\star=0$ universality classes\index{universality class!scale-invariant}\index{universality class!K@$K^\star=0$}.\footnote{To be more specific, for the scale-invariant class, we'll find that $P^{(\ell)}$ identically vanishes and that $Q^{(\ell)}$ solely determines the leading finite-width dNTK-preactivation cross correlation.}
+Thus, we'll be able to conclude that all the leading finite-width effects of the  preactivation-NTK-dNTK joint distribution are \emph{relevant}\index{relevant (RG flow)} -- in the sense of RG flow -- controlled by the same $\ell/n$ perturbative cutoff\index{cutoff, effective theory}.
+
+
+Now that we're fully prepared for what we're going to see, let's actually solve the dNTK recursions for our two important universality classes.
+
+
+
+
+\subsection{Scale-Invariant Universality Class}\label{subsec:dntk_criticality_scale_invariant}\index{universality class!scale-invariant}
+First, let's recall some previous results that we'll need in order to evaluate the recursions \eqref{eq:dNTKP-recursion-single-input} and \eqref{eq:dNTKQ-recursion-single-input}. For the scale-invariant universality class, we know from \eqref{eq:needed-to-recall-in-kernel-learning-chapter-II}, \eqref{eq:helper-ntk-scale-invariant-h}, and \eqref{eq:gaussian-expectation-ntk-scale-invariant-2} that
+\begin{align}\label{eq:dntk-prior-results-scale}
+\Ti{\chi}{\perp}{\ell}=C_WA_2\equiv \chi\, , \qquad h^{(\ell)}=0\, , \qquad \bra\sigma^{\prime}\sigma^{\prime}\sigma\sigma\ket_{\ker^{(\ell)}}=A_4 \ker^{(\ell)}\, ,
+\end{align}
+where as a reminder $A_2\equiv (a_{+}^2+a_{-}^2)/2$ and $A_4\equiv (a_{+}^4+a_{-}^4)/2$, and the $a_{\pm}$ are the respective slopes of the positive/negative linear pieces of the activation function, cf.~\eqref{eq:scale-invariant-one-kink}.
+
+Next, we see that all the new Gaussian expectations in  the recursions \eqref{eq:dNTKP-recursion-single-input} and \eqref{eq:dNTKQ-recursion-single-input}  involve the second derivative of the activation. For these, we need to be somewhat careful with nonlinear scale-invariant activation functions, since they have an undifferentiable kink at the origin. (For linear activation functions, $\sigma^{\prime\prime}(z)=0$, and there's no subtlety.)
+For the first of these new expectations, note that we can integrate it by parts as
+\begin{align}\label{eq:scale-invariant-higher-derivative-first}
+\bra\sigma^{\prime\prime}\sigma\ket_{\ker}=&\frac{1}{\sqrt{2\pi K}}\int_{-\infty}^{\infty} dz e^{-\frac{z^2}{2K}}\le(\frac{d}{dz}\sigma'\ri)\sigma = \frac{1}{\ker}\bra z \sigma^{\prime}\sigma\ket_{\ker}-\bra \sigma^{\prime}\sigma^{\prime}\ket_{\ker}= 0 \, ,%
+\end{align}
+where in the final equality we used
+\be
+\frac{1}{\ker}\bra z \sigma^{\prime}\sigma\ket_{\ker}=\bra \sigma^{\prime}\sigma^{\prime}\ket_{\ker} = A_2 \,.
+\ee
+Similarly, integrating the other new Gaussian expectation by parts, we find
+\be\label{eq:scale-invariant-higher-derivative-second}
+\bra\sigma^{\prime\prime}\sigma^{\prime}\sigma^{\prime}\sigma\ket_{\ker}=\frac{1}{\ker}\bra z \sigma^{\prime}\sigma^{\prime}\sigma^{\prime}\sigma\ket_{\ker}-2\bra\sigma^{\prime\prime}\sigma^{\prime}\sigma^{\prime}\sigma\ket_{\ker}-\bra\sigma^{\prime}\sigma^{\prime}\sigma^{\prime}\sigma^{\prime}\ket_{\ker}\, .
+\ee
+Rearranging this, we easily see that
+\be
+\bra\sigma^{\prime\prime}\sigma^{\prime}\sigma^{\prime}\sigma\ket_{\ker}=\frac{1}{3\ker}\bra z \sigma^{\prime}\sigma^{\prime}\sigma^{\prime}\sigma\ket_{\ker}-\frac{1}{3}\bra\sigma^{\prime}\sigma^{\prime}\sigma^{\prime}\sigma^{\prime}\ket_{\ker} = 0\, , %
+\ee
+where in the final equality we used
+\be
+\frac{1}{\ker}\bra z \sigma^{\prime}\sigma^{\prime}\sigma^{\prime}\sigma\ket_{\ker}= \bra\sigma^{\prime}\sigma^{\prime}\sigma^{\prime}\sigma^{\prime}\ket_{\ker} = A_4 \,.
+\ee
+Thus, we can safely ignore both of these new expectations.
+
+
+Substituting in all of \eqref{eq:dntk-prior-results-scale} and ignoring ignorable expectations, our single-input recursions \eqref{eq:dNTKP-recursion-single-input} and \eqref{eq:dNTKQ-recursion-single-input} are extremely simple:
+\begin{align}
+\dNTKP{}{\ell+1}=&\chi^2\dNTKP{}{\ell}\, , \\
+\dNTKQ{}{\ell+1}=&\chi^2\dNTKQ{}{\ell}
++ \frac{\lambda_{W}^{(\ell+1)}}{C_W}\NTHF{}{\ell+1}  \, .\label{eq:dNTKQ-recursion-single-input-relu}
+\end{align}
+In particular, since our initial condition \eqref{eq:dntk-initial-conditions} is $\dNTKP{}{1}=0$, we see immediately that $\dNTKP{}{\ell}$ vanishes identically for all layers:
+\be\label{eq:P-vanish-scale-invariant}
+\dNTKP{}{\ell}=0\, .
+\ee
+In contrast, for $\dNTKQ{}{\ell}$ we see that the susceptibility $\chi$ is going to generically lead to exponential behavior.
+
+\index{criticality}
+Now, let's tune to scale-invariant criticality by setting the initialization hyperparameters as $C_b=0$ and $C_W=1/A_2$. As a consequence, this fixes the susceptibility to unity, $\chi=1$, and leaves the kernel fixed for all layers as $\ker^{(\ell)}=\Tif{\ker}{}$. Additionally, let's pick our training hyperparameters according to the learning rate \terminate{equivalence principle}, for which we're instructed to choose layer-independent learning rates \eqref{eq:super-scale-invariant} as 
+\be\label{eq:learning-rate-EP-scale-invariant-reprint-for-dNTK}
+\Lb{\ell} = \frac{\widetilde{\lambda}_b}{L} \, , \qquad \LW{\ell} = \frac{\widetilde{\lambda}_W }{L}  \,.
+\ee
+Finally, with these hyperparameter choices, the single-input solution for the frozen NTK\index{frozen NTK} \eqref{eq:frozen-ntk-critical-solution-relu} and the single-input solution for the NTK-preactivation cross correlation $\Ti{F}{}{\ell}$ \eqref{eq:F-solution} are given by
+\begin{align}\label{eq:frozen-ntk-critical-solution-relu-reprint} 
+\Ti{\NTKI}{}{\ell}&=\le(\widetilde{\lambda}_b+\widetilde{\lambda}_W A_2 \Tif{\ker}{}\ri)\frac{\ell}{L}\, , \\
+\Ti{F}{}{\ell}&=\frac{\ell(\ell-1)}{2L}\le[\frac{A_4}{A_2^2} \le(\widetilde{\lambda}_b+\widetilde{\lambda}_W A_2 \Tif{\ker}{}\ri)\Tif{\ker}{}\ri] \, .
+\label{eq:F-solution-reprint}
+\end{align}
+
+
+Plugging in the critical initialization hyperparameters, the fixed kernel, the learning rates \eqref{eq:learning-rate-EP-scale-invariant-reprint-for-dNTK}, and the expression for $\Ti{F}{}{\ell}$ \eqref{eq:F-solution-reprint}, the $Q$-recursion \eqref{eq:dNTKQ-recursion-single-input-relu} becomes
+\be
+\dNTKQ{}{\ell+1}=\dNTKQ{}{\ell}+ \frac{\ell (\ell+1)}{2L^2}\le[\frac{A_4}{A_2 }    \le(\widetilde{\lambda}_b+\widetilde{\lambda}_W A_2 \Tif{\ker}{}\ri) \widetilde{\lambda}_W  \Tif{\ker}{} \ri]\, .
+\ee
+This simple recursion is exactly solved by
+\be\label{eq:Q-solution-scale-invariant}
+\dNTKQ{}{\ell}= \frac{\ell (\ell^2-1)}{6L^2}\le[\frac{A_4}{A_2 }    \le(\widetilde{\lambda}_b+\widetilde{\lambda}_W A_2 \Tif{\ker}{}\ri) \widetilde{\lambda}_W  \Tif{\ker}{} \ri]\, ,
+\ee
+which satisfies the initial condition $\dNTKQ{}{1}=0$. 
+
+With this solution, we can identify the \terminate{critical exponent} associated with the large-$\ell$ behavior of $\dNTKQ{}{\ell}$: $p_Q = -3$. Further, we see that our dimensionless quantity \eqref{eq:scaling-relations-dNTK} will satisfy the scaling law \eqref{eq:dNTK-scaling-laws} as promised,
+\be
+p_Q - 2p_\Theta = -1\, ,
+\ee
+where we have also used $p_\Theta=-1$ from the scale-invariant frozen NTK solution reprinted above in \eqref{eq:frozen-ntk-critical-solution-relu-reprint}. More specifically, substituting in the solution for $\Ti{\NTKI}{}{\ell}$ \eqref{eq:frozen-ntk-critical-solution-relu-reprint} and the solution for $\dNTKQ{}{\ell}$ \eqref{eq:Q-solution-scale-invariant} into the dimensionless ratio \eqref{eq:scaling-relations-dNTK}, we find
+\be
+\frac{\dNTKQ{}{\ell}}{n \le(\Ti{\NTKI}{}{\ell} \ri)^2} = \frac{A_4}{6A_2}\le[ \frac{  \widetilde{\lambda}_W  \Tif{\ker}{}  }{  \widetilde{\lambda}_b+\widetilde{\lambda}_W A_2 \Tif{\ker}{} } \ri]\frac{\ell}{n} + \dots \, .
+\ee
+Thus, we have verified the $\ell/n$ scaling of the leading dNTK-preactivation cross correlation for scale-invariant activation functions.
+
+
+
+
+
+
+\subsection{\texorpdfstring{$\Tif{\ker}{}=0$}{K*=0} Universality Class}\label{subsec:dntk_criticality_tanh_univ}\index{universality class!K@$K^\star=0$}
+For the $K^\star=0$ universality class, we'll begin again by recalling some previous results. First, we know from
+\eqref{eq:chi-parallel-expansion-K-star-equals-zero}, \eqref{eq:chi-perp-expansion-K-star-equals-zero}, \eqref{eq:gaussian-expectation-k-star-3}, and \eqref{eq:h-function-reprint-new} the following:
+\begin{align}\label{eq:recalling-expansion-for-the-sake-of-dntk-for-one-last-time-1}
+\chi_{\parallel}(\ker)=&\le(C_W\sigma_1^2\ri)\le[1+2 a_1K+\o{K^2}\ri]\, ,\\
+\label{eq:recalling-expansion-for-the-sake-of-dntk-for-one-last-time-2}
+\chi_{\perp}(\ker)=&\le(C_W\sigma_1^2\ri)\le[1+b_1 K+O\!\le(K^2\ri)\ri]\, ,\\
+\label{eq:recalling-expansion-for-the-sake-of-dntk-for-one-last-time-3}
+C_W^2\bra\sigma^{\prime}\sigma^{\prime}\sigma\sigma\ket_{\ker}=&\le(C_W\sigma_1^2\ri)^2\le[\ker+O|1\le(\ker^2\ri)\ri]\,  ,\\
+\label{eq:recalling-expansion-for-the-sake-of-dntk-for-one-last-time-4}
+h\!\le(K\ri)=&\frac{1}{2}\frac{\td }{\td K}\chi_{\perp}(\ker)=\le(C_W\sigma_1^2\ri)\le[\frac{b_1}{2}+\o{K^1}\ri]\, .
+\end{align}
+To interpret these results, remember that we Taylor expanded the activation function as %
+\be\label{eq:taylor-expansion-k-star-reprint-last}
+\sigma(z)=\sum_{p=0}^{\infty}\frac{\sigma_{p}}{p!}z^p\,  ,
+\ee
+ defined the following combination of Taylor coefficients for convenience
+\begin{align}
+a_1&\equiv \le(\frac{\sigma_3}{\sigma_1}\ri)+\frac{3}{4}\le(\frac{\sigma_2}{\sigma_1}\ri)^2\ ,\label{eq:a1-recall-last}\\
+b_1&\equiv \le(\frac{\sigma_3}{\sigma_1}\ri)+\le(\frac{\sigma_2}{\sigma_1}\ri)^2\, ,\label{eq:b1-recall-last}%
+\end{align}
+and required that all activation functions in this class satisfy $\sigma_0 = 0$ and $\sigma_1 \neq 0$.
+Then, making analogous Taylor expansions and performing Gaussian integrations order by order, we can evaluate the new Gaussian expectations in  the recursions \eqref{eq:dNTKP-recursion-single-input} and \eqref{eq:dNTKQ-recursion-single-input} as
+\begin{align}
+C_W\bra\sigma^{\prime\prime}\sigma\ket_{\ker}=&\le(C_W\sigma_1^2\ri)\le[(2a_1-b_1)\ker+O\!\le(K^2\ri)\ri]\, ,\label{eq:doing-expansion-for-the-sake-of-dntk-for-one-last-time-3}\\
+C_W^2\bra\sigma^{\prime\prime}\sigma^{\prime}\sigma^{\prime}\sigma\ket_{\ker}=&\le(C_W\sigma_1^2\ri)^2\le[(-6a_1+7b_1)\ker+O\!\le(\ker^2\ri)\ri]\, .\label{eq:doing-expansion-for-the-sake-of-dntk-for-one-last-time-4}
+\end{align}
+
+
+
+
+Now, let's jump right into $K^\star=0$ criticality  \eqref{eq:k-star-equals-zero-critical-initialization} by tuning the initialization hyperparameters as $C_b=0$ and $C_W =1/\sigma_1^2$. At the same time, let's also tune our training hyperparameters according to the learning rate \terminate{equivalence principle}, which for $K^\star=0$ activation functions is given by \eqref{eq:super-tanh-general},
+\be
+\Lb{\ell}=\widetilde{\lambda}_b\le(\frac{1}{\ell}\ri)^{p_{\perp}}L^{p_{\perp}-1}\, , \qquad \lamW{\ell}=\widetilde{\lambda}_W\le(\frac{L}{\ell}\ri)^{p_{\perp}-1} \, ,
+\ee
+where the critical exponent for perpendicular perturbations is defined as $p_{\perp}\equiv b_1/a_1$. With these hyperparameter settings, let's also record the other single-input solutions that we need for the recursions, the kernel $\Ti{\ker}{}{\ell}$ \eqref{eq:initial-tanh-wthout-subleading},  the frozen NTK $\Ti{\NTKI}{}{\ell}$ \eqref{eq:frozen-ntk-k-star-solution}, the NTK-preactivation cross correlation $F^{(\ell)}$ \eqref{eq:F-k-star-solution}, and the NTK variance $B^{(\ell)}$ \eqref{eq:B-k-star-solution}:
+\begin{align}
+\ker^{(\ell)}=&\le[\frac{1}{(-a_1)}\ri]\frac{1}{\ell}+ \ldots\, ,\label{eq:oh-really-we-have-to-recall-this-again-dots-yes}\\
+\label{eq:K-star-frozen-NTK-dNTK-reprint}
+\Ti{\NTKI}{}{\ell}=&\le[\widetilde{\lambda}_b+\frac{\widetilde{\lambda}_W\sigma_1^2}{(-a_1)}\ri]\le( \frac{L}{\ell}\ri)^{p_{\perp}-1}+\ldots\, , \\
+\Ti{F}{}{\ell}=&\frac{1}{(5-p_{\perp})}\le[\frac{1}{(-a_1)}\ri] \le[\widetilde{\lambda}_b+\frac{\widetilde{\lambda}_W\sigma_1^2}{(-a_1)}\ri]\le(\frac{L}{\ell}\ri)^{p_{\perp}-1}+\ldots\, , \\
+\NTHB{}{\ell}=&\frac{L^{2p_{\perp}-2}}{3} \le[\widetilde{\lambda}_b+\frac{\widetilde{\lambda}_W\sigma_1^2}{(-a_1)}\ri]^2\le(\frac{1}{\ell}\ri)^{2p_{\perp}-3}+\ldots\, .
+\label{eq:NTKB-final-reprint-for-dNTK}
+\end{align}
+Finally, plugging all our collected results and tunings \eqref{eq:recalling-expansion-for-the-sake-of-dntk-for-one-last-time-1}--\eqref{eq:recalling-expansion-for-the-sake-of-dntk-for-one-last-time-4} and \eqref{eq:doing-expansion-for-the-sake-of-dntk-for-one-last-time-3}--\eqref{eq:NTKB-final-reprint-for-dNTK}  into the $P$-recursion \eqref{eq:dNTKP-recursion-single-input} and the $Q$-recursion \eqref{eq:dNTKQ-recursion-single-input}, we get
+\begin{align}\label{eq:P-recursion-K-star}
+\dNTKP{}{\ell+1}=&\le[1-\frac{(p_{\perp}+2)}{\ell}+\ldots\ri]\dNTKP{}{\ell}
++\frac{(p_\perp -2) }{3}\le[\widetilde{\lambda}_b+\frac{\widetilde{\lambda}_W\sigma_1^2}{(-a_1)}\ri]^2\le( \frac{L}{\ell}\ri)^{2p_{\perp}-2}
++ \dots \, ,\\
+\dNTKQ{}{\ell+1}=&\le[1-\frac{(p_{\perp}+2)}{\ell}+\ldots\ri]\dNTKQ{}{\ell}\, \label{eq:Q-recursion-K-star}\\
+&+\frac{1}{(5-p_\perp)}\le[ (1-p_{\perp})\frac{\widetilde{\lambda}_W \sigma_1^2}{(-a_1)}  -p_{\perp}\widetilde{\lambda}_b\ri]\le[\widetilde{\lambda}_b+\frac{\widetilde{\lambda}_W\sigma_1^2}{(-a_1)}\ri]\le( \frac{L}{\ell}\ri)^{2p_{\perp}-2}+\ldots\, .\notag
+\end{align}
+
+
+
+Let's tackle the
+$P$-recursion first.  Plugging our scaling ansatz \eqref{eq:master-scaling-ansatz-reprint-the-second} into the recursion \eqref{eq:P-recursion-K-star} and matching the terms, we find an asymptotic solution
+\begin{align}\label{eq:P-K-star-asymptotic}
+\dNTKP{}{\ell}=&-\frac{L^{2p_\perp-2}}{3}\le(\frac{2-p_{\perp}}{5-p_{\perp}} \ri) \le[\widetilde{\lambda}_b+\frac{\widetilde{\lambda}_W\sigma_1^2}{(-a_1)}\ri]^2\le( \frac{1}{\ell}\ri)^{2p_{\perp}-3 }+\ldots\, .
+\end{align}
+Thus, the \terminate{critical exponent} for this dNTK-preactivation cross correlation is $p_P = 2p_{\perp}-3$, and we obtain our promised \terminate{scaling law} \eqref{eq:dNTK-scaling-laws} 
+\be
+p_P-2p_\Theta = -1 \, ,
+\ee
+after substituting in $p_\Theta = p_\perp - 1$ from the $K^\star=0$ frozen NTK solution \eqref{eq:K-star-frozen-NTK-dNTK-reprint}. More specifically, substituting in the solution for $\NTKI^{(\ell)}$ \eqref{eq:K-star-frozen-NTK-dNTK-reprint} and  the solution for $P^{(\ell)}$ \eqref{eq:P-K-star-asymptotic} into the dimensionless ratio \eqref{eq:scaling-relations-dNTK}, we get
+\begin{align}
+\frac{\dNTKP{}{\ell}}{n \le(\Ti{\NTKI}{}{\ell} \ri)^2}=&-\frac{1}{3}\le(\frac{2-p_{\perp}}{5-p_{\perp}} \ri) \frac{\ell}{n} +\ldots\, ,
+\end{align}
+which  \emph{(i)} scales as $\ell/n$,  \emph{(ii)} is independent of the training hyperparameters, and \emph{(iii)} is manifestly negative, given $p_{\perp}\leq1$.\footnote{
+To recall why $p_{\perp}\leq1$, without flipping back to footnote \ref{foot:p-perp-less-than-or-equal-to-zero} of \S\ref{ch:NTHb}, \emph{(i)} remember that we must have $a_1<0$ in order for the kernel $\ker^{(\ell)}$ to stay positive when asymptotically approaching the $\ker^{\star}=0$ fixed point, cf.~\eqref{eq:oh-really-we-have-to-recall-this-again-dots-yes}, \emph{(ii)} note to yourself that $b_1 \geq a_1$, cf.~\eqref{eq:a1-recall-last} and \eqref{eq:b1-recall-last}, and \emph{(iii)} realize that $a_1<0$ and $b_1 \geq a_1$ together imply that $p_\perp \equiv b_1 / a_1\leq1$.}
+
+Similarly for the $Q$-recursion \eqref{eq:Q-recursion-K-star}, plugging our scaling ansatz \eqref{eq:master-scaling-ansatz-reprint-the-second} into the recursion \eqref{eq:Q-recursion-K-star} and matching the terms one final time, we find
+\be
+\dNTKQ{}{\ell}=\frac{L^{2p_\perp - 2}}{(5-p_\perp)^2}\le[
+1-p_{\perp} - \frac{\widetilde{\lambda}_b}{ \widetilde{\lambda}_b+ \widetilde{\lambda}_W\sigma_1^2 / (-a_1) } \ri]\le[\widetilde{\lambda}_b+\frac{\widetilde{\lambda}_W\sigma_1^2}{(-a_1)}\ri]^2\le( \frac{1}{\ell}\ri)^{2p_{\perp}-3} \, .
+\ee
+This gives a critical exponent of $p_Q = 2p_\perp -3$ and a dimensionless ratio of
+\be\label{eq:Q-ratio}
+\frac{\dNTKQ{}{\ell}}{n \le(\Ti{\NTKI}{}{\ell} \ri)^2}=\frac{1}{(5-p_\perp)^2}\le[
+1-p_{\perp} - \frac{\widetilde{\lambda}_b}{ \widetilde{\lambda}_b+ \widetilde{\lambda}_W\sigma_1^2 / (-a_1) }  \ri]  \frac{\ell}{n}+\ldots \, .
+\ee
+Thus, we've now fully verified our \terminate{scaling law} \eqref{eq:dNTK-scaling-laws}: 
+\be
+p_Q-2p_\Theta = -1 \, .
+\ee
+
+
+
+
+
+
+
+\sbreak
+
+In conclusion, all the nonzero dimensionless dNTK-preactivation cross correlations will grow as $\ell/n$ at leading order in the finite-width expansion. As the dNTK leads to a dynamical NTK\index{dynamical NTK}\index{dynamical NTK|seealso{interaction NTK}}\index{dynamical NTK|seealso{effective kernel}}\index{neural tangent kernel!dynamical|see{dynamical NTK}}, this is sufficient to see that deep finite-width networks are representation learners.
+
+
+In the next section, we're going to set aside our direct investigation of deep MLPs and instead focus on a pedagogical model of representation learning that directly incorporates the effect of a nonzero dNTK. In the following chapter, we'll return to our finite-width networks and complete our goal of computing the effective distribution over wide and deep finite-width MLPs after training. The simplified model presented in the next section will make it easier to understand the results of our later analysis of such fully-trained networks.
+
+
+
+
+
+
+\section{Nonlinear Models and Nearly-Kernel Methods}\label{sec:nonlinear-model}
+In \S\ref{sec:lazy-kernel}, we placed infinite-width networks into a broader context of \terminate{machine learning} models. There, we discussed how the infinite-width network can be understood as either a \neo{linear model} with fixed random features or, dually, as a \emph{kernel method}\index{kernel methods} with the kernel given by the frozen NTK. 
+Now we are ready to find a broader context for finite-width networks.
+
+
+In this chapter, we've seen that the statistics needed to compute the dynamics of finite-width networks (\S\ref{sec:dNTK-RG} and \S\ref{sec:dNTK-criticality}) are far more complicated than for infinite-width networks, nontrivially incorporating the second derivative of the network function. This additional complexity is irreducibly encapsulated by a single object: the dNTK (\S\ref{sec:dNTK}).
+The dNTK enables the NTK to evolve during training, 
+leading to nontrivial \neo{representation learning}  from the training data. 
+
+The goal of this section is to abstract this property away from the deep learning\index{deep learning!abstracted} framework and distill it into a \textbf{minimal model of representation learning}\index{representation learning!minimal model|textbf} that captures all of its important features.
+Such a model provides a framework for studying the type of representation learning exhibited by deep neural networks, but more succinctly and more broadly.
+In other words, we hope that this endeavor will %
+extend the standard toolbox of \terminate{machine learning}.
+
+First in \S\ref{subsec:nonlinear-models}, we'll extend \terminate{linear model}s discussed in \S\ref{subsec:linear-models} to \emph{nonlinear models}\index{nonlinear model}.
+Then in \S\ref{subsec:nearly-kernel-methods}, we'll give a dual\index{duality!nonlinear model -- nearly-kernel methods} description of these nonlinear models, \neo{nearly-kernel methods}, which will extend the standard \terminate{kernel methods} that we discussed in \S\ref{subsec:kernel-methods}.
+Finally in \S\ref{subsec:nonlinear-at-finite}, as we did analogously for infinite-width networks before in \S\ref{subsec:linear-at-infinity}, we'll see how finite-width networks can be understood in terms of this new
+framework. %
+
+
+
+
+
+
+\subsection{Nonlinear Models}\label{subsec:nonlinear-models}
+As a reminder from \S\ref{subsec:linear-models}, a  \neo{linear model} is given by \eqref{eq:linear-model-def}
+\be\label{eq:linear-model-def-reprint}
+z_i(x_{\delta}; \theta) =\sum_{j=0}^{n_f}W_{ij}\fea_j(x_{\delta}) \, ,
+\ee
+where the model parameters are given by the weight matrix $\theta=W_{ij}$, the model's features are given by the \neo{feature function} $\fea_{j}(x)$, and we again adopt the old-school convention for incorporating biases, including a constant feature $\fea_{0}(x)\equiv 1$ so that the bias vector is given by $W_{i0}\equiv b_{i}$.
+Note that since we're not discussing neural networks in particular, there's no \terminate{neural indices} or \terminate{layer indices} here. Instead, in this equation,
+$\delta$ is a \emph{sample index}, running over the $\ND$ samples in the dataset $\delta \in \D$; $i$ is a \emph{vectorial index}\index{vectorial indices}, running over the $n_{\text{out}}$ vectorial component of the model output $z_i$; and $j$ is a \emph{feature index}\index{feature indices}, running over $(n_f+1)$ different features. In this setup, a \terminate{feature function} $\fea_{j}(x)$ is computed on an input sample $x$, and the weight matrix $W_{ij}$ determines the effect of the $j$-th feature on the $i$-th component of the output.
+Traditionally, feature functions  $\fea_{j}(x)$ are often \emph{designed} such that the linear model works well for the desired task after optimization or  \neo{linear regression}.
+
+
+
+
+
+
+To go beyond this linear paradigm, let's slightly  \emph{deform}\index{deformation!linear model} it to get a \textbf{\emph{nonlinear} model}\index{nonlinear model}:
+\be\label{eq:nonlinear-model-def}
+z_i(x_{\delta}; \theta) = \sum_{j=0}^{n_f}W_{ij}\fea_j(x_{\delta}) + \frac{\epsilon}{2}\sum_{j_1,j_2=0}^{n_f}W_{ij_1}W_{ij_2}\featwo_{j_1j_2}(x_{\delta}) +\ldots \, .
+\ee
+Here, $\epsilon \ll 1$ is small parameter that controls the size of the deformation, and more importantly, 
+we've introduced another set of feature functions\index{feature function!nonlinear model},  $\featwo_{j_1j_2}(x)$, with \emph{two} feature indices, making the model nonlinear in its weights.
+By definition, $\featwo_{j_1j_2}(x)$ is symmetric under the exchange of the feature indices $j_1\leftrightarrow j_2$, and the factor of $1/2$ is there because of the double counting of the double sum. For reasons that will be made clear shortly, we will call each component of $\featwo_{j_1j_2}(x)$ a \textbf{meta feature function}\index{meta feature function|textbf}\index{feature function!meta|see{meta feature function}}, and so there are $(n_f+1)(n_f+2)/2$ different meta feature functions.
+
+
+
+
+
+
+
+
+
+To familiarize ourselves with the features of this model, let's see how the model outputs change given a small change in the model parameters $W_{ij}\to W_{ij}+\dbar W_{ij}$:
+\begin{align}\label{eq:quadratic-model-small-step}
+&z_{i}(x_\delta; \theta+ \dbar \theta)\,\notag \\
+=&z_{i}(x_\delta; \theta) +  \sum_{j=0}^{n_f} \dbar W_{ij}\, \le[ \fea_{j}(x_{\delta}) + \epsilon\sum_{j_1=0}^{n_f} W_{ij_1} \featwo_{j_1j}(x_{\delta}) \ri] + \frac{\epsilon}{2}\sum_{j_1,j_2=0}^{n_f} \dbar W_{ij_1}\dbar W_{ij_2}  \featwo_{j_1j_2}(x_{\delta}) +\dots \, \notag \\
+=&z_{i}(x_\delta; \theta) + \sum_{j=0}^{n_f} \dbar W_{ij} \,  \feaE_{ij}(x_{\delta};\theta) + \frac{\epsilon}{2}\sum_{j_1,j_2=0}^{n_f} \dbar W_{ij_1}\dbar W_{ij_2}  \featwo_{j_1j_2}(x_{\delta}) +\dots\, ,
+\end{align}
+where in the last line we summarized the quantity in the square bracket in terms of an \textbf{effective feature function}\index{feature function!effective|textbf}:
+\be\label{eq:effective-feature-def}
+\feaE_{ij}(x_{\delta};\theta)\equiv \frac{dz_{i}(x_\delta;\theta)}{dW_{ij}}=\fea_{j}(x_{\delta}) + \epsilon\sum_{k=0}^{n_f} W_{ik} \featwo_{kj}(x_{\delta})   \, .
+\ee
+The utility of this is as follows: the linear response of the model to changing its parameters is as if it \emph{effectively} has a feature function, $\feaE_{ij}(x_{\delta};\theta)$, which itself depends on the value of the model parameters. Moreover, the change in the effective feature function given a small change in the model parameters $W_{ik}\to W_{ik}+\dbar W_{ik}$ is given by
+ \be\label{eq:effective features-small-step}
+\feaE_{ij}(x_{\delta};\theta+ \dbar \theta) = \feaE_{ij}(x_{\delta};\theta) + \epsilon \sum_{k=0}^{n_f} \dbar W_{ik}\, \featwo_{kj}(x_{\delta})\, .
+ \ee
+Thus, the effective features $\feaE_{ij}(x_{\delta};\theta)$ are \emph{learnable}, evolving as a linear model\index{linear model!for effective features}, and for these effective features, the meta features $\featwo_{kj}(x_{\delta})$ play the role usually played by the features.\footnote{
+    This role of the meta features $\featwo_{kj}(x_{\delta})$ in the linear model for the effective features explains our choice of name. Note also that in this setup, we assume that both the feature function $\fea_{j}(x)$ and the meta feature function $\featwo_{j_1j_2}(x)$ are picked by the model designer, just as the feature function was before for the linear model.
+} In this way, we can think of our nonlinear model as having a hierarchical structure, where the features evolve as if they are described by a linear model according to \eqref{eq:effective features-small-step}, while the model's output evolves in a more complicated nonlinear way according to \eqref{eq:quadratic-model-small-step}.
+
+
+
+
+
+
+ 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Note that we could extend this hierarchical structure further, e.g.~by further deforming our nonlinear model \eqref{eq:nonlinear-model-def} with a term that's cubic in the parameters and includes a three-indexed \emph{meta-meta feature function}\index{meta-meta feature function} that analogously allows the meta feature functions to learn.\footnote{Such deformations are essentially equivalent to incorporating further terms in the Taylor expansion of an arbitrary general model function $z_i(x_{\delta}; \theta)$, where the linear model is the base model, and the nonlinear model \eqref{eq:nonlinear-model-def} gives the first improvement from the expansion.}
+However, as the quadratic term already suffices to provide a minimal model of representation learning\index{representation learning!minimal model}\index{representation learning!minimal model} -- just as a nonzero dNTK sufficed to induce nontrivial representation learning in the MLP --
+from here on, we'll explicitly truncate the model \eqref{eq:nonlinear-model-def} at the quadratic order, giving us a \textbf{quadratic model}\index{nonlinear model!quadratic model|textbf}\index{quadratic model|see{nonlinear model}}.\footnote{
+To leading order in the $1/n$ expansion\index{$1/n$ expansion},
+finite-width networks cannot self-consistently be described by a truncated quadratic model; instead, they fall into a class of  \emph{cubic models}\index{nonlinear model!cubic model}, with evolving meta feature functions. This is one of the ways in which such finite-width networks are \emph{non-minimal} representation learners\index{representation learning!non-minimal model} and is the main reason for discussing quadratic models first before moving on to the more complicated analysis of finite-width networks with their dynamical dNTKs.\index{dynamical dNTK}
+}
+
+
+
+
+
+
+
+\index{minimal model!of representation learning|see{representation learning}}
+To understand how representation learning\index{representation learning!for quadratic models} works in this model, we should find the optimal values for the weights $W_{ij}^\star$ given a training set $\A$. Mirroring what we did before for linear models, let's minimize the MSE loss, which for our quadratic model is given by
+\index{loss!MSE!nonlinear models}
+\begin{align}\label{eq:quadratic-regression}
+\L_{\A}(\theta)&=\frac{1}{2}\sum_{\tra\in\A}\sum_{i=1}^{n_{\text{out}}}\Big[ \y{i}{\tra} - z_i(x_{\tra}; \theta) \Big]^2  \\
+&=\frac{1}{2}\sum_{\tra\in\A}\sum_{i=1}^{n_{\text{out}}}\le[\y{i}{\tra} - \sum_{j=0}^{n_f} W_{ij} \, \fea_{j}(x_{\tra})  - \frac{\epsilon}{2}\sum_{j_1,j_2=0}^{n_f} W_{ij_1}W_{ij_2} \featwo_{j_1j_2}(x_{\tra}) \ri]^2\, . \notag
+\end{align}
+Supervised learning\index{supervised learning!with quadratic models|see{quadratic regression}} with such a quadratic model \eqref{eq:nonlinear-model-def} doesn't have a particular name, but if it did, we'd all probably agree that its name should be \term{quadratic regression}\index{quadratic regression|seealso{quadratic model}}.
+However, unlike linear regression\index{linear regression!vs.~quadratic regression} -- where the MSE loss  \eqref{eq:linear-regression} was quadratic in the model parameters -- quadratic regression -- where the loss is now \emph{quartic} in the parameters -- does not in general yield analytical solutions. Nevertheless, we can perturbatively find a solution to the quadratic regression problem by expanding in our small parameter $\epsilon$, for which the regression is \emph{nearly linear}.\index{nearly-linear model|see{nonlinear model}}\index{nearly-linear regression|see{quadratic regression}}
+
+
+
+
+
+
+\subsubsection{Nearly-Linear Quadratic Regression}\index{quadratic regression!nearly-linear}
+Taking the derivative of the loss $\L_\A$  \eqref{eq:quadratic-regression} with respect to the model parameter $W_{ij_0}$ and setting it to zero, we find
+\be\label{eq:quadratic-optimization-implict-features}
+0 = \sum_{\tra} \feaE_{ij_0}(x_{\tra};\theta^\star) \le[z_{i}(x_{\tra};\theta^\star) - \y{i}{\tra} \ri]\,,
+\ee
+making clear that the effective features \eqref{eq:effective-feature-def} give the linear response of the model.
+Next, substituting in for the quadratic model \eqref{eq:linear-model-def-reprint} and the effective feature function \eqref{eq:effective-feature-def} and rearranging we find
+\begin{align}\label{eq:nonlinear-model-implicit-expression}
+&\sum_{\tra\in\A}\!\le\{\sum_{j_1=0}^{n_f}W^{\star}_{ij_1}\fea_{j_1}(x_{\tra})\fea_{j_0}(x_{\tra})+\epsilon\!\!\!\!\sum_{j_1,j_2=0}^{n_f}\!\!W^{\star}_{ij_1}W^{\star}_{ij_2}\!\le[\fea_{j_1}(x_{\tra})\featwo_{j_2j_0}(x_{\tra})\!+\frac{1}{2}\featwo_{j_1j_2}(x_{\tra})\fea_{j_0}(x_{\tra})\ri]\ri\}\, \notag\\
+=&\sum_{\tra\in\A} \y{i}{\tra}\le[\fea_{j_0}(x_{\tra})+\epsilon\sum_{j_1=0}^{n_f}W^{\star}_{ij_1}\featwo_{j_1j_0}(x_{\tra})\ri]+\o{\epsilon^2}\, .
+\end{align}
+This expression contains the two terms we found for linear regression\index{linear regression!vs.~quadratic regression} in \eqref{eq:linear-model-implicit-expression} as well as three additional terms proportional to the meta features $\featwo_{j_1j_2}(x)$. Additionally, we truncated the $\o{\epsilon^2}$ term since $\epsilon$ is assumed to be parametrically small. 
+Importantly, we see clearly that the equation is overall nonlinear, with the two terms quadratic in the weights. 
+In the language of \terminate{physics}, the linear equation of \terminate{linear regression} is \emph{free} and exactly solvable, while the nonlinear equation of \terminate{quadratic regression} is \emph{interacting}.\index{interactions!dynamics} Since $\epsilon$ multiplies all the new terms associated with quadratic regression, the nonlinear terms are all small, and so  \eqref{eq:nonlinear-model-implicit-expression} exhibits \emph{weakly-interacting} dynamics.\index{interactions!dynamics!weakly-interacting} This means that we can systematically solve this nonlinear equation via \terminate{perturbation theory}. %
+
+
+    
+With that in mind, let's decompose the optimal weight matrix into a free linear part and an interacting nonlinear part as
+\be\label{eq:quadratic-optimization-decomposition-parameters}
+W^{\star}_{ij}\equiv\WF_{ij}+\WI_{ij}\, ,
+\ee
+with the idea being that the free part $\WF_{ij}$ will solve the free linear regression equation \eqref{eq:linear-model-implicit-expression}, while the interacting part $\WI_{ij}$ will solve the remaining linearized equation after substituting back in the solution for $\WF_{ij}$. Given that the quadratic regression problem \eqref{eq:nonlinear-model-implicit-expression} becomes a linear regression problem \eqref{eq:linear-model-implicit-expression} in the limit of $\epsilon\to0$, we naturally expect that the interacting part of the optimal weights should be proportional to the small parameter $\WI_{ij}=\o{\epsilon}$. 
+
+Let's quickly review our \term{direct optimization} solution to linear regression from \S\ref{subsec:linear-models} in the current context:
+defining an $(n_f+1)$-by-$(n_f+1)$ symmetric matrix \eqref{eq:no-good-matrix-name}
+\be\label{eq:no-good-matrix-name-reprint}
+M_{j_1j_2}\equiv\sum_{\tra\in\A}\fea_{j_1}\!(x_{\tra})\,\fea_{j_2}\!(x_{\tra})\, , %
+\ee
+the linear part of the quadratic regression problem \eqref{eq:nonlinear-model-implicit-expression} can be written as
+\be
+\sum_{j_1=0}^{n_f}\WF_{ij_1}M_{j_1j_0}=\sum_{\tra\in\A}\y{i}{\tra}\fea_{j_0}(x_{\tra})\, ,
+\ee
+which can be solved by the multiplication of the inverse $(M^{-1})_{j_0 j}$,
+\be\label{eq:linear-regression-optimal-reprint}
+\WF_{ij}=\sum_{j_0=0}^{n_{f}}\sum_{\tra\in\A}\y{i}{\tra}\fea_{j_0}(x_{\tra})\le(M^{-1}\ri)_{j_0j}\, .
+\ee
+Recall that the inverse $(M^{-1})_{j_0 j}$ will not uniquely exist if we're in the \emph{overparameterized}\index{overparameterization!in quadratic models} regime with more features than training examples, $(n_f+1) > \NR$, but we can use our regularization trick \eqref{eq:inverse-of-M-regularized} to pick out a particular inverse. Going forward, we will assume that we're in this overparameterized regime and that the inverse was picked in this way.
+
+
+Next, plugging in our decomposition \eqref{eq:quadratic-optimization-decomposition-parameters} into our equation \eqref{eq:nonlinear-model-implicit-expression} and collecting the terms of order $\epsilon$, remembering also that $\WI_{ij}=\o{\epsilon}$, we find for our linearized interacting dynamics,
+\begin{align}
+\sum_{j_1=0}^{n_f}\WI_{ij_1}M_{j_1j_0}=&\epsilon\sum_{j_1=0}^{n_f}\WF_{ij_1}\sum_{\tra\in\A}\y{i}{\tra}\featwo_{j_1j_0}(x_{\tra})-\epsilon\sum_{j_1,j_2=0}^{n_f}\WF_{ij_1}\WF_{ij_2}\sum_{\tra\in\A}\fea_{j_1}(x_{\tra})\featwo_{j_2j_0}(x_{\tra})\, \notag\\
+&-\frac{\epsilon}{2}\sum_{j_1,j_2=0}^{n_f}\WF_{ij_1}\WF_{ij_2}\sum_{\tra\in\A}\fea_{j_0}(x_{\tra})\featwo_{j_1j_2}(x_{\tra}) +\o{\epsilon^2}\, .
+\end{align}
+Here on the right-hand side, the first two terms actually cancel each other, since the free solution satisfies
+\be\label{eq:one-nice-property-of-free-solution}
+\sum_{j=0}^{n_f}\WF_{ij}\fea_{j}(x_{\tra})=\y{i}{\tra}\, ,
+\ee
+i.e.~for overparameterized models, linear part of the optimized model can correctly predict all the training-set examples.\footnote{This is shown in detail in \S\ref{subsec:kernel-methods}. Note that for \emph{underparametrized}\index{underparameterization} models, the solution can still be analyzed, but the details will be different. We're focusing on overparameterized models here since \emph{(i)} deep learning models are typically overparameterized and \emph{(ii)} we suspect that the sort of representation learning our model exhibits is most useful in that regime.
+We'll elaborate on this quite a bit more in Epilogue~\ref{epi:overparameterization}.
+}
+After making that cancellation, we can multiply by the inverse $(M^{-1})_{j_0 j}$ to find a solution:
+\begin{align}\label{eq:nearly-linear-regression-optimal}
+\WI_{ij}=-\frac{\epsilon}{2}\sum_{j_1,j_2,j_3=0}^{n_f}\WF_{ij_1}\WF_{ij_2}\sum_{\tra\in\A}\le[\featwo_{j_1j_2}(x_{\tra})\fea_{j_3}(x_{\tra})\ri]\le(M^{-1}\ri)_{j_3j}+\o{\epsilon^2}\, .
+\end{align}
+In particular, the free solution, \eqref{eq:linear-regression-optimal-reprint}, and the interacting solution, \eqref{eq:nearly-linear-regression-optimal}, together solve the nonlinear optimization problem \eqref{eq:nonlinear-model-implicit-expression} to order $\epsilon$.\footnote{When doing nearly-linear quadratic regression practically, it would probably make the most sense to first find the optimal linear parameters $\WF_{ij}$ and then plug them back into \eqref{eq:nearly-linear-regression-optimal} to find the additional nonlinear parameters $\WI_{ij}$.}
+
+
+
+
+Finally, having obtained the solution, we can throw away the training data and simply store the optimal parameters $W^{\star}_{ij}=\WF_{ij}+\WI_{ij}$, making predictions on novel test inputs $x_{\tea}$ as
+\begin{align}\label{eq:nearly-kernel-prediction-nearly-kernel-methods-before-duality}
+z_i(x_{\tea}; \theta^{\star})=&\sum_{j=0}^{n_f}W^{\star}_{ij}\fea_j(x_{\tea})+ \frac{\epsilon}{2}\sum_{j_1,j_2=0}^{n_f}W^{\star}_{ij_1}W^{\star}_{ij_2}\featwo_{j_1j_2}(x_{\tea})\, \\
+=&\sum_{j=0}^{n_f}\WF_{ij}\fea_j(x_{\tea})+\sum_{j=0}^{n_f}\WI_{ij}\fea_j(x_{\tea})  + \frac{\epsilon}{2}\sum_{j_1,j_2=0}^{n_f}\WF_{ij_1}\WF_{ij_2}\featwo_{j_1j_2}(x_{\tea})+\o{\epsilon^2}\, \notag\\
+=&\frac{1}{2}\sum_{j=0}^{n_f}W^{\star}_{ij}\le[\fea_j(x_{\tea})+\feaE_{ij}(x_{\tea}; \theta^{\star})\ri]+\o{\epsilon^2}\, .\notag
+\end{align}
+Here, we've given two different ways to think about the optimal output.
+On the first and second lines, we simply have the prediction of the quadratic model\index{nonlinear model!quadratic model} \eqref{eq:nonlinear-model-def} expressed in terms of the fixed features $\fea_j(x_{\tea})$ and the fixed meta features $\featwo_{j_1j_2}(x_{\tea})$. This presentation makes the nonlinearity manifest.
+After regrouping the terms and using our definition \eqref{eq:effective-feature-def}, in the last line we instead wrote the model prediction in the form of a linear model, where we see that features in this interpretation are the mean of the fixed unlearned features and the learned effective features. From this perspective, representation learning\index{representation learning!for quadratic models} is manifest: the effective features $\feaE_{ij}(x_{\tea}; \theta^{\star})$ depend on the training data through the optimal parameters, $W^{\star}_{ij}=W^{\star}_{ij}(x_{\tra},y_{\tra})$. 
+
+
+
+
+
+
+
+In summary, our nonlinear quadratic model \eqref{eq:nonlinear-model-def} serves as a minimal model of representation learning.
+As we will see soon, this captures the mechanism of feature evolution for a nonzero but fixed dNTK.
+
+
+
+
+\subsubsection{\emph{Aside}: Model Comparison of Linear Regression and Quadratic Regression}
+
+Before we move on to the dual sample-space description of the quadratic model, 
+let's briefly perform a model comparison between linear regression and quadratic regression.
+In particular, let's think about the \neo{model complexity} of these classes of models.\footnote{
+    For a further discussion of model complexity,  with a direct focus on overparameterized deep learning models, see Epilogue~\ref{epi:overparameterization}.
+}
+
+
+
+
+
+For both linear and quadratic regression, the number of model parameters is given by the number of elements in the combined weight matrix $W_{ij}$:
+\be\label{eq:parameters-in-linear-model}
+P \equiv n_{\text{out}} \times (n_f+1)\, .
+\ee
+Since both models completely memorize the same training set for a fixed and equal number of parameters,
+we obviously cannot naively use the \terminate{Occam's razor} heuristic (\S\ref{subsec:bayesian-model-comparison}) for model comparison\index{model comparison!linear model vs.~quadratic model}.
+This makes our model comparison\index{model comparison!linear model vs.~quadratic model} somewhat subtle.
+
+On the one hand, there is a sense in which the quadratic model is more complicated, as it computes far more functions of the input per parameter. Specifically, on a per parameter basis, we need to specify a far greater number of underlying functions  for the quadratic model than we do for the linear model:
+i.e.~we need
+\be\label{eq:quadratic-model-feature-to-parameters}
+(n_f+1)+ \le[\frac{1}{2}(n_f +1)(n_f+2)\ri] = 
+\o{P^2} \,
+\ee
+numbers to specify $\fea_{j}(x)$ \emph{and} $\featwo_{j_1j_2}(x)$,
+while we need \emph{just}
+\be\label{eq:linear-model-feature-to-parameters}
+(n_f+1)  = \o{P} \, 
+\ee
+numbers to specify  $\fea_{j}(x)$.
+In particular, the counting of the model functions is dominated by the meta feature functions $\featwo_{j_1j_2}(x)$.
+As such, this type of complexity is not really captured by the counting of model parameters, $P$; instead, it is expressed in the structure of the model, with the addition of the meta feature functions $\featwo_{j_1j_2}(x)$.
+
+On the other hand, we can interpret these additional meta feature functions as \emph{constraining} the quadratic model according to an explicit inductive bias for representation learning\index{inductive bias!for representation learning in nonlinear models}.\footnote{
+Similarly, we could naively think that the addition of a \neo{regularization}\index{regularization!interpretation of representation learning} term such as $\sum_{\mu=1}^P a_{\mu}\theta_\mu^2$ to the loss as making a model more complex with its extra structure, despite being a well-known remedy for overfitting. Instead, it's probably better to think of this regularization term as an inductive bias for \emph{constraining} the norm squared of the optimized model parameters.\label{footnote:regularization-again}
+}
+In particular, this additional structure alters the linear model solution \eqref{eq:linear-regression-optimal-reprint} with the addition of $\o{\epsilon}$ tunings $\WI_{ij}$, constrained by the $\o{P^2}$ meta features that are defined before any learning takes place.
+Assuming these meta feature functions are \emph{useful}, we might expect that the quadratic model will overfit less and generalize better.\footnote{Interestingly, for the quadratic model, the number of \emph{effective feature functions}\index{feature function!effective}\index{effective feature function|see{feature function}} \eqref{eq:effective-feature-def}, is actually the same as the number of model parameters: $n_{\text{out}} \times (n_f +1) = P$.
+Since it's only through these effective features that the meta feature functions enter the model predictions, cf.~\eqref{eq:nearly-kernel-prediction-nearly-kernel-methods-before-duality}, this further underscores that, despite the additional model structure, there aren't actually $\o{P^2}$ independent degrees of freedom that can be applied towards fitting the training data.
+} (In fact, that was the whole point of introducing them.)
+
+
+
+
+
+
+
+ 
+
+This latter point is worth a little further discussion. One typical signature of overfitting is that the parameters are extremely \textbf{finely-tuned}\index{fine tuning|textbf}\index{overfitting!by fine tuning the parameters}; 
+these tunings are in some sense \emph{unnatural}\index{naturalness}\index{naturalness|seealso{fine tuning}} as they can arise from the extreme flexibility afforded to overparameterized models, enabling models to pass through all the training points \emph{exactly}, to the extreme detriment of the test predictions.\footnote{
+   This is very commonly illustrated by using polynomial basis of feature functions for linear regression, which is sometimes called \neo{polynomial regression}. In this case, consider a linear model of a scalar function $f(x)$ with a scalar input $x$:
+\be
+z(x_{\delta}; \theta) %
+=\sum_{j=0}^{n_f}w_{j}\fea_j(x_{\delta}) \equiv w_{0} + w_{1} x_\delta +  w_{2} x_\delta^2 %
++\dots +  w_{n_f} x_\delta^{n_f}   \, .
+\ee
+If there's any noise at all in the data, when the model is overparameterized, $n_f+1 > \NR$, the plot of this one-dimensional function will make $\sim n_f$ wild turns to go through the $\NR$ training points. (This is particularly evocative if the target function is a simple linear function with noise, 
+i.e.~$f(x) = a x + b + \varepsilon$, with $\varepsilon$ a zero-mean Gaussian noise with small variance $\sigma^2_{\varepsilon} \ll 1$.) 
+In order to make these turns, the optimal coefficients, $w_{j}^\star$, computed by \eqref{eq:linear-regression-optimal-reprint}, will
+be finely-tuned to many significant figures. This kind of fine-tuning problem in model parameters is indicative of the model being unnatural or wrong; in fact, the analog of this problem in high-energy theoretical physics\index{physics} 
+is called \neo{naturalness}
+(see e.g.~\cite{Giudice:2008bi} for a non-technical discussion).
+}
+Adding a regularization term on the parameter norm -- i.e.~the one we just discussed in footnote~\ref{footnote:regularization-again} -- combats such tuning: the additional constraints on the optimization problem drive the norm of the parameters towards zero, effectively promoting parameter sparsity.
+Here, we see that since the nonlinear contribution to the optimal weights, $\WI_{ij}$, is fixed to be small, $\o{\epsilon}$, it's adding constraints that -- if they're useful -- can combat any fine tunings that may appear in the linear solution, $\WF_{ij}$, and lead to better generalization.
+
+
+
+
+
+
+
+
+
+
+
+
+
+\subsection{Nearly-Kernel Methods}\label{subsec:nearly-kernel-methods}
+
+Now that we have some more parameter-space intuition for the potential advantages of nonlinear models over linear models, 
+let's now develop a \emph{dual}\index{duality} sample-space description of quadratic regression where a quadratic-model analog of the dNTK appears naturally. %
+
+Starting with the expression in the second line of the prediction formula  \eqref{eq:nearly-kernel-prediction-nearly-kernel-methods-before-duality} and plugging in the  free solution \eqref{eq:linear-regression-optimal-reprint} and the interacting solution \eqref{eq:nearly-linear-regression-optimal}, we get
+\begin{align}\label{eq:nearly-linear-regression-optimal-cleaner}
+z_i(x_{\tea}; \theta^{\star})=&\sum_{\tra\in\A}\y{i}{\tra}\le[\sum_{j_1,j_2=0}^{n_{f}}\fea_{j_1}(x_{\tra})\le(M^{-1}\ri)_{j_1j_2}\fea_{j_2}(x_{\tea})\ri]\, \\
+&+ \frac{\epsilon}{2}\sum_{\tra_1,\tra_2\in\A}\y{i}{\tra_1}\y{i}{\tra_2}\sum_{j_1,j_2,j_3,j_4=0}^{n_f}\fea_{j_1}(x_{\tra_1})\le(M^{-1}\ri)_{j_1j_3}\fea_{j_2}(x_{\tra_2})\le(M^{-1}\ri)_{j_2j_4}\, \notag\\
+&\quad\quad\, \times\!\le[\featwo_{j_3j_4}(x_{\tea})-\!\!\sum_{\tra\in\A}\featwo_{j_3j_4}(x_{\tra})\!\!\!\sum_{j_5,j_6=0}^{n_f}\!\!\fea_{j_5}(x_{\tra})\le(M^{-1}\ri)_{j_5j_6}\!\!\fea_{j_6}(x_{\tea})\ri]+\o{\epsilon^2}\, .\notag
+\end{align}
+To simplify this expression, recall formula  \eqref{eq:kernel-trick-result} that we derived when discussing \neo{kernel methods},
+\be\label{eq:kernel-trick-result-reprint}
+\sum_{j_1,j_2=0}^{n_{f}}\fea_{j_1}(x_{\tra})\le(M^{-1}\ri)_{j_1j_2}\fea_{j_2}(x_{\tea})=\kerm_{\tea\tra_1}\kermsub^{\tra_1\tra}\, ,
+\ee
+where the \emph{kernel}\index{nearly-kernel methods!kernel} was defined in \eqref{eq:kernel-with-features} as 
+\be\label{eq:kernel-with-features-reprint}
+\kerm_{\delta_1\delta_2}\equiv\kerm\!\le(x_{\delta_1},x_{\delta_2} \ri) \equiv \sum_{j=0}^{n_{f}} \fea_j\!\le(x_{\delta_1}\ri) \fea_j\!\le(x_{\delta_2}\ri) \, ,
+\ee
+and provided a measure of similarity between two inputs $x_{i;\delta_1}$ and $x_{i;\delta_2}$ in \terminate{feature space}.
+Plugging this formula \eqref{eq:kernel-trick-result-reprint} back into our quadratic regression prediction formula \eqref{eq:nearly-linear-regression-optimal-cleaner}, we get
+\begin{align}\label{eq:nearly-linear-regression-optimal-cleanerer}
+z_i(x_{\tea}; \theta^{\star})=&\sum_{\tra_1,\tra_2\in\A}\kerm_{\tea\tra_1}\kermsub^{\tra_1\tra_2}\y{i}{\tra_2}\, \\
+&+ \frac{\epsilon}{2}\sum_{\tra_1,\tra_2\in\A}\y{i}{\tra_1}\y{i}{\tra_2}\sum_{j_1,j_2,j_3,j_4=0}^{n_f}\fea_{j_1}(x_{\tra_1})\le(M^{-1}\ri)_{j_1j_3}\fea_{j_2}(x_{\tra_2})\le(M^{-1}\ri)_{j_2j_4}\, \notag\\
+&\quad \quad \quad \quad \quad \quad \quad \quad \times\le[\featwo_{j_3j_4}(x_{\tea})-\sum_{\tra_1,\tra_2\in\A}\kerm_{\tea\tra_1}\kermsub^{\tra_1\tra_2}\featwo_{j_3j_4}(x_{\tra_2})\ri]+\o{\epsilon^2}\, ,\notag
+\end{align}
+which is already starting to look a little better.
+
+To simplify this expression further, we need to understand an object of the following form:
+\be
+\sum_{j_1,j_2,j_3,j_4=0}^{n_f}\epsilon\,\fea_{j_1}(x_{\tra_1})\le(M^{-1}\ri)_{j_1j_3}\fea_{j_2}(x_{\tra_2})\le(M^{-1}\ri)_{j_2j_4}\featwo_{j_3j_4}(x_{\delta})\, .
+\ee
+Taking inspiration from the steps \eqref{eq:kernel-trick} that we took to derive our kernel-method formula \eqref{eq:kernel-trick-result-reprint}, let's act on this object with two training-set kernels:
+\begin{align}\label{eq:nearly-kernel-trick}
+&\sum_{\tra_1,\tra_2\in\A}\le[\sum_{j_1,j_2,j_3,j_4=0}^{n_f}\epsilon\,\fea_{j_1}(x_{\tra_1})\le(M^{-1}\ri)_{j_1j_3}\fea_{j_2}(x_{\tra_2})\le(M^{-1}\ri)_{j_2j_4}\featwo_{j_3j_4}(x_{\delta})\ri]\kermsub_{\tra_1\tra_3}\kermsub_{\tra_2\tra_4}\, \notag\\
+=&\sum_{\tra_1,\tra_2\in\A}\sum_{j_1,\ldots,j_6=0}^{n_f}\epsilon\,\fea_{j_1}(x_{\tra_1})\le(M^{-1}\ri)_{j_1j_3}\fea_{j_2}(x_{\tra_2})\le(M^{-1}\ri)_{j_2j_4}\, \notag\\
+&\quad\quad\times\featwo_{j_3j_4}(x_{\delta})\fea_{j_5}(x_{\tra_1})\fea_{j_5}(x_{\tra_3})\fea_{j_6}(x_{\tra_2})\fea_{j_6}(x_{\tra_4})\, \notag\\
+=&\sum_{j_1,\ldots,j_6=0}^{n_f}\epsilon\,M_{j_1j_5}\le(M^{-1}\ri)_{j_1j_3}M_{j_2j_6}\le(M^{-1}\ri)_{j_2j_4}\featwo_{j_3j_4}(x_{\delta})\fea_{j_5}(x_{\tra_3})\fea_{j_6}(x_{\tra_4})\, \notag\\
+=&\sum_{j_1,j_2=0}^{n_f}\epsilon\,\featwo_{j_1j_2}(x_{\delta})\fea_{j_1}(x_{\tra_3})\fea_{j_2}(x_{\tra_4})\, .
+\end{align}
+Here on the second line, we used the definition of the kernel \eqref{eq:kernel-with-features-reprint} to swap both kernels for feature functions, on the third line we used the definition of the symmetric matrix $M_{j_1j_2}$, \eqref{eq:no-good-matrix-name-reprint}, to replace two pairs of feature functions, and on the final line we simply canceled these matrices against their inverses. 
+
+This last expression suggests that an important object worth defining is 
+\be\label{eq:meta-kernel-definition}
+\mkerm_{\delta_0\delta_1\delta_2}\equiv\sum_{j_1,j_2=0}^{n_f}\epsilon\,\featwo_{j_1j_2}(x_{\delta_0})\fea_{j_1}(x_{\delta_1})\fea_{j_2}(x_{\delta_2})\, ,
+\ee
+which we will call the \textbf{meta kernel}\index{kernel!meta kernel|see{nearly-kernel methods}}\index{meta kernel|see{nearly-kernel methods}}\index{nearly-kernel methods!meta kernel|textbf}.\footnote{
+    An alternate name for this object is the \emph{differential of the kernel}, which we would consider symbolizing as $\mkerm_{\delta_0\delta_1\delta_2} \to \text{d}k_{\delta_0\delta_1\delta_2}$. This name-symbol pair highlights the connection we're about to make to finite-width networks, but is perhaps less general in the context of making a broader model of representation learning.\index{nearly-kernel methods!meta kernel!other potential names}
+} Analogous to the kernel methods' kernel \eqref{eq:kernel-with-features-reprint}, the meta kernel is a parameter-independent tensor, symmetric under an exchange of its final two sample indices $\delta_1 \leftrightarrow  \delta_2$, and given entirely in terms of the fixed feature and meta feature functions that define the model.  
+One way to think about \eqref{eq:meta-kernel-definition} is that for a fixed particular input, $x_{\delta_0}$, the meta kernel computes a different feature-space inner product between the two other inputs, $x_{\delta_{1}}$ and $x_{\delta_{2}}$.
+Note also that due to the inclusion of the small parameter $\epsilon$ into the definition of the meta kernel \eqref{eq:meta-kernel-definition}, we should think of $\mkerm_{\delta_0\delta_1\delta_2}$ as being parametrically small too.  
+
+
+
+
+   
+
+
+
+
+With this definition, the relation \eqref{eq:nearly-kernel-trick} can now be succinctly summarized as
+\begin{align}
+&\sum_{j_1,j_2,j_3,j_4=0}^{n_f}\epsilon\,\fea_{j_1}\!(x_{\tra_1})\le(M^{-1}\ri)_{j_1j_3}\fea_{j_2}(x_{\tra_2})\le(M^{-1}\ri)_{j_2j_4}\featwo_{j_3j_4}(x_{\delta})\, \\
+=&\sum_{\tra_3,\tra_4\in\A}\mkerm_{\delta\tra_3\tra_4}\kermsub^{\tra_3\tra_1}\kermsub^{\tra_4\tra_2}\, .\notag
+\end{align}
+Finally, plugging this simple relation back into \eqref{eq:nearly-linear-regression-optimal-cleanerer}, we get
+\begin{align}\label{eq:nearly-linear-regression-optimal-cleanest}
+z_i(x_{\tea}; \theta^{\star})=&\sum_{\tra_1,\tra_2\in\A}\kerm_{\tea\tra_1}\kermsub^{\tra_1\tra_2}\y{i}{\tra_2}\, \\
+&+ \frac{1}{2}\sum_{\tra_1,\ldots,\tra_4\in\A}\!\le[\mkerm_{\tea\tra_1\tra_2}-\!\!\!\!\sum_{\tra_5,\tra_6\in\A}\kerm_{\tea\tra_5}\kermsub^{\tra_5\tra_6}\mkerm_{\tra_6\tra_1\tra_2}\ri]\!\!\le(\kermsub^{\tra_1\tra_3}\y{i}{\tra_3}\ri)\!\!\le(\kermsub^{\tra_2\tra_4}\y{i}{\tra_4}\ri)\, .\notag
+\end{align}
+When the prediction of a quadratic model\index{nonlinear model!quadratic model} is computed in this way, we'll hereby make it known as a \emph{nearly-kernel machine}\index{nearly-kernel machine|see{nearly-kernel methods}} or \term{nearly-kernel methods}.\footnote{Unlike kernel methods, this solution actually depends on the details of the \terminate{learning algorithm}. For instance, if we had optimized the quadratic-regression loss \eqref{eq:quadratic-regression} by \neo{gradient descent} rather than by \neo{direct optimization} \eqref{eq:quadratic-optimization-implict-features}, then we would have found instead (for zero initialization $W_{ij}=0$)
+\begin{align}\label{eq:nearly-linear-regression-optimal-with-projectors}
+z_i(x_{\tea}; \theta^{\star})=&\sum_{\tra_1,\tra_2\in\A}\kerm_{\tea\tra_1}\kermsub^{\tra_1\tra_2}\y{i}{\tra_2}\, \\
+&+ \sum_{\tra_1,\ldots,\tra_4\in\A}\!\le[\mkerm_{\tra_1\tea\tra_2}-\!\!\!\!\sum_{\tra_5,\tra_6\in\A}\kerm_{\tea\tra_5}\kermsub^{\tra_5\tra_6}\mkerm_{\tra_1\tra_6\tra_2}\ri] \algodNTKone^{\tra_1\tra_2\tra_3\tra_4} \y{i}{\tra_3}  \y{i}{\tra_4} \, \notag\\
+&+ 
+\sum_{\tra_1,\ldots,\tra_4\in\A}\!\le[\mkerm_{\tea\tra_1\tra_2}-\!\!\!\!\sum_{\tra_5,\tra_6\in\A}\kerm_{\tea\tra_5}\kermsub^{\tra_5\tra_6}\mkerm_{\tra_6\tra_1\tra_2}\ri] 
+\algodNTKtwo^{\tra_1\tra_2\tra_3\tra_4}  \y{i}{\tra_3}  \y{i}{\tra_4}
+\, \notag
+\end{align}
+for our nearly-kernel methods prediction formula, where the \emph{algorithm projectors}\index{algorithm projector} are given by
+\begin{align}
+\algodNTKone^{\tra_1\tra_2\tra_3\tra_4} \equiv& \kermsub^{\tra_1\tra_3} \kermsub^{\tra_2\tra_4} - \sum_{\tra_5} \kermsub^{\tra_2\tra_5}  \geosumtwo^{\tra_1\tra_5\tra_3\tra_4}
+\, ,\\
+\algodNTKtwo^{\tra_1\tra_2\tra_3\tra_4} \equiv& \kermsub^{\tra_1\tra_3} \kermsub^{\tra_2\tra_4} - \sum_{\tra_5} \kermsub^{\tra_2\tra_5}  \geosumtwo^{\tra_1\tra_5\tra_3\tra_4} + \frac{\eta}{2}\geosumtwo^{\tra_1\tra_2\tra_3\tra_4} \, ,
+\end{align}
+with the tensor $\geosumtwo^{\tra_1\tra_2\tra_3\tra_4}$ implicitly satisfying
+\be\label{eq:implicit-X-tensor-nearly-kernel-version}
+\sum_{\tra_3,\tra_4\in\A}\geosumtwo^{\tra_1\tra_2\tra_3\tra_4}\le(\kermsub_{\tra_3\tra_5}\delta_{\tra_4\tra_6}+\delta_{\tra_3\tra_5}\kermsub_{\tra_4\tra_6}-\eta\kermsub_{\tra_3\tra_5}\kermsub_{\tra_4\tra_6}\ri)=\delta^{\tra_1}_{\ \tra_5}\delta^{\tra_2}_{\ \tra_6}\, ,
+\ee
+and global learning rate $\eta$.
+The origin of this gradient-descent solution should be clear after you traverse through \S\ref{subsec:real-GD-at-finite-width}. Such \neo{algorithm dependence} is to be expected for a nonlinear overparameterized model and is an important characteristic of finite-width networks as well. However, for the rest of the section we will continue to analyze the direct optimization formula, \eqref{eq:nearly-linear-regression-optimal-cleanest}, with $\algodNTKone^{\tra_1\tra_2\tra_3\tra_4}=0$ and $\algodNTKtwo^{\tra_1\tra_2\tra_3\tra_4}=\kermsub^{\tra_1\tra_3} \kermsub^{\tra_2\tra_4}/2$.\label{footnote:algo-dependence-quadratic-regression}
+}
+
+
+
+
+Analogous to linear models, we again have two ways of thinking about the solution of our nonlinear quadratic model's predictions: on the one hand, we can use the optimal parameters \eqref{eq:linear-regression-optimal-reprint} and \eqref{eq:nearly-linear-regression-optimal} to make predictions \eqref{eq:nearly-kernel-prediction-nearly-kernel-methods-before-duality}; 
+on the other hand, we can make \emph{nearly-kernel predictions}\index{nearly-kernel methods!prediction} using the formula \eqref{eq:nearly-linear-regression-optimal-cleanest}  in which the features, the meta features, and the model parameters do not appear. 
+That is, we've successfully traded our feature-space quantities $\fea_{j}(x)$, $\featwo_{j_1j_2}(x)$, and $W^{\star}_{ij}$ for sample-space quantities $ \kerm_{\delta\tra}$, $\mkerm_{\delta_0\tra_1\tra_2}$, and $\y{i}{\tra}$. 
+As was the case before for kernel methods, this works because all the feature indices are contracted in our prediction formula \eqref{eq:nearly-kernel-prediction-nearly-kernel-methods-before-duality}, and so only combinations of the form $\kerm_{\delta\tra}$ and $\mkerm_{\delta_0\tra_1\tra_2}$ ever show up in the result and not the value of the features or meta features themselves.\footnote{Just as we discussed for kernel methods in footnote~\ref{footnote:kernel-vs-feature-functions} of \S\ref{ch:NTHb}, in some situations we expect that specifying and evaluating the meta kernel $\mkerm_{\delta_0\delta_1\delta_2}$
+is much simpler than specifying and evaluating meta feature function $\featwo_{j_1j_2}(x)$.
+Although picking these out of the thin air seems difficult, perhaps there are other inspired ways of determining these functions that don't require an underlying description in terms of neural networks.
+It would be interesting to determine the necessary and sufficient conditions for a general three-input function, $\mkerm(x_{\delta_0}, x_{\delta_1}, x_{\delta_2}) \equiv \mkerm_{\delta_0\delta_1\delta_2}$, to be a meta kernel.
+} 
+This duality between the microscopic feature-space description of the model and a macroscopic sample-space description is another realization of the \terminate{effective theory} approach discussed in \S\ref{sec:ET-approach}, and we will return to comment more broadly on this duality in Epilogue~\ref{epi:overparameterization} after we discuss the dynamics of finite-width networks in \S\ref{ch:eot}.
+
+Finally, as we saw before for kernel methods, the nearly-kernel prediction is computed by direct comparison with previously-seen examples. In this case, it has the same piece linear in the true outputs proportional to $\y{i}{\tra_2}$, and also has a new piece that's quadratic in the true output across different training examples proportional to $\y{i}{\tra_1} \y{i}{\tra_2}$. In this way, nearly-kernel methods are also \emph{memory-based} methods that involve memorizing the entire training set.\index{memory-based method|see{nearly-kernel methods}}\index{nearly-kernel methods!as a memory-based method}
+
+
+
+
+
+
+
+\subsubsection{Trained-Kernel Prediction}\index{nearly-kernel methods!trained kernel|seealso{trained NTK}}
+Even though these \terminate{nearly-kernel methods} are \emph{very-nearly} \terminate{kernel methods},
+there's a real qualitative difference between them due to the presence of interactions between the parameters.\index{interactions!nearly-kernel methods}
+In the feature-space picture described in \S\ref{subsec:nonlinear-models}, this difference manifested itself in terms of the nontrivial feature learning for the effective features $\feaE_{ij}(x,\theta)$, as expressed in the last line of the quadratic model prediction formula \eqref{eq:nearly-kernel-prediction-nearly-kernel-methods-before-duality}. To better understand this from the dual\index{duality} sample-space picture, let's analogously define an \textbf{effective kernel}\index{effective kernel|see{nearly-kernel methods}}\index{nearly-kernel methods!effective kernel}\index{kernel!effective kernel|see{nearly-kernel methods}} 
+\begin{align}\label{eq:effective-kernel-def}
+\kermE_{ii;\delta_1 \delta_2 }(\theta) \equiv& \sum_{j=0}^{n_f} \feaE_{ij}(x_{\delta_1};\theta) \, \feaE_{ij}(x_{\delta_2};\theta) \, ,
+\end{align}
+which measures a parameter-dependent similarity between two inputs $x_{\delta_1}$ and $x_{\delta_2}$ using our effective features \eqref{eq:effective-feature-def}. Interestingly, we see that the model actually gives a different effective kernel for each output component $i$.\footnote{Here, the use of two $i$'s in the subscript of the effective kernel to represent the output-component is just our convention; we'll later require a version with off-diagonal components in the slightly-less minimal model~\eqref{eq:stochastic-kernel-ntk-parameter-dependent}.} 
+Let's try to understand this a little better by evaluating the
+effective kernel\index{nearly-kernel methods!effective kernel} at the \terminate{end of training}:
+\begin{align}\label{eq:evolving-kernel-methods-kernel}
+\kermE_{ii;\delta_1 \delta_2 }(\theta^{\star}) \equiv& \sum_{j=0}^{n_f} \feaE_{ij}(x_{\delta_1};\theta^{\star}) \, \feaE_{ij}(x_{\delta_2};\theta^{\star}) \, \\
+=& \sum_{j=0}^{n_f} \fea_{j}(x_{\delta_1}) \, \fea_{j}(x_{\delta_2})+\!\!\!\!\!\sum_{j_1,j_2=0}^{n_f}\!\!\!\WF_{ij_1}\le[\featwo_{j_1j_2}(x_{\delta_1})\fea_{j_2}(x_{\delta_2})+ \featwo_{j_1j_2}(x_{\delta_2})\fea_{j_2}(x_{\delta_1})\ri]+ \o{\epsilon^2}\, \notag\\
+=&\kerm_{\delta_1\delta_2}+\sum_{\tra_1,\tra_2\in\A}(\mkerm_{\delta_1\delta_2\tra_1}+\mkerm_{\delta_2\delta_1\tra_1})\kermsub^{\tra_1\tra_2}\y{i}{\tra_2}+\o{\epsilon^2}\, .
+\notag
+\end{align}
+To get this last result
+on the final line we plugged in the free solution \eqref{eq:linear-regression-optimal-reprint}, and then 
+secretly used the following relation
+\be
+\fea_{j_0}(x_{\tra}) \le(M^{-1}\ri)_{j_0j_1}\featwo_{j_1j_2}(x_{\delta_1})\fea_{j_2}(x_{\delta_2})=\sum_{\tra_1\in\A}\mkerm_{\delta_1\delta_2\tra_1}\kermsub^{\tra_1\tra}\, ,
+\ee
+which can be derived with manipulations analogous to those that we used in \eqref{eq:kernel-trick} and \eqref{eq:nearly-kernel-trick}.\footnote{
+    Note that if we had instead optimized the quadratic-regression loss, \eqref{eq:quadratic-regression}, using gradient descent, then the effective kernel\index{nearly-kernel methods!effective kernel} at the end of training, $\kermE_{ii;\delta_1 \delta_2 }(\theta^{\star})$, would have a different expression than the one above, \eqref{eq:evolving-kernel-methods-kernel}, for direct optimization, cf.~our discussion in footnote~\ref{footnote:algo-dependence-quadratic-regression}.
+} 
+Here, in \eqref{eq:evolving-kernel-methods-kernel} we see that the effective kernel\index{nearly-kernel methods!effective kernel} is shifted from the kernel and includes a contribution proportional to the meta kernel as well as the true training outputs $\y{i}{\tra}$; this is what gives the effective kernel its output-component dependence. 
+
+Finally, let's define one more kernel:
+\be\label{eq:learned-unlearned-kernels-averaged}
+\kermA_{ii;\delta_1\delta_2}\equiv\frac{1}{2}\le[\kerm_{\delta_1\delta_2}+\kermE_{ii;\delta_1\delta_2}(\theta^{\star})\ri]\, .
+\ee
+This \textbf{trained kernel}\index{trained kernel|see{nearly-kernel methods}}\index{nearly-kernel methods!trained kernel}\index{kernel!trained kernel|see{nearly-kernel methods}} averages between the simple kernel methods' kernel\index{kernel methods!kernel} from the linear model and the learned nearly-kernel methods' effective kernel.\index{nearly-kernel methods!effective kernel} 
+Defining the inverse of the trained-kernel submatrix evaluated on the training set  in the usual way,
+\be
+\sum_{\tra_2\in\A} \kermAsub_{ii}^{\tra_1\tra_2} \kermAsub_{ii;\tra_2\tra_3} = \delta^{\tra_1}_{\ \tra_3} \, ,
+\ee
+the utility of this final formulation is that
+the nearly-kernel prediction formula \eqref{eq:nearly-linear-regression-optimal-cleanest} can now be compressed as
+\be\label{eqtrained-kernel-prediction}
+z_i(x_{\tea}; \theta^{\star})=\sum_{\tra_1,\tra_2\in\A}\kermA_{ii;\tea\tra_1}\kermAsub_{ii}^{\tra_1\tra_2}\y{i}{\tra_2}+\o{\epsilon^2}\, ,
+\ee
+taking the form of a \emph{kernel prediction}\index{kernel methods!prediction}, but with the benefit of nontrivial feature evolution incorporated into the trained kernel.\footnote{
+    To verify the formula, use the definition of the trained kernel\index{nearly-kernel methods!trained kernel}, \eqref{eq:learned-unlearned-kernels-averaged}, then expand in the effective kernel\index{nearly-kernel methods!effective kernel} using the Schwinger-Dyson equations\index{Schwinger-Dyson equations} \eqref{eq:stochastic-metric-inversion} to evaluate the matrix inverse. The result should agree with the nearly-kernel prediction formula \eqref{eq:nearly-linear-regression-optimal-cleanest}.
+} This is how representation learning manifests itself in \terminate{nearly-kernel methods}.
+
+
+
+
+
+Finally, note that in our minimal model\index{representation learning!minimal model} of representation learning\index{representation learning!minimal model}, there's no \emph{wiring}\index{nearly-kernel methods!wiring}\index{wiring!in nearly-kernel methods|see{nearly-kernel methods}} or mixing among the $n_{\text{out}}$ different output components: while the prediction $z_{i}(x_{\tea};\theta^{\star})$ is quadratic in the true output $\y{i}{\tra}$ -- most easily seen in  \eqref{eq:nearly-linear-regression-optimal-cleanest} -- it still only involves the $i$-th component. From the perspective of the \textbf{trained-kernel prediction}\index{nearly-kernel methods!trained kernel!prediction|textbf}, \eqref{eqtrained-kernel-prediction}, each output component $i$ has a \emph{different} trained kernel associated with its prediction, but the $i$-th prediction never depends on other true output components $\y{i'}{\tra}$ with $i' \neq i$. 
+
+However, this lack of wiring is by our design; this representation-learning model is really intended to be \emph{minimal}. To enable mixing of the output components, we'll have to slightly generalize the quadratic model. This we'll do next when we explain how finite-width networks can be described in this nearly-kernel methods framework.
+
+
+
+
+
+
+
+\subsection{Finite-Width Networks as Nonlinear Models}\label{subsec:nonlinear-at-finite}\index{differential of the neural tangent kernel!connection to representation learning}
+While the discussion so far in this section has been somewhat disconnected from the deep learning framework, much of it should still feel pretty familiar to you. For instance, the  formula for the effective kernel\index{nearly-kernel methods!effective kernel} at the end of training, \eqref{eq:evolving-kernel-methods-kernel}, seems like it could be related to the update to the NTK, \eqref{eq:dNTK-naming}, if we identify the meta kernel $\mkerm_{\delta_0\delta_1\delta_2}$ with the dNTK $\dNTK_{i_0i_1i_2;\delta_0\delta_1\delta_2}$ and also make the previous identifications that we made in \S\ref{subsec:linear-at-infinity} between the kernel methods' kernel and the NTK. Let's now make these connections between finite-width networks and nonlinear models more precise.
+
+
+
+
+
+
+
+
+
+
+
+
+
+To start, for neural networks, let us define an analog of the effective feature function $\feaE_{ij}(x_{\delta};\theta)$ \eqref{eq:effective-feature-def} by
+\be\label{eq:feature-function-stochastic-reprint}
+ \feaE_{i,\mu}(x_{\delta}; \theta) \equiv \frac{\td \z{i}{\delta}{L}}{d \theta_\mu}  \, .
+\ee
+Note that for the linear model description of infinite-width networks, the derivative of the model output is a constant, and these features are completely \emph{fixed} throughout training.
+In contrast, for quadratic models and finite-width networks, the derivative \eqref{eq:feature-function-stochastic-reprint} is not constant, and so these effective features evolve throughout training as the model parameters move.
+As for the function approximator itself, after a small change in the parameters $\theta \to \theta+\dbar\theta$, the network output evolves as 
+\begin{align}\label{eq:Taylor-expanding-the-finite-width-network-function}
+\z{i}{\delta}{L}(\theta+\dbar\theta)&=\z{i}{\delta}{L}(\theta)+\sum_{\mu=1}^{P} \frac{\td \z{i}{\delta}{L}}{d \theta_\mu} \dbar \theta_{\mu}+\frac{1}{2}\sum_{\mu,\nu=1}^{P} \frac{\td^2 \z{i}{\delta}{L}}{d \theta_\mu d \theta_\nu}\dbar \theta_{\mu}\dbar \theta_{\nu}+\ldots\, ,  \notag \\
+&=\z{i}{\delta}{L}(\theta)+\sum_{\mu=1}^{P} \feaE_{i,\mu}(x_{\delta}; \theta)\,\dbar \theta_{\mu}+\frac{\epsilon}{2}\sum_{\mu,\nu=1}^{P} \widehat{\featwo}_{i,\mu\nu}(x_{\delta})\, \dbar \theta_{\mu}\dbar \theta_{\nu}+\ldots\, ,
+\end{align}
+where we've additionally defined an analog of the meta feature function $ \featwo_{j_1j_2}(x_{\delta})$ for neural networks by
+\be\label{eq:nonlinear-feature-function-stochastic}
+ \epsilon\widehat{\featwo}_{i,\mu\nu}(x_{\delta}) \equiv \frac{\td^2 \z{i}{\delta}{L}}{d \theta_\mu d \theta_\nu}  \, .
+\ee
+For this discussion, we truncated the ``$\ldots$'' in \eqref{eq:Taylor-expanding-the-finite-width-network-function} so that the update to the output is exactly quadratic in the small change in the parameters. With this truncation, the update \eqref{eq:Taylor-expanding-the-finite-width-network-function} for a finite-width neural network is identical to the update equation \eqref{eq:quadratic-model-small-step} that we found for our quadratic model\index{nonlinear model!quadratic model} after taking a small step.\footnote{Considering the definition of our quadratic model, \eqref{eq:nonlinear-model-def},  we have included the small parameter $\epsilon$ as part of our identification. For MLPs, this parameter will be set automatically by the architecture, and is given by the effective theory cutoff\index{cutoff, effective theory!nearly-kernel methods}, the depth-to-width ratio of the network: $\epsilon \equiv L/n$. However, for such finite-width networks there are additional terms of order $\epsilon \equiv L/n$ that need to be incorporated in order to have a consistent description, as we will explain soon.}
+
+Let us further note that for the linear model description of infinite-width networks, the meta feature functions \eqref{eq:nonlinear-feature-function-stochastic} vanish identically -- as any linear function has a zero second derivative -- and thus have no effect on the dynamics.
+For finite-width networks with a quadratic truncation, these meta features \eqref{eq:nonlinear-feature-function-stochastic} are parametrically small but no longer zero; they are stochastically sampled at initialization and then fixed over the course of training, hence decorated with a hat.
+Therefore, at quadratic order we will call these meta feature functions,  $\widehat{\featwo}_{i,\mu\nu}(x)$, as \textbf{random meta features}\index{meta feature function!random}, just as we called the feature functions as \emph{random features} for infinite-width networks.
+
+
+Having established a connection in the feature space, let us now establish a similar connection in the sample-space dual description. First, associated with the effective feature functions  \eqref{eq:feature-function-stochastic-reprint} is the analog of the effective kernel\index{nearly-kernel methods!effective kernel!in terms of effective feature functions} $\kermE_{ii;\delta_1 \delta_2 }(\theta)$ \eqref{eq:effective-kernel-def}, defined by
+\begin{align}\label{eq:stochastic-kernel-ntk-parameter-dependent}
+\kermE_{i_1i_2;\delta_1\delta_2}(\theta)=  \sum_{\mu,\nu}\lambda_{\mu\nu}\, \feaE_{i_1,\mu}(x_{\delta_1};\theta) \feaE_{i_2,\nu}(x_{\delta_2};\theta)=\sum_{\mu,\nu}\lambda_{\mu\nu}\frac{\td \z{i_1}{\delta_1}{L}}{d \theta_\mu}\frac{\td \z{i_2}{\delta_2}{L}}{d \theta_\nu} \equiv \Tia{\NTKM}{i_1i_2}{\delta_1\delta_2}{L}\!(\theta)\, .
+\end{align}
+Here, we used our more general definition of the kernel \eqref{eq:kernel-with-features-weighted} to include the learning-rate tensor, and 
+since the effective features \eqref{eq:feature-function-stochastic-reprint} have a parameter dependence, in the final equality we used most general definition of the NTK, \eqref{eq:NTH-definition}, and gave it a $\theta$ argument, $\Tia{\NTKM}{i_1i_2}{\delta_1\delta_2}{L}\!(\theta)$, to indicate its parameter dependence.
+In particular, if we evaluated the effective kernel\index{nearly-kernel methods!effective kernel} at initialization $\theta = \theta(t=0)$ in terms of the random features
+\be\label{eq:stochastic-feature-at-init-reprint}
+\widehat{\fea}_{i,\mu}(x_{\delta})\equiv \feaE_{i,\mu}\Big(x_{\delta};\theta(t=0)\Big)= \frac{\td \z{i}{\delta}{L}}{d \theta_\mu}\Bigg|_{\theta=\theta(t=0) }\, ,
+\ee
+we'd just have the usual $L$-th-layer stochastic NTK at initialization~\eqref{eq:midNTH-definition}:
+\begin{align}\label{eq:stochastic-kernel-ntk-reprint}
+ \widehat{\kerm}_{i_1i_2;\delta_1\delta_2}\equiv \kermE_{i_1i_2;\delta_1\delta_2}\!\Big(\theta(t=0)\Big)&=  \sum_{\mu,\nu}\lambda_{\mu\nu}\, \widehat{\fea}_{i_1,\mu}(x_{\delta_1}) \, \widehat{\fea}_{i_2,\nu}(x_{\delta_2}) \, \\
+ &=\sum_{\mu,\nu}\lambda_{\mu\nu}\le( \frac{\td \z{i_1}{\delta_1}{L}}{d \theta_\mu}\frac{\td \z{i_2}{\delta_2}{L}}{d \theta_\nu}\ri)\Bigg|_{\theta=\theta(t=0) }\!\!\equiv \Tia{\NTK}{i_1i_2}{\delta_1\delta_2}{L}\, . \notag
+ \end{align}
+For infinite-width networks, this NTK doesn't evolve during training and is composed of \emph{random features} at initialization \eqref{eq:feature-function-stochastic}.
+In contrast, as we saw in \S\ref{sec:dNTK}, for finite-width networks the effective kernel\index{nearly-kernel methods!effective kernel}\index{nearly-kernel methods!effective kernel!relation to dynamical NTK} \eqref{eq:stochastic-kernel-ntk-parameter-dependent} \emph{does} evolve during training, just as the analogous effective kernel \eqref{eq:effective-kernel-def} did for the quadratic model. 
+
+
+
+
+
+
+
+
+
+
+
+Finally, analogously to the meta kernel for the quadratic model \eqref{eq:meta-kernel-definition}, we can form a meta kernel for finite-width networks from the random features  \eqref{eq:stochastic-feature-at-init-reprint} and the random meta features \eqref{eq:nonlinear-feature-function-stochastic} as
+\begin{align}\label{eq:stochastic-meta-kernel-definition}
+\widehat{\mkerm}_{i_0 i_1 i_2; \delta_0\delta_1\delta_2} &\equiv \sum_{\substack{\mu_1,\nu_1, \\ \mu_2,\nu_2} }\ \epsilon \lambda_{\mu_1\nu_1}\lambda_{\mu_2\nu_2} \widehat{\featwo}_{i_0,\mu_1\mu_2}(x_{\delta_0})\, \widehat{\fea}_{i_1,\nu_1}(x_{\delta_1} ) \,\widehat{\fea}_{i_2,\nu_2}(x_{\delta_2}) \\
+&=\sum_{\substack{\mu_1,\nu_1, \\ \mu_2,\nu_2} }\lambda_{\mu_1\nu_1}\lambda_{\mu_2\nu_2}\le( \frac{d^2\!\z{i_0}{\delta_0}{L}}{d\theta_{\mu_1}d\theta_{\mu_2}}\frac{d\z{i_1}{\delta_1}{L}}{d\theta_{\nu_1}}\frac{d\z{i_2}{\delta_2}{L}}{d\theta_{\nu_2}}\ri)\Bigg|_{\theta=\theta(t=0) } \equiv \Tia{\dNTK}{i_0i_1i_2}{\delta_0 \delta_1\delta_2}{L} \, , \notag
+\end{align}
+where we slightly generalized our earlier definition of the meta kernel \eqref{eq:meta-kernel-definition} with the inclusion of the learning-rate tensors.\footnote{
+Our slightly more general definition of the meta kernel here should be understood as analogous to the slightly more general definition of the kernel \eqref{eq:kernel-with-features-weighted}.}
+Thus, we've now identified the random meta kernel \eqref{eq:stochastic-meta-kernel-definition}  with the $L$-th-layer stochastic dNTK \eqref{eq:dNTK-definition}.
+
+
+
+
+
+
+
+With all these connections established, there are three notable differences between our minimal quadratic model and finite-width neural networks.  
+
+
+
+
+First, as should be clear from the definitions of the random features and random meta features, \eqref{eq:stochastic-feature-at-init-reprint} and \eqref{eq:nonlinear-feature-function-stochastic}, these functions are stochastic rather than designed: they are determined by the details of the neural network architecture and depend on the values of the randomly-sampled parameters at initialization. We might more generally call such a quadratic model of the form \eqref{eq:nonlinear-model-def} with random functions $\widehat{\fea}_j(x)$ and $\widehat{\featwo}_{j_1j_2}(x)$ a \term{random meta feature model}, generalizing the notion of a \neo{random feature model} that we discussed in conjunction with infinite-width networks and linear models in \S\ref{subsec:linear-at-infinity}.
+
+
+
+
+Second, as we discussed at the end of \S\ref{subsec:nearly-kernel-methods}, the quadratic model \eqref{eq:nonlinear-model-def} does not wire together different components of the true outputs from the training set when making nearly-kernel predictions \eqref{eq:nearly-linear-regression-optimal-cleanest} on test-set inputs. In contrast, we will show soon in \S\ref{subsec:prediction-at-finite-width} that the finite-width network predictions do have this wiring property.
+This deficiency of the quadratic model was actually by design on our part in an effort to eliminate extra complications when working through our minimal model\index{representation learning!minimal model} of representation learning\index{representation learning!minimal model}. To include wiring in the quadratic model\index{nonlinear model!quadratic model!with wiring}, we can generalize it slightly as 
+\be\label{eq:nonlinear-model-def-less-minimal}
+z_i(x_{\delta}; \theta) = \sum_{\mu=1}^{P}\theta_{\mu}\widehat{\fea}_{i,\mu}(x_{\delta}) + \frac{\epsilon}{2}\sum_{\mu,\nu=1}^{P}\theta_{\mu}\theta_{\nu}\widehat{\featwo}_{i,\mu\nu}(x_{\delta})\, .
+\ee
+This slightly-less-minimal model will now allow a parameter $\theta_{\mu}$ to connect to various  different output components, as the feature functions and meta feature functions now also carry vectorial indices specifying an output-component.\footnote{Note that these feature functions may have constraints, cf.~the explicit form of the random feature \eqref{eq:NTK-weight-features}. These constraints end up causing the infinite-width model not to wire, while allowing to wire the predictions of any particular network at finite width. These constraints can be thought of as a type of \emph{weight-tying}.
+}
+
+Third, as we've mentioned throughout this chapter, the leading finite-width contributions to the update to the network output include $\o{\eta^3}$ terms. To capture these effects, we need to deform\index{deformation!quadratic model} our quadratic model\index{nonlinear model!quadratic model} \eqref{eq:nonlinear-model-def} into a  \textbf{cubic model}\index{nonlinear model!cubic model|textbf}\index{cubic model|see{nonlinear model}}:
+\be\label{eq:cubic-model-def}
+z_i(x_{\delta}; \theta) = \sum_{\mu=1}^{P}\theta_{\mu}\widehat{\fea}_{i,\mu}(x_{\delta}) + \frac{1}{2}\sum_{\mu,\nu=1}^{P}\theta_{\mu}\theta_{\nu}\widehat{\featwo}_{i,\mu\nu}(x_{\delta}) + \frac{1}{6}\sum_{\mu,\nu,\rho=1}^{P}\theta_{\mu}\theta_{\nu}\theta_{\rho}\widehat{\feathree}_{i,\mu\nu\rho}(x_{\delta}) \, .
+\ee
+Here, the random \textbf{meta-meta feature function}\index{meta-meta feature function|textbf}\index{feature function!meta-meta|see{meta-meta feature function}}, are given by the third derivative of the network output,
+\be\label{eq:third derative random}
+\widehat{\feathree}_{i,\mu\nu\rho}(x_{\delta}) \equiv \frac{\td^3 \z{i}{\delta}{L}}{d \theta_\mu d \theta_\nu d \theta_\rho}  \, ;
+\ee 
+the addition of this cubic term will enable the meta features to effectively evolve as if they're described by a linear model, while in turn the features will effectively evolve as if they're described by a quadratic model.\footnote{To make this connection precise, we must give the small parameter $\epsilon$ not in the cubic model definition \eqref{eq:cubic-model-def}, but instead in the statistics of the joint distribution, $p(\widehat{\fea}_{i,\mu}, \widehat{\featwo}_{i,\mu\nu},\widehat{\feathree}_{i,\mu\nu\rho})$, that controls the random meta-meta feature model. Schematically, the nontrivial combinations are the following:
+\begin{align}
+\E{\widehat{\fea}^2 } = \o{1} \, , \qquad 
+\E{\widehat{\featwo} \,\widehat{\fea}^2 z} = \o{\epsilon}\, , \qquad
+\E{\widehat{\feathree} \,\widehat{\fea}^3} = \o{\epsilon}\,, \qquad
+\E{\widehat{\featwo}^2\, \widehat{\fea}^2} = \o{\epsilon}
+\,.
+\end{align}
+In the next chapter, we'll identify these combinations with the NTK, the dNTK, and (soon-to-be-revealed) two ddNTKs, respectively. Importantly, since all of these combinations are the same order in $\epsilon= L/n$, to describe finite-width networks self-consistently, we need to think of them as cubic models.
+}
+In summary, for finite-width networks of depth $L>1$, this less-minimal model, 
+\eqref{eq:cubic-model-def}, is a consistent description, with random features \eqref{eq:stochastic-feature-at-init-reprint},  random meta features \eqref{eq:nonlinear-feature-function-stochastic}, and random meta-meta features \eqref{eq:third derative random}.
+
+
+
+
+
+
+
+
+
+
+\subsubsection{Deep Learning: A Non-Minimal Model of Representation Learning}
+
+
+
+
+
+Representation learning is a big part of what makes deep learning exciting. 
+What our minimal model of representation learning\index{representation learning!minimal model}\index{representation learning!minimal model} has shown us is that
+we can actually decouple the analysis of the \emph{learning} from the analysis of the \emph{deep}:
+the simple quadratic model
+\eqref{eq:nonlinear-model-def} 
+exhibits nontrivial representation learning for general choices of feature functions\index{feature function}
+$\fea_j(x)$
+and meta feature functions\index{meta feature function}
+$\featwo_{jk}(x)$,
+or dually, of a kernel 
+$\kerm_{\delta_1\delta_2}$
+and a meta kernel 
+$\mkerm_{\delta_0\delta_1\delta_2}$. 
+In particular, the
+meta kernel is what made learning features from the training data possible, and we hope that this broader class of representation-learning models will be of both theoretical and practical interest in their own right.
+
+Of course, \emph{deep} learning is a non-minimal model of representation learning, and the structure of these kernels and meta kernels \emph{do} matter.
+Specifically, for deep neural networks the statistics of these functions encoded in the joint preactivation-NTK-dNTK distribution 
+$p\Big(z^{(L)}, \, \NTK^{(L)},\, \dNTK^{(L)}\Big\vert \D\Big)$
+are controlled by the \terminate{representation group flow} recursions -- cf.~\S\ref{ch:ngp},~\S\ref{ch:NTKa}, and~\S\ref{sec:dNTK-RG}  -- the details of which are implicitly determined by the underlying architecture and hyperparameters.
+In particular, we can understand the importance 
+of this RG flow
+by remembering there can be a vast improvement from selecting other architectures 
+beyond
+MLPs when applying function approximation to specific domains or datasets: RG flow \emph{is} the inductive bias of the deep learning architecture.\index{inductive bias!of model architectures}\footnote{Note that the formalism of nonlinear models and nearly-kernel methods that we outlined in this section should also describe these other deep learning architectures so long as they admit an expansion around an infinite-width (or infinite-channel or infinite-head) limit. In particular, everything we learned here about representation learning and the training dynamics can be carried over; the only difference is that we will have have different functions $\fea_{i,\mu}(x)$ and $\featwo_{i,\mu\nu}(x)$, leading to different kernels and meta kernels, $\kerm_{i_1i_2;\delta_1\delta_2}$ and $\mkerm_{i_0i_1i_2;\delta_0\delta_1\delta_2}$, that can be built up from a different set of recursions than the ones that we studied in this book.} Thus, even in the set of models that exhibit nontrivial representation learning, these choices -- the initial features, meta features, and so on -- are still really important.\footnote{
+In Appendix~\ref{app:residual}, we'll explore an aspect of this question directly by studying \emph{residual networks}\index{residual network}: these networks let us introduce a parameter that in a single network has an interpretation of trading off more layers of representation group flow against more effective realizations from the ensemble.}
+
+The full power of deep learning is likely due to the deep -- i.e.~the \neo{representation group flow} induced by interactions between neurons in deep models of many iterated layers -- working in conjunction with the  learning -- i.e.~the \neo{representation learning} induced by the nonlinear dynamical interactions present at finite width. The \terminate{principles of deep learning theory} presented in this book are precisely those that will let you analyze both of these irreducible basic elements in full generality.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
