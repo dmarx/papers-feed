@@ -12,7 +12,7 @@ System which monitors what I'm reading via a browser extension and publishes a f
 
 1. Create a new repository from this template: https://github.com/dmarx/papers-feed-template
 2. Configure repository settings
-  * Configure github pages to deploy from the `gh-pages` branch
+  * [Configure github pages](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site#publishing-from-a-branch) to deploy from the `gh-pages` branch
   * Give actions write permissions on your repo
 5. Install the browser extension located in `papers-feed-src/extension`
 6. Createa a github PAT with permission to create issues on your papers-feed repo
