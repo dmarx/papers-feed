@@ -15,7 +15,7 @@ System which monitors what I'm reading via a browser extension and publishes a f
   * [Configure github pages](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site#publishing-from-a-branch) to deploy from the `gh-pages` branch
   * Give actions write permissions on your repo
 5. [Install the browser extension](https://developer.chrome.com/docs/extensions/get-started/tutorial/hello-world#load-unpacked) located in `papers-feed-src/extension`
-6. Createa a github PAT with permission to create issues on your papers-feed repo
+6. [Create a a github PAT](https://github.blog/security/application-security/introducing-fine-grained-personal-access-tokens-for-github/#creating-personal-access-tokens) with permission to create issues on your papers-feed repo
 7. Register the PAT in the browser extension's options
 8. visit an arxiv /abs/ or /pdf/ page to test that everything is set up correctly. Shortly after visiting:
   * an issue with the label "paper" should be created
