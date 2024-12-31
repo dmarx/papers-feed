@@ -1,0 +1,1112 @@
+\PassOptionsToPackage{dvipsnames}{xcolor}
+\documentclass{article} % For LaTeX2e
+\usepackage{iclr2021_conference,times}
+
+% Optional math commands from https://github.com/goodfeli/dlbook_notation.
+\input{math_commands.tex}
+
+\usepackage{booktabs}
+\usepackage{url}
+\usepackage{graphicx} % Required for including images
+\usepackage{subcaption} % Required for creating subfigures
+\usepackage{wrapfig}
+\usepackage{tikz}
+
+\usepackage{thmtools}
+\usepackage{thm-restate}
+\usepackage[export]{adjustbox}
+\usepackage{hyperref}
+
+\usepackage{cleveref}
+
+\usepackage{amsmath}
+\usepackage{algorithm}
+\usepackage[noend]{algpseudocode}
+\usepackage{amsfonts}
+\usepackage{xcolor}
+\usepackage{multirow}
+\usepackage[T1]{fontenc}
+\usepackage{inconsolata}
+
+\setlength{\arraycolsep}{1.5pt} % Adjust horizontal space in pmatrix
+\renewcommand{\arraystretch}{1.5} % Adjust vertical space in pmatrix
+
+\definecolor{citecolor}{HTML}{2779af}
+\definecolor{linkcolor}{HTML}{c0392b}
+\hypersetup{breaklinks=true,colorlinks,citecolor=citecolor,linkcolor=linkcolor}
+\declaretheorem[name=Theorem]{theorem}
+\declaretheorem[name=Corollary]{corollary}
+\declaretheorem[name=Observation]{observation}
+\declaretheorem[name=Proposition]{prop}
+\declaretheorem[name=Statement of Lemma]{statementoflemma}
+\DeclareMathOperator{\rank}{rank}
+
+\definecolor{customLightPurple}{rgb}{1, 0.85, 1}
+\definecolor{customMediumPurple}{rgb}{1, 0.3, 1}
+\definecolor{customDarkPurple}{rgb}{1, 0.1, 1}
+
+\definecolor{customLightBlue}{rgb}{0.9, 0.9, 1}
+\definecolor{customMediumBlue}{rgb}{0.6, 0.6, 1}
+\definecolor{customDarkBlue}{rgb}{0.33, 0.33, 1}
+\definecolor{customDarkestBlue}{rgb}{0.01, 0.01, 1}
+
+\definecolor{customLightRed1}{rgb}{1, 0.9, 0.9}
+\definecolor{customMediumRed1}{rgb}{1, 0.6, 0.6}
+\definecolor{customDarkRed1}{rgb}{1, 0.4, 0.4}
+\definecolor{customDarkestRed1}{rgb}{1, 0.05, 0.05}
+
+\definecolor{customLightRed2}{rgb}{1, 0.85, 0.85}
+\definecolor{customMediumRed2}{rgb}{1, 0.65, 0.65}
+\definecolor{customDarkRed2}{rgb}{1, 0.43, 0.43}
+\definecolor{customDarkestRed2}{rgb}{1, 0.03, 0.03}
+
+\definecolor{customLightRed3}{rgb}{1, 0.80, 0.80}
+\definecolor{customMediumRed3}{rgb}{1, 0.5, 0.5}
+\definecolor{customDarkRed3}{rgb}{1, 0.2, 0.2}
+\definecolor{customDarkestRed3}{rgb}{1, 0.01, 0.01}
+
+\usepackage{titlesec}
+\titlespacing*{\paragraph}{\parindent}{0.25ex}{1ex}
+\titlespacing*{\section}{0pt}{5pt}{5pt}
+\titlespacing*{\subsection}{0pt}{5pt}{5pt}
+
+\title{Improving Pretraining Data Using\\  Perplexity Correlations}
+
+% Authors must not appear in the submitted version. They should be hidden
+% as long as the \iclrfinalcopy macro remains commented out below.
+% Non-anonymous submissions will be rejected without review.
+
+\author{Tristan Thrush, Christopher Potts \& Tatsunori Hashimoto \\
+Department of Computer Science\\
+Stanford University\\
+Stanford, CA 94305, USA \\
+\texttt{\{tthrush,cgpotts,thashim\}@stanford.edu} \\
+}
+
+% The \author macro works with any number of authors. There are two commands
+% used to separate the names and addresses of multiple authors: \And and \AND.
+%
+% Using \And between authors leaves it to \LaTeX{} to determine where to break
+% the lines. Using \AND forces a linebreak at that point. So, if \LaTeX{}
+% puts 3 of 4 authors names on the first line, and the last on the second
+% line, try using \AND instead of \And before the third author name.
+
+\newcommand{\fix}{\marginpar{FIX}}
+\newcommand{\new}{\marginpar{NEW}}
+\newcommand{\bmthproj}{\hat{\bm{\theta}}^{\textnormal{proj}}}
+\newcommand{\thproj}{\hat{\theta}^{\textnormal{proj}}}
+
+\iclrfinalcopy % Uncomment for camera-ready version, but NOT for submission.
+\begin{document}
+
+
+\maketitle
+
+\begin{abstract}
+Quality pretraining data is often seen as the key to high-performance language models. However, progress in understanding pretraining data has been slow due to the costly pretraining runs required for data selection experiments. We present a framework that avoids these costs and selects high-quality pretraining data without \emph{any} LLM training of our own.  Our work is based on a simple observation: LLM losses on many pretraining texts are correlated with downstream benchmark performance, and selecting high-correlation documents is an effective pretraining data selection method. We build a new statistical framework for data selection centered around estimates of perplexity-benchmark correlations and perform data selection using a sample of 90 LLMs taken from the Open LLM Leaderboard on texts from tens of thousands of web domains. In controlled pretraining experiments at the 160M parameter scale on 8 benchmarks, our approach outperforms DSIR on every benchmark, while matching the best data selector found in DataComp-LM, a hand-engineered bigram classifier.
+\end{abstract}
+
+\section{Introduction}
+
+Dataset curation is increasingly crucial for training high-quality large language models (LLMs). As pretraining datasets have grown, from under 200B tokens in 2020 \citep{raffel2019exploring,pile} to 240T tokens today \citep{datacomp}, it has become critical to identify subsets of the available data that will lead to the best LLMs, and a wide range of methods have arisen to meet these needs \citep{datamodels, doremi, dsir, dsdm, gio, regmix, llama3}. However, data-driven approaches to data selection typically involve expensive model retraining steps that limit their effectiveness, and no algorithm has been reported to consistently beat or match hand-crafted classifiers for data selection~\citep{datacomp}.
+
+Is training new LLMs necessary for data selection? Instead of training our own models, can we use the growing collection of publicly available, high-performance LLMs \citep{transformers, openllmleaderboard} to perform data valuation and selection? This would have significant benefits: we could leverage the millions of dollars collectively spent on building these LLMs, and we would have coverage over a large, heterogeneous collection of high-performance models varying in size, architectures, and pretraining data distribution. 
+
+Despite these advantages, using existing models for pretraining data selection is challenging, as the training data for these models are often unknown and heterogeneous. Our key observation is that data selection can be done using two observable features of \emph{all} public models today: 1) all open-weight models produce a causal language modeling loss for a given text, and 2) all of them can be evaluated on benchmarks. Prior work has found systematic relationships between web corpus loss and benchmark performance \citep{wei2022emergent}, which suggests the possibility of using correlations between perplexity and benchmark scores as the basis for a data selection policy.
+
+In the present paper, we pursue this possibility and find a radically simple approach that is also effective: we select data via \emph{perplexity correlations} (Figure \ref{fig:overview}), where we select data domains (e.g.\ wikipedia.org, stackoverflow.com, etc.)\ for which LLM log-probabilities are highly correlated with downstream benchmark performance. To enable our approach, we complement our algorithm with a statistical framework for correlation-based data selection and derive correlation estimators that perform well over our heterogeneous collection of LLMs.
+
+We validate our approach over a large collection of pretrained causal LLMs on the Hugging Face Open LLM Leaderboard \citep{openllmleaderboard} and find that perplexity correlations are often predictive of an LLM's benchmark performance. More importantly, we find that these relationships are robust enough to enable reliable data selection that targets downstream benchmarks. In controlled pretraining experiments at the 160M parameter scale on eight benchmarks, our approach strongly outperforms DSIR \citep{dsir} (a commonly used training-free data selection approach based on n-gram statistics) while generally matching the performance of the best overall method validated at scale by \citeauthor{datacomp} (the OH-2.5 +ELI5 fastText classifier \citep{fasttext}) without any parameter tuning or human curation.
+
+Our manuscript focuses on pretraining experiments at the 160M scale. To assess the sensitivity of our experimental results to the choice of pretraining data pool, scale, and experiment design, we use this paper also as a preregistration for further pretraining experiments using different data sources and evaluation benchmarks at the 1.4B model scale. We commit to updating the arXiv version of our manuscript with both positive and negative results on these preregistered validation experiments.
+
+\begin{figure}[t]
+\centering
+\sf
+\resizebox{\linewidth}{!}{
+$
+\begin{array}{c@{\hspace{1em}}c}
+  & \textbf{\phantom{XXX}Domains}
+  \\
+  \multirow{2}{*}{\rotatebox{90}{\text{\textbf{LLMs}}}} &
+  \begin{matrix}
+    & \text{\footnotesize bbc} & \text{\footnotesize arxiv}  & \cdots & \text{\footnotesize willys-hifi}  \\
+    \text{\scriptsize Mistral} & \colorbox{customDarkestRed1}{\phantom{X}} & \colorbox{customDarkestRed2}{\phantom{X}}  & \cdots & \colorbox{customLightRed3}{\phantom{X}}  \\
+    \text{\scriptsize Llama} & \colorbox{customDarkRed1}{\phantom{X}} & \colorbox{customDarkRed2}{\phantom{X}}  & \cdots & \colorbox{customDarkRed3}{\phantom{X}}  \\
+    \text{\scriptsize Mamba} & \colorbox{customMediumRed1}{\phantom{X}} & \colorbox{customMediumRed2}{\phantom{X}} & \cdots & \colorbox{customMediumRed3}{\phantom{X}} \\
+    \vdots & \vdots & \vdots & \ddots & \vdots \\
+    \text{\scriptsize Pythia} & \colorbox{customLightRed1}{\phantom{X}} & \colorbox{customLightRed2}{\phantom{X}} & \cdots & \colorbox{customDarkestRed3}{\phantom{X}}
+  \end{matrix}\\
+  & \textbf{\phantom{XX}} \shortstack{\phantom{X}\\\phantom{X}\\\text{\tikz[]{\shade[left color=white, right color=customDarkRed2] (0,0) rectangle (7mm,2mm);}}\\ \text{\scriptsize logprob}}
+\end{array}
+\begin{array}{c}
+\textbf{Benchmark}\\
+  \begin{matrix}
+    \text{\footnotesize SciQ} \\
+    \colorbox{customDarkestBlue}{\phantom{X}} \\
+    \colorbox{customDarkBlue}{\phantom{X}} \\
+    \colorbox{customMediumBlue}{\phantom{X}} \\
+    \vdots \\
+    \colorbox{customLightBlue}{\phantom{X}}
+  \end{matrix}\\\shortstack{\phantom{X}\\\phantom{X}\\ \text{\tikz[]{\shade[left color=white, right color=customDarkBlue] (0,0) rectangle (7mm,2mm);}}\\ \text{\scriptsize accuracy}}
+\end{array}\text{\tikz[baseline=-0.5ex]\draw[->,>=latex,line width=0.75mm] (0,0) -- +(0.75,0);}
+\begin{array}{c}
+   \textbf{Correlations} \\
+  \begin{matrix}
+    \text{\footnotesize bbc} & \text{\footnotesize arxiv} & \cdots & \text{\footnotesize willys-hifi} \\
+    \colorbox{customMediumPurple}{\phantom{X}} & \colorbox{customDarkPurple}{\phantom{X}}  & \cdots & \colorbox{customLightPurple}{\phantom{X}} 
+  \end{matrix}\\ \\ \\
+\end{array}
+\begin{array}{cc}
+&\fbox{\shortstack{\phantom{x}\textbf{High Corr (Keep)\phantom{x}}\\ \footnotesize arxiv, bbc, $\cdots$}}\\
+\text{\tikz[baseline=-0.5ex]\draw[->,>=latex,line width=0.75mm] (0,0) -- +(0.5,0.5);}&\\
+\text{\tikz[baseline=-0.5ex]\draw[->,>=latex,line width=0.75mm] (0,0) -- +(0.5,-0.5);}&\\
+&\fbox{\shortstack{\textbf{Low Corr (Discard)}\\ \footnotesize willys-hifi, $\cdots$}}\\
+\end{array}
+$
+}
+\caption{We want to pretrain on domains where lower loss is generally correlated with higher downstream performance. Our approach does this by taking public, pretrained LLMs and measuring correlations across their log-likelihoods (left, red matrix) and performance on a target benchmark (center, blue vector). We then perform data selection by picking domains with high correlation and training a fastText classifier that distinguishes these domains from others. This approach is on par with the best-known data selection methods in our experiments, despite requiring no human selection of high-quality domains.}
+\label{fig:overview}
+\end{figure}
+
+\section{Related Work}
+
+To go beyond the status quo of deduplication, perplexity filtering, and hand-curation \citep{roots, bloom, semdedup, olmo, dolma, fineweb, llama3}, targeted methods have been proposed to filter pretraining data so that the resulting LLM will achieve higher scores on given benchmarks. There are lightweight approaches that use n-gram overlap \citep{dsir} or embedding similarity \citep{gio} to select training data that is similar to data from a given benchmark. There are also less-scalable methods that require training proxy LLMs on different data mixtures \citep{datamodels, doremi, dsdm, regmix, llama3}.
+
+Given the high costs of proxy-based data selection methods, they have primarily been used to select among human-curated pretraining data mixtures \citep{llama3, datacomp} rather than a high dimensional space of mixtures. Our work takes an orthogonal approach and builds upon recent observational studies that have found scaling relationships that hold across collections of uncontrolled and diverse LLMs \citep{owen2024predictable,ruan2024observationalscalinglawspredictability}. While these studies do not examine loss-to-performance relationships or derive useful data selection methods from them, we know that losses and performance are generally highly correlated. Validation losses on samples of text corpora are commonly used as a proxy for downstream performance when comparing LLMs pretrained on the same data distribution \citep{kaplan2020scaling, chinchilla, wei2022emergent}, even if they have different architectures \citep{hyena, rwkv, mamba}.
+
+According to a recent survey of data selection approaches by \citet{datacomp}, the heavier-weight pretraining data selection methods have not yet shown large gains, and the current state-of-the-art across many tasks is still primitive: a fixed fastText classifier \citep{fasttext} combined with an English filter as a final layer after extensive deduplication and filtering. Are we missing important information that we can efficiently extract from a diverse collection of already trained models, larger and more diverse than any single organization is likely to produce? We show promising evidence supporting this hypothesis -- simple loss-performance correlation coefficients are effective when used for data selection.
+
+\section{Problem Setting}
+
+Our goal is to build predictive models of how pretraining data distributions affect downstream benchmark performance and use them to build better language models. Unfortunately, this task is challenging and computationally expensive. A standard approach adopted in paradigms such as datamodeling \citep{datamodels} is to obtain $N$ different pretraining distributions $\{\mathbf{p}_i: i\in [N], \mathbf{p}_i\in{\mathbb{R}_0^+}^D\}$ over  $D \gg N$ domains  (e.g.\ arxiv.org, stackoverflow.com, etc.), pretrain and measure model errors on a target benchmark $y_i \in [0,1]$, and fit a model $\mathbf{p} \to y$. This approach requires $N$ LLM training runs, performed at a scale sufficient to obtain non-random performance on~$y$. This can cost tens to hundreds of millions of dollars for hard benchmarks such as MMLU, where even the performance of 1B parameter LLMs often do not exceed random chance \citep{openllmleaderboard}.
+
+Instead, our work considers the following \emph{observational} setting that requires no training. We obtain $N$ pretrained, high-performance LLMs that vary in pretraining data, tokenizer, architecture, and scale (e.g.\ models on Huggingface's OpenLLM leaderboard). Now, if we could train a predictor $\mathbf{p} \to y$ on these $N$ models, we could avoid large scale model training. Unfortunately, this is impossible as the training data for these models is often proprietary, and so we have no knowledge of $\mathbf{p}$. 
+
+The key observation of our work is that we can replace $p_{i,j}$ (the unobserved sampling probability of model $i$'s data selection policy on document $j$) with an observable  surrogate $x_{i,j}$, which is the negative log-likelihood of document $j$ under model $i$.%
+\footnote{\label{fn:bpb}To be precise, we use bits-per-byte, which normalizes the sequence negative log-likelihood with the number of UTF-8 bytes. This is defined in terms of the length of the string in tokens $L_T$, the length of the string in UTF-8 bytes $L_B$, and the cross entropy loss $\ell$ as $\text{BPB} = \frac{L_T\ell}{L_B\ln(2)}$} We can then build a regression model that relates negative log-likelihood $\mathbf{x}_i$ and benchmark error $y_i$. Using this model, we can select pretraining data from domains $j$ for which decreasing the loss $x_{i,j}$ is predicted to rapidly decrease error $y_i$.
+
+\label{hypothesis}
+\noindent\textbf{The perplexity-performance hypothesis.} We formulate the task of predicting errors $y_i$ from negative log-probabilities $\mathbf{x}_i$ as a single-index model (SIM),
+\begin{equation}
+\label{sim}
+y_i = f(\langle \bm{\thstar},\mathbf{x}_i\rangle + \epsilon_i)
+\end{equation}
+where $f: \mathbb{R} \mapsto \mathbb{R}$ is some unknown monotonically increasing univariate function, $\epsilon_i$ is zero-mean noise which is independent of $\mathbf{x}$, and $\bm{\thstar} \in \mathbb{R}^D$ are unknown weights over $D$ domains.
+
+A single index model is highly flexible (due to the arbitrary, monotone $f$) and has the advantage that we do not need to estimate the nonlinear function $f$ if our goal is to optimize model performance. We can see this directly from the monotonicity of $f$ as
+\begin{equation}
+\langle\bm{\thstar},\mathbf{x}_i\rangle + \epsilon_i < \langle\bm{\thstar},\mathbf{x}_j\rangle + \epsilon_j
+\iff
+f(\langle\bm{\thstar},\mathbf{x}_i\rangle + \epsilon_i) < 
+f(\langle\bm{\thstar},\mathbf{x}_j\rangle + \epsilon_j).
+\end{equation}
+
+\textbf{Data selection from perplexity correlations.} The weights $\bm{\thstar}$ tell us which domain perplexities are correlated with downstream performance. However, this isn't sufficient for data selection. Even if we know how model likelihoods relate to model performance, we do not know how data selection affects likelihoods. Even worse, this data mixture to likelihood relationship \emph{cannot} be learned observationally, as we do not know the data mixture of any of our models.
+
+Despite this, we show that there is a clean approach for optimizing the data mixture. Our core observation is the following: \emph{if we find a nonnegative $\bm{\thstar}$, sampling proportional to $\bm{\thstar}$ is always a good choice.} More formally, we see that this sampling distribution defines the pretraining loss such that optimizing the training loss directly optimizes the downstream task via the single index model.
+\begin{restatable}{prop}{expectation_observation} 
+\label{expectation_observation}
+Suppose that $\bm{\thstar}$ weights are non-negative. Then, for models with associated likelihoods $\mathbf{x} \in \mathcal{X}\subset \mathbb{R}^{D}$, the minimizer of the pretraining loss over the $\bm{\thstar}$ sampling distribution $\mathbb{E}_{j\sim \bm{\thstar}}[x_j]$ also has the lowest expected downstream error according to the single index model:
+\[\argmin_{\mathbf{x}\in\mathcal{X}} \mathbb{E}_{j\sim \bm{\thstar}}[x_j]=\argmin_{\mathbf{x}\in\mathcal{X}} \mathbb{E}[f(\langle \bm{\thstar}, \mathbf{x}\rangle +\epsilon)].\]
+\end{restatable}
+This observation follows directly from the fact that we can normalize any non-negative $\bm{\thstar}$ into a distribution (and shift the normalization constant into $f$) which allows us to write the inner product in the single-index model as a monotone function of the expected pretraining loss:
+\begin{equation}
+y = f(\langle \bm{\thstar},\mathbf{x}\rangle + \epsilon) = f(\mathbb{E}_{j \sim \bm{\thstar}}[x_j] + \epsilon).
+\end{equation}
+
+Proposition~\ref{expectation_observation} allows us to entirely avoid the task of finding the optimal data mixture for a target likelihood. Instead, we pick sampling distributions that make the pretraining loss a monotone function of the predicted downstream error. Afterward, we can rely on our ability to optimize the loss to optimize downstream performance. 
+
+This view gives us a straightforward roadmap for data selection in the remainder of the paper: estimate a set of domains where loss and downstream benchmark performance is highly correlated, and then constrain our $\bm{\thstar}$  estimates to be a pretraining data sampling distribution.
+
+\section{Methods}
+We now describe the details of our approach, starting by presenting the algorithm itself and the intuitions behind it, followed by a more precise and mathematical justification for the various steps. 
+
+\subsection{Algorithm}
+\label{algorithm}
+
+\paragraph*{Estimating $\bm{\thstar}$.} 
+The parameter $\theta^*_j$ measures the relationship between log-likelihoods in domain $j$ and downstream performance. Because of this, we might naturally expect $\theta^*_j$ to be related to  nonlinear correlation coefficients between $x$ and $y$. Our work uses a simple correlation measure,
+\[
+\gamma_j = \sum_{\substack{1 \leq k,l \leq n\\k \neq l}}\sign(y_k-y_l)(\rank_j(x_{k,j}) - \rank_j(x_{l,j}))
+\]
+where $\rank_j(x)$ is the rank of $x$ among $\{x_{1,j} \hdots x_{N,j}\}$. This formula is intuitive: when model $k$ does better than model $l$, what percentile is model $k$'s log-likelihood compared to model $l$'s? While this is not the only correlation coefficient that performs well (see Appendix~\ref{additional_pretraining_results_appendix}), this functional form has the additional benefit of being a principled estimate of $\bm{\thstar}$. In particular, we show in sections below that in expectation, the ranking of domains in $\bm{\gamma}$ exactly matches those of $\bm{\thstar}$ (under standard high-dimensional regression assumptions; see~\Cref{sec:theory} for a complete discussion).
+
+\paragraph*{Selecting pretraining data.} Suppose that we have an accurate estimate $\gamma_j$ which is nonnegative. In this case, we could use $\gamma_j$ directly as a data selection procedure and \Cref{expectation_observation} would ensure that minimizing the population pretraining loss minimizes downstream errors. Unfortunately, $\gamma_j$ can be negative and the finite number of tokens per domain can make it difficult to minimize the population pretraining loss. Thus, we must project $\gamma_j$ onto the set of reasonable pretraining data distributions that are nonnegative and account for the per-domain token counts.
+
+What is a good way to project a set of domain rankings estimated via $\bm{\gamma}$ into a sampling distribution? Intuitively, if wikipedia.org has a $\gamma_j =0.5$ and arxiv.org is $\gamma_k = 0.9$, it would be natural to select tokens in order of $\bm{\gamma}$, preferring tokens from arxiv.org over tokens from wikipedia.org when selecting pretraining data.
+
+Having established the ordering of domains, the remaining question is how many tokens we take for each domain. We follow recent observations that repeating data degrades performance \citep{semdedup} to arrive at a simple selection algorithm: select domains in greatest to least $\bm{\gamma}$, taking all the tokens in each domain once, until we exhaust our total pretraining token budget.
+
+\paragraph*{Full algorithm.} Together, these steps result in a simple, parameter-free algorithm that calculates our rank correlation coefficient, and selects domains in order from largest to smallest coefficient. We show this process explicitly in Algorithm~\ref{main-algorithm}, and additionally show an extra step where we train a fastText \citep{fasttext} classifier (using standard settings and bigram features from~\citet{datacomp}) which distinguishes our selected documents and domains from the rest of the pool. The fastText classifier allows us to perform data selection at a single-page level, and scale the selection process to larger datasets. We also found the classifier to slightly improve downstream performance over directly selecting the documents. More information on the specifics of the data selection approaches that we tested is given in Appendix \ref{pretraining_experiment_details}.
+
+\begin{algorithm}
+\caption{Perplexity Correlation Based Data Selection}
+\label{main-algorithm}
+\begin{algorithmic}[]
+\State \textbf{Input:} Benchmark error vector $\mathbf{y}\in[0,1]^N$, log-loss matrix normalized as bits-per-byte $\mathbf{X}\in{\mathbb{R}_0^+}^{N\times D}$, available tokens per domain $\mathbf{a}\in\mathbb{N}^D$, and pretraining token target $b\in\mathbb{N}$.
+\State \textbf{Output:} Target token counts per domain $\mathbf{t} \in \mathbb{N}_0^D$, a fastText classifier to filter pretraining data.
+\State \textbf{Initialize:} $\bm{\gamma} \gets \mathbf{0} \in \mathbb{R}^D, \mathbf{t} \gets [0\hdots] \in \mathbb{N}_0^D$, $\text{counter} \gets 0$.
+\State $\mathbf{r}_0, \mathbf{r}_1, \dots, \mathbf{r}_N \gets \rank(\mathbf{x}_0, \mathbf{x}_1, \dots, \mathbf{x}_N)$ \Comment{1. Compute the $\bm{\gamma}$ correlation coefficient}
+\For{$i,j \in 0$ \textbf{to} $N$}            \State $\bm{\gamma} \gets \bm{\gamma} + \sign(y_i - y_j) \cdot (\mathbf{r}_i - \mathbf{r}_j)$
+\EndFor
+
+\For{$i \in $\textbf{ArgSort}($\bm{\gamma}$, descending=True)}
+\Comment{2. Select most to least correlated domains}
+\State $t_i \gets \text{min}(a_i, b-\text{counter})$
+\State $\text{counter} \gets \text{counter} + a_i$
+\If{$\text{counter} \geq b$}
+\State \textbf{Break}
+\EndIf
+\EndFor
+classifier = trainFastText$\left(\text{positive}=1_{t>0}, \text{negative}=1_{t=0}\right)$
+\State \textbf{Return} $\mathbf{t}$, classifier
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{Theory}
+\label{sec:theory}
+We now study the approach closely and show that our choices for the correlation coefficient and projection step are 
+extensions of the classic, high-dimensional single index model estimator of \citet{plan2016high}. We describe the basic single-index model estimators first, describe our extensions, and then conclude with a discussion on how our estimator and results deviate from the theory.
+
+\subsubsection{High-dimensional estimation of single index models}
+
+For our theory, we consider the standard high-dimensional regression setting of \citet{plan2016high} and \citet{chen2017robust}. Here, our goal is to estimate the unknown weights $\bm{\thstar}$ in a single-index model $y_i = f(\langle \bm{\thstar}, \mathbf{x}_i\rangle + \epsilon_i)$, with $\textbf{x}_i \sim \mathcal{N}(\mathbf{0}, \mathbf{I})$ for $\|\bm{\thstar}\|_2 = 1$ (assumed without loss of generality, as $\|\bm{\thstar}\|_2$ can be absorbed by $f$).
+
+Our starting point is the classic result of \citet{plan2016high}, who showed 
+\begin{equation}\label{eq:plan}
+\mathbb{E}\left[y_k\mathbf{x}_k\right] = c\bm{\thstar},
+\end{equation}
+for some positive constant $c$ and $1 \leq k \leq N$. Closely related is the result of \citet{chen2017robust} who showed a robust estimator quite similar to ours,
+\begin{equation}
+\mathbb{E}\left[\sign(y_k - y_l) (\mathbf{x}_k - \mathbf{x}_l)\right] = \beta\bm{\thstar}
+\end{equation}
+for any $1 \leq k,l \leq N$ (where $k \neq l$) and some positive constant $\beta$. Both of these results clearly identify that for the high-dimensional single-index model in the Gaussian setting, generalized correlation coefficients provide consistent estimates of the true regression coefficient $\bm{\thstar}$.
+
+\subsubsection{Deriving our estimator}
+
+Both \citeauthor{plan2016high} and \citeauthor{chen2017robust} provide moment-matching style estimators that consistently recover $\bm{\thstar}$ in high-dimensional, sparse settings. However, we found that both estimators directly use the values of $x$, and this resulted in brittle estimates due to outliers in language model log-likelihoods. While outlier removal is one possibility, we found that a simpler approach was to robustify the estimator of \citet{chen2017robust} to outliers in $x$.
+
+Recall that our estimate $\bm{\gamma}$ is a U-statistic, defined as pairwise sums of 
+\begin{equation}
+\sign(y_i - y_j) (\Phi(\mathbf{x}_i) - \Phi(\mathbf{x}_j)),
+\end{equation}
+for any $1 \leq i,j \leq N$ (where $i \neq j$), where $\Phi$ is the empirical CDF of the $\mathbf{x}$ values. This estimate is significantly less sensitive to outliers than that of \citet{chen2017robust}, as the empirical CDF is bounded between zero and one, and no single model can make the estimator degenerate.
+
+We study this estimate theoretically in the Gaussian setting, where we consider the asymptotically equivalent estimator with $\Phi$ as the CDF of the standard Gaussian. In this case, we can show that this modified estimator is also consistent in recovering $\bm{\thstar}$.
+\begin{restatable}{theorem}{estimator}
+\label{estimator_theorem}
+When $\epsilon \sim \mathcal{N}(0,\sigma^2)$, we have:
+\begin{equation}
+\label{proved_estimator_equation}
+\mathbb{E}[\sign(y_i - y_j) (\Phi(\mathbf{x}_i) - \Phi(\mathbf{x}_j))] = \frac{2}{\pi}\sin^{-1}\left(\frac{\bm{\thstar}}{2\sqrt{1+\sigma^2}}\right).
+\end{equation}
+\end{restatable}
+We provide the proof in Appendix \ref{estimatorproof}. Because we assume $||\bm{\thstar}||_2=1$ and the expected value in Equation \ref{proved_estimator_equation} must be between $-1$ and $1$, we are always within the domain of $\sin^{-1}$ and able to invert it. After inverting, we get:
+\begin{equation}
+\label{estimator}
+\hat{\bm{\theta}} \propto \sin\left(\frac{\pi}{2} \mathbb{E}\left[\sign(y_i - y_j)(\Phi(\mathbf{x}_i) - \Phi(\mathbf{x}_j))\right]\right)
+\end{equation}
+as an estimate for $\bm{\thstar}$, where the constant $2\sqrt{1+\sigma^2}$ term due to noise has been dropped.
+
+Beyond the fact that our estimator is consistent, we can show an even tighter connection to the \citeauthor{chen2017robust} estimator and show that our estimates agree when running the original estimator on rank-transformed data. More specifically, for two models $\mathbf{x}_i$ and $\mathbf{x}_j$ with the estimated model rankings $\langle \hat{\bm{\theta}}, \mathbf{x}_i\rangle > \langle \hat{\bm{\theta}}, \mathbf{x}_j \rangle$, the expected ranking under rank-transformation (i.e.\ $\Phi(\mathbf{x})$) match this ranking. 
+
+\begin{restatable}{corollary}{cdfprediction} Suppose that $\hat{\bm{\theta}}$ is any vector of fixed weights and $\mathbf{x} \sim \mathcal{N}(\mathbf{0},\mathbf{I})$. Then, conditioning on the event $\langle\hat{\bm{\theta}},\mathbf{x}_i\rangle < \langle\hat{\bm{\theta}},\mathbf{x}_j\rangle$, we have
+\begin{equation}
+\label{predicting}
+\langle\hat{\bm{\theta}},\mathbb{E}[\Phi(\mathbf{x}_i)\mid \langle\hat{\bm{\theta}},\mathbf{x}_i\rangle < \langle\hat{\bm{\theta}},\mathbf{x}_j\rangle]\rangle < 
+\langle\hat{\bm{\theta}},\mathbb{E}[\Phi(\mathbf{x}_j)\mid\langle\hat{\bm{\theta}},\mathbf{x}_i\rangle < \langle\hat{\bm{\theta}},\mathbf{x}_j\rangle]\rangle.
+\end{equation}
+with probability $1$.
+\end{restatable}
+This proof follows from the same calculations as \Cref{estimator_theorem} and is given in Appendix \ref{estimatorproof}.
+
+\subsubsection{Selecting Data for Pretraining}
+\label{pretraining}
+
+Recall that our algorithm for data selection is to constrain $\bm{\gamma}$ to be a valid sampling distribution (nonnegative, at the very least) and then sample directly from this estimate. For now, we focus on constraining $\hat{\bm{\theta}}$, and we will see at the end of this section that we can apply the same constraint to $\bm{\gamma}$ directly to get the same result. The theory of constrained estimation for $\hat{\bm{\theta}}$ is simple and well-understood, with both \citet{plan2016high} and \citet{chen2017robust} extensively studying the problem of estimating $\hat{\bm{\theta}}$ under a known convex constraint set $C$. In particular, \citet{plan2016high} show that performing a $L_2$ projection via $\bmthproj = \argmin_{\bm{\theta} \in C}\|\bm{\theta} - \hat{\bm{\theta}} \|_2$ provides improved convergence rates that depend on the Gaussian mean width of $C$ rather than the ambient dimension, and \citet{chen2017robust} show similar results when maximizing the linear correlation $\bmthproj = \argmin_{\bm{\theta} \in C\subseteq B_D}-\langle\bm{\theta}, \hat{\bm{\theta}}\rangle$.
+
+We take a similar approach here. We define a convex constraint set $C$ that forces $\hat{\bm{\theta}}$ to be a reasonable sampling distribution and find the best sampling distribution via the linear correlation approach. 
+
+We define $C$ as the combination of two sets of constraints. First, we must have a valid sampling distribution, so we constrain $\hat{\bm{\theta}}$ to lie in the simplex. As we noted above, it is well-known that duplicating data harms performance \citep{semdedup}, and so we constrain $\hat{\bm{\theta}}$ to avoid data duplication by limiting the maximum weight on domains. Concretely, if want to pretrain on $m$ tokens overall, we enforce $\theta^*_i \leq \tau_i, \forall i \in [1,D]$, where $\tau_i$ is set so $\tau_im$ is the number of tokens from the $i$-th domain that we can access for training.
+
+The resulting linear program has a simple solution and takes the form of initializing $\bmthproj$ to $\mathbf{0}$ and then iterating through the values in $\hat{\bm{\theta}}$ from largest to smallest, setting the value at the corresponding index of $\bmthproj$ to the maximum allowable value, until $\bmthproj$ sums to $1$ (see Appendix \ref{projection_proof} for a proof).
+\begin{restatable}{theorem}{linearproj} 
+Suppose we want to solve:
+\[
+\bmthproj = \argmin_{\bm{\theta}\in\mathbb{R}^D} -\langle \bm{\theta},\hat{\bm{\theta}} \rangle,
+\]
+subject to:
+\begin{align*}
+\sum_{i=1}^D \theta_i = 1&\\
+0 \leq \theta_i \leq \tau_i, \forall i \in [1,D]&,
+\end{align*}
+where $\tau_i>0$ are fixed values. Then, the solution is:
+\begin{equation}
+\label{linear_proj_equation}
+  \hat{\theta}^\textnormal{proj}_k = 
+  \begin{cases} 
+    \tau_k & \text{if } \sum_{j\text{: }r_j(\hat{\theta}_j) \geq r_k(\hat{\theta}_k)} \tau_j \leq 1\\
+    1-\sum_{j\text{: }r_j(\hat{\theta}_j) > r_k(\hat{\theta}_k)} \tau_j & \text{if } \sum_{j\text{: }r_j(\hat{\theta}_j) \geq r_k(\hat{\theta}_k)} \tau_j \geq 1 \land \sum_{j\text{: }r_j(\hat{\theta}_j) > r_k(\hat{\theta}_k)} \tau_j \leq 1\\
+    0 & \text{otherwise}
+  \end{cases},
+\end{equation}
+where $r$ is some function that breaks all ties between $\hat{\theta}_j$ and $\hat{\theta}_k$ for $k \neq j$, and otherwise leaves the ordinal relationships the same.
+\end{restatable}
+
+We note that while the use of this linear program is in line with the constrained estimators proposed in \citet{chen2017robust}, the $L_2$ projection is arguably more natural, and does not require assuming that $\|\hat{\bm{\theta}}\|_2 = 1$ for asymptotic recovery conditions. We derive similar closed-form expressions for this quadratic case in \Cref{projection_proof}, but do not use this approach for two separate reasons.
+
+First, the $L_2$ projection depends on the $L_2$ norm of $\hat{\bm{\theta}}$, unlike the linear program which only depends on the ranks of the values in $\hat{\bm{\theta}}$. The challenge with determining the norm is that the exact recovery result in \Cref{proved_estimator_equation} requires knowledge of the noise level, and the trigonometric functions rely strongly on the Gaussian structure of $x$. Because of this, we are unlikely to be able to estimate the norm of $\hat{\bm{\theta}}$ with any accuracy, and the only way to avoid this would be to treat the norm as a hyperparameter, which adds unnecessary complexity. The second reason is empirical (although possibly a consequence of the first) -- we found that the linear projection performed better across a wide range of benchmarks and conditions (See Appendix \ref{additional_pretraining_results_appendix}).
+
+We conclude by relating our theory to the full algorithm in Section \ref{algorithm}. The estimation step for $\bm{\gamma}$ is the finite sample, U-estimate of the expectation in \Cref{estimator}, dropping the nonlinear transform $\sin$ and $\pi/2$ as these two terms do not change the rankings of the domains. The data selection step directly applies our projection in \Cref{linear_proj_equation}, and we make use of the fact that this projection only relies on rankings among the domains to use $\bm{\gamma}$ rather than an exact estimate for $\bm{\thstar}$. 
+
+\subsection{Alternative Methods}
+
+Our estimator is far from the only reasonable high-dimensional, single-index model estimator. We briefly discuss some alternatives and the tradeoffs involved before moving to experimental results.
+
+We could use classic low-dimensional methods regularized for the high-dimensional setting. This includes ordinal regression \citep{ordinalregression} and the isotron algorithm \citep{isotron}. We found these methods to underperform correlation-based estimators, and tuning hyperparameters added additional complexity that was not needed in the correlation-based approaches.
+
+Another class of methods involve scaling laws \citep{kaplan2020scaling, llama3, ruan2024observationalscalinglawspredictability}. We could transform the $y$ values via an inverse sigmoid or power law, and fit high-dimensional linear regression methods (e.g.\ ridge, partial least squares, or Lasso). We initially found this approach promising, but the inverse transforms were unstable, and the combination of fitting the nonlinear transform and regularization required significant amounts of tuning.
+
+Rank-correlation methods, including our robustified version of the estimator from \citet{chen2017robust}, and even the standard Spearman correlation \citep{spearmanr} (see Appendix \ref{additional_pretraining_results_appendix}) performed well. We believe that in general, robust per-feature correlations are likely to perform well as $D \gg N$, and extreme levels of regularization are needed to obtain reasonable models. Sparse methods such as the Lasso \citep{tibshirani1996regression} are one classic answer, but we cannot necessarily assume that the underlying correlations $\bm{\thstar}$ are sparse, and we did not find these techniques to perform well.
+
+\section{Results}
+
+We empirically validate our approach to predicting downstream performance and data selection. Our validation consists of three sets of experiments: we first pretrain 160M-parameter LLMs from scratch to study our primary goal of selecting pretraining data to improve downstream performance, followed by analyzing the ability of losses to predict downstream performance, and conclude with an analysis of the loss matrix $\mathbf{X}$. Throughout our experiments, we use the same single-index model that we train using \Cref{main-algorithm}. As shown in the algorithm, we train the fastText classifier on selected vs unselected domains and use the classifier to filter the pretraining data at the page-level.
+
+\textbf{Input data matrix X.} To build the input data matrix, $\mathbf{X}$, we collected byte normalized loss values from a sample of 90 Open LLM Leaderboard \citep{openllmleaderboard} LLMs that we could run without errors. Concretely, these values are defined as bits-per-byte $\frac{L_T\ell}{L_B\ln(2)}$ where $L_T$ is the token count, $L_B$ is the number of UTF-8 bytes, and $\ell$ is the per-token cross-entropy \citep{pile}. We collected these values on the smallest sample provided by the RedPajama V2 (RPJv2) dataset \citep{redpajama} for all domains with $\geq$ 25 pages in the sample. Specifically, we used the ``sample'' subset\footnote{\url{https://huggingface.co/datasets/togethercomputer/RedPajama-Data-V2}} of RPJv2 resulting in 9,841 domains/features. Specifics of how we computed losses are in Appendix \ref{app:loss_computation}.
+
+\textbf{Target benchmark performance $y$.}
+We constructed a target vector, $\mathbf{y}$, for LAMBADA \citep{paperno2016lambada}, ARC Easy \citep{arc}, PIQA \citep{piqa}, and SciQ \citep{sciq}. These are all of the tasks reported in the Pythia scaling experiments for which a model in the 160M parameter range could meaningfully perform above chance. We also constructed target vectors for LAMBADA$_{\text{IT}}$, LAMBADA$_{\text{FR}}$, LAMBADA$_{\text{DE}}$, and LAMBADA$_{\text{ES}}$, which are subsets of LAMBADA translated into Italian, French, German, and Spanish by \citet{black2023}. These languages match those in RPJv2 where each page is conveniently tagged as one of five languages: English, Spanish, French, German, and Italian. The correspondence between our target benchmark languages and the RPJv2 metadata will be convenient for us, as it will allow us to include language filtering baselines at no additional cost.
+
+\subsection{Pretraining}
+
+We begin by validating our algorithm in the end-to-end task of pretraining data selection with controlled experiments at the 160M parameter, 3.2B token scale. The 
+low compute requirements of this setting allowed us to more extensively study replicates and ablations in Appendix \ref{additional_pretraining_results_appendix} within the timeframe of a few days. We also note that while 160M models are small, this is far from an easy setting for our data selection algorithm. Most of the Open LLM Leaderboard models are 10 to 100$\times$ larger than the 160M scale, and our single index model must extrapolate substantially from $\approx$7B scale models to our small-scale validation setting (see Appendix \ref{app:histogram} for a histogram of model sizes). Finally, the focus on small-scale validation in this manuscript allows us to commit to a clear preregistration-based strategy toward scaling up (\Cref{sec:preregistration}) rather than cherry-picking experiments that succeed at scale.
+
+\textbf{Pretraining data and setting.}
+For pretraining, we used the ``sample-100B'' subset of RPJv2. This is larger than the sample that we used to compute our estimate. We filtered this data so it contains only the domains used for our estimate, and then tokenized the data with the Pythia tokenizer. The vast majority of the domains from our BPB matrix were present in this larger sample of text. However, 42 (out of 9,841) were not, and so we removed them from our estimate. For every data selection method that we tested, the task was to further select 3.2B tokens for pretraining, which is Chinchilla-optimal \citep{chinchilla} for the 160M-parameter LLM used in our tests.
+
+\textbf{Baselines.} We compare against several baseline data-selection methods. First, we present the results of uniformly sampling from the available pretraining data. Then we use the language tags present in RPJv2 to filter only for the language matching the target task. In addition to these commonsense baselines, we also run DSIR~\citep{dsir}: a lightweight training data selection technique based on n-gram overlaps that \citet{datacomp} found to be competitive with proxy LLM-based techniques and was also validated at scale \citep{parmar2024datadataeverywhereguide}. Finally, we run the state-of-the-art method for pretraining data quality filtering found by \citeauthor{datacomp}, which is a fastText classifier that beats all of the heavier-weight proxy-LLM methods that were tested. The classifier was trained on a benchmark-agnostic and handcrafted objective, which is to classify data as coming from Common Crawl\footnote{\url{https://commoncrawl.org}} (low quality) or OH2.5 \citep{oh2.5} and Reddit ELI5 \citep{eli5} (high quality). It is combined with an English filter in \citeauthor{datacomp}, and so we present results for this fastText filter with and without the additional English filter.
+
+\textbf{Model and hyperparameters.} We use the Pythia 160M LLM configuration from \citet{pythia} and optimize the hyperparameters including learning rate, weight decay, and warmup to minimize loss on the uniform sampling (no selection algorithm) baseline. Training hyperparameters were fixed across all methods. We provide 
+additional training and evaluation details in Appendix \ref{pretraining_experiment_details}.
+
+
+\begin{table}[t]
+\centering
+\caption{Average rankings of each data selection method (lower is better) across 8 benchmarks shows that correlation-based filtering beats baselines by a wide margin, and matches the current best open data filter from~\citet{datacomp}. Our approach significantly beats the default filter in~\citet{datacomp} with the EN filter and loses slightly after additional manual language filtering that depends on the target task ($+$ manual Lang Filter).}
+\label{tab:avg_rank}
+\resizebox{\linewidth}{!}{
+\begin{tabular}{r|ccccccc}
+\toprule
+\textbf{Method} & None & \parbox{1cm}{\centering Lang\\Filt} & \parbox{3cm}{\centering DSIR \\ \citep{dsir}} & \parbox{4cm}{\centering Handcrafted fastText \\ $+$ EN Lang Filter \\ \citep{datacomp}} & \parbox{4cm}{\centering Handcrafted fastText \\ w/o Lang Filter} & \parbox{4cm}{\centering Handcrafted fastText \\ $+$ manual Lang Filter} & \parbox{2cm}{Perplexity\\Correlations} \\ \midrule
+\textbf{Avg. Rank} & 3.750 & 4.000 & 4.500 & 3.750 & 3.250 & 1.375 & 1.750 \\
+\bottomrule
+\end{tabular}
+}
+\end{table}
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}
+  \node[anchor=south west,inner sep=0] (main) at (0,0) {\includegraphics[width=\textwidth]{images/llm-perf-heatmap-fasttext.png}};
+  \begin{scope}[x={(main.south east)},y={(main.north west)}]
+    \node[anchor=north east,inner sep=3pt, draw=black, thick] at (0.95,0.23) {\includegraphics[width=.1\textwidth]{images/pretraining-fig-legend.png}};
+  \end{scope}
+\end{tikzpicture}
+\caption{Pretraining results with different data selection methods. Each row is an LLM, and each column is a task. The number in the upper left indicates the ranking of the method when targeting that benchmark compared to other methods (lower is better). Numbers within the heatmap denote accuracy for all benchmarks except the LAMBADA tasks for which the values are  log perplexities (where lower scores are better). We find that our approach appropriately optimizes data mixes for the target language and benchmark, and matches the fastText baseline across most benchmarks.}
+\label{pretraining_figure}
+\end{figure}
+
+\textbf{Results.} We report average rankings over all benchmarks in Table~\ref{tab:avg_rank}, and we find that our approach significantly outperforms the basic baselines of random sampling, language filtering, and DSIR. Compared to the existing state of the art from~\citet{datacomp}, our approach beats the performance of the default, English-filtered fastText classifier, but loses slightly once we add in a manual language filtering step to enable better performance on the multilingual LAMBADA datasets. For the maintext comparisons, we use the optional fastText classifier from our algorithm to select pretraining data at the page levels, but we show ablations without the classifier in Appendix \ref{additional_pretraining_results_appendix}.
+
+Figure~\ref{pretraining_figure} shows how each data selection method affects benchmark performance in more detail. Each block of rows represents a data selection method, while an individual row represents an LLM within a method that targets a particular benchmark or set of benchmarks. Columns represent benchmarks. We see that language filtering and perplexity correlations both clearly optimize for the target benchmark -- within each block, the benchmark column matching each row typically performs best. Surprisingly, the pattern is much less obvious for DSIR -- the heatmap looks much more uniform across LLMs with different task targets. We also see that while language filtering has significant impacts on model performance, our performance significantly exceeds the impact of language filtering across all tested benchmarks.
+
+Figure~\ref{fig:weight_figure} shows the distribution of languages in pretraining data selected by our method, targeting each benchmark. Our algorithm provides significant enrichment of the corresponding languages for the multilingual benchmarks (LAMBADA\_*), but we also find that it does not \emph{exclusively} select domains in one language. In contrast, for English benchmarks our approach selects nearly exclusively English data, likely due to the large quantity of high-quality English data in our pretraining data pool. There are significantly fewer tokens in non-English languages in the pretraining data pool and our $\tau$ constraint to prevent duplication has a large impact on the weights when the benchmarks are non-English. We provide the same figure when the $\tau$ values are made $5\times$ as large in Appendix \ref{app:5_tau}.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{images/token-dist-heatmap.png}
+
+\caption{Language distributions of pretraining data selected by perplexity correlations. The default RPJv2 distribution is given in the left column for reference. The English benchmark targets often exclusively select English but the reverse is not the case. In every case, our approach selects more data than the default from the benchmark-matched language (shown as a green box in each column).}
+\label{fig:weight_figure}
+\end{figure}
+
+Finally, we note that our results are somewhat insensitive to the specifics of the perplexity-correlation procedure we present in Algorithm \ref{main-algorithm}. We show in Appendix~\ref{additional_pretraining_results_appendix} that varying the projection method (linear, $L_2$) and even using Spearman rank correlations~\citep{spearmanr} often work better than the baselines. These results suggest that the performance of our approach is not tightly dependent on the precise form of the estimator that is coupled to our theory results but holds more broadly across general perplexity-correlation relationships. Additionally, our approach performs better with the optional fastText classifier that our algorithm trains, possibly because it can operate at the page-level instead of the domain-level\footnote{One might ask if the fastText classifier alone can be an effective data selector, since it appears in both high-performance selection methods. This is not possible -- the classifier can only amplify the effectiveness of an existing selector rather than replace it -- as training a classifier requires supervision, which is provided by either the perplexity correlation algorithm or human curation (in the case of \citet{datacomp}).}.
+
+\subsection{Performance Rank Predictions}
+
+\begin{figure}[t]
+\centering
+
+\includegraphics[width=0.495\linewidth]{images/piqa-5-fold-leave-out-rank.png}
+\includegraphics[width=0.495\linewidth]{images/lambada-fr-5-fold-leave-out-rank.png}
+
+\caption{Rank predictions given by $\langle\bmthproj,\Phi(\mathbf{x})\rangle$ for PIQA and LAMBADA FR. A standard deviation ($\sigma$) from the ideal fit is shown in red. $2\sigma$ is shown in orange. Many models outside $2\sigma$ (named and shown in blue) are trained on atypical data such as heavily multilingual data, code, or GPT-4~\citep{gpt} outputs. Models with atypical architectures (i.e.\ Mamba~\citep{mamba}) are named and shown in black. Generally, our estimate tightly predicts ordinal benchmark performance from web corpus losses.}
+\label{pred_figure}
+\end{figure}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{images/rank-r2-heatmap.png}
+\caption{Held-out $R^2$ score of our raw correlation estimate $\hat{\bm{\theta}}$, our projected estimate $\bmthproj$, and the average loss baseline. The $95\%$ bootstrapped confidence intervals are wide enough that no individual comparison is significant. Across benchmarks, $\bmthproj$ has statistically significant gains over the baseline (p=0.035) as it is unlikely that  $\bmthproj$ beats mean loss 7 times out of 8 by chance.}
+\label{fig:weight_figure:r2}
+\end{figure}
+
+We have shown that our approach succeeds at the goal of selecting useful pretraining data, but how good are single index model's predictions? An accurate map between loss to benchmarks would be helpful in selecting among candidate pretraining data mixtures generally, even when not using our pretraining data selection algorithm.
+
+Comparing model performance rankings predicted by our regression to the ground truth, we find generally accurate predictions. Figure \ref{pred_figure} shows 5-fold leave-out plots for PIQA, and LAMBADA$_{\text{FR}}$ with the rank predictions given by $\langle\bmthproj,\Phi(\mathbf{x})\rangle$. Every point in the plot is a held-out point: we estimated $\bm{\thstar}$ five times, holding out a different $20\%$ of the data each time, and plotted the prediction for every point when it was held out. 
+
+We find that our estimator achieves high ordinal prediction performance across all target tasks. We include 5-fold leave-out $R^2$ scores for all tasks in Figure \ref{fig:weight_figure:r2}. However, we complement these strong results with the additional observation that simply taking the \emph{mean} loss across all domains is a strong predictor of model performance (bottom row). The surprising effectiveness of average loss over uniformly sampled documents has been discussed extensively~\citep{owen2024predictable,wei2022emergent,kaplan2020scaling} and our results further suggest that regressions with correlations only slightly above the mean loss baseline still can result in effective data selection methods.
+
+Finally, we discuss outliers in our prediction of model performance. Our predictions are accurate for LLMs with usual architectures (e.g.\ Mamba~\citep{mamba}), the smallest/largest vocabulary sizes, context sizes, and parameter sizes. However, we also see that LLMs that were trained on unusual data are not as well predicted by our approach (e.g.\ Phi~\citep{phi}). We may simply require a bigger or more diverse pretraining data pool and set of models to find estimates that work well for models that expect different styles of text.
+
+\subsection{Analysis of the model-loss matrix \texorpdfstring{$\mathbf{X}$}{}}
+
+What information is contained in the matrix of model losses $\mathbf{X}$? Clearly, it must contain semantically meaningful information about the data, such as the language that a piece of text is in. We performed PCA \citep{pca} and t-SNE \citep{tsne} on $\mathbf{X}$ and plotted the first two components for each of our 9,841 domains. As shown in the first row of Figure \ref{analysis_figure}, we found two components with relatively high singular values. The first component clearly corresponds with the language of a domain. The second component corresponds with the average bits-per-byte or entropy of a domain. The t-SNE components show the same general pattern as well as showing that the language clusters are very well separated. As shown in our plots, there are several salient clusters within the language clusters. Within the English cluster, we found a subcluster for luxury goods, another for legal services and information, another for academic research, and even a cluster for funeral homes.
+
+\begin{figure}[t]
+\centering
+
+\begin{subfigure}{0.182\textwidth}
+    \includegraphics[width=\linewidth]{images/eigenvalue-decay.png}
+    \caption{}
+\end{subfigure}\hfill
+\begin{subfigure}{0.182\textwidth}
+    \includegraphics[width=\linewidth]{images/pca-components.png}
+    \caption{}
+\end{subfigure}\hfill
+\begin{subfigure}{0.182\textwidth}
+    \includegraphics[width=\linewidth]{images/pca-components-entropy.png}
+    \caption{}
+\end{subfigure}\hfill
+\begin{subfigure}{0.182\textwidth}
+    \includegraphics[width=\linewidth]{images/tsne-components.png}
+    \caption{}
+\end{subfigure}\hfill
+\begin{subfigure}{0.182\textwidth}
+    \includegraphics[width=\linewidth]{images/tsne-components-entropy.png}
+    \caption{}
+\end{subfigure}\hfill
+\begin{subfigure}{0.08\textwidth}
+    \raisebox{1.3cm}{
+    \includegraphics[width=\linewidth]{images/lang-legend.png}
+    }
+\end{subfigure}
+\vfill
+\begin{subfigure}{0.182\textwidth}
+    \includegraphics[width=\linewidth]{images/model-eigenvalue-decay.png}
+    \caption{}
+\end{subfigure}\hfill
+\begin{subfigure}{0.182\textwidth}
+    \includegraphics[width=\linewidth]{images/model-pca-components.png}
+    \caption{}
+\end{subfigure}\hfill
+\begin{subfigure}{0.182\textwidth}
+    \includegraphics[width=\linewidth]{images/model-pca-components-entropy.png}
+    \caption{}
+\end{subfigure}\hfill
+\begin{subfigure}{0.182\textwidth}
+    \includegraphics[width=\linewidth]{images/model-tsne-components-no-entropy.png}
+    \caption{}
+\end{subfigure}\hfill
+\begin{subfigure}{0.182\textwidth}
+    \includegraphics[width=\linewidth]{images/model-tsne-components-entropy.png}
+    \caption{}
+\end{subfigure}\hfill
+\begin{subfigure}{0.08\textwidth}
+    \raisebox{1.4cm}{
+    \includegraphics[width=\linewidth]{images/family-legend.png}
+    }
+\end{subfigure}
+
+\caption{Analysis of the loss matrix. The first row treats domains as examples to be projected via PCA, while the second row treats models as examples.
+Panels (a): eigenvalue decay for the eigendecomposition of the $D{\times}D$ covariance matrix resulting from the loss matrix; a few dominant PCs are seen. (b) and (c): domains plotted by the first two PCA components showing separation of language in b and entropy in c. (d,e) show analogous plots in t-SNE with a clearer separation of language. (f): eigenvalue decay analogous to (a). (g,h): models plotted by the first two PCA components showing clustering by model family (clusters show Pythia~\citep{pythia}, Qwen~\citep{qwen}, and OpenLlama~\citep{openllama} derivatives -- the three largest clusters in our data), and average model loss. (i,j) show analogous results under t-SNE where (i) is normalized to remove per-model entropy differences.}
+\label{analysis_figure}
+\end{figure}
+
+The second row of Figure \ref{analysis_figure} shows plots for the loss matrix when we take the principal components of the other dimension, where points correspond to the 90 LLMs. For PCA, PC1 corresponds to entropy. For both cases, it is less clear what the other PCs are, but when we color the three largest families of models in our data (Pythia~\citep{pythia}, Qwen~\citep{qwen}, and OpenLlama~\citep{openllama}), we see that model families are clustered together in the PC graphs.
+
+\section{Robustness Checks with Pre-Registration}
+\label{sec:preregistration}
+In small-scale experiments, our approach is competitive with the leading approach from \citeauthor{datacomp}'s survey: a fixed fastText model \citep{fasttext}, manually augmented with the best language filtering. This leading approach is heuristic and hand-crafted, requiring appropriate language filtering matched to the target benchmark and assumptions about what good pretraining data looks like. Our approach does not make these assumptions and could potentially improve as more public models are released and we have better data to estimate $\bm{\thstar}$.
+
+While our results are generally positive, many past data selection methods have reported initially positive results, only to later break: they may fail to scale to larger models or rely on specific details of their experimental setting. Our 160M-scale experiments may also raise such concerns.
+
+We design a pre-registered scaling experiment that addresses both the concerns of scale and external validity. We use the permanence of arXiv preprints as a mechanism to preregister a series of scaling experiments within the DataComp-LM framework \citep{datacomp}, which is a testbed for data-selection techniques released with the recent survey. Pre-registering held-out scaling experiments commits us to reporting negative results, and avoid overfitting to our chosen experimental settings.
+
+DataComp-LM is ideal for this preregistered scaling experiment, as it standardizes the setting by providing a pool of 240 trillion tokens, pretraining code for 412M to 7B parameter models, and evaluation code for 53 benchmarks, 22 of which are labelled as ``core'' benchmarks that scale predictably. Importantly, we have not trained \emph{any} models on DataComp-LM using our methods or baselines, making this a true held-out experiment with known high-performance baselines.
+
+\paragraph*{Preregistered experiment.}
+We will run the best-performing approach from our paper: a fastText filter trained on our correlation estimator. We will define the target benchmark for our estimator as the average of the ``core'' DataComp-LM benchmarks and run our estimator with perplexities from our set of 90 OpenLM Leaderboard LLMs on a uniform subsample of the DataComp-LM pool of data. We will use the provided DataComp-LM code for training LLMs for the ``Filtering 1B-1x'' track, where a 1.4B parameter LLM is trained on 28.8B tokens chosen from a 1.64T sample of the DataComp-LM pool of data. In the DataComp-LM paper, they apply their fixed fastText filter as a final step after several complicated deduplication and filtering steps. We will report results where our fastText classifier is used as a direct substitute for this last step alone, as well as another test in which we replace the entire pipeline with one classifier. We will report results where our estimator is trained at the domain-level (following this paper) and where our estimator is trained at the page-level (which we have not tried yet). Finally, we will report analogous results where we replace the ``core'' evaluation score with the average score on all of the non-English LAMBADA translations, and compare the raw fastText classifier from \citet{datacomp} to our approach, using both of these approaches in place of the full filtering pipeline from 1.64T tokens. We preregister this additional multilingual task because ``core'' does not include multilingual evaluations.
+
+We chose the ``Filtering 1B-1x'' track because it is the most compute-intensive track that we can perform within a couple weeks, given our resources. For these experiments, the compute needs for our data selection procedure are negligible compared to LLM pretraining. Per \citet{datacomp}, the pretraining for these experiments combined is estimated to take 240 hours on an 8-GPU H100 node.
+
+\section{Conclusion}
+Does high-performance data selection require careful hand-crafted heuristics or prohibitively expensive model training runs? Our work demonstrates an alternative, viable approach -- leveraging existing, public models as a source of information for data selection. Pretraining experiments suggest that a simple, correlation-based approach to selecting data can be effective, but more broadly, we show how to 1) use single-index models as a surrogate for downstream performance and 2) build models that relate \emph{losses} to downstream performance and use these surrogates effectively in data selection. Finally, we propose pre-registered scaling experiments on held-out data to test external validity of reported results. We hope this type of experiment will help improve the trustworthiness of experimental results for data selection.
+
+\subsubsection*{Acknowledgments}
+We thank Jack Spilecki for conversations on the mathematical aspects of the work. We also thank Zitong Yang, Yangjun Ruan, and Lisa Li for their helpful feedback throughout the project, Ludwig Schmidt and Samir Gadre for discussions on scaling laws involving benchmark perplexity, Rohan Pandey for conversations about scaling laws, Sung Min Park for discussions on drafts of this work, and William Held for conversations about data selection.
+This work is supported in part by a grant from Sandia National Laboratories, and gifts from Open Philanthropy, Meta, Panasonic Research, and the Tianqiao and Chrissy Chen Institute. Any opinions, findings, and conclusions or recommendations expressed in this material are those of the authors and do not necessarily reflect the views of Sandia National Laboratories. Tristan Thrush is supported in part by the Stanford Graduate Fellowship.
+
+
+\bibliography{iclr2021_conference}
+\bibliographystyle{iclr2021_conference}
+
+\newpage
+
+\appendix
+
+\section{Estimator solution}
+\label{estimatorproof}
+
+\subsection{Lemma 1}
+
+\begin{restatable}{statementoflemma}{estimatorlemma3}
+\label{estimatorlemma3}
+Define the PDF of \textnormal{HalfNormal} as $f(x; \sigma) = \frac{\sqrt{2}}{\sigma\sqrt{\pi}}e^{-\frac{x^2}{2\sigma^2}}$ for $x>0$ and 0 otherwise. Now, suppose:
+\begin{itemize}
+\item $\bm{\beta}$ is a vector with $||\bm{\beta}||_2=1$ \item $\mathbf{Z}_1, \mathbf{Z}_2$ are vectors $\sim \mathcal{N}(\mathbf{0},\mathbf{I})$
+\item $\epsilon \sim \mathcal{N}(0,\sigma^2)$
+\item $Z' \sim \mathcal{N}(0,1)$
+\item $Z_+ \sim \textnormal{HalfNormal}(1)$.
+\end{itemize}
+Then we have:
+\[
+{Z_1}_j | \langle \mathbf{Z}_1 - \mathbf{Z}_2, \bm{\beta} \rangle + \epsilon > 0 \overset{d}{=} Z'\sqrt{1-\frac{\beta_j^2}{2 + \sigma^2}} + \frac{\beta_j}{\sqrt{2+\sigma^2}} Z_{+},
+\]
+where ${Z_1}_j$ is the $j$-th entry of $\mathbf{Z}_1$.
+\end{restatable}
+
+\textit{Proof:} First, note:
+\[
+{Z_1}_j | \langle \mathbf{Z}_1 - \mathbf{Z}_2, \bm{\beta} \rangle + \epsilon > 0  \overset{d}{=} {Z_1}_j | \left\langle \begin{bmatrix}\mathbf{Z}_1\\\mathbf{Z}_2\\\epsilon/\sigma\end{bmatrix}, \begin{bmatrix}\bm{\beta}\\ -\bm{\beta}\\\sigma\end{bmatrix}\right\rangle > 0
+\overset{d}{=} {Z_1}_j | \left\langle \begin{bmatrix}\mathbf{Z}_1\\\mathbf{Z}_2\\\epsilon/\sigma\end{bmatrix}, \begin{bmatrix}\bm{\beta}\\ -\bm{\beta}\\\sigma\end{bmatrix}/\sqrt{2+\sigma^2}\right\rangle > 0,
+\]
+where $\begin{bmatrix}\cdot\\ \cdot\\\cdot\end{bmatrix}$ denotes the vector-valued result of concatenating vectors and scalars. For readability, we set $\mathbf{Z}_{c} = \begin{bmatrix}\mathbf{Z}_1\\\mathbf{Z}_2\\\epsilon/\sigma\end{bmatrix}$ and $\bm{\beta}_{c} = \begin{bmatrix}\bm{\beta}\\ -\bm{\beta}\\\sigma\end{bmatrix}/\sqrt{2+\sigma^2}$.
+
+Given that $\bm{\beta}_{c}$ is unit-norm (by supposition, $\bm{\beta}$ is unit-norm), and every element of $\mathbf{Z}_{c}$ is $ \sim \mathcal{N}(0,1)$ (even $\epsilon/\sigma$), we can easily split a conditional random vector containing ${Z_1}_j$ into a conditionally dependent component and independent component:
+\[
+ \mathbf{Z}_{c} | \langle \mathbf{Z}_{c}, \bm{\beta}_{c}\rangle > 0 \overset{d}{=} (\mathbf{I} - \bm{\beta}_{c}\bm{\beta}_{c}^{\top})\mathbf{Z}'' + \bm{\beta}_{c}\mathbf{Z}_{+}.
+\]
+The first term is orthogonal to $\bm{\beta}_{c}$ and so it is the part of $\mathbf{Z}_{c}$ that is not subject to the condition. In the unconditional case, $\mathbf{Z}_{c} \sim \mathcal{N}(\mathbf{0}, \mathbf{I})$ and so $\mathbf{Z}''\sim \mathcal{N}(\mathbf{0}, \mathbf{I})$. The second term is the part of $\mathbf{Z}_{c}$ that is in the direction of $\bm{\beta}_{c}$. $\mathbf{Z}_{+} \sim \text{HalfNormal}(\mathbf{I})$ because our dot product condition is satisfied for half of the possible non-orthogonal $\mathbf{Z}_{c}$ values. Now, we focus on finding $\mathbf{Z}_{c} | \langle \mathbf{Z}_{c}, \bm{\beta}_{c}\rangle > 0$ for a single index $j$. We have (for $C$ defined to be the dimensionality of $\bm{\beta}_c$):
+\begin{align*}
+((\mathbf{I} - \bm{\beta}_{c}\bm{\beta}_{c}^{\top})\mathbf{Z}'')_j + (\bm{\beta}_{c}\mathbf{Z}_{+})_j &= Z''_j(1-{\beta_c}_j^2) - \sum_{\substack{1 \leq i \leq C \\ i \neq j}} Z''_i {\beta_c}_j {\beta_c}_i + \beta_j {Z_+}_j\\
+&= Z''_j - \sum_{i = 1}^C Z''_i {\beta_c}_j {\beta_c}_i + \beta_j {Z_+}_j.
+\end{align*}
+Now, note that $Z''_j - \sum_{i = 1}^C Z''_i {\beta_c}_j {\beta_c}_i$ is the sum of independent zero-mean Gaussians with variances given by $1$ and ${\beta_c}_j^2 {\beta_c}_i^2$, so it itself is a zero-mean Gaussian $Y \sim \mathcal{N}(0, 1-\sum_{i = 1}^C {\beta_c}_j^2 {\beta_c}_i^2)$. We can also use the fact that $\sum_{i = 1}^C {\beta_c}_i^2 = 1$ (recall that $\bm{\beta_c}$ is unit norm) to get: $Y \sim \mathcal{N}(0, 1-{\beta_c}_j^2)$. So we have that the conditional ${Z_1}_j$ is given by:
+\[
+Z'\sqrt{1-{\beta_c}_j^2} + {\beta_c}_j Z_{+} = Z'\sqrt{1-\frac{\beta_j^2}{2 + \sigma^2}} + \frac{\beta_j}{\sqrt{2+\sigma^2}} Z_{+},
+\]
+for $Z' \sim \mathcal{N}(0,1)$. As a corollary, we can see that ${Z_2}_j$ under the same condition is given by:
+\[
+Z'\sqrt{1-\frac{\beta_j^2}{2 + \sigma^2}} + \frac{-\beta_j}{\sqrt{2+\sigma^2}} Z_{+}.
+\]
+
+\subsection{Lemma 2}
+
+\begin{restatable}{statementoflemma}{estimatorlemma4}
+\label{estimatorlemma4}
+Suppose that $\Phi$ is the CDF of a standard Gaussian, $a$ and $c$ are constants, and $Z \sim \mathcal{N}(0, 1)$. Then we have:
+\[
+\mathbb{E}[\Phi(aZ + c)] = \Phi\left(\frac{c}{\sqrt{1+a^2}}\right).
+\]
+\end{restatable}
+
+\textit{Proof:}
+By the definition of the CDF of a standard Gaussian, we have:
+\begin{align*}
+\mathbb{E}[\Phi(aZ + c)] &= \mathbb{E}[P(X \leq aZ + c)],
+\end{align*}
+where $X \sim \mathcal{N}(0, 1)$. Continuing, we have:
+\begin{align*}
+&= \mathbb{E}[P(X - aZ - c \leq 0 )].
+\end{align*}
+Now, note that $X - aZ - c$ is the sum of independent Gaussian random variables with given mean and variance; it itself is a Gaussian random variable $\sim \mathcal{N}(-c, a^2 + 1)$. To find $P(X - aZ - c \leq 0 )$, we can evaluate its CDF at $0$:
+\begin{align*}
+&= \mathbb{E}\left[\Phi\left(\frac{c}{\sqrt{a^2+1}}\right)\right] = \Phi\left(\frac{c}{\sqrt{a^2+1}}\right).
+\end{align*}
+
+\subsection{Lemma 3}
+
+\begin{restatable}{statementoflemma}{estimatorlemma5}
+\label{estimatorlemma5}
+Suppose $\Phi$ is the standard Gaussian CDF, $Z_+ \sim \textnormal{HalfNormal}(1)$, and $b$ and $a$ are constants. Then we have:
+\[
+\mathbb{E}\left[\Phi\left(\frac{Z_{+}b}{\sqrt{a^2+1}}\right)\right] = \frac{1}{2} + \frac{1}{\pi}\tan^{-1}\left(\frac{b}{\sqrt{a^2+1}}\right).
+\]
+\end{restatable}
+
+\textit{Proof:} By the definition of expected value, we can take the following integral where $f_{Z_{+}}$ is the PDF of $Z_{+}$. We integrate from $0$ instead of $-\infty$ because the PDF of the Standard Half Normal is $0$ in the domain below $0$:
+\begin{align*}
+\mathbb{E}\left[\Phi\left(\frac{Z_{+}b}{\sqrt{a^2+1}}\right)\right] &= \int_{0}^{\infty} \Phi\left(\frac{zb}{\sqrt{a^2+1}}\right) f_{Z_{+}}(z) dz\\
+&= \int_{0}^{\infty} \Phi\left(\frac{zb}{\sqrt{a^2+1}}\right) \frac{\sqrt{2}}{\sqrt{\pi}}e^{\frac{-z^2}{2}} dz\\
+&= \frac{1}{\sqrt{2\pi}}\left(\int_{0}^{\infty} e^{\frac{-z^2}{2}}dz + \int_{0}^{\infty}\text{erf}\left(\frac{zb}{\sqrt{2}\sqrt{a^2+1}}\right) e^{\frac{-z^2}{2}} dz\right)\textbf{ (\textasteriskcentered)}.
+\end{align*}
+The second integral is generally non-trivial to solve, but luckily we can solve it by using Equation 2 in Section 4.3 of the integral table from \citet{ng1968table}, which states:
+\[
+\int_{0}^{\infty} \text{erf}(cx)e^{-d^2x^2}dx = \frac{\sqrt{\pi}}{2d} - \frac{1}{d\sqrt{\pi}}\tan^{-1}\left(\frac{d}{c}\right)
+\]
+Where $c$ and $d$ are real and positive. We split the solution by cases: $b>0$, $b=0$, and $b<0$. We find that in every case, we can manipulate our integral so that the solution is trivial or the constant inside the $\text{erf}(\cdot)$ is positive (and so we can use the integral table). In every case, we find that the solution is $\frac{1}{2} + \frac{1}{\pi}\tan^{-1}\left(\frac{b}{\sqrt{a^2+1}}\right)$.
+
+\textbf{Case 1: $b>0$}. We can use the integral table directly:
+\begin{align*}
+\textbf{(\textasteriskcentered)} &= \frac{1}{\sqrt{2\pi}}\left(\frac{\sqrt{\pi}}{\sqrt{2}} + \frac{\sqrt{\pi}}{\sqrt{2}} - \frac{\sqrt{2}}{\sqrt{\pi}}\tan^{-1}\left(\frac{\sqrt{a^2+1}}{b}\right)\right)\\
+&= \frac{1}{2} + \frac{1}{2} - \frac{1}{\pi}\tan^{-1}\left(\frac{\sqrt{a^2+1}}{b}\right).
+\end{align*}
+Then, using the identity:
+\[
+\tan^{-1}x + \tan^{-1}\frac{1}{x} = \frac{\pi}{2}\text{ if } x > 0, \\
+\]
+we find the following:
+\[
+=\frac{1}{2} + \frac{1}{\pi}\tan^{-1}\left(\frac{b}{\sqrt{a^2+1}}\right).
+\]
+
+\textbf{Case 2: $b=0$}. Note that $\text{erf}(0) = 0$; we do not have to use the integral table:
+\begin{align*}
+\textbf{(\textasteriskcentered)} &= \frac{1}{\sqrt{2\pi}}\left(\frac{\sqrt{\pi}}{\sqrt{2}} + 0\right)\\
+&= \frac{1}{2}.
+\end{align*}
+Because $\tan^{-1}(0)=0$, we have:
+\[
+=\frac{1}{2} + \frac{1}{\pi}\tan^{-1}\left(\frac{b}{\sqrt{a^2+1}}\right).
+\]
+
+\textbf{Case 3: $b<0$}. Because $\text{erf}(\cdot)$ is an odd function, we can pull the negative out:
+\begin{align*}
+\textbf{(\textasteriskcentered)} &= \frac{1}{\sqrt{2\pi}}\left(\int_{0}^{\infty} e^{\frac{-z^2}{2}}dz - \int_{0}^{\infty}\text{erf}\left(\frac{z|b|}{\sqrt{2}\sqrt{a^2+1}}\right) e^{\frac{-z^2}{2}} dz\right).
+\end{align*}
+Now we can use the integral table as in the $b>0$ case:
+\begin{align*}
+&= \frac{1}{\sqrt{2\pi}}\left(\frac{\sqrt{\pi}}{\sqrt{2}} - \frac{\sqrt{\pi}}{\sqrt{2}} + \frac{\sqrt{2}}{\sqrt{\pi}}\tan^{-1}\left(\frac{\sqrt{a^2+1}}{|b|}\right)\right)\\
+&= \frac{1}{2} + \frac{1}{2} - \frac{1}{\pi}\tan^{-1}\left(\frac{\sqrt{a^2+1}}{|b|}\right).
+\end{align*}
+We can then use the same identity again:
+\[
+\tan^{-1}x + \tan^{-1}\frac{1}{x} = \frac{\pi}{2}\text{ if } x > 0 \\
+\]
+to get:
+\[
+=\frac{1}{2} - \frac{1}{\pi}\tan^{-1}\left(\frac{|b|}{\sqrt{a^2+1}}\right).
+\]
+Because $\tan^{-1}$ is an odd function, we can put the negative inside of it:
+\[
+=\frac{1}{2} + \frac{1}{\pi}\tan^{-1}\left(\frac{b}{\sqrt{a^2+1}}\right).
+\]
+
+\subsection{Full Proof}
+
+Here, we prove:
+\[
+\mathbb{E}[\sign(y_1 - y_2) (\Phi(\mathbf{x}_1) - \Phi(\mathbf{x}_2))] = \frac{2}{\pi}\sin^{-1}\left(\frac{\bm{\thstar}}{\sqrt{4 + 2\sigma_1^2 + 2\sigma_2^2}}\right)
+\]
+with $y_1, y_2, \Phi(\mathbf{x}_1), \Phi(\mathbf{x}_2)$, and $\bm{\thstar}$ defined in the main text, for the case where $\epsilon_1$ and $\epsilon_2$ are zero-mean Gaussian noise $\sim \mathcal{N}(0,\sigma^2_1)$ and $\sim \mathcal{N}(0,\sigma^2_2)$, respectively.
+
+It is easy to see that this is a more general version of the following theorem.
+
+\estimator*
+
+\textit{Proof:} By symmetry, we have:
+\begin{align*}
+&\mathbb{E}[\sign(y_1 - y_2) (\Phi(\mathbf{x}_1) - \Phi(\mathbf{x}_2))]\\
+&= \frac{1}{2}\mathbb{E}[\Phi(\mathbf{x}_1) - \Phi(\mathbf{x}_2)|\sign(y_1 - y_2) > 0] + \frac{1}{2}\mathbb{E}[-(\Phi(\mathbf{x}_1) - \Phi(\mathbf{x}_2))|\sign(y_1 - y_2) < 0].
+\end{align*}
+By increasing monotonicity of $f$, we have $\sign(y_1-y_2)>0 \iff \langle \mathbf{x}_1 - \mathbf{x}_2, \bm{\thstar}\rangle + \epsilon_\Delta > 0$, for $\epsilon_\Delta = \epsilon_1 - \epsilon_2 \sim \mathcal{N}(0,\sigma^2_1 + \sigma^2_2)$. So:
+\begin{align*}
+=& \frac{1}{2}\mathbb{E}[\Phi(\mathbf{x}_1) - \Phi(\mathbf{x}_2)|\langle \mathbf{x}_1 - \mathbf{x}_2,\bm{\thstar}\rangle + \epsilon_\Delta > 0]\\
+&+ \frac{1}{2}\mathbb{E}[-(\Phi(\mathbf{x}_1) - \Phi(\mathbf{x}_2))|\langle \mathbf{x}_1 - \mathbf{x}_2,\bm{\thstar}\rangle + \epsilon_\Delta < 0].
+\end{align*}
+Because $\mathbf{x}_1 \overset{d}{=} \mathbf{x}_2$ and $\epsilon_\Delta \overset{d}{=} -\epsilon_\Delta$, the two expected values above are the same:
+\[
+=\mathbb{E}[\Phi(\mathbf{x}_1) - \Phi(\mathbf{x}_2)|\langle \mathbf{x}_1 - \mathbf{x}_2,\bm{\thstar}\rangle + \epsilon_\Delta > 0].
+\]
+By linearity of expectation:
+\begin{align*}
+&= \mathbb{E}[\Phi(\mathbf{x}_1)|\langle \mathbf{x}_1 - \mathbf{x}_2,\bm{\thstar}\rangle + \epsilon_\Delta > 0] - \mathbb{E}[\Phi(\mathbf{x}_2)|\langle \mathbf{x}_1 - \mathbf{x}_2,\bm{\thstar}\rangle + \epsilon_\Delta > 0].
+\end{align*}
+Now, we focus on finding the overall estimate for a single index $j$. By Lemma \ref{estimatorlemma3}, we have, for $Z \sim \mathcal{N}(0,1)$ and $Z_{+} \sim \text{HalfNormal}(1)$:
+\begin{align*}
+\Phi({x_1}_j)|\langle \mathbf{x}_1 - \mathbf{x}_2,\bm{\thstar}\rangle + \epsilon_\Delta > 0 \overset{d}{=} \Phi(Za + Z_{+}b_1).
+\end{align*}
+Here, $a=\sqrt{1-\frac{(\theta_j^*)^2}{2+\sigma^2_1 + \sigma^2_2}}$ and $b_1=\frac{\theta_j^*}{\sqrt{2+\sigma^2_1 + \sigma^2_2}}$. As a corollary of Lemma \ref{estimatorlemma3}, we can see:
+\begin{align*}
+\Phi({x_2}_j)|\langle \mathbf{x}_1 - \mathbf{x}_2,\bm{\thstar}\rangle + \epsilon_\Delta > 0 \overset{d}{=} \Phi(Za + Z_{+}b_2).
+\end{align*}
+Where $b_2=-\frac{\theta_j^*}{\sqrt{2+\sigma^2_1 + \sigma^2_2}}$. So for the index $j$, our estimate is:
+\begin{align*}
+&\mathbb{E}[\Phi(Za + Z_{+}b_1)] - \mathbb{E}[\Phi(Za + Z_{+}b_2)]\\
+&= \mathbb{E}[\mathbb{E}[\Phi(Za + c)|c = Z_{+}b_1]] - \mathbb{E}[\mathbb{E}[\Phi(Za + c)|c = Z_{+}b_2]].
+\end{align*}
+Using Lemma \ref{estimatorlemma4}, we have:
+\begin{align*}
+&= \mathbb{E}\left[\Phi\left(\frac{Z_{+}b_1}{\sqrt{a^2+1}}\right)\right] - \mathbb{E}\left[\Phi\left(\frac{Z_{+}b_2}{\sqrt{a^2+1}}\right)\right].
+\end{align*}
+Then, using Lemma \ref{estimatorlemma5}, we have:
+\begin{align*}
+&= \frac{1}{2} + \frac{1}{\pi}\tan^{-1}\left(\frac{b_1}{\sqrt{a^2+1}}\right) - \frac{1}{2} - \frac{1}{\pi}\tan^{-1}\left(\frac{b_2}{\sqrt{a^2+1}}\right)\\
+&= \frac{1}{\pi}\tan^{-1}\left(\frac{b_1}{\sqrt{a^2+1}}\right) - \frac{1}{\pi}\tan^{-1}\left(\frac{b_2}{\sqrt{a^2+1}}\right).
+\end{align*}
+Using the fact that $\tan^{-1}$ is an odd function and $b_2 = -b_1$, we get:
+\begin{align*}
+&= \frac{2}{\pi}\tan^{-1}\left(\frac{b_1}{\sqrt{a^2+1}}\right).
+\end{align*}
+Now, we write $a$ and $b_1$ in terms of $\theta_j^*$:
+\begin{align*}
+&= \frac{2}{\pi}\tan^{-1}\left(\frac{\frac{\theta_j^*}{\sqrt{2+\sigma^2_1 + \sigma^2_2}}}{\sqrt{2-\frac{(\theta_j^*)^2}{2+\sigma^2_1 + \sigma^2_2}}}\right)\\
+&= \frac{2}{\pi}\tan^{-1}\left(\frac{\frac{\theta_j^*}{\sqrt{4+2\sigma^2_1 + 2\sigma^2_2}}}{\sqrt{1-\left(\frac{\theta_j^*}{\sqrt{4+2\sigma^2_1 + 2\sigma^2_2}}\right)^2}}\right).
+\end{align*}
+Using the identity $\sin^{-1}x = \tan^{-1}\left(\frac{x}{\sqrt{1-x^2}}\right)$, we have:
+\begin{align*}
+&= \frac{2}{\pi}\sin^{-1}\left(\frac{\theta_j^*}{\sqrt{4+2\sigma^2_1 + 2\sigma^2_2}}\right).
+\end{align*}
+
+\subsection{Corollary 1}
+
+\cdfprediction*
+
+To see this, we can find:
+\begin{align*}
+\mathbb{E}[\Phi(\mathbf{x}_1)-\Phi(\mathbf{x}_2)|\langle\hat{\bm{\theta}},\mathbf{x}_1\rangle + \epsilon_1 > \langle\hat{\bm{\theta}},\mathbf{x}_2\rangle + \epsilon_2]
+= \mathbb{E}[\Phi(\mathbf{x}_1)-\Phi(\mathbf{x}_2)|\langle\hat{\bm{\theta}},\mathbf{x}_1-\mathbf{x}_2\rangle + \epsilon_\Delta > 0]
+\end{align*}
+Note that we have already computed this expected value in the proof above; for an index $j$, it is:
+\begin{align*}
+\frac{2}{\pi}\sin^{-1}\left(\frac{\hat{\theta}_j}{\sqrt{4+2\sigma^2_1 + 2\sigma^2_2}}\right).
+\end{align*}
+Because $\sin^{-1}$ is an odd function, the above expression has the same sign as $\hat{\theta}_j$. Because the values at every index of $\mathbb{E}[\Phi(\mathbf{x}_1)-\Phi(\mathbf{x}_2)]$ under our condition and $\hat{\bm{\theta}}$ are the same sign, we have $\langle\mathbb{E}[\Phi(\mathbf{x}_1)-\Phi(\mathbf{x}_2)], \hat{\bm{\theta}}\rangle > 0$, so $\langle\hat{\bm{\theta}},\mathbb{E}[\Phi(\mathbf{x}_1)]\rangle > 
+\langle\hat{\bm{\theta}},\mathbb{E}[\Phi(\mathbf{x}_2)]\rangle$.
+
+\section{Optimal projected weights solutions}
+\label{projection_proof}
+
+\subsection{Linear Projection}
+\linearproj*
+
+\textit{Proof:} We proceed by considering each of the three cases from Equation \ref{linear_proj_equation}.
+
+\textbf{Case 1.}
+Suppose for the sake of contradiction that the optimal solution is $\bmthproj$ and yet $\thproj_k < \tau_k$ for some $\thproj_k$ falling under the first case of Equation \ref{linear_proj_equation}. Now suppose that we construct a $\bm{\theta}'$ also satisfying the projection constraints that is the same as $\bmthproj$ except in these places:
+\begin{align*}
+\theta'_k &= \thproj_k + \Delta = \tau_k\\
+\theta'_p &= \thproj_p - \delta_1 \geq 0\\
+\vdots\\
+\theta'_q &= \thproj_q - \delta_n \geq 0\\
+\end{align*}
+for some $\Delta=\sum_{i=1}^n \delta_i >0$ where $\hat{\theta}_p \geq \cdots \geq \hat{\theta}_q$ are all of the $\hat{\theta}$ values which do not fall under the first condition and where the corresponding $\thproj$ values are nonzero. We know that there must be some $\thproj_p, \cdots, \thproj_q$ from which we can subtract $\delta_1, \cdots, \delta_n$ (and so from which we can take the $\Delta$) because $\sum_{j\text{: }r_j(\hat{\theta}_j) \geq r_k(\hat{\theta}_k)} \tau_j \leq 1$. Now, we have:
+\begin{align*}
+&\langle \hat{\bm{\theta}}, \bmthproj \rangle - \langle \hat{\bm{\theta}}, \bm{\theta}' \rangle\\
+&= \hat{\theta}_k\thproj_k + \hat{\theta}_p\thproj_p + \cdots + \hat{\theta}_q\thproj_q - \hat{\theta}_k\thproj_k - \hat{\theta}_k\Delta -\hat{\theta}_p\thproj_p - \cdots - \hat{\theta}_q\thproj_q + \hat{\theta}_p\delta_1 + \cdots + \hat{\theta}_q\delta_n\\
+&= -\hat{\theta}_k\Delta + \hat{\theta}_p\delta_1 + \cdots + \hat{\theta}_q\delta_n\\
+&\leq \hat{\theta}_p(\delta_1+\cdots+\delta_n) - \hat{\theta}_k\Delta\\
+&=\hat{\theta}_p\Delta - \hat{\theta}_k\Delta\\
+&\leq 0.
+\end{align*}
+
+At this point, the only way to avoid the contradiction result would be if $\hat{\theta}_k=\hat{\theta}_p=\cdots=\hat{\theta}_q$. Otherwise, the above non-strict inequality would be a strict inequality. If $\hat{\theta}_k=\hat{\theta}_p=\cdots=\hat{\theta}_q$, then we know that $\hat{\theta}_k$ is the smallest $\hat{\theta}$ value satisfying condition 1 and all of the other greater $\hat{\theta}$ values satisfying condition 1 must be projected to their $\tau$ threshold value (otherwise we would get the contradiction result). In this edge case can see above that rearranging the remaining weight among equal $\hat{\theta}$ values does not change the dot product, so all of the solutions that we can get without the contradiction result are equivalently optimal (including the solution from Equation \ref{linear_proj_equation}).
+
+\textbf{Case 3.}
+This is analogous to case 1. Suppose for the sake of contradiction that the optimal solution is $\bmthproj$ and yet $\thproj_k > 0$ for some $\thproj_k$ falling under the third case of Equation \ref{linear_proj_equation}. Now suppose that we construct a $\bm{\theta}'$ also satisfying the projection constraints that is the same as $\bmthproj$ except in these places:
+\begin{align*}
+\theta'_k &= \thproj_k - \Delta = 0\\
+\theta'_p &= \thproj_p + \delta_1 \leq \tau_p\\
+\vdots\\
+\theta'_q &= \thproj_q + \delta_n \leq \tau_q\\
+\end{align*}
+for some $\Delta=\sum_{i=1}^n \delta_i >0$ where $\hat{\theta}_p \geq \cdots \geq \hat{\theta}_q$ are all of the $\hat{\theta}$ values which do not fall under the third condition and where the corresponding $\thproj$ values are not at their thresholds. By construction we know that there must be some $\thproj_p, \cdots, \thproj_q$ to which we can add $\delta_1, \cdots, \delta_n$. Now, we have:
+\begin{align*}
+&\langle \hat{\bm{\theta}}, \bmthproj \rangle - \langle \hat{\bm{\theta}}, \bm{\theta}' \rangle\\
+&= \hat{\theta}_k\thproj_k + \hat{\theta}_p\thproj_p + \cdots + \hat{\theta}_q\thproj_q - \hat{\theta}_k\thproj_k + \hat{\theta}_k\Delta -\hat{\theta}_p\thproj_p - \cdots - \hat{\theta}_q\thproj_q - \hat{\theta}_p\delta_1 - \cdots - \hat{\theta}_q\delta_n\\
+&= \hat{\theta}_k\Delta - \hat{\theta}_p\delta_1 - \cdots - \hat{\theta}_q\delta_n\\
+&\leq -\hat{\theta}_q(\delta_1+\cdots+\delta_n) + \hat{\theta}_k\Delta\\
+&=-\hat{\theta}_q\Delta + \hat{\theta}_k\Delta\\
+&\leq 0.
+\end{align*}
+
+At this point, the only way to avoid the contradiction result would be if $\hat{\theta}_k=\hat{\theta}_p=\cdots=\hat{\theta}_q$. Otherwise, the above non-strict inequality would be a strict inequality. If $\hat{\theta}_k=\hat{\theta}_p=\cdots=\hat{\theta}_q$, then we know that $\hat{\theta}_k$ is the largest $\hat{\theta}$ value satisfying condition 3 and all of the other smaller $\hat{\theta}$ values satisfying condition 3 must be projected to 0 (otherwise we would get the contradiction result). In this edge case, we can see above that rearranging the remaining weight among equal $\hat{\theta}$ values does not change the dot product, so all of the solutions that we can get without the contradiction result are equivalently optimal (including the solution from Equation \ref{linear_proj_equation}).
+
+\textbf{Case 2.}
+Above, we show that both Case 1 and Case 3 are true. So, the remaining weight must be given to the single value of $\bmthproj$ not covered by either case.
+
+\subsection{Quadratic Projection}
+
+\subsubsection{Lemma 4}
+
+\begin{restatable}{statementoflemma}{quadprojlemma1}
+\label{quad_lemma1}
+Suppose that $\bmthproj$ is the optimal solution to:
+\[
+\bmthproj = \argmin_{\bm{\theta}\in\mathbb{R}^D} ||\hat{\bm{\theta}}-\bm{\theta}||_2^2,
+\]
+subject to:
+\begin{align*}
+\sum_{i=1}^D \theta_i = 1&\\
+0 \leq \theta_i \leq \tau_i, \forall i \in [1,D],
+\end{align*}
+where $\tau_i>0$ are fixed values. Then, $\thproj_s=0$ implies that any $j$ with $\hat{\theta}_s > \hat{\theta}_j$ must have $\thproj_j=0$.
+\end{restatable}
+
+\textit{Proof:} This is similar to Lemma 2 from \citet{shalev2006efficient}. Assume for the sake of contradiction $\thproj_s = 0$ and $\hat{\theta}_s > \hat{\theta}_j$, yet we have $\thproj_j > 0$.
+
+Now we can construct another vector $\bm{\theta}'$ that is the same as $\bmthproj$, except in two places:
+\begin{align*}
+\theta'_s &= \thproj_s + \Delta\\
+\theta'_j &= \thproj_j - \Delta,
+\end{align*}
+for some $\Delta$ satisfying $0 < \Delta < \min(\thproj_j, \tau_s-\thproj_s)$. This bound on $\Delta$ ensures that $\theta'$ is still within the thresholds. We know that $\Delta$ can exist because $\min(\thproj_j, \tau_s-\thproj_s) > 0$ (by supposition, $\tau_s-\thproj_s = \tau_s - 0 > 0$ and $\thproj_j>0$).
+
+Now we can compute:
+\begin{align*}
+||\hat{\bm{\theta}}-\bmthproj||^2_2 - ||\hat{\bm{\theta}}-\bm{\theta}'||^2_2 &= (\hat{\theta}_s - \thproj_s)^2 + (\hat{\theta}_j - \thproj_j)^2 - (\hat{\theta}_s - (\thproj_s + \Delta))^2 - (\hat{\theta}_j - (\thproj_j - \Delta))^2\\
+&= 2\Delta((\hat{\theta}_s - \thproj_s) - (\hat{\theta}_j - \thproj_j) - \Delta)\\
+&> 2\Delta((\hat{\theta}_s - \thproj_s) - (\hat{\theta}_j - \thproj_j) - \min(\thproj_j, \tau_s - \thproj_s))\\
+&\geq 2\Delta((\hat{\theta}_s - \thproj_s) - (\hat{\theta}_j - \thproj_j) - \thproj_j)\\
+&= 2\Delta(\hat{\theta}_s - \hat{\theta}_j)\\
+&> 0.
+\end{align*}
+So $\bmthproj$ cannot be the optimal solution.
+
+\subsubsection{Lemma 5}
+\begin{restatable}{statementoflemma}{quadprojlemma2}
+\label{quad_lemma2}
+Suppose that $\bmthproj$ is the optimal solution to:
+\[
+\bmthproj = \argmin_{\bm{\theta}\in\mathbb{R}^D} ||\hat{\bm{\theta}}-\bm{\theta}||_2^2,
+\]
+subject to:
+\begin{align*}
+\sum_{i=1}^D \theta_i = 1&\\
+0 \leq \theta_i \leq \tau_i, \forall i \in [1,D],
+\end{align*}
+where $\tau_i>0$ are fixed values.
+Then, $\thproj_s = \tau_s$ implies $\thproj_j = \tau_j$ for any $\hat{\theta}_j-\tau_j > \hat{\theta}_s-\tau_s$.
+\end{restatable}
+
+\textit{Proof:} Again, this is similar to Lemma 2 from \citet{shalev2006efficient}. Assume for the sake of contradiction $\thproj_s = \tau_s$ and $\hat{\theta}_j-\tau_j > \hat{\theta}_s-\tau_s$, yet we have $\thproj_j < \tau_j$.
+
+Now we can construct another vector $\bm{\theta}'$ that is the same as $\bmthproj$, except in two places:
+\begin{align*}
+\theta'_s &= \thproj_s - \Delta\\
+\theta'_j &= \thproj_j + \Delta,
+\end{align*}
+for some $\Delta$ satisfying $0 < \Delta < \min(\thproj_s, \tau_j-\thproj_j)$. This bound on $\Delta$ ensures that $\theta'$ is still within the thresholds. We know that $\Delta$ can exist because $\min(\thproj_s, \tau_j-\thproj_j) > 0$ (by supposition, $\tau_j-\thproj_j > 0$ and $\thproj_s=\tau_s>0$).
+
+Now we can compute:
+\begin{align*}
+||\hat{\bm{\theta}}-\bmthproj||^2_2 - ||\hat{\bm{\theta}}-\bm{\theta}'||^2_2 &= (\hat{\theta}_s - \thproj_s)^2 + (\hat{\theta}_j - \thproj_j)^2 - (\hat{\theta}_s - (\thproj_s - \Delta))^2 - (\hat{\theta}_j - (\thproj_j + \Delta))^2\\
+&= 2\Delta((\hat{\theta}_j - \thproj_j) - (\hat{\theta}_s - \thproj_s) - \Delta)\\
+&> 2\Delta((\hat{\theta}_j - \thproj_j) - (\hat{\theta}_s - \thproj_s) - \min(\thproj_s, \tau_j - \thproj_j))\\
+&\geq 2\Delta((\hat{\theta}_j - \thproj_j) - (\hat{\theta}_s - \thproj_s) - (\tau_j - \thproj_j))\\
+&= 2\Delta((\hat{\theta}_j - \tau_j) - (\hat{\theta}_s - \thproj_s))\\
+&= 2\Delta((\hat{\theta}_j - \tau_j) - (\hat{\theta}_s - \tau_s))\\
+&> 0.
+\end{align*}
+So $\bmthproj$ cannot be the optimal solution.
+
+\subsubsection{Full Proof}
+\label{quad_full}
+
+\begin{restatable}{theorem}{quadproj}
+Suppose we want to solve:
+\[
+\bmthproj = \argmin_{\bm{\theta}\in\mathbb{R}^D} ||\hat{\bm{\theta}}-\bm{\theta}||_2^2,
+\]
+subject to:
+\begin{align*}
+\sum_{i=1}^D \theta_i = 1&\\
+0 \leq \theta_i \leq \tau_i, \forall i \in [1,D],
+\end{align*}
+where $\tau_i>0$ are fixed values.
+Then the solution is:
+\[
+\thproj_k = \min(\max(\hat{\theta}_k - \lambda, 0), \tau_k),
+\]
+where $\lambda$ is found (through e.g.\ bisection search) to satisfy:
+\[
+\sum_{i=1}^D \min(\max(\hat{\theta}_i - \lambda, 0), \tau_i) = 1.
+\]
+\end{restatable}
+
+\textit{Proof:} Note that this problem is the same as the simplex projection problem from \citet{shalev2006efficient} and \citet{duchi2008efficient}, except here we have additional $\theta_i \leq \tau_i$ constraints. The Lagrangian for this problem is\footnote{Note that multiplying $||\bmthproj-\bm{\theta}||_2^2$ by $\frac{1}{2}$ does not change the minimization problem and enables us to get rid of a factor of $2$ after taking the derivative of the Lagrangian.}:
+\[
+\mathcal{L}(\bm{\theta}, \mathbf{\mu}, \mathbf{\zeta}, \lambda) = \frac{1}{2}||\hat{\bm{\theta}}-\bm{\theta}||_2^2 + \lambda \left(-1 + \sum_{i=1}^N \theta_i \right) - \langle\mathbf{\mu}, \bm{\theta}\rangle + \langle\mathbf{\zeta}, \bm{\theta}-\mathbf{\tau}\rangle.
+\]
+To find the optimality condition with respect single index of $\bm{\theta}$, we set the derivative to zero:
+\[
+\frac{d\mathcal{L}}{d\theta_i} = \theta_i - \hat{\theta}_i + \lambda - \mu_i + \zeta_i = 0.
+\]
+The complimentary slackness KKT condition gives us that $\zeta_i=\mu_i=0$ when $0 < \theta_i < \tau_i$, so for $\theta_i$ not at the boundary of our constraints, we get:
+\[
+\theta_i = \hat{\theta}_i - \lambda.
+\]
+So, we have that for all $\theta_i \in (0, \tau_i)$, there is a shared value $\lambda$ which we subtract from $\hat{\theta}_i$ to get the value of $\theta_i$. How do we know which $\theta_i$ are $0$ and which $\theta_i$ are $\tau_i$, though?
+
+Assume that we know $\lambda$. By Lemma \ref{quad_lemma1}, we can characterize the optimal solution as:
+\[
+\thproj_k = \max(\hat{\theta}_k - \lambda, 0),
+\]
+for $\thproj_k \neq \tau_k$. By Lemma \ref{quad_lemma2}, we can characterize the optimal solution as:
+\[
+\thproj_k = \min(\hat{\theta}_k - \lambda, \tau_k),
+\]
+for $\thproj_k \neq 0$. So, we can combine these two forms to get:
+\[
+\thproj_k = \min(\max(\hat{\theta}_k - \lambda, 0), \tau_k).
+\]
+Now recall that we have the following constraint:
+\[
+\sum_{i=1}^D \min(\max(\hat{\theta}_i - \lambda, 0), \tau_i) = 1.
+\]
+Given this constraint, we can find $\lambda$ through search (moving the value up or down). We can see this by noticing that $\sum_{i=1}^D \min(\max(\hat{\theta}_i - \lambda, 0), \tau_i)$ is a strictly decreasing function of $\lambda$ between the setting of $\lambda$ that makes $\hat{\theta}_i - \lambda>0$ for at least one $i$, and the setting of $\lambda$ that makes $\hat{\theta}_i - \lambda<\tau_i$ for at least one $i$. So in this range, there is only one setting of $\lambda$ that satisfies this equation. We can only choose a $\lambda$ outside of this range when $\sum_{i=1}^D \tau_i = 1$, and in this case the solution is trivial: $\thproj_i=\tau_i$ for all $i$.
+
+\section{Loss Matrix Computation Specifics}
+\label{app:loss_computation}
+
+For all of our experiments, we computed the loss matrix as follows. For efficiency purposes, we sampled only 25 pages for a domain's bits-per-byte (BPB) computation even if a domain had more than 25 pages. To get an LLM's BPB on a page, we split the page into chunks of text that were 512 tokens according to a reference tokenizer (we used the Llama 2 7B tokenizer; \citealt{llama2}). These text chunks turned out to be small enough to fit in the context of every LLM we tested. We then averaged BPB across chunks for each page and then across pages for each domain. 
+
+\section{Additional Details for Pretraining Experiments}
+\label{pretraining_experiment_details}
+
+In this section, we specify hyperparameters and methods used for LLM pretraining and evaluation for our LLM pretraining experiments. We also specify settings used for the data-selection methods.
+
+\subsection{LLM Pretraining}
+
+We trained each LLM on 4 NVIDIA A100 GPUs. At 3.2B tokens, each training run took under 3 hours with the Hugging Face Trainer \citep{transformers} and appropriate PyTorch \citep{pytorch} compile flags. We provide pretraining hyperparameters in Table \ref{pretraining_hyperparameters}. Given our per-device batch size, we found the learning rate by increasing it by a factor of 2 until we saw instability and then using the highest learning rate where no instability was observed. Refer to the Pythia paper \citep{pythia} for more information; we initialized the model from scratch using their 160M model configuration at \url{https://huggingface.co/EleutherAI/pythia-160m}. Other hyperparameters can be assumed to be Hugging Face Trainer defaults at the time of this writing.
+
+\begin{table}[t]
+\centering
+\caption{LLM Pretraining Hyperparameters}
+\begin{tabular}{|c|c|}
+\hline
+\textbf{Parameter} & \textbf{Value} \\
+\hline
+Per-device Batch Size & 128 \\
+\hline
+Learning Rate & $5 \times 10^{-3}$ \\
+\hline
+Warmup Ratio & 0.1 \\
+\hline
+Adam $\beta_1$ & 0.9 \\
+\hline
+Adam $\beta_2$ & 0.95 \\
+\hline
+Adam $\epsilon$ & $1 \times 10^{-8}$ \\
+\hline
+Weight Decay & 0.1 \\
+\hline
+LR Scheduler & cosine \\
+\hline
+Max Grad Norm & 1.0 \\
+\hline
+BF 16 & True \\
+\hline
+Distributed Backend & nccl \\
+\hline
+Gradient Accumulation Steps & 1 \\
+\hline
+\end{tabular}
+\label{pretraining_hyperparameters}
+\end{table}
+
+\subsection{LLM Evaluation}
+
+At the end of the pretraining script, we used the Eleuther AI Eval Harness \citep{eval-harness}. For efficiency, we set the sample limit to 5000 examples per benchmark. Elsewhere, we used the default settings. On 4 NVIDIA A100s, it took only a few minutes per LLM to compute evaluation results for SciQ, ARC Easy, PIQA, LAMBADA, and all of the translations of LAMBADA.
+
+\subsection{DSIR}
+
+DSIR \citep{dsir}, despite its simplicity, requires some tuning. A decision must be made about how to format the bemchmark data into a single piece of text per example so that it can be compared with potential pretraining data in terms of n-gram overlap. The LAMBADA tasks only have one text column per example, so the decision here is trivial. Examples from the other tasks each have a question, possibly a context, and a set of multiple choice answers to choose from. We chose to concatenate all of these columns together with spaces to form one piece of text per example, duplicating the same question as a prefix for each different answer.
+
+DSIR does not allow the user to specify the exact number of unique tokens desired for pretraining. It only allows the specification of the number of unique pages, which can have wildly varying token counts. For every DSIR job, we set the desired number of pages to 3325589, which we found through binary search to produce slightly more than 3.2B unique tokens for LAMBADA$_{\text{FR}}$. It was expensive to find this number for even one bechmark, because for each iteration of the binary search, we had to run DSIR and then the Pythia tokenizer to know how many tokens resulted from the input page number parameter. We provide the number of unique tokens from DSIR for each task in Table \ref{dsir_tokens}. We pretrained on 3.2B tokens for every LLM regardless of whether all of them were unique.
+
+\begin{table}[t]
+\centering
+\caption{Unique pretraining tokens selected per benchmark, from DSIR.}
+\begin{tabular}{|c|c|}
+\hline
+\textbf{Benchmark} & \textbf{Tokens} \\
+\hline
+ARC Easy & 2,905,206,499 \\
+\hline
+PIQA & 2,910,486,295 \\
+\hline
+SCIQ & 2,920,734,042 \\
+\hline
+LAMBADA & 3,022,219,424 \\
+\hline
+LAMBADA$_{\text{DE}}$ & 3,210,986,137 \\
+\hline
+LAMBADA$_{\text{ES}}$ & 3,396,528,704 \\
+\hline
+LAMBADA$_{\text{FR}}$ & 3,413,930,081 \\
+\hline
+LAMBADA$_{\text{IT}}$ & 3,384,854,845 \\
+\hline
+\end{tabular}
+\label{dsir_tokens}
+\end{table}
+
+\subsection{fastText}
+
+The ``SOTA'' fastText model from \citet{datacomp} is available here:
+\url{https://huggingface.co/mlfoundations/fasttext-oh-eli5}. We used this model to filter data by sorting pages by the model's ``high quality'' score, including the top pages in order until we had either reached or gone slightly over 3.2B unique tokens. This aligns with the data-selection procedure in the original paper, and is also essentially the same as running the linear projection (Equation \ref{linear_proj_equation}) at the page-level. We also applied this method when selecting data using our own fastText filter trained by our algorithm.
+
+\section{Additional Pretraining Results}
+\label{additional_pretraining_results_appendix}
+
+In Figure \ref{additional_pretraining_results}, we present additional pretraining results for methods in our loss-performance correlation data selection paradigm. We find that using Spearman rank correlation \citep{spearmanr} in place of our estimator achieves comparable performance. On some tests, it performs even better than our estimator. We also find that using the quadratic projection, while perhaps more intuitive, leads to worse performance than the linear projection.
+
+\begin{figure}[t]
+    \centering
+    \begin{subfigure}[b]{0.49\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{images/llm-perf-heatmap-lin-proj.png}
+        \caption{Estimate with linear projection. This is our algorithm from the main text without training the additional fastText filter.}
+    \end{subfigure}\hfill
+    \begin{subfigure}[b]{0.49\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{images/llm-perf-heatmap-l2-proj.png}
+        \caption{Estimate with quadratic projection. Same as (a) except the linear projection is replaced with the quadratic projection.}
+    \end{subfigure}
+    \vskip\baselineskip
+    \begin{subfigure}[b]{0.49\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{images/llm-perf-heatmap-spearman.png}
+        \caption{Spearman rank correlation with linear projection. Same as (a) except we replaced our estimator with the Spearman rank correlation.}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.49\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{images/llm-perf-heatmap-fasttext-spearman.png}
+        \caption{fastText filter trained on data selected in (c). This is the same as our algorithm in the main text, replacing our estimator with the Spearman rank correlation.}
+    \end{subfigure}
+    \caption{Pretraining results for different methods within our paradigm. Overall, we see that many rank-correlation pretraining data selection approaches perform well.}
+    \label{additional_pretraining_results}
+\end{figure}
+
+\section{Pretraining Token Distribution with \texorpdfstring{$5 \times \tau$}{5xtau}}
+\label{app:5_tau}
+
+Figure \ref{fig:weight_figure_5_tau} shows what the projected estimate in our pretraining experiments would be if we had a pretraining data pool $5\times$ as large. We see here that the estimate does an even better job at selecting pretraining data with the language that matches the target task.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{images/token-dist-heatmap-5-tau.png}
+
+\caption{This figure is analogous to Figure \ref{fig:weight_figure}, except the $\tau$ thresholds have been multiplied by 5. We see that our approach selects even more relevant data when the selection pool is larger.}
+\label{fig:weight_figure_5_tau}
+\end{figure}
+
+\section{Parameter Count Distribution for Estimator LLMs}
+\label{app:histogram}
+
+In Figure \ref{paramhist}, we present the parameter-count histogram of the 90 models from the Open LLM Leaderboard \citep{openllmleaderboard} that we used to compute our estimate for pretraining data selection. Only 8 models here are less than 160M parameters. Despite this, our estimate can be used to effectively pretrain 160M parameter LLMs.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\textwidth]{images/param-count-dist.png}
+\caption{The parameter-count histogram of the 90 models from the Open LLM Leaderboard \citep{openllmleaderboard} that we used to compute our estimate for pretraining data selection. Bar widths are 160M. The smallest model in the sample has $\approx$33M parameters and the largest has $\approx$9B. The spike around $6.7$B parameters is due to a large number of partially trained Pythia~\citep{pythia} checkpoints from the same training run at that scale. Our algorithm has the hard task of selecting pretraining data for 160M parameter models, which is abnormally small in the set of models used to compute the estimate.}
+\label{paramhist}
+\end{figure}
+
+\end{document}

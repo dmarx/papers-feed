@@ -1,0 +1,78 @@
+\subsection{Post-Training}
+\label{section:vision_post_training}
+In this section, we describe the post-training recipe for our vision adapters. After pre-training, we fine-tune the model on highly curated multi-modal conversational data to enable chat capabilities. We further implement direct preference optimization (DPO) to boost human evaluation performance and rejection sampling to improve multi-modal reasoning capabilities. Finally, we add a quality-tuning stage where we continue fine-tuning the model on a very small set of high-quality conversational data which further boosts human evaluation while retaining performance across benchmarks. More details on each of these steps are provided below.
+
+\subsubsection{Supervised Finetuning Data}
+\label{subsubsection:vision_supervised_finetuning_data}
+We describe our supervised finetuning (SFT) data for image and video capabilities separately below.
+
+\textbf{Image.} We utilize a mix of different datasets for supervised finetuning.
+\begin{itemize}
+\item \textbf{Academic datasets.} We convert a highly filtered collection of existing academic datasets to question-answer pairs using templates or via LLM rewriting. The LLM rewriting's purpose is to augment the data with different instructions and to improve the language quality of answers.
+
+\item \textbf{Human annotations.} We collect multi-modal conversation data via human annotators for a wide range of tasks (open-ended question-answering, captioning, practical use cases, \textit{etc.}) and domains (\textit{e.g.}, natural images and structured images). Annotators are provided with images and asked to write conversations. To ensure diversity, we cluster large-scale datasets and sampled images uniformly across different clusters. Further, we acquire additional images for a few specific domains by expanding a seed via k-nearest neighbors. Annotators are also provided with intermediate checkpoints of existing models to facilitate model-in-the-loop style annotations, so that model generations can be utilized as a starting point by the annotators to then provide additional human edits. This is an iterative process, in which model checkpoints would be regularly updated with better performing versions trained on the latest data. This increases the volume and efficiency of human annotations, while also improving their quality.
+
+\item \textbf{Synthetic data.} We explore different ways to generate synthetic multi-modal data by using text-representations of images and a text-input LLM. The high-level idea is to utilize the reasoning capabilities of text-input LLMs to generate question-answer pairs in the text domain, and replace the text representation with its corresponding images to produce synthetic multi-modal data. Examples include rendering texts from question-answer datasets as images or rendering table data into synthetic images of tables and charts. Additionally, we use captions and OCR extractions from existing images to generate additional conversational or question-answer data related to the images.
+\end{itemize}
+
+\textbf{Video.} Similar to the image adapter, we use academic datasets with pre-existing annotations and convert them into appropriate textual instructions and target responses.
+The targets are converted to open-ended responses or multiple-choice options, whichever is more appropriate.
+We ask humans to annotate videos with questions and corresponding answers.
+The annotators are asked to focus on questions that could not be answered based on a single frame, to steer the annotators towards questions that require temporal understanding.
+
+\subsubsection{Supervised Finetuning Recipe}
+We describe our supervised finetuning (SFT) recipe for image and video capabilities separately below.
+
+\label{subsubsection:vision_supervised_finetuning_recipe}
+\textbf{Image.} We initialize from the pre-trained image adapter, but hot-swap the pre-trained language model's weights with the instruction tuned language model's weights. The language model weights are kept frozen to maintain text-only performance, \textit{i.e.}, we only update the vision encoder and image adapter weights.
+
+Our approach to finetune the model is similar to \cite{wortsman2022modelsoupsaveragingweights}. First, we run a hyperparameter sweep using multiple random subsets of data, learning rates and weight decay values. Next, we rank the models based on their performance. Finally, we average the weights of the top-$K$ models to obtain the final model. The value of $K$ is determined by evaluating the averaged models and selecting the instance with highest performance. We observe that the averaged models consistently yield better results compared to the best individual model found via grid search. Further, this strategy reduces sensitivity to hyperparameters.
+
+\textbf{Video.} For video SFT, we initialize the video aggregator and cross-attention layers using the pre-trained weights.
+The rest of the parameters in the model, the image weights and the LLM, are initialized from corresponding models following their finetuning stages.
+Similar to video pre-training, we then finetune only the video parameters on the video SFT data.
+For this stage, we increase the video length to 64 frames, and use an aggregation factor of 32 to get two effective frames.
+The resolution of the chunks is also increased to be consistent with the corresponding image hyperparameters.
+
+\subsubsection{Preference Data}
+\label{subsubsection:vision_preference_data}
+We built multimodal pair-wise preference datasets for reward modeling and direct preference optimization.
+\begin{itemize}
+
+\item \textbf{Human annotations.} The human-annotated preference data consists of comparisons between two different model outputs, labeled as ``chosen'' and ``rejected'', with 7-scale ratings. The models used to generate responses are sampled on-the-fly from a pool of the best recent models, each with different characteristics. We update the model pool weekly. Besides preference labels, we also request annotators to provide optional human edits to correct inaccuracies in ``chosen'' responses because vision tasks have a low tolerance for inaccuracies. Note that human editing is an optional step because there is a trade-off between volume and quality in practice.
+
+\item \textbf{Synthetic data.} Synthetic preference pairs could also be generated by using text-only LLMs to edit and deliberately introduce errors in the supervised finetuning dataset. We took the conversational data as input, and use an LLM to introduce subtle but meaningful errors (\textit{e.g.}, change objects, change attributes, add mistakes in calculations, etc.). These edited responses are used as negative ``rejected'' samples and paired with the ``chosen'' original supervised finetuning data.
+
+\item \textbf{Rejection sampling.} Furthermore, to create more \emph{on-policy} negative samples, we leveraged the iterative process of rejection sampling to collect additional preference data. We discuss our usage of rejection sampling in more detail in the following sections. At a high-level, rejection sampling is used to iteratively sample high-quality generations from a model. Therefore, as a by-product, all generations that are not selected can be used as negative rejected samples and used as additional preference data pairs.
+
+\end{itemize}
+
+\subsubsection{Reward Modeling}
+\label{subsubsection:vision_reward_modeling}
+We train a vision reward model (RM) on top of the vision SFT model and the language RM. The vision encoder and the cross-attention layers are initialized from the vision SFT model and unfrozen during training, while the self-attention layers are initialized from the language RM and kept frozen. We observe that freezing the language RM part generally leads to better accuracy, especially on tasks that require the RM to judge based on its knowledge or the language quality. We adopt the same training objective as the language RM, but adding a weighted regularization term on the square of the reward logits averaged over the batch, which prevents the reward scores from drifting.
+
+The human preference annotations in Section~\ref{subsubsection:vision_preference_data} are used to train the vision RM. We follow the same practice as language preference data (Section~\ref{sec:rlhf_annotation_data}) to create two or three pairs with clear ranking (\emph{edited} > \emph{chosen} > \emph{rejected}). In addition, we also synthetically augment the negative responses by perturbing the words or phrases related to the information in the image (such as numbers or visual texts). This encourages the vision RM to ground its judgement based on the actual image content.
+
+\subsubsection{Direct Preference Optimization}
+\label{subsubsec:dpo}
+Similar to the language model (Section~\ref{subsubsec:postdpo}), we further train the vision adapters with Direct Preference Optimization (DPO;~\cite{rafailov2023dpo}) using the preference data described in Section~\ref{subsubsection:vision_preference_data}. To combat the distribution shift during post-training rounds, we only keep recent batches of human preference annotations while dropping batches that are sufficiently off-policy (\textit{e.g.}, if the base pre-trained model is changed). We find that instead of always freezing the reference model, updating it in an exponential moving average (EMA) fashion every k-steps helps the model learn more from the data, resulting in better performance in human evaluations. Overall, we observed that the vision DPO model consistently performs better than its SFT starting point in human evaluations for every finetuning iteration.
+
+\subsubsection{Rejection Sampling}
+\label{subsubsection:vision_rejection_sampling}
+Most available question-answer pairs only contain the final answer and lack the chain-of-thought explanation that is required to train a model that generalizes well for reasoning tasks.
+We use rejection sampling to generate the missing explanations for such examples and boost the model's reasoning capabilities.
+
+Given a question-answer pair, we generate multiple answers by sampling the finetuned model with different system prompts or temperature.
+Next, we compare the generated answers to the ground-truth via heuristics or an LLM judge.
+Finally, we retrain the model by adding the correct answers back into the finetuning data mix. We find it useful to keep multiple correct answers per question.
+
+To ensure we only add high-quality examples back into training, we implemented the following two guardrails.
+First, we find that some examples contain incorrect explanations, despite the final answer being correct.
+We observed that this pattern occurs more frequently for questions where only a small fraction of the generated answers is correct.
+Therefore, we drop answers for questions where the probability of the answer being correct is below a certain threshold.
+Second, raters prefer some answers over others due to differences in language or style.
+We use the reward model to select top-$K$ highest-quality answers and add them back into training.
+
+\subsubsection{Quality Tuning}
+\label{subsubsection:vision_quality_tuning}
+We curate a small but \emph{highly} selective SFT dataset where all samples have been rewritten and verified either by humans or our best models to meet our highest standards. We train DPO models with this data to improve response quality, calling the process Quality-Tuning (QT). We find that QT significantly improves human evaluations without affecting generalization verified by benchmarks when the QT dataset covers a wide range of tasks and proper early stopping is applied. We select checkpoints at this stage purely based on benchmarks to ensure capabilities are retained or improved.

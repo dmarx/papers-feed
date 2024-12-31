@@ -1,0 +1,34 @@
+\subsection{Model Architecture}
+\label{section:vision_model_architecture}
+Our visual-recognition model consists of three main components: \textbf{(1)} an image encoder, \textbf{(2)} an image adapter, and \textbf{(3)} a video adapter.
+
+\textbf{Image encoder.} Our image encoder is a standard vision transformer (ViT; \citet{dosovitskiy2020vit}) that is trained to align images and text \citep{xu2023demystifying}.
+We use the ViT-H/14 variant of the image encoder, which has 630M parameters that were trained on 2.5B image-text pairs for five epochs.
+The image encoder is pre-trained on images with resolution $224 \times 224$; images were split up into $16 \times 16$ patches of equal size (\emph{i.e.}, a patch size of $14x14$ pixels).
+As also demonstrated by prior work such as ViP-Llava \citep{cai2023vipllava}, we observe that image encoders trained via a contrastive text alignment objective are unable to preserve fine-grained localization information. To alleviate this, we employ a \emph{multi-layer} feature extraction, where features from the \emph{4$^{th}$, 8$^{th}$, 16$^{th}$, 24$^{th}$ and 31$^{st}$} layers are also provided in addition to the final layer features.
+In addition, we further insert 8 \emph{gated} self-attention layers (making a total of 40 transformer blocks) prior to pre-training of the cross-attention layers to learn alignment-specific features. The image encoder therefore eventually has a total $850$M parameters with the additional layers.
+With the multi-layer features, the image encoder produces a $7680$-dimensional representation for each of the resulting $16 \times 16\!=\!256$ patches.
+The parameters of the image encoder are \emph{not} frozen during subsequent training stages as we found it to improve performance, especially in domains such as text recognition.
+
+\textbf{Image adapter.} We introduce cross-attention layers between the visual token representations produced by the image encoder and the token representations produced by the language model \citep{alayrac2022flamingo}.
+The cross-attention layers are applied after every fourth self-attention layer in the core language model.
+Like the language model itself, the cross-attention layers use generalized query attention (GQA) for increased efficiency.
+The cross-attention layers introduce substantial numbers of additional trainable parameters into the model: for Llama 3 405B, the cross-attention layers have $\approx$100B parameters.
+We pre-train our image adapter in two stages: (1) initial pre-training followed by (2) annealing:
+\begin{itemize}
+\item \textbf{Initial pre-training.} We pre-train our image adapter on our dataset of  $\sim$6B image-text pairs described above.
+For compute efficiency reasons, we resize all images to fit within \emph{at most} four tiles of $336 \times 336$ pixels each, where we arrange the tiles to support different aspect ratios, \emph{e.g.}, $672 \times 672$, $672 \times 336$, and $1344 \times 336$.
+
+\item \textbf{Annealing.}
+We continue training the image adapter on $\sim$500M images from the annealing dataset described above.
+During annealing, we increase the per-tile image resolution to improve performance on tasks that require higher-resolution images, for example, infographics understanding.
+\end{itemize}
+
+\textbf{Video adapter.} Our model takes as input up to 64 frames (uniformly sampled from a full video), each of which is processed by the image encoder.
+We model temporal structure in videos through two components: \textbf{(i)} encoded video frames are aggregated by a temporal aggregator which merges 32 consecutive frames into one, \textbf{(ii)} additional video cross attention layers are added before every fourth image cross attention layer.
+The temporal aggregator is implemented as a perceiver resampler~\citep{jaegle2021perceiver,alayrac2022flamingo}.
+We pre-train using 16 frames per video (aggregated to 1 frame), but increase the number of input frames to 64 during supervised finetuning.
+The video aggregator and cross attention layers have 0.6B and 4.6B parameters for Llama 3 7B and 70B, respectively. 
+
+
+

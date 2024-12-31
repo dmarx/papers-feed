@@ -1,0 +1,104 @@
+\providecommand{\llama}[1]{\textsc{Llama #1}}
+
+\subsection{Pre-Training Data}
+\label{section:pretraining_data}
+
+We create our dataset for language model pre-training from a variety of data sources containing knowledge until the end of 2023. 
+We apply several de-duplication methods and data cleaning mechanisms on each data source to obtain high-quality tokens. We remove domains that contain large amounts of personally identifiable information (PII), and domains with known adult content. %
+
+\subsubsection{Web Data Curation}
+Much of the data we utilize is obtained from the web and we describe our cleaning process below. 
+
+\textbf{PII and safety filtering.}
+Among other mitigations, we implement filters designed to remove data from websites are likely to contain unsafe content or high volumes of PII, domains that have been ranked as harmful according to a variety of Meta safety standards, and domains that are known to contain adult content.
+
+\textbf{Text extraction and cleaning.}
+We process the raw HTML content for non-truncated web documents to extract high-quality diverse text.
+To do so, we build a custom parser that extracts the HTML content and optimizes for precision in boilerplate removal and content recall.
+We evaluate our parser's quality in human evaluations, comparing it with popular third-party HTML parsers that optimize for article-like content, and found it to perform favorably.
+We carefully process HTML pages with mathematics and code content to preserve the structure of that content. 
+We maintain the image \texttt{alt} attribute text since mathematical content is often represented as pre-rendered images where the math is also provided in the \texttt{alt} attribute.
+We experimentally evaluate different cleaning configurations. 
+We find markdown is harmful to the performance of a model that is primarily trained on web data compared to plain text, so we remove all markdown markers.
+
+\textbf{De-duplication.}
+We apply several rounds of de-duplication at the URL, document, and line level:
+
+\begin{itemize}
+\item \textbf{URL-level de-duplication.}
+We perform URL-level de-duplication across the entire dataset. We keep the most recent version for pages corresponding to each URL.
+
+\item \textbf{Document-level de-duplication.}
+We perform global MinHash~\citep{666900} de-duplication across the entire dataset to remove near duplicate documents.
+
+\item \textbf{Line-level de-duplication.}
+We perform aggressive line-level de-duplication similar to \texttt{ccNet}~\citep{wenzek2019ccnetextractinghighquality}.
+We remove lines that appeared more than 6 times in each bucket of 30M documents. 
+Although our manual qualitative analysis showed that the line-level de-duplication removes not only leftover boilerplate from various websites such as navigation menus, cookie warnings, but also frequent high-quality text, our empirical evaluations showed strong improvements.
+
+\end{itemize}
+
+\textbf{Heuristic filtering.}
+We develop heuristics to remove additional low-quality documents, outliers, and documents with excessive repetitions. Some examples of heuristics include:
+\begin{itemize}
+\item We use duplicated n-gram coverage ratio~\citep{Rae2021ScalingLM} to remove lines that consist of repeated content such as logging or error messages. Those lines could be very long and unique, hence cannot be filtered by line-dedup. 
+\item We use ``dirty word'' counting~\citep{raffel2020exploring} to filter out adult websites that are not covered by domain block lists.
+\item We use a token-distribution Kullback-Leibler divergence to filter out documents containing excessive numbers of outlier tokens compared to the training corpus distribution.
+\end{itemize}
+
+\textbf{Model-based quality filtering.}
+Further, we experiment with applying various model-based quality classifiers to sub-select high-quality tokens. These include using fast classifiers such as \texttt{fasttext} \citep{joulin2017bag} trained to recognize if a given text would be referenced by Wikipedia \citep{touvron2023llama}, as well as more compute-intensive Roberta-based classifiers \citep{liu2019roberta} trained on Llama 2 predictions.
+To train a quality classifier based on Llama 2, we create a training set of cleaned web documents, describe the quality requirements, and instruct Llama 2's chat model to determine if the documents meets these requirements. 
+We use DistilRoberta \citep{sanh2019distilbert} to generate quality scores for each document for efficiency reasons.
+We experimentally evaluate the efficacy of various quality filtering configurations.
+
+\textbf{Code and reasoning data.}
+Similar to \citet{deepseekai2024deepseekcoderv2breakingbarrierclosedsource}, we build domain-specific pipelines that extract code and math-relevant web pages. 
+Specifically, both the code and reasoning classifiers are DistilRoberta models trained on web data annotated by Llama 2. 
+Unlike the general quality classifier mentioned above, we conduct prompt tuning to target web pages containing math deduction, reasoning in STEM areas and code interleaved with natural language. 
+Since the token distribution of code and math is substantially different than that of natural language, these pipelines implement domain-specific HTML extraction, customized text features and heuristics for filtering.
+
+\textbf{Multilingual data.}
+Similar to our processing pipelines for English described above, we implement filters to remove data from websites that are likely to contain PII or unsafe content.  %
+Our multilingual text processing pipeline has several unique features:
+\begin{itemize}
+\item We use a \texttt{fasttext}-based language identification model to categorize documents into 176 languages.
+\item We perform document-level and line-level de-duplication within data for each language.
+\item We apply language-specific heuristics and model-based filters to remove low-quality documents.
+\end{itemize}
+
+In addition, we perform quality ranking of multilingual documents using a multilingual Llama 2-based classifier to ensure that high-quality content is prioritized.
+We determine the amount of multilingual tokens used in pre-training experimentally, balancing model performance on  English and multilingual benchmarks.
+
+\subsubsection{Determining the Data Mix}
+To obtain a high-quality language model, it is essential to carefully determine the proportion of different data sources in the pre-training data mix. 
+Our main tools in determining this data mix are knowledge classification and scaling law experiments.
+
+\textbf{Knowledge classification.}
+We develop a classifier to categorize the types of information contained in our web data to more effectively determine a data mix.
+We use this classifier to downsample data categories that are over-represented on the web, for example, arts and entertainment.
+
+\textbf{Scaling laws for data mix.}
+To determine the best data mix, we perform scaling law experiments in which we train several small models on a data mix and use that to predict the performance of a large model on that mix (see Section~\ref{section:scaling_law}).
+We repeat this process multiple times for different data mixes to select a new data mix candidate.
+Subsequently, we train a larger model on this candidate data mix and evaluate the performance of that model on several key benchmarks.
+
+\textbf{Data mix summary.}
+Our final data mix contains roughly 50\% of tokens corresponding to general knowledge, 25\% of mathematical and reasoning tokens, 17\% code tokens, and 8\% multilingual tokens.
+
+\subsubsection{Annealing Data}
+\label{sec:annealing_data}
+Empirically, we find that annealing (see Section~\ref{section:annealing}) on small amounts of high-quality code and mathematical data can boost the performance of pre-trained models on key benchmarks.
+Akin to \citet{li2024datacomplmsearchgenerationtraining}, we perform annealing with a data mix that upsamples high-quality data in select domains.
+We do not include any training sets from commonly used benchmarks in our annealing data.
+This enables us to assess the true few-shot learning capabilities and out-of-domain generalization of Llama 3.
+
+Following \citet{openai2023gpt4}, we evaluate the efficacy of annealing on the GSM8k \citep{cobbe2021training} and MATH \citep{hendrycks2021measuring} training sets in annealing. 
+We find that annealing improved the performance of a pre-trained Llama 3 8B model on the GSM8k and MATH validation sets by 24.0\% and 6.4\%, respectively.
+However, the improvements on the 405B model are negligible, suggesting that our flagship model has strong in-context learning and reasoning capabilities and does not require specific in-domain training samples to obtain strong performance. 
+
+\textbf{Using annealing to assess data quality.}
+Similar to \citet{blakeney2024doesdatasparkjoy}, we find that annealing enables us to judge the value of small domain-specific datasets.
+We measure the value of such datasets by annealing the learning rate of a 50\% trained Llama 3 8B model linearly to 0 on 40B tokens. 
+In those experiments, we assign 30\% weight to the new dataset and the remaining 70\% weight to the default data mix.
+Using annealing to evaluate new data sources is more efficient than performing scaling law experiments for every small dataset.

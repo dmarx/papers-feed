@@ -1,0 +1,82 @@
+\subsection{Data}
+\label{section:vision_data}
+We describe our image and video data separately below.
+
+\subsubsection{Image Data}
+\label{subsubsection:vision_data_image}
+Our image encoder and adapter are trained on image-text pairs.  %
+We construct this dataset via a complex data processing pipeline that consists of four main stages: \textbf{(1)} quality filtering, \textbf{(2)} perceptual de-duplication, \textbf{(3)} resampling, and \textbf{(4)} optical character recognition.
+We also apply a series of safety mitigations.
+
+\begin{itemize}
+
+\item \textbf{Quality filtering.} We implement quality filters that remove non-English captions and low-quality captions via heuristics such as low alignment scores produced by \citep{radford2021learning}.
+Specifically, we remove all image-text pairs below a certain CLIP score.
+
+\item \textbf{De-duplication.} De-duplicating large-scale training datasets benefits model performance because it reduces training compute spent on redundant data \citep{esser2024scaling,lee2021deduplicating,abbas2023semdedup} and memorization \citep{carlini2023extracting,somepalli2023diffusion}.
+Hence, we de-duplicate our training data for both efficiency and privacy reasons.
+To do so, we use an internal version of the state-of-the-art SSCD copy-detection model \citep{pizzi2022self} to de-duplicate images at scale.
+For all images, we first compute a 512-dimensional representation using the SSCD model.
+We use those embeddings to perform a nearest neighbor (NN) search for each image across all images in our data set, using a cosine similarity measure.
+We define examples above a certain similarity threshold as duplicates.
+We group these duplicates using a connected-components algorithm, and maintain only one image-text pair per connected component.
+We increase the efficiency of our de-duplication pipeline by: (1) pre-clustering the data using k-means clusters and (2) using FAISS \citep{johnson2019billion} for NN searches and clustering.
+
+\item \textbf{Resampling.} We ensure diversity of the image-text pairs via resampling akin to \citet{xu2023demystifying,Mahajan_2018_ECCV,mikolov2013efficient}.
+First, we construct a vocabulary of n-grams by parsing high-quality text sources.
+Next, we compute the frequency of each vocabulary n-gram in our dataset.
+We then resample the data as follows:
+If any of the n-grams in a caption occurs less than $T$ times in the vocabulary, we keep the corresponding image-text pair.
+Otherwise, we independently sample each of the n-grams $n_i$ in the caption with probability $\sqrt{T / f_i}$ where $f_i$ indicates the frequency of n-gram $n_i$; we keep the image-text pair if any of the n-grams was sampled.
+This resampling aids performance on low-frequency categories and fine-grained recognition tasks.
+
+\item \textbf{Optical character recognition.} We further improve our image-text data by extracting text written in the image and concatenating it with the caption.
+The written text is extracted using a proprietary optical character recognition (OCR) pipeline.
+We observe that adding OCR data into the training data greatly improves tasks that require OCR capabilities, such as document understanding.
+
+\end{itemize}
+
+\textbf{Transcribing documents.} To improve the performance of our models on document understanding tasks, we render pages from documents as images and paired the images with their respective text. The document text is obtained either directly from the source or via a document parsing pipeline.
+
+\textbf{Safety.}
+We focus primarily on ensuring that the pre-training dataset for image recognition does not contain unsafe content, such as sexual abuse material (CSAM)~\citep{thiel2023csam}. We scan all our training images for CSAM using perceptual hashing approaches such as PhotoDNA~\citep{farid2021overview} as well as internal, proprietary classifiers.
+We also use a proprietary media-risk retrieval pipeline to identify and remove image-text pairs that we consider to be NSFW, for example, because they contain sexual or violent content.
+We believe that minimizing the prevalence of such material in the training dataset improves the safety of the final model without impacting its helpfulness.
+Finally, we perform face blurring on all images in our training set.
+We test the model against human generated prompts that refer to an attached image.
+
+\textbf{Annealing data.} We create an annealing dataset by resampling the image-caption pairs to a smaller volume of $\sim$350M examples using n-grams.
+Since the n-grams resampling favor richer text descriptions, this selects a higher-quality data subset.
+We augment the resulting data with $\sim$150M examples from five additional sources:
+
+\begin{itemize}
+
+\item \textbf{Visual grounding.}
+We link noun phrases in the text to bounding boxes or masks in the image.
+The grounding information (bounding boxes and masks) are specified in the image-text pair in two ways. (1) We overlay boxes or masks with marks on the image and use marks in the text as reference, akin to set-of-marks \citep{yang2023set}. (2) We insert normalized $(x_\textrm{min}, y_\textrm{min}, x_\textrm{max}, y_\textrm{max})$ coordinates directly into the text, demarcated by special tokens.
+
+\item \textbf{Screenshot parsing.} We render screenshots from HTML code and task the model with predicting the code that produced a specific element in the screenshot, akin to \citet{Pix2Struct}. The element of interest is indicated in the screenshot via a bounding box.
+
+\item \textbf{Question-answer pairs.} We include question-answer pairs, enabling us to use volumes of question-answering data that are too large to be used in model finetuning.
+
+\item \textbf{Synthetic captions.} We include images with synthetic captions that were generated by an early version of the model. Compared to original captions, we find that synthetic captions provide a more comprehensive description of images than the original captions.
+
+\item \textbf{Synthetically-generated structured images.} We also include synthetically generated images for a variety of domains such as charts, tables, flowcharts, math equations and textual data. These images are accompanied by a structured representation such as the corresponding markdown or LaTeX notation. Besides improving recognition capabilities of the model for these domains, we find this data useful to generate question-answer pairs via the text model for finetuning.
+\end{itemize}
+
+
+\subsubsection{Video Data}
+\label{subsubsection:vision_data_video}
+For video pre-training, we use a large dataset of video-text pairs.
+Our dataset is curated through a multi-stage process.
+We filter and clean the associated texts using rule-based heuristics, such as ensuring a minimum length and fixing capitalization.
+Then, we run language identification models to filter out non-English texts.
+We run OCR detection models to filter out videos with excessive overlaid text.
+To ensure reasonable alignment between the video-text pairs,
+we use CLIP~\citep{radford2021learning} style image-text and video-text contrastive models. We first compute image-text similarity using a single frame in the videos and filtered out low similarity pairs, and then subsequently filter out pairs with low video-text alignment.
+Some of our data contains static or low-motion videos; we filter out such data using motion-score based filtering \citep{girdhar2023emu}.
+We do not apply any filters on the visual quality of the videos such as aesthetic scores or resolution filtering.
+
+Our dataset contains videos with an average duration of 21 seconds and a median duration of 16 seconds, with over $99\%$ videos being under a minute.
+The spatial resolution varies significantly between 320p and 4K videos, with over $70\%$ of the videos having a short side greater than 720 pixels.
+The videos have varying aspect ratios with almost all videos having between aspect ratio between $1{:}2$ and $2{:}1$, with a $1{:}1$ median.
