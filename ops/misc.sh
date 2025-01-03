@@ -1,2 +1,2 @@
 #!/bin/bash
-cp src/scripts/frontend/ .
+cp -r src/scripts/frontend/ .
