@@ -1,4 +1,4 @@
-# src/scripts/frontend/generate_html.py
+# frontend/generate_html.py
 import yaml
 import json
 from pathlib import Path
