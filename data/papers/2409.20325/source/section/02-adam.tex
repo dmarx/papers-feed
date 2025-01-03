@@ -1,0 +1,50 @@
+\section{Adam as Steepest Descent under the Max-of-Max Norm}
+\label{sec:adam}
+
+\lettrine{A}{dam} is a widely used deep learning optimizer: the original paper of \citet{kingma_adam:_2015} now has well over 100,000 citations. Adam has been motivated in various ways, including through convex analysis \citep{kingma_adam:_2015} and as an approximate second-order method \citep{sun-and-spall}. However, there have been efforts to build a more direct understanding of Adam: for instance, with exponential moving averages (EMA) switched off, Adam is just \textit{sign gradient descent} \citep{pmlr-v80-balles18a,signum}, which is equivalent to steepest descent under the infinity norm \citep{spectral-descent-2}. In this story, we connect Adam to a certain ``max-of-max'' norm, showing how Adam respects the tensor structure of a neural network in a very particular way.
+
+To begin, we review how Adam connects to sign gradient descent. Ignoring bias corrections and numerical stabilizations, Adam is given by the following system of updates:
+\begin{align}
+    \vm_t &= \beta_1 \cdot \vm_{t-1} + (1 - \beta_1) \cdot \vg_t, \\
+    \vv_t &= \beta_2 \cdot \vv_{t-1} + (1 - \beta_2) \cdot \vg_t^2, \\
+    \vw_{t+1} &= \vw_t - \eta \cdot \vm_t / \sqrt{\vv_t},
+\end{align}
+where $t$ denotes the time step, $\vg_t \in \R^n$ the gradient vector and $\eta > 0$ the step size. The EMA time scales of the first gradient moment $\vm_t$ and second moment $\vv_t$ are set by $0 \leq \beta_1, \beta_2 < 1$. All operations are conducted entry-wise. If we switch off EMA by setting $\beta_1 = \beta_2 = 0$, the Adam updates reduce to just sign gradient descent:
+\begin{align}
+    \vw_{t+1} &= \vw_t - \eta \cdot \vg_t / \sqrt{\vg_t^{2}} \label{eq:funky-adam} \\
+    &= \vw_t - \eta \cdot \sign(\vg_t) \label{eq:sign-adam}.
+\end{align}
+
+This connection to sign descent should not be surprising since Adam, published in 2015, builds on the RMSprop optimizer that \citet{tieleman_rmsprop_2012} already called ``the mini-batch version of just using the sign of the gradient''. And RMSprop itself built on the RPROP optimizer \citep{rprop}, which also uses gradient signs.
+
+Still, \textit{why should using the sign of the gradient be a good idea in deep learning?} In search of a motivation, we might consider that sign descent solves the problem of steepest descent under the vector $\ell_\infty$ norm, $\norm{\vv}_\infty \defeq \max_i \abs{\vv_i}$ \citep{spectral-descent-2, spectral-descent-1, xie2024implicit}:
+\begin{myproposition}[Sign descent as steepest descent under the infinity norm]\label{prop:sign-descent}
+    \\For any gradient vector $\vg\in\R^n$ and sharpness $\lambda > 0$, it holds that:
+    \begin{equation}
+        \argmin_{\Delta \vw \in \R^n} \left[ \vg^\top \Delta \vw + \frac{\lambda}{2} \, \norm{\Delta \vw}_\infty^2 \right] = -\frac{\norm{\vg}_1}{\lambda} \, \sign(\vg).
+    \end{equation}
+\end{myproposition}
+In words, the vector that minimizes a linear functional under an infinity norm penalty is a scalar multiple of a sign vector. The proof is given in \cref{proof:sign-descent}. 
+
+While this connection between Adam, sign descent and steepest descent is perhaps cute, it does not answer a basic question: \textit{Why does the vector $\ell_\infty$ norm have anything to do with neural network training?} In particular, taking the weight space to be $\R^n$ equipped with the simple infinity norm seems to ``throw away'' the fact that the weight space of a neural network is built in a structured way out of layers of matrices (and perhaps other tensors).
+
+To resolve this conundrum, we suggest that in fact the vector $\ell_\infty$ norm on the flattened weight space doesn't have anything to do with deep learning. Instead, there is a coincidence at play. The $\ell_\infty$ norm enjoys a special property summarized by the slogan ``a max of a max is a max''. To see this, consider a neural network with a list of $L$ weight matrices $\mW_1, \dots, \mW_L$. Let $\mathrm{row}_r(\mW_l)$ denote the $r$th row of the $l$th weight matrix, and let $\vw = \flatten(\mW_1, \dots, \mW_L) \in \R^n$ denote the full flattened weight vector. Then we have that:
+\begin{equation}\label{eq:coincidence}
+    \norm{\vw}_\infty = \max_{l} \max_r \norm{ \mathrm{row}_r(\mW_l) }_\infty = \max_{l} \norm{\mW_l}_{\ell_1\to\ell_\infty},
+\end{equation}
+where the second equality follows via \cref{prop:tractable-norms}. In words, the infinity norm of the flattened weight vector coincides with the largest $\ell_1$ to $\ell_\infty$ operator norm of the layers. So \cref{eq:coincidence} connects the \textit{unstructured} space of the flattened weight vector to the \textit{structured} space of the list of weight matrices. We refer to the object $\max_{l} \norm{\mW_l}_{\ell_1\to\ell_\infty}$ as the ``max-of-max norm''. And sign descent emerges as steepest descent under this norm:
+\begin{myproposition}[Sign descent as steepest descent under the max-of-max norm]\label{prop:structural-sign-descent}
+    \\For any list of gradient matrices $\mG_1,...,\mG_L$ and any sharpness $\lambda > 0$, consider the problem:
+    \begin{equation}\label{eq:max-to-max}
+        \argmin_{\Delta \mW_1,...,\Delta \mW_L} \left[ \sum_{l=1}^L \langle\mG_l, \Delta \mW_l\rangle + \frac{\lambda}{2} \max_{l=1}^L \norm{\Delta\mW_l}_{\ell_1\to\ell_\infty}^2 \right],
+    \end{equation}
+    where $\langle\cdot, \cdot\rangle$ denotes the Frobenius inner product, and $\Delta \mW_l$ has the same shape as $\mG_l$. For step size $\eta = \frac{1}{\lambda}\sum_{l=1}^L \norm{\mG_l}_{\ell_1\to\ell_\infty}^\dagger$, where $\dagger$ denotes the dual norm, \cref{eq:max-to-max} is solved by:
+    \begin{equation}\label{eq:sign-descent-layerwise}
+        \Delta \mW_l = - \eta \cdot \sign(\mG_l) \qquad \text{ for each layer } l=1,...,L.
+    \end{equation}
+\end{myproposition}
+In words, the matrix-aware steepest descent problem of \cref{eq:max-to-max} is solved by layerwise sign descent as given in \cref{eq:sign-descent-layerwise}. This observation---that sign descent updates are implicitly doing \textit{per-matrix gradient normalization}---may be a major reason that Adam, sign descent and Lion \citep{chen2023symbolic} outperform vanilla gradient descent in large language model training \citep{Zhao2024Deconstructing, modula}. The proof is given in \cref{proof:structural-sign-descent}.
+
+\ornament
+
+All told, this story has shown that Adam without EMA is sign descent and that, coincidentally, sign descent solves two different steepest descent problems: one on the flattened weight space, and one that is aware of the matrix structure of neural architecture. But, at the end of this story, questions linger. \textit{Why does the $\ell_1$ to $\ell_\infty$ induced operator norm rear its head? What does it have to do with deep learning? Aren't there other induced operator norms on matrices we could equally well consider?} For answers to these questions, dear reader, you'll have to wait for our next story... a story about Shampoo!

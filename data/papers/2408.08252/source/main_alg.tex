@@ -1,0 +1,206 @@
+\vspace{-2mm}
+\section{Soft Value-Based Decoding in Diffusion Models}
+\vspace{-2mm}
+
+First, we present the motivation behind developing our new algorithm. We then introduce \alg, which satisfies our desired properties, \textit{i.e.}, the lack of need for fine-tuning or constructing differentiable models.
+
+
+\vspace{-2mm}
+\subsection{Key Observation}
+\vspace{-2mm}
+
+We introduce several key concepts. First, we define the \emph{soft value function}:
+\begin{align*}
+   \textstyle  t \in [T+1,\cdots,1]; v_{t-1}(\cdot ):=\alpha \log \EE_{x_0 \sim p^{\pre}(x_0|x_{t-1})}\left [\exp\left (\frac{r(x_0)}{\alpha} \right)|x_{t-1}=\cdot \right ], 
+\end{align*}
+where $\EE_{\{p^{\pre}\}}[\cdot]$ is induced by $\{ p^{\pre}_{t}(\cdot|x_{t+1})\}_{t=T}^0$. This value function represents the expected future reward at $t=0$ from the intermediate noisy state at $t-1$. 
+
+Next, we define the following \emph{soft optimal policy} (denoising process) $p^{\star,\alpha}_{t-1}:\Xcal  \to \Delta(\Xcal)$ weighted by value functions $v_{t-1}:\Xcal \to \RR$: 
+\begin{align*}
+ \textstyle  p^{\star,\alpha}_{t-1}(\cdot|x_{t})&=\frac{p^{\pre}_{t-1}(\cdot |x_{t})\exp(v_{t-1}(\cdot)/\alpha)}{\int p^{\pre}_{t-1}(x|x_{t})\exp(v_{t-1}(x)/\alpha)dx }. 
+\end{align*}
+
+
+Here, $v_t$ are soft value functions and $p^{\star,\alpha}_t$ are soft optimal policies, because they literally correspond, respectively, to soft value functions and soft optimal policies, where we embed diffusion models into entropy-regularized MDPs \citep{geist2019theory}, as demonstrated in \citet{uehara2024understanding}.
+
+With this preparation in mind, we utilize the following key observation: 
+\begin{theorem}[From Theorem 1 in \citet{uehara2024bridging}]\label{thm:key}
+The distribution induced by $\{ p^{\star,\alpha}_t(\cdot|x_{t+1})\}_{t=T}^0$ is the target distribution $p^{(\alpha)}(x)$, \textit{i.e.}, 
+\begin{align*} \textstyle 
+    p^{(\alpha)}(x_0) = \int \left\{ \prod_{t=T+1}^1 p^{\star,\alpha}_{t-1}(x_{t-1}|x_t)\right \}d x_{1:T}.
+\end{align*}
+\end{theorem}
+
+While \citet{uehara2024bridging} presents this theorem, they use it primarily to interpret RL-based fine-tuning methods in \citet{fan2023dpok,black2023training}. In contrast, our work explores how to convert this into a new fine-tuning-free optimization algorithm. 
+
+\vspace{-2mm}
+\paragraph{Our motivation for a new algorithm.} \pref{thm:key} states that if we can hypothetically sample from $\{p^{\star,\alpha}_t\}_{t=T}^0$, we can sample from the target distribution $p^{(\alpha)}$. However, there are two challenges in sampling from each  $p^{\star,\alpha}_{t-1}$: (1) the soft-value function $v_{t-1}$ in $p^{\star,\alpha}_{t-1}$  is unknown, and (2) it is unnormalized (\textit{i.e.}, calculating the normalizing constant is hard). 
+
+We address the first challenge in \pref{sec:soft}. Assuming the first challenge is resolved, we consider how to tackle the second challenge. A natural approach is to use importance sampling (IS):
+\begin{align*}
+ p^{\star,\alpha}_{t-1}(\cdot|x_t,c )\approx \sum_{m=1}^M \frac{w^{\langle m \rangle}_{t-1}}{\sum_{j=1}^M w^{\langle j \rangle}_{t-1}} \delta_{x^{\langle m \rangle}_{t-1}}, \quad \{x^{\langle m \rangle}_{t-1} \}_{m=1}^{M} \sim p^{\pre}_{t-1}(\cdot \mid x_t), 
+\end{align*}
+where $w^{\langle m \rangle}_{t-1}:= \exp(v_t(x^{\langle m \rangle}_{t-1})/\alpha)$. Thus, we can approximately sample from $p^{\star,\alpha}_{t-1}(\cdot|x_t)$ by obtaining multiple ($M$) samples from pre-trained diffusion models and selecting the sample based on an index, which is determined by sampling from the categorical distribution with mean $\{w^{\langle m \rangle}_{t-1}/\sum_j w^{\langle j\rangle}_{t-1}\}_{m=1}^{\langle M \rangle}$.
+
+Note that Best-of-N, which generates multiple samples and selects the highest reward sample, is technically considered IS, where the proposal distribution is the entire $p^{\pre}(x_0)=\int \prod_t \{p^{\pre}_t(x_{t-1}\mid x_t)\}dx_{1:T}$. However, the use of importance sampling in our algorithm differs significantly, as we apply it at each time step to approximate each soft-optimal policy.
+
+
+\vspace{-2mm}
+\subsection{Inference-Time Algorithm}\label{sec:inference_time}
+\vspace{-2mm}
+
+\begin{algorithm}[!th]
+\caption{\alg\,(\textbf{S}oft \textbf{V}alue-Based \textbf{D}ecoding in \textbf{D}iffusion Models)}\label{alg:decoding}
+\begin{algorithmic}[1]
+     \STATE {\bf Require}: Estimated soft value function $\{\hat v_t\}_{t=T}^0$ (refer to \pref{alg:MC} or \pref{alg:PM}), pre-trained diffusion models $\{p^{\pre}_t\}_{t=T}^0$, hyperparameter $\alpha \in \mathbb{R}$
+     \FOR{$t \in [T+1,\cdots,1]$}
+       \STATE  Get $M$ samples from pre-trained polices $\{x^{\langle m \rangle}_{t-1}\}_{m=1}^{M} \sim p^{\pre}_{t-1}(\cdot| x_{t}) $, and for each $m$, calculate  $ w^{\langle m \rangle}_{t-1}:= \exp(\hat v_{t-1}(x^{\langle m \rangle}_{t-1})/\alpha)$ \label{line:select2}
+        \STATE $ x_{t-1}   \leftarrow  x^{\langle \zeta_{t-1} \rangle }_{t-1} $ after selecting an index: $ \zeta_{t-1}  \sim \mathrm{Categorical}\left ( \left \{\frac{w^{\langle m \rangle}_{t-1}}{\sum_{j=1}^{M} w^{\langle j \rangle}_{t-1} } \right \}_{m=1}^{M} \right),\,$ \label{line:select}
+     \ENDFOR
+  \STATE {\bf Output}: $x_0$
+\end{algorithmic}
+\end{algorithm}
+
+
+Now, by leveraging the observation in \pref{alg:decoding}, we introduce our algorithm. Our algorithm is an iterative sampling method that integrates soft value functions into the standard inference procedure of pre-trained diffusion models. Each step is designed to approximately sample from a value-weighted policy $\{p^{\star,\alpha}_t\}_{t=T}^0$. 
+
+We note several key points.
+\begin{itemize}[leftmargin=*]
+    \item When $\alpha= 0$, Line~\ref{line:select} corresponds to $
+    \zeta_{t-1} = \argmax_{m \in [1,\cdots,M]}\hat v_{t-1}(x^{\langle m \rangle}_{t-1}). $
+ In practice, we often recommend this choice. This is the default choice in \pref{sec:experiment}. 
+\item A typical choice we recommend for $M$ is from $5$ to $20$. The performance with varying $M$ values will be discussed in \pref{sec:experiment}. 
+\item  { Line~\ref{line:select2} can be computed in parallel at the cost of additional memory (scaled by $M$). If Line~\ref{line:select2} is not computed in parallel, the computational time in SVDD would be approximately $M$ times that of the standard inference procedure. We will check it in \pref{sec:experiment}.  } 
+\item In special cases where the normalizing constant can be calculated relatively easily (\textit{e.g.}, in discrete diffusion with small $K,L$), we can directly sample from $\{p^{\star,\alpha}_t\}_{t=T}^0$. 
+\item { A proposal distribution different from $p^{\pre}_{t-1}$ in \pref{line:select2} can be applied (see \pref{sec:arbitary}). For instance, classifier guidance or its variants may be used to obtain better proposal distributions than those from the pure pre-trained model.
+} 
+\end{itemize}
+
+
+The remaining question is how to obtain the soft value function, which we address in the next section.
+
+\vspace{-2mm}
+\subsection{Learning Soft Value Functions}\label{sec:soft}
+\vspace{-2mm}
+
+Next, we describe how to obtain soft value functions $v_t(x)$ in practice. We propose two main approaches: a Monte Carlo regression approach and a posterior mean approximation approach.
+
+\vspace{-2mm}
+\paragraph{Monte Carlo regression.}
+
+Here, we use the following approximation $v'_t$ as $v_t$ where 
+\begin{align*}
+    v'_t(\cdot ):= \EE_{x_0\sim p^{\pre}(x_0|x_t)}[ r(x_0) | (x_t)=\cdot ]. 
+\end{align*}
+This is based on 
+\begin{align}\label{eq:approximation}
+   v_t(x_t)= \alpha \log \EE_{x_0\sim p^{\pre}(\cdot|x_t)}[\exp(r(x_0)/{\alpha}) |x_t]\approx \log (\exp(\EE_{x_0\sim p^{\pre}(x_t)}[r(x_0)|x_t])) = v'_t(x_t). 
+\end{align}
+
+By regressing $r(x_0)$ onto $x_t$, we can learn $v'_t$ as in \pref{alg:MC}. Combining this with \pref{alg:decoding}, we refer to the entire optimization approach as \alg-MC. 
+
+\begin{algorithm}[!th]
+\caption{Value Function Estimation Using Monte Carlo Regression}\label{alg:MC}
+\begin{algorithmic}[1]
+     \STATE {\bf Require}:  Pre-trained diffusion models, reward $r:\Xcal \to \RR$, function class $\Phi: \Xcal  \times [0,T]\to \RR$.
+    \STATE Collect datasets $\{x^{(s)}_{T},\cdots,x^{(s)}_0\}_{s=1}^S$ by rolling-out $\{ p^{\pre}_t\}_{t=T}^0$ from $t=T$ to $t=0$. 
+    \STATE $
+        \hat v' = \argmin_{f \in \Phi}\sum_{t=0}^{T} \sum_{s=1}^S \{r(x^{(s)}_0) - f(x^{(s)}_t, t) \}^2.  $
+      \STATE {\bf Output}: $ \hat v'$
+\end{algorithmic}
+\end{algorithm}
+
+Note that technically, without the approximation introduced in \pref{eq:approximation}, we can estimate $v_t$ by regressing $\exp(r(x_0)/\alpha)$ onto $x_t$ based on the original definition. This approach may work in many cases. However, when $\alpha$ is very small, the scaling of $\exp(r(\cdot)/\alpha)$ tends to be excessively large. Due to this concern, we generally recommend using \pref{alg:MC}. 
+
+
+
+\begin{remark}[Another way of learning value functions]
+Technically, another method for learning value functions is available such as soft-Q-learning (\pref{sec:soft-q}), by leveraging soft-Bellman equations in diffusion models \citet[Section 3]{uehara2024understanding} 
+However, since we find Monte Carlo approaches to be more stable, we recommend them over soft-Q-learning. 
+\end{remark}
+
+\vspace{-2mm}
+\paragraph{Posterior mean approximation. }
+Here, recalling we use $\hat x_0(x_t)$ (approximation of $\EE_{x_0\sim p^{\pre}(x_t)}[x_0|x_t]$) when training pre-trained diffusion models in \pref{sec:diffusion}, we perform the following approximation:
+\begin{align*}
+     v_t(x):= \alpha \log \EE_{x_0\sim p^{\pre}(x_0|x_t)}[\exp(r(x_0)/\alpha)|x_t] \approx \alpha \log (\exp(r(\hat x_0(x_t))/\alpha)= r(\hat x_0(x_t)). 
+\end{align*}
+Then, we can use $r(\hat x_0(x_t))$ as the estimated value function. 
+
+The advantage of this approach is that no additional training is required as long as we have $r$. When combined with \pref{alg:decoding}, we refer to the entire approach as \alg-PM. 
+
+\begin{algorithm}[!th]
+\caption{Value Function Estimation using Posterior Mean Approximation}\label{alg:PM}
+\begin{algorithmic}[1]
+     \STATE {\bf Require}:  Pre-trained diffusion models, reward $r:\Xcal \to \RR$
+    \STATE  Set $\hat v^{\diamond}(\cdot,t):= r(\hat x_0(x_t=\cdot),t)$ 
+      \STATE {\bf Output}: $ \hat v^{\diamond}$
+\end{algorithmic}
+\end{algorithm}
+
+\begin{remark}[Relation with DPS]
+In the context of classifier guidance, similar approximations have been employed (\textit{e.g.}, DPS in \citet{chung2022diffusion}). However, the final inference-time algorithms differ significantly, as these methods compute gradients at the end.
+\end{remark}
+
+\vspace{-2mm}
+\section{Advantages, Extensions, Limitations of \alg } 
+\vspace{-2mm}
+We discuss the advantages, extensions, and limitations of \alg.
+\vspace{-2mm}
+\subsection{Advantages}
+\vspace{-2mm}
+
+\paragraph{No fine-tuning (or no training in \alg-PM).} Unlike classifier-free guidance or RL-based fine-tuning, \alg\, does not require any fine-tuning of the generative models. In particular, when using \alg-PM, no additional training is needed as long as we have $r$. 
+
+
+\vspace{-2mm} 
+\paragraph{No need for constructing differentiable models.} Unlike classifier guidance, \alg\, does not require differentiable proxy models, as there is no need for derivative computations. For example, if $r$ is non-differentiable feedback (\textit{e.g.}, physically-based simulations for docking scores in molecule generation), our method \alg-PM can directly utilize such feedback without constructing differentiable proxy models. In cases where non-differentiable computational feedback is costly to obtain, the usage of proxy reward models may still be preferred, but they do not need to be differentiable; thus, non-differentiable features or non-differentiable models based on scientific knowledge (\textit{e.g.}, molecule fingerprints, GNNs) can be leveraged. Similarly, when using \alg-MC, while a value function model is required, it does not need to be differentiable, unlike classifier guidance. Additionally, compared to approaches that involve derivatives (like classifier guidance or DPS), \alg\ can be directly applied to discrete diffusion models mentioned in Example~\ref{exa:discrete}.
+
+
+
+
+
+
+
+
+
+
+
+\vspace{-2mm}
+\subsection{Extensions }\label{sec:extension}
+\vspace{-2mm}
+
+\paragraph{Using a likelihood/classifier as a reward.} While we primarily consider scenarios where reward models are regression models, by adopting a similar strategy to that in \citet{zhao2024adding}, they can be readily replaced with classifiers or likelihood functions in the context of solving inverse problems or conditioning \citep{chung2022diffusion,bansal2023universal}.
+
+\vspace{-2mm}
+\paragraph{Fine-tuning by distilling \alg.}  The inference-time cost may become slow as $M$ increases in \alg,. This issue can be mitigated by policy distillation, that is further fine-tuning diffusion models to align them closely with policies from \alg\,\citep{salimans2022progressive,kim2023consistency}. We leave this aspect for future work.
+
+
+
+
+
+\vspace{-2mm}
+\subsection{Potential Limitations}\label{sec:limitation}
+\vspace{-2mm}
+
+\paragraph{Memory and computational complexity in inference time.}  Our approach requires more computational resources (if not parallelized) or memory (if parallelized), approximately $M$ times more than standard inference methods, as noted in \pref{sec:inference_time}. Taking this aspect into account, we compare \alg, with baselines such as best-of-N in our experimental section (\pref{sec:experiment}). For gradient-based approaches like classifier guidance and DPS, while a direct comparison with \alg\,is challenging, it is important to note that these methods also incur additional computational and memory complexity due to the backward pass, which \alg\,avoids. Lastly, it is important to note that this additional inference-time burden can be alleviated through distillation, as discussed in \pref{sec:extension}.
+
+
+\vspace{-2mm}
+\paragraph{Proximity to pre-trained models.}  If significant changes to the pre-trained models are desired, we acknowledge that RL-based fine-tuning \citep{black2023training,fan2023dpok} could be more effective than \alg\,for this purpose in certain scenarios, such as image examples. However, this proximity to pre-trained models could also be advantageous in the sense that it is robust against reward optimization, which conventional fine-tuning methods often suffer from by exploiting these out-of-distribution regions \citep{uehara2024bridging}.  
+Lastly, in cases where reward backpropagation \citep{prabhudesai2023aligning,clark2023directly,uehara2024finetuning} is not applicable, particularly in scientific domains for RL-based fine-tuning, we may need to rely on PPO. However, PPO is often mode-seeking and unstable, highlighting the challenges of RL-based fine-tuning in certain scenarios. 
+
+
+
+\vspace{-2mm}
+{ \section{Comparison between SVDD and SMC-Based Methods }\label{sec:TDS}
+\vspace{-2mm}
+
+
+SMC-based methods for diffusion models are closely related to \alg. These approaches~\citep{wu2024practical,trippe2022diffusion,dou2024diffusion,phillips2024particle,cardoso2023monte} use SMC \citep{del2014particle} for sampling from diffusion models. While they are originally designed for conditioning (by setting rewards as classifiers), they can also be applied to reward maximization. Notably, similar to our work, these methods do not require differentiable models. 
+
+However, these SMC methods are not tailored to reward maximization. Most importantly, they involve resampling across the ``entire'' batch, which complicates parallelization. Additionally, when batch sizes are small, as is often the case with recent large diffusion models, performance may be suboptimal, since the SMC theoretical guarantees hold primarily with large batch sizes. Even with larger batch sizes, using SMC for reward maximization can result in a loss of diversity across the entire batch, since the effective sample size based on weights, which is a standard diversity measure in SMC, does not ensure ``real'' diversity in the generated samples. In contrast, our method is highly parallelizable, performs well even with small batch sizes (as low as $1$), and maintains diversity with larger batch sizes, as sampling is conducted on a ``per-sample basis'' (Line~\ref{line:select}). We empirically validate this in \pref{sec:experiment}. We provide further details and experiments in Appendix~\ref{sec:filter}.
+
+} 
+
+
