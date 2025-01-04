@@ -1,0 +1,93 @@
+\section{Additional Method Details}
+
+\subsection{Fused SNR reweighting}
+\label{app:snr_derivation}
+SNR reweighting~\cite{min_snr} is a widely used technique to accelerate the convergence of image diffusion models. In short, it reweighs the diffusion loss proportional to the signal-to-noise ratio (SNR) of noisy $\bx^k$. In \algo, conditioning variable $\bz_{t-1}$ can also contain a non-trivial amount of information about $\bx_t$, in addition to $\xtk$. For example, in a deterministic markovian system, if $\bx_{t-1}^{k_{t-1}}$ has its noise level $k_{t-1}=0$, the posterior state $\bz_{t-1}$ contains all the information needed to predict $\bx^0_t$ regardless of the noise level of $\xtk$.
+
+Therefore we \textbf{re-derive} SNR reweighting to reflect this change in \algo. We call this technique Fused SNR reweighting. We follow the intuition of original SNR reweighting to loosely define SNR in a sequence with independent levels of noises at different time steps. Denote $S_t$ as the normalized SNR reweighting factor for $\xtk$ following its normal derivation in diffusion models. For example, if one uses min snr strategy ~\cite{min_snr}, its reweighting factor will always fall between $[0, C]$ which we divide by $C$ to get $S_t\in [0, 1]$. Define signal decay factor $0<\gamma<1$, measuring what proportion of signal in $\bx_{t-1}^{k_{t-1}}$ contribute to denoising $\xtk$. This is the simple exponential decay model of sequential information. Now, define cumulated SNR recursively as the running mean of $S_t$: $\bar{S}_t=\gamma \bar{S}_{t-1} + (1 -\gamma)S_{t}$ to account for signals contributed by the entire noisy history to the denoising at time step $t$. The other factor that contributes to the denoising is $S_t$ of noisy observation $\xtk$. To combine them, we use a simplified model for independent events. Notice $S_t$ and $\bar{S}_t$ always falls in range $[0, 1]$, and therefore can be reinterpreted as probabilities of having all the signal one needs to perfect denoise $\xtk$. Since the noise level at $t$ is independent of prior noise levels, we can view $S_t$ and $\bar{S}_{t-1}$ as probabilities of independent events and thus can composed to define a joint probability $S'_t=1-(1-S_t)(1-\bar{S}_{t-1})$, and we use this $S'_t$ as our fused SNR reweighting factor for diffusion training. 
+
+In our experiments, we choose to follow the min-SNR reweighting strategy ~\cite{min_snr} to derive the $S$. Our Fused SNR reweighting proves extremely useful to accelerate the convergence of video prediction, while we didn't observe a boost on non-image domains so we didn't use it there.
+
+\subsection{Architecture}
+\label{app:video_method}
+\paragraph{Video Diffusion} We choose both the raw image $\bx$ and latent state $\bz$ to be 2D tensors with channel, width, and height. For simplicity, we use the same width and height for $\bx$ and $\bz$. We then implement the transition model $p(\xtk|\bz_{t-1})$ with a typical diffusion U-net~\cite{DBLP:journals/corr/abs-2102-09672}. We use the output of the U-net as the input to a gated recurrent unit (GRU) and use $\bz_{t-1}$ as the hidden state feed into a GRU. The output of GRU is treated as $\bz_t$. For observation model $p(\bx_t|\bz_t)$, we use a $1$-layer resnet~\cite{resnet} followed by a conv layer. We combine these two models to create an RNN layer, where the latent of a particular time step is $\bz_{t-1}$, input is $\xtk$ and output is $\hat{\bx}$. One can potentially obtain better results by training \algo{} with a causal transformer architecture. However, since RNN is more efficient for online decision-making, we also stick with it for video prediction and it already gives us satisfying results.
+
+We choose the number of channels in $\bz$ to be $16$ for DMlab and $32$ for Minecraft. In total, our Minecraft model consists of $36$ million parameters and our DMlab model consists of $24$ million parameters. We can potentially obtain a better Minecraft video prediction model with more parameters, but we defer that to future works to keep the training duration reasonable ($<1$ day). In maze planning, the number of total parameters is $4.33$ million.
+
+
+\paragraph{Non-Video Diffusion}
+For non-spatial $\bx$ that is not video nor images, we use residue MLPs~\cite{DBLP:journals/corr/abs-2105-03404} instead of Unet as the backbone for the dynamics model. Residue MLP is basically the ResNet~\cite{resnet} equivalent for MLP. Similar to video prediction, we feed the output of resMLP into a GRU along with $\bz_{t-1}$ to get $\bz_t$. Another ResMLP serves as the observation model.
+
+\subsection{Diffusion parameterization}
+In diffusion models, there are three equivalent prediction objectives, $\bx_0$, $\epsilon$~\cite{ho2020denoising}, and $v$ parameterization~\cite{vparameterization}.  Different objectives lead to different reweighting of loss at different noise levels, together with SNR reweighting. For example, $\epsilon$ parameterization and $v$ parameterization are essential in generating pixel data that favors high-frequency details. 
+
+In our experiments, we use $v$ parameterization for video prediction and found it essential to both convergence speed and quality.
+
+We observe that $\bx_0$ parameterization is strongly favorable in planning and imitation learning, likely because they don't favor an artificial emphasis on high-frequency details. We observe the benefits of v-parameterization in time-series prediction.
+
+
+
+\subsection{Noise schedule}
+We use sigmoid noise schedule~\cite{chen2023importance} for video prediction, linear noise schedule for maze planning, and cosine schedule for everything else. 
+
+\subsection{Implementation Details of Sampling with Guidance}
+
+
+\paragraph{Corner case of sampling noise}
+\label{app:corner_case}
+In our sampling algorithm, due to the flexibility of the scheduling matrix $\mathcal{K}$, there are corner cases when $\xtk$ is required to stay at its same noise level during a sampling step. The core question of this corner case is whether we should update$\xtk$ at all. One option is just copying over the old value. The other option is to run a backward diffusion followed by a forward diffusion back to its old noise level to resample under the diffusion process. While we conclude this can be an open question, we prefer the later approach, resampling, and use it in Monte Carlo Guidance to generate multiple samples. We note that even if one takes the first approach, the guidance gradient can still flow back in the time steps before $t$ as the dynamics model $p(\bz_t|\xtk, \bz_{t-1})$ can still propagate the guidance gradient to $\bz_{t-1}$.
+
+Other than Monte Carlo Guidance, this corner case only happens when $k_t=0$ or $k_t=K$ throughout our experiments. That is, we chose our $\mathcal{K}$ such that once any token gets diffused slightly, it will keep diffusing. In the case of $k_t=K$, keeping $\xtk$ at the same noise level implies it will stay as white noise, and we don't even need to sample another white noise. In case $k_t=0$, the time step is already completely diffused either approach should give us the same result so we just opt for copying over for simplicity.
+
+\paragraph{Guidance for maze planning}
+\label{app:maze_guidance}
+In maze planning, our main baseline Diffuer~\cite{janner2022planning} discards the reward from the dataset and directly plans with the goal position and velocity. We adopt the same convention for \algo{}. One can perform guidance on goal position using log-likelihood $||\mathbf{p}_T-\mathbf{g}||$, but a flexible horizon model should not require users to manually specify a $T$ to reach its goal, instead we want it to try to reach the goal for any possible horizon. Therefore we use the reward model $\sum_t ||\mathbf{p}_T-\mathbf{g}||$ so any time step can be the final step to reach the goal. This objective is challenging due to the non-convex nature of 2D maze, but we found \algo{} can still reliably find plans without bumping into walls. However, we also observe that the agent tend to leave the goal location due to the nature of the provided dataset - the goal location is just one possible waypoint for the robot to pass through, and there are no trajectories that simply stay at the goal. We also tried this reward for guidance with Diffuser, but it didn't work even with a good amount of tuning.
+
+
+\subsection{Performance Optimization}
+Accelerating the diffusion sampling of \algo{} is similar to that of normal diffusion models. We adopt DDIM~\cite{ddim} sampling for the diffusion of each token. While we use $K=1000$ steps of diffusion, we sample with only $100$ DDIM for video prediction and $50$ for non-video domains.
+
+While \algo{} can be implemented with transformers, we use an RNN as the backbone for \algo{} experiments it's widely used in decision-making for its flexibility and efficiency in online decision-making systems. To further reduce training time and GPU memory usage, we use frame-stacking to stack multiple observed images as a single $\bx$. This is due to the fact that adjacent tokens can be very similar - e.g. recording the same motion at higher fps can lead to this. We deem that it's wasteful if we roll out the dynamics model multiple times to generate almost identical tokens. For video datasets, we manually examine how many time steps it takes to require a minimal level of prediction power instead of copying frames over. There is another reason why we use frame stacking - many diffusion model techniques such as different noise schedules are designed to model $\bx$ with correlated elements or redundancy. Low-dimensional systems may need drastically different hyperparameters when they lack the data redundancy these techniques are tested on. Frame stacking is thus also helpful for our non-image experiments so we can start with canonical hyperparameters of diffusion models. We use a frame stack of $4$ for DMlab video prediction, $8$ for Minecraft, and $10$ for maze planning.
+
+At sampling time, we also have a design choice to reduce compute usage, as reflected in line 8 of Algorithm~\ref{alg:diffusion_forcing_sampling}. In line 8, we directly assign $\bz_t^{\text{new}}$ to $\bz_t$, instead of recalculating $\bz_t$ with posterior model $p(\bz_t|\bz_{t-1}, \bx_t^{\text{new}}, k-1)$. Since the model is trained to condition on $\bz_t$ estimated from arbitrary noisy history, we recognize that both are valid approaches. The reason why the choose line $8$ is twofold. First, it cuts the compute by half, avoiding computing posterior every step. Second, this happens to be what we want for stabilization - $\bz_t^{\text{new}}$ already contains the information of the clean $\bx_t^{\text{new}}$ under our simplified observation model, and happens to be estimated with $k=k_t$, a noise level higher than that of $\bx_t^{\text{new}}$. This happens to implement the behavior we want for stabilization.
+
+
+
+
+
+
+
+
+\subsection{Sampling schedule for causal uncertainty}
+Inference is depicted in \Cref{alg:diffusion_forcing_sampling} and Figure~\ref{fig:method}. In Equation~\ref{eq:pyramid}, we illustrate a specific instantiation of the $\mathcal{K}$ matrix we used for causal planning. For simplicity, we denote the case where a latent $\bz_0$ is given and aim to generate $\bx_{1:H+1}$. 
+\begin{align}
+\cK^{\mathrm{pyramid}}=
+\begin{bmatrix}
+K & K & K & ... & K\\
+K-1 & K & K & ... & K\\
+K-2 & K-1 & K & ... & K\\
+\vdots& \vdots &\vdots  &\ddots & \vdots \\
+1 & 2 & 3 & ... & H \\
+0 & 1 & 2 & ... & H-1 \\
+\vdots& \vdots &\vdots  &\ddots & \vdots \\
+0 & 0 & 0 & ... & 1 \\
+0 & 0 & 0 & ... & 0
+\end{bmatrix} 
+\label{eq:pyramid}
+\end{align}
+
+\algo{} begins by sampling our sequences as white noise with noise level $K$. It then denoises along each row $m=1,\dots, M$ of $\cK$ in decreasing order. It does so by proceeding sequentially through frames $t=1,\dots, T $, updating the latent (Line 5 of Algorithm~\ref{alg:diffusion_forcing_sampling}), and then partially applying the backward process to noise level $k = \cK_{m,t}$ dictated by the scheduling matrix $\cK$  (Line 6-7 of Algorithm~\ref{alg:diffusion_forcing_sampling}). We call a $\cK$ like this pyramid scheduling, as the tokens in the far future are kept at higher noise level than near future.
+
+\subsection{Metrics for Maze Planning}
+We report the episode reward of \algo{} for different maze planning environments in Table~\ref{fig:planning}. However, we found that the episode reward isn't necessarily a good metric: Intuitively, maze planning should reward smart agents that can find the fastest route to the goal, not a slow-walking agent that goes there at the end of the episode. The dataset never contains data on the behavior of staying at the goal, so agents are supposed to walk away after reaching the goal with sequence planning methods. Diffuser may had an unfair advantage of just generating slow plans, which happens to let the agent stay in the neighborhood of the goal for more steps and get a very high reward as a result. This metric seems to exploit flaws in the environment design - a good design would involve a penalty of longer time taken to reach the goal. Therefore, in future works based on our paper, we encourage alternative metrics like the time it takes to reach the goal for the first time, which \algo{} excels at.
+
+
+\subsection{Implementation Details of Timeseries Regression}
+We follow the implementation of pytorch-ts, where the validation set is a random subset of the training set with the same number of sequences as the test set. We use early stopping when validation crps-sum hasn't increased for 6 epochs. We leverage the same architecture (1 mlp and 4 grus) as well as a batch size of 32.
+
+
+\subsection{Compute Resources}
+All of our experiments use $fp16$ mixed precision training. Time series, maze planning, compositionally, and visual imitation experiments can be trained with a single $2080Ti$ with $11$GB of memory. We tune the batch size such that we fully use the memory of GPUs. This translates to a batch size of $2048$ for maze planning and compositional experiments, and $32$ for visual imitation learning. While we use early stopping on the validation set for time series experiments, we did not carefully search for the minimal number of training steps required, though the model usually converges between $50$k to $100k$ steps. The above environments thus usually take $4-8$ hours to train although there is without doubt a significant potential for speed up.
+
+Video prediction is GPU intensive. We use $8$ A100 GPUs for both video prediction datasets. We train for $50K$ steps with a batch size of $8\times 16$. It usually takes $12$ hours to converge at $40K$ steps of training (occasional validation time also included). 
+

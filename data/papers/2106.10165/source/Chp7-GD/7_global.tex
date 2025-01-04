@@ -1,0 +1,329 @@
+
+\chapter{Gradient-Based Learning}\index{gradient-based learning|see{gradient descent}}
+\label{ch:training}
+
+\epigraph{%
+Of course, that’s like saying \terminate{Newton's second law} $F = ma$, as it appears in textbooks on mechanics\index{mechanics (physics)}, is just a definition of what you mean by ``force''.  That’s true, strictly speaking, but we live in a landscape where there is an implicit promise that when someone writes that down \dots
+that they will give laws for the force\index{force|see{Newton's second law}}, and not, say, for some quantity involving the 17th time derivative of the position.}{Sidney Coleman, in his ``Quantum Mechanics\index{quantum mechanics} in Your Face'' Dirac\index{Dirac, Paul Adrien Maurice} Lecture \cite{Coleman:2020put}.\index{Coleman, Sidney}}
+
+\index{optimization|see{gradient descent}}\index{optimization|see{training}}
+
+\noindent{}In the last chapter, we discussed \terminate{Bayesian inference} as a learning algorithm, which followed naturally from our study of networks at initialization. Starting from a description of a neural network architecture with parameters -- weights and biases -- we integrated out these parameters to find a distribution over preactivations $z^{(\ell)}(x)$ as a function of layer and input sample, which in particular includes the \terminate{output distribution} $p\!\le(z^{(L)}(x) \ri)$. %
+This was interpreted as a \emph{prior distribution}\index{prior} over an \terminate{ensemble} of such models, and then we explained how the logic of Bayes' rule\index{Bayesian probability!Bayes' rule} lets us evolve the prior into a \emph{posterior distribution}\index{posterior} conditioned on observed data. Despite the theoretical elegance of \terminate{Bayesian inference}, the naive implementation quickly became computationally intractable as the number of conditioned data samples grew large.
+
+Stepping back, there's actually something a little bit odd about this setup. Once we worked out the \terminate{output distribution}, the actual network itself was discarded, with the parameters long since integrated out. Since \terminate{Bayesian inference} only cares about the output distribution of a model, the starting point for inference can really be any ensemble of models as it isn't specifically tailored to neural networks\index{neural network} at all. So why go through all the trouble of starting with neural-network models? How did we even know that these models are a good abstraction to begin with?
+
+\index{training}\index{machine learning}
+Deep neural networks are exciting because they work surprisingly well. We know this because in practice such networks are explicitly \emph{trained} and used to perform useful tasks. Most commonly, learning occurs by repeatedly updating the \terminate{model parameters} via a gradient-based optimization procedure such as \neo{gradient descent}. 
+
+\index{learning algorithm}
+In particular, gradient-based learning algorithms can efficiently process a large amount of training data by optimizing an auxiliary \neo{loss} function that directly compares the network output $f(x;\theta) \equiv z^{(L)}(x)$ to some desired result or \emph{label}. 
+This optimization procedure involves sampling only a single set of network parameters from the \terminate{initialization distribution}, yielding just a single network trained for the task of interest rather than a full \terminate{ensemble} of networks. 
+In this way, gradient-based learning methods offset their inability to express confidence in their predictions -- due to the absence of an \terminate{ensemble} -- with data efficiency and easy scalability. 
+
+
+
+
+Since \terminate{gradient descent} involves making explicit updates to the \terminate{model parameters}, the first step is to bring them back (from whatever place that variables go when they are integrated out). 
+In supervised learning, the adjustments of \terminate{model parameters} are directly proportional to the function-approximation\index{function approximation} error times the gradient of the model output with respect to the parameters.
+This decomposition motivates the study of the \neo{neural tangent kernel} (NTK).\footnote{The NTK was first identified in the seminal work of 
+Jacot \emph{et al.}~\cite{jacot2018neural} in the context of infinite-width networks.
+}
+In short, the NTK is a type of \terminate{Hamiltonian}\index{Hamiltonian|seealso{neural tangent kernel}}  that controls the training dynamics\index{training dynamics!controlled by the NTK} of observables\index{observable} whenever gradient descent is used to optimize an auxiliary loss that scores a \terminate{function approximation}. As we detail 
+in~\S\ref{ch:NTHb}, \S\ref{ch:features}, and~\S\ref{ch:eot},
+understanding the NTK for a given neural-network architecture will enable us to effectively describe gradient-based learning for that model.
+
+
+In this chapter, we give a short introduction to supervised learning in \S\ref{sec:supervised-learning}, followed by a discussion of \terminate{gradient descent} in \S\ref{sec:gd} with a very general focus on how the NTK arises in supervised learning. In the next chapter, we'll incorporate the NTK into our \terminate{effective theory of deep learning} by exploiting the same layer-to-layer RG flow technique we used in \S\ref{ch:ngp}. %
+\index{representation group flow}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+\section{Supervised Learning}\label{sec:supervised-learning}
+One of the most basic modeling tasks at which neural networks\index{neural network} excel is known as \term{supervised learning}.
+Given a \term{data distribution}\index{data distribution|seealso{input data}} $p(x,y)=p(y|x)p(x)$, the goal is to predict a \term{label} $y$ given an input $x$, for any pair that is jointly sampled from the distribution.\footnote{In this section, we suppress \neo{vectorial indices}  on the inputs $x_\delta$, labels $y_\delta$, and model outputs $z\le(x_\delta;\theta\ri)$, while often retaining \neo{sample indices} $\delta\in\D$.} To be precise, the model tries to learn the conditional distribution $p(y|x)$, and the resulting model is sometimes called a \textbf{discriminative model}.\index{discriminative model}\index{discriminative model|seealso{probabilistic model}}
+In one canonical example from \terminate{computer vision}, we might want to \index{classification|textbf}\textbf{classify} an image $x_{\delta}$ of a hand-written digit ``$3$'' according to its literal value $y_{\delta}=$ \texttt{3}. Or, for a \terminate{natural language processing} example, given a sentence containing the word $x_{\delta} =$ \texttt{cat} we might want to identify the part of the speech as $y_{\delta} =$ \texttt{noun}.  The better the \neo{probabilistic model} learns the distribution $p(y|x)$,  the more accurately it can predict a true label $y$ for a novel input example $x$. Generating these datasets generally requires human annotators to label the inputs, hence the name supervised learning.
+
+
+
+In this setup, the supervised-learning model outputs a prediction $z(x_\delta; \theta)$.  This notation emphasizes that the model output is both a function of the input $x_\delta$ as well as some adjustable parameters $\theta$. This should already be familiar in the context of neural-network \terminate{function approximation}, where the \terminate{model parameters} consist of
+the \terminate{biases} and \terminate{weights}.\index{neural network}
+
+As discussed in \S\ref{sec:MLP_distribution}, the \terminate{model parameters} are drawn from an easy-to-sample prior distribution\index{prior} over the parameters, which is also known as the \neo{initialization distribution} in the context of gradient-based learning. Importantly, this parameter distribution knows nothing about the \terminate{data distribution}. Thus, in order for the model to make good predictions, its parameters will need to be adjusted somehow. Really, this is just a specific application of the \terminate{function approximation} that we discussed in \S\ref{sec:MLP_intro} where the function to be approximated is a conditional distribution $p(y|x)$.
+
+Before we understand how to adjust or \emph{fit} the model parameters\index{gradient descent!model fitting}\index{model fitting!gradient-based optimization|see{gradient descent}}\index{model fitting|seealso{training}},  we need to understand what we mean by making good predictions. What we want is, for a typical input $x_\delta$ and a label $y_\delta$ sampled from the \terminate{data distribution} $p(x,y)$, that the model output $z(x_\delta; \theta)$ is as close to the label $y_\delta$ as possible on average. In order to measure this proximity, for a prediction-label pair we need to define an auxiliary \neo{objective function}\index{objective function|seealso{loss}} or \term{loss},
+\be\label{eq:loss-per-example}
+\L\Big(z(x_\delta; \theta),\, y_\delta\Big) \,,
+\ee
+with the property that the closer $z(x_\delta; \theta)$ is to $y_\delta$, the lower the value of the function is. One very intuitive choice for the loss is 
+\emph{MSE loss}\index{loss!MSE}\index{mean squared error|see{loss}}\index{MSE|see{mean squared error}}~\eqref{eq:MSE-loss-preview},
+\be\label{eq:MSE-loss}
+\L_{\text{MSE}}\Big(z(x_\delta; \theta),\, y_{\delta}\Big)\equiv \frac{1}{2}\Big[z(x_\delta; \theta)-y_{\delta}\Big]^2 \,,
+\ee
+which clearly has the required property,
+though this is not the most common choice in deep learning. The specific form of the loss will not matter for the rest of the chapter. \index{loss!MSE}
+
+
+
+
+
+With the loss function in hand, the goal of \terminate{training} is to adjust \terminate{model parameters} so as to minimize the loss for as many input-label pairs as possible. Ideally, we would like to minimize the loss averaged over the entire \terminate{data distribution},
+\be\label{eq:entireloss}
+\E{\L(\theta)} = \int dx dy\, p(x,y)\, \L\Big(z(x; \theta),\, y\Big) \, .
+\ee
+But since we almost never have access to the analytical form of the data distribution $p(x,y)$, in practice this would require the sampling of an infinite number of input-label pairs. Instead, as a proxy of the entire loss~\eqref{eq:entireloss},
+we sample a large-but-finite number of pairs $(x_{\tra}, y_{\tra})_{\tra\in \A}$ and try to minimize
+\be\label{eq:training-loss}
+\L_\A(\theta) \equiv \sum_{\tra \in \A} \L\Big(z(x_{\tra}; \theta),\, y_{\tra}\Big)\, .
+\ee
+This set of examples $\A$ is referred to as the \term{training set}, and the estimate of the loss \eqref{eq:training-loss} is called the \textbf{training loss}\index{loss!training loss|textbf}\index{training loss|see{loss}}; 
+here we've also inherited from \S\ref{ch:bayesian-inference} our sample-index notation of alpha-with-tilde for the inputs in the training set $\tra \in\A$, while denoting generic inputs as delta-with-no-decoration $\delta\in\D$, and soon we'll  use beta-with-dot for inputs in the \emph{test set} $\tea\in\B$.\footnote{Note that our definition of the training loss \eqref{eq:training-loss} is a bit at odds with our definition of the expected loss \eqref{eq:entireloss}. In particular, the expected loss is \emph{intensive}\index{intensivity (of loss)}, while the training loss
+is \emph{extensive}\index{extensivity!of loss}, scaling linearly with the size of the training set $\NR \equiv \vert\A\vert$.
+This latter choice is consistent with our first definition of this loss, \eqref{eq:MSE-loss-preview}, in the context of MLE\index{maximum likelihood estimation} as an approximate method for Bayesian model fitting\index{Bayesian inference!model fitting} in \S\ref{subsec:ForIO}. There, the extensivity of the loss was natural according to the Bayesian framework: as the number of observed input-output pairs $\NR$ increases, we want the likelihood to dominate the prior. %
+As such, we will find it natural to follow that convention. (You also might more accurately call the extensive loss \eqref{eq:MSE-loss-preview} as the \emph{\sout{mean} squared error}.\index{loss!MSE!name}\index{loss!SE})
+However, from a non-Bayesian perspective, it is often customary to define a training loss as
+\be\label{eq:training-loss-intense}
+\L_\A(\theta) \equiv \frac{1}{\vert\A\vert}\sum_{\tra \in \A} \L\Big(z(x_{\tra}; \theta),\, y_{\tra}\Big)\, ,
+\ee
+which better corresponds to the expected loss \eqref{eq:entireloss}. Since in the context of gradient-based learning the overall normalization can always be absorbed in a redefinition of the global learning rate\index{learning rate!global} $\eta$, to be introduced next section, the only advantage we see of this latter definition \eqref{eq:training-loss-intense} is the better correspondence of the loss with its name.
+}
+To train our model, we try to find a configuration of the model parameters that minimizes the training loss\index{loss!training loss} 
+\be\label{eq:supervised-learning-criterion}
+\theta^{\star} = \argmin_\theta \L_\A(\theta)=\argmin_\theta \le[\sum_{\tra \in \A} \L\Big(z(x_{\tra}; \theta),\, y_{\tra}\Big) \ri]\, .
+\ee
+In the next section, 
+we will present the \terminate{gradient descent} algorithm as a way to accomplish this goal.
+
+\index{bias-variance tradeoff}
+Having set the minimization of the training loss\index{loss!training loss}~\eqref{eq:training-loss} as our optimization problem, it is important to keep in mind that the true goal of \terminate{supervised learning} is the minimization of the \terminate{loss} over the entire \terminate{data distribution} in the sense of \eqref{eq:entireloss}.
+Said another way, the question is not whether the model is able to memorize all the input-label pairs in the training set, but rather whether it's able to generalize its predictions to additional input-label pairs not seen during \terminate{training}.
+One might then worry about whether a \terminate{training set} is \emph{biased} in its sampling of the \terminate{data distribution} or
+whether
+there is high \emph{variance} in a particular set of samples.
+
+To explicitly assess this \term{generalization} property of a model, a separate set of input-label samples $(x_{\tea}, y_{\tea})_{\tea \in \B}$ -- known as the \term{test set} -- is typically set aside and only used to evaluate a model after \terminate{training} is complete.  To the extent that the \terminate{training set} $\A$ is representative of the full \terminate{data distribution} $p(x,y)$, 
+decreasing the training loss\index{loss!training loss} will often decrease the entire loss~\eqref{eq:entireloss}, as estimated by the test loss\index{loss!test loss|textbf}\index{test loss|see{loss}} $\L_\B$. We will address this question directly in~\S\ref{ch:NTHb}.
+
+
+
+
+
+
+
+
+
+
+\section{Gradient Descent and Function Approximation}\label{sec:gd}
+Considering the training loss\index{loss!training loss} minimization~\eqref{eq:supervised-learning-criterion}, we see that learning is a complicated optimization problem.
+Being entirely naive about it,  in order to find extrema of a function, calculus instructs us to differentiate the training loss\index{loss!training loss} and find the value of the argument for which the resulting expression vanishes:
+\be\label{eq:gradient-vanishing-mind}
+0 = \frac{\td\L_\A}{\td\theta_{\mu}}\Bigg|_{\theta=\theta^{\star}}\, .
+\ee
+Unfortunately this equation is exactly solvable only in special cases, for instance when the \terminate{loss} is quadratic in the \terminate{model parameters}. Rather than trying to find minima analytically, practitioners typically employ an iterative procedure to bring the loss closer and closer to a minimum.  
+
+
+
+\index{loss!training loss}\index{gradient descent!model fitting}
+\textbf{Gradient descent}\index{gradient descent|textbf} is one such method that can be used to minimize nontrivial functions like the training loss~\eqref{eq:training-loss}, and so it's a natural candidate for model fitting. The algorithm involves the  computation of the gradient of the \terminate{loss}
+and iteratively updates the \terminate{model parameters} in the (negative) direction of the gradient
+\be\label{eq:gd-update}
+\theta_\mu(t+1) = \theta_\mu(t) - \eta \frac{\td \L_\A}{\td \theta_\mu}\Bigg|_{\theta_\mu = \theta_\mu(t)} \,,
+\ee
+where  $t$ keeps track of the number of steps in the iterative training process, with $t=0$ conventionally being the point of initialization.
+Here, $\eta$ is a positive \textbf{training hyperparameter}\index{training hyperparameters|textbf} called the \term{learning rate},
+which controls how large of a step is taken in \neo{parameter space}\index{parameter space|seealso{microscopic perspective}}. Note that the computational cost of gradient descent scales linearly with the size of the dataset $\A$, as one just needs to compute the gradient for each sample and then add them up. 
+
+\index{optimization|seealso{Newton's method}}\index{optimization|seealso{direct optimization}}
+
+For sufficiently small learning rates, the updates \eqref{eq:gd-update} are guaranteed to decrease the training loss $\L_\A$. In order to see this, let us Taylor-expand the training loss\index{loss!training loss} around the current value of the parameters $\theta(t)$ and compute the change in the loss after making an update
+\be\label{eq:gd-decreases-loss}
+\Delta\L_\A \equiv \L_\A\Big(\theta(t+1)\Big) -\L_\A\Big(\theta(t)\Big) = - \eta  \sum_{\mu}\le(\frac{\td \L_\A}{\td \theta_\mu}\ri)^2\Bigg\vert_{\theta=\theta(t)} + O(\eta^2) \, .
+\ee 
+As minus a sum of squares, this is strictly negative. Pretty typically, iterating these updates will eventually lead to (at least) a local minimum of the training loss\index{loss!training loss}. In practice, small variants of the gradient descent algorithm are responsible for almost all \terminate{training} and optimization in \terminate{deep learning}.\footnote{In particular, the most popular \terminate{learning algorithm} is \term{stochastic gradient descent} (SGD). SGD uses updates of the form\index{SGD|see{stochastic gradient descent}}\index{gradient descent!stochastic|see{stochastic gradient descent}}
+\be\label{eq:sgd-update}
+\theta_\mu(t+1) = \theta_\mu(t) - \eta \frac{\td \L_{\mathcal{S}_t}}{\td \theta_\mu}\Bigg|_{\theta_\mu = \theta_\mu(t)} \,,
+\ee
+where $\mathcal{S}_t$ is a subset of the \terminate{training set}, $\mathcal{S}_t \subset \A$. 
+Each subset $\mathcal{S}_t$ is called a \emph{mini-batch}\index{mini-batch|see{batch}} or \term{batch}\index{batch|seealso{stochastic gradient descent}}. Training\index{training} is then organized by \term{epoch}\index{epoch|seealso{stochastic gradient descent}}, which is a complete passes through the training set. Typically, for each epoch the training set is \emph{stochastically} partitioned into subsets of equal size, which are then sequentially used to estimate the gradient. 
+
+The advantage of this algorithm is twofold: \emph{(i)} the computational cost of training now scales with the fixed size of the sets $\mathcal{S}_t$ rather than with the size of the whole training set $\mathcal{A}$; and \emph{(ii)} SGD is thought to have better \terminate{generalization} properties than gradient descent. Nevertheless, essentially everything we will say about gradient descent
+will apply to stochastic gradient descent
+as well.
+}
+
+
+\subsubsection{Tensorial Gradient Descent}\index{tensor!learning-rate tensor|see{learning rate}}\index{tensorial gradient descent|see{gradient descent}}
+In one such variant, we can define a more general family of learning algorithms by modifying the update \eqref{eq:gd-update} as \index{learning algorithm}\index{gradient descent!tensorial}\index{learning rate!global}
+\be\label{eq:gd-update-lambda}
+\theta_\mu(t+1) =\theta_\mu(t) - \eta \sum_{\nu}\lambda_{\mu\nu} \frac{\td \L_\A}{\td \theta_\nu}\Bigg\vert_{\theta=\theta(t)} \, ,
+\ee
+where the \terminate{tensor} $\lambda_{\mu\nu}$ is a \textbf{learning-rate tensor}\index{learning rate!learning-rate tensor|textbf} on \terminate{parameter space}; the original gradient-descent update~\eqref{eq:gd-update} is a special case with the \terminate{Kronecker delta} as the tensor $\lambda_{\mu\nu}=\delta_{\mu\nu}$. While in  the original gradient descent~\eqref{eq:gd-update} we have one global learning rate $\eta$, in the tensorial gradient descent~\eqref{eq:gd-update-lambda}  we have the freedom to separately specify how the $\nu$-th component of the gradient $\td \L_{\A} / \td \theta_\nu$ 
+contributes to the update of the $\mu$-th parameter $\theta_\mu$ via the  tensor $\lambda_{\mu\nu}$.
+Repeating the same Taylor-expansion in $\eta$ \eqref{eq:gd-decreases-loss} with the generalized update \eqref{eq:gd-update-lambda}, we find
+\be\label{eq:change-in-loss-lambda}
+ \Delta\L_\A = - \eta \sum_{\mu,\nu} \lambda_{\mu\nu}  \frac{\td \L_\A}{\td \theta_\mu} \frac{\td  \L_\A}{\td \theta_\nu}  + O(\eta^2)\, ,
+\ee
+indicating that the training loss\index{loss!training loss} again is almost surely decreasing for sufficiently small learning rates, so long as the learning-rate tensor $\lambda_{\mu\nu}$ is a \terminate{positive semidefinite matrix}. \index{learning rate}
+
+
+
+
+
+
+
+
+
+
+
+
+
+\subsubsection{Neural Tangent Kernel}\label{sec:nth}
+Everything we have said so far about \terminate{gradient descent} could be applied equally to the optimization of any
+function.
+However, in the context of \terminate{function approximation}
+there is additional structure: the optimization objective is a function of the model output.
+
+To take advantage of this structure,  first note that by the \terminate{chain rule} the gradient of the \terminate{loss} can be expressed as
+\be\label{eq:gd-update-decomposed}
+\frac{\td \L_\A}{\td \theta_\mu}=\sum_{i=1}^{n_{\text{out}}} \sum_{\tra \in \A} \frac{\partial \L_\A}{\partial z_{i;\tra}}\frac{\td z_{i;\tra}}{\td \theta_\mu}\, ,
+\ee
+which means that the change in the loss~\eqref{eq:change-in-loss-lambda} after an update  can be nicely decomposed as
+\be\label{eq:change-in-loss-NTH}
+\Delta\L_\A= - \eta\sum_{i_1,i_2=1}^{n_{\text{out}}} \sum_{\tra_1,\tra_2 \in \A} \le[\frac{\partial \L_\A}{\partial z_{i_1;\tra_1}}\frac{\partial  \L_\A}{\partial z_{i_2;\tra_2}}\ri]  \le[ \sum_{\mu,\nu} \lambda_{\mu\nu} \frac{\td z_{i_1;\tra_1} }{\td \theta_\mu} \frac{\td z_{i_2;\tra_2} }{\td \theta_\nu}  \ri]  + O(\eta^2)\,  .
+\ee
+The quantity in the first square bracket is a measure of the \terminate{function approximation} error. For instance, for the MSE loss~\eqref{eq:MSE-loss} we see that the gradient of the loss with respect to the model output is exactly the prediction error, \index{loss!MSE}\index{error factor!MSE loss}
+\be\label{eq:mse-function-approximation-error}
+\frac{\partial \L_\A}{\partial z_{i;\tra}}=z_i(x_{\tra}; \theta)-\y{i}{\tra} \, .
+\ee
+More generally for other losses, the gradient of the loss or \term{error factor}
+\be\label{eq:grad-loss-def}
+\epsilon_{i;\tra}\equiv \frac{\partial \L_\A}{\partial z_{i;\tra}}\, ,
+\ee
+is small when the model output is close to the label.
+Sensibly, the greater the 
+error factor,
+the larger the update \eqref{eq:gd-update-decomposed}, and the greater the change in the loss \eqref{eq:change-in-loss-NTH}.
+The quantity in the second square bracket is called the \term{neural tangent kernel} (NTK)\index{NTK|see{neural tangent kernel}}
+\be\label{eq:NTH-definition}
+\NTKM_{i_1i_2;\tra_1 \tra_2} \equiv \sum_{\mu,\nu} \lambda_{\mu\nu} \frac{\td z_{i_1;\tra_1} }{\td \theta_\mu} \frac{\td z_{i_2;\tra_2} }{\td \theta_\nu}  \, .
+\ee
+As is clear from \eqref{eq:NTH-definition}, the NTK is independent of the auxiliary \terminate{loss} function.
+
+Importantly, the NTK is the main driver of the function-approximation\index{function approximation} dynamics.\index{supervised learning}
+To the point, it governs the evolution of a much more general set of observables than the training loss\index{loss!training loss}.
+Consider any \terminate{observable} that depends on the model's outputs
+\be\label{eq:observable-last-layer}
+\O\!\le(\theta \ri) \equiv \O\Big( z\!\le(x_{\delta_1} ; \theta \ri)\!,\,\ldots\,,z\!\le(x_{\delta_M} ; \theta \ri) \Big) \, , 
+\ee
+where $x_{\delta_1}, \ldots, x_{\delta_M} \in \D$  for some dataset\index{input data} $\D$.
+For example,
+if $\D$ is the test set $\B$ and $\O$  is the \terminate{loss} function, then this \terminate{observable} would be the test loss\index{loss!test loss} $\L_{\B}$.
+In addition to the test loss\index{loss!test loss}, one might want to observe the change in a particular component of the output $\O = z_i(x)$
+or perhaps track correlations among different vectorial components of the output $\O = z_i(x)\, z_j(x)$
+for a given input $x$.
+For any such \terminate{observable} \eqref{eq:observable-last-layer}, its change after an update is given by the expression
+\be\label{eq:change-in-observable-NTH}
+\O\Big(\theta(t+1)\Big) - \O\Big(\theta(t)\Big) = - \eta\sum_{i_1,i_2=1}^{n_{\text{out}}} \sum_{\tra \in \A} \sum_{\delta \in \D} \le[\frac{\partial \L_\A}{\partial z_{i_1;\tra}}\frac{\partial \O}{\partial z_{i_2;\delta}}\ri]  \NTKM_{i_1 i_2;\tra\delta}  + O(\eta^2)\, .
+\ee
+As we see, the square bracket contains the function-approximation error as well as the particulars about how the \terminate{observable} depends on the model output.
+In contrast, the NTK contains all the dynamical information pertaining to the particular model, depending only on the model \terminate{architecture} and parameters.\footnote{As our discussion makes clear, the NTK can generally be defined for any function approximator. This means that its name masks its true generality. In addition to objecting to the ``neural'' part of the name, one could object to the ``kernel'' part. In particular, the NTK is more akin to a \terminate{Hamiltonian} than a kernel as it generates the evolution of observables; we'll fully justify this claim in \S\ref{subsec:real-GD-at-finite-width}.\label{footnote:ntk-name}}
+\index{neural tangent kernel!name}\index{kernel!NTK|see{neural tangent kernel}}\index{function approximation}\index{model parameters}
+
+
+
+
+
+
+\index{neural indices}\index{sample indices}\index{loss!MSE}
+We can further understand the function-approximation\index{function approximation} dynamics under \terminate{gradient descent} by considering a particular vectorial component of the output for a particular sample as an \terminate{observable}, i.e.~$\O=z_{i}(x_{\delta})$. In this case, the derivative of $\O$ in \eqref{eq:change-in-observable-NTH} is a \terminate{Kronecker delta} on both the \terminate{vectorial indices} and \terminate{sample indices}, and the evolution reduces to
+\be\label{eq:NTK-change-in-output}
+z_{i}\Big(x_{\delta}; \theta(t+1)\Big) - z_{i}\Big(x_{\delta}; \theta(t)\Big)= - \eta\sum_{j=1}^{n_{\text{out}}} \sum_{\tra \in \A}     \NTKM_{i j;\delta\tra}\epsilon_{j;\tra}  + O(\eta^2)\, .
+\ee
+This equation shows how the model output changes after a training update. Importantly, we see how the 
+\terminate{error factor}
+$\epsilon_{j;\tra}$~\eqref{eq:grad-loss-def} from example $x_{\tra}$ on the model output component $j$ affects the updated behavior of the model output component $i$ on a different example $x_{\delta}$: it's mediated by the NTK component $\NTKM_{i j;\delta\tra}$. This is what makes \terminate{function approximation} possible; the ability to learn something about one example, $x_{\delta}$, by observing another, $x_{\tra}$. We see that the off-diagonal components of the NTK in the \terminate{sample indices} determine the \terminate{generalization} behavior of the model, while the off-diagonal components in \terminate{vectorial indices} allow for one \terminate{feature} to affect the training of another feature. We will have more to say about the former property in \S\ref{ch:NTHb} and the latter property in \S\ref{ch:eot}.
+
+
+
+
+
+\index{loss!training loss}\index{learning rate}\index{loss!test loss}\index{generalization}\index{overfitting}
+Finally, let us note in passing that unlike the case of the training loss~\eqref{eq:change-in-loss-NTH}, for general observables\index{observable} \eqref{eq:change-in-observable-NTH} the term in the square bracket is not necessarily positive. While the training loss\index{loss!training loss} $\L_\A$ will always decrease for small enough learning rates, a given observable may not.
+In particular, nothing guarantees that the test loss\index{loss!test loss} will decrease and -- for models that overfit their \terminate{training set} -- the test loss\index{loss!test loss} may even increase.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

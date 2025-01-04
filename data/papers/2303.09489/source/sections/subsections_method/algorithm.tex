@@ -1,0 +1,117 @@
+%
+\subsection{Efficient Inference with the Companion SSM}
+\label{sec:efficient_algorithm}
+
+We finally discuss our third contribution, where we derive an algorithm for efficient training and inference with the companion SSM.
+To motivate this section, we note that prior efficient algorithms to compute powers of the state matrix $\zA$ were only proposed to handle specific classes of $\zA$, and do not apply to the companion matrix~\citep{gu2021efficiently, goel2022s, gu2022parameterization}. 
+
+% In particular, constructing the convolution kernel for a sequence of length $L$
+% from the companion matrix of state dimension $D$ takes $O(L \log L + D \log D)$
+% in time and $O(L + D)$ in space (as opposed to a na\"ive algorithm of complexity
+% $\tilde{O}(LD)$ in time).
+
+Recall from Sec.~\ref{sec:method_spacetime_layer} that 
+% during training, 
+for a sequence of length $\ell$, we want to construct the output filter
+$\zF^y = (\zC \zB, \dots, \zC\zA^{\ell-1}\zB)$, where $\zA$ is a $d \times d$
+companion matrix and $\zB, \zC$ are $d \times 1$ and $1 \times d$ matrices.
+%
+Na\"ively, we could use sparse matrix multiplications to compute powers $\zC \zA^j \zB$ for $j=0, \dots, \ell-1$ sequentially. As $\zA$ has $O(d)$
+nonzeros, this would take $O(\ell d)$ time. 
+We instead derive an algorithm that constructs this filter in $O(\ell \log \ell + d \log d)$
+time.
+The main idea is that rather than computing the filter directly, we can compute its spectrum (its discrete Fourier transform) more easily, \ie{} 
+% $\tilde{\zF}_k^y = {\cal F}(\zF_k^y)$
+% with the truncated generating function~\citep{gu2021efficiently}
+% (cite S4 paper calling this the truncated generating function)
+\begin{equation*}
+%   \tilde{\zF}_k^y = {\cal F}(\zF_k^y),
+%   \quad \text{ with 
+%   } 
+  \tilde{\zF}^y[m] := {\cal F}(\zF^y) = \textstyle \sum_{j=0}^{\ell-1} \zC \zA^j \omega^{mj} \zB = \zC(\zI - \zA^\ell) (\zI - \zA \omega^m)^{-1} \zB,
+  \quad m = 0, 1, \dots, \ell-1.
+\end{equation*}
+where $\omega = \exp(-2\pi i / \ell)$ is the $\ell$-th root of unity.
+This reduces to computing the quadratic form of the resolvent $(\zI - \zA \omega^m)^{-1}$
+on the roots of unity (the powers of $\omega$).
+Since $\zA$ is a companion matrix, we can write $\zA$ as a shift matrix plus a
+rank-1 matrix, $\zA = \zS + a e_d^T$.
+Thus Woodbury's formula reduces this computation to the resolvent of a shift
+matrix $(\zI - \zS \omega^m)^{-1}$, with a rank-1 correction.
+This resolvent can be shown analytically to be a
+lower-triangular matrix consisting of roots of unity, and its quadratic form can
+be computed by the Fourier transform of a linear convolution of size $d$.
+Thus one can construct $\zF_k^y$ by linear convolution and the FFT, resulting in $O(\ell \log \ell + d\log d)$ time.
+%
+
+We validate in 
+Sec.~\ref{sec:empirical_efficiency} 
+% Appendix~\ref{appendix:todo}
+that Algorithm~\ref{alg:output_filter_computation} leads to a wall-clock time speedup of 2$\times$ compared to computing the output filter na\"ively by powering $\zA$.
+%
+In App.\ \ref{appendix:efficiency_proofs}, we prove the time complexity $O(\ell \log \ell + d\log d)$ and correctness of Algorithm~\ref{alg:output_filter_computation}. We also provide an extension to the closed-loop SSM, which can also be computed in subquadratic time as $\zA+\zB \zK$ is a shift plus rank-2 matrix. 
+
+% \setlength{\textfloatsep}{2pt}
+\begin{algorithm}[!t]
+\caption{Efficient Output Filter $\zF^y$ Computation}\label{alg:output_filter_computation}
+
+\begin{algorithmic}[1]
+\Require $\zA$ is a companion matrix parameterized by the last column $a \in \mathbb{R}^d$, $\zB \in \mathbb{R}^d$, $\tilde{\zC} = \zC (\zI - \zA^\ell) \in \mathbb{R}^d$, sequence length $\ell$.
+% \Ensure $y = x^n$
+\State Define $\mathrm{quad}(u, v) \in \mathbb{R}^\ell$ for vectors $u, v \in \mathbb{R}^d$: compute $q = u*v$ (linear convolution), zero-pad to length $\ell \lceil d / \ell \rceil$, split into $\lceil d/\ell \rceil$ chunks of size $\ell$ of the form $[q^{(1)}, \dots, q^{(\lceil d/\ell \rceil)}]$ and return the length-$\ell$ Fourier transform of the sum $\mathcal{F}_\ell(q^{(1)} + \dots + q^{(\lceil d/\ell \rceil)})$.
+\State Compute the roots of unity $z = [\bar{\omega}^0, \dots, \bar{\omega}^{\ell-1}]$ where $\omega = \exp(-2\pi i / \ell)$.
+\State Compute $\tilde{\zF}^y = \mathrm{quad}(\tilde{\zC}, \zB) + \mathrm{quad}(\tilde{\zC}, a) * \mathrm{quad}(e_d, \zB) / (z - \mathrm{quad}(e_d, a)) \in \mathbb{R}^\ell$, where $e_d = [0, \dots, 0, 1]$ is the $d$-th basis vector. 
+\State Return the inverse Fourier transform $\zF^y = {\cal F}_\ell^{-1}(\tilde{\zF}^y)$.
+\end{algorithmic}
+% \vspace{0.125cm}
+\end{algorithm}
+% \vspace{-0.75cm}
+
+% We formalize the time and space complexity below.
+% Algorithm~\ref{alg:output_filter_computation}.
+%
+
+% \begin{theorem}\label{efficient_thm}
+%   Algorithm~\ref{alg:output_filter_computation} computes the output filter $\zF_k^y$ in
+%   $O(\ell \log \ell + d\log d)$ time and space.
+% \end{theorem} 
+%
+
+%
+
+
+
+% We measure the speed empirically (Sec.~\ref{sec:empirical_efficiency}) to show that the fast algorithm
+% is XXX times faster than the na\"ive algorithm.
+
+% [put in algorithm box]:
+% \begin{enumerate}
+%   \item Given $\zA = \mathrm{Companion}(p)$, $B$, $\tilde{C} = C (I - \zA^N)$.
+%   \item Define $\mathrm{quad}(u, v) = {\cal F}_N(u * v)$ for vectors $u, v \in \mathbb{R}^D$ and $*$
+%   denotes linear convolution, and ${\cal F}_N$ denote the DFT size of $N$ (where
+%   the input is padded to have size $N$).
+%   \item Compute $\tilde{\zF}_k^y = \mathrm{quad}(\tilde{C}, B) + $ [TODO].
+%   \item Take the inverse Fourier transform $\zF_k^y = {\cal F}_N^{-1}(\tilde{\zF}_k^y)$.
+% \end{enumerate}
+
+
+
+
+% In Table~\ref{tab:big_O_complexity}, we summarize this section's contributions with a time and space complexity analysis. For inference during training and forecasting, we compare the companion SSM with the popular convolution, recurrence, and attention deep learning operations. We also compare with the recent \emph{Diagonal-Plus-Low-Rank} (DPLR)~\citep{gu2021efficiently} and diagonal~\citep{gupta2022diagonal} state-matrix SSM representations. With our efficient algorithm, the companion SSM achieves optimal time and space complexity for processing long sequences.
+
+% \begin{table}[]
+% \caption{Complexity of various sequence models in terms of sequence length, batch size, and hidden state dimension. \MZ{to fill in...} }
+% \centering
+% \resizebox{\linewidth}{!}{
+% \begin{tabular}{@{}lcccccc@{}}
+% \toprule
+%             & Convolution & Recurrence & Attention & DPLR SSM & Diagonal SSM & Companion SSM \\ \midrule
+% Parameters  & -           & -          & -         & -        & -            & -             \\
+% Training    & -           & -          & -         & -        & -            & -             \\
+% Forecasting & -           & -          & -         & -        & -            & -             \\
+% Space       & -           & -          & -         & -        & -            & -             \\
+% Parallel    & -           & -          & -         & -        & -            & -             \\ \bottomrule
+% \end{tabular}
+% }
+% \label{tab:big_O_complexity}
+% \end{table}

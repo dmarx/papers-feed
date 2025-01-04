@@ -1,0 +1,232 @@
+%!TEX root = ../main.tex
+
+\section{Hungry Hungry Hippos Layer to Model Discrete Sequences}
+\label{sec:method}
+
+To understand the gap between SSMs and attention on language modeling, we
+examine two synthetic language modeling tasks.
+These tasks motivate our \hthree layer to add a discrete SSM (based on shift matrix) and multiplicative interaction to effectively model discrete sequences.
+We then show that the \hthree layer is expressive enough to solve these synthetic tasks, and that this understanding leads to better performance on a real language modeling benchmark.
+
+\subsection{Motivation: Synthetic Language Modeling Tasks\label{sec:synthetics}}
+
+We describe two closely-related synthetic tasks, summarized in Table~\ref{table:synthetic_tasks}. 
+Olsson et al.~\citep{olsson2022context} argue that the ability to solve (variants of) these tasks accounts for the majority of the in-context learning capability of Transformers, and more intuition is given in Appendix~\ref{sec:app_exp_details}. 
+\input{tables/synthetic_tasks.tex}
+
+The \textbf{Induction Head} task tests how well a model can recall content after a special token (e.g., $\vdash$ in~\cref{table:synthetic_tasks}).
+At the end of the sequence, the model must recall the token that appeared immediately after the special token earlier in the sequence. \textbf{Associative Recall}~\citep{ba2016using} is similar to the induction head task, but requires the model to remember multiple key-value pairs.
+At the end of the sequence, the model must recall a specific value belonging to a specific key.
+\input{tables/synthetics.tex}
+Table~\ref{table:synthetics} (for two-layer models) shows that S4D~\citep{gu2022parameterization} and Gated State Spaces~\citep{mehta2022long} both fail to model these synthetic languages, which suggests they may not have the expressivity for general language.
+We argue that these failures suggest two missing capabilities: (i) to remember tokens that appear after a particular event (e.g., the special token in the induction head task), and (ii) to compare tokens across the sequence (e.g., comparing keys to decide which value to recall).
+Attention has both these capabilities: it can compare tokens by constructing the \textit{quadratic} attention matrix $\vQ \vK^\top$, and it can recall tokens by direct copying (multiplying $\softmax(\vQ \vK^\top)$ with $\vV$).
+In Section~\ref{sec:method_h3}, we design our new layer \hthree to enable these capabilities in SSMs, narrowing the expressivity gap between SSMs and attention.
+
+\subsection{\hthree Layer\label{sec:method_h3}}
+\hthree uses SSMs with shift and diagonal matrices, along with multiplicative
+operations against projections of the input to capture the missing capabilities identified by the synthetics.
+
+\textbf{High-level Intuition.}
+(i) To remember tokens from the past, we want the state $x_i$ to copy from the input $u_i$, and then pass that information to the next state $x_{i+1}$. As $x_{i+1}$ relates to $x_i$by $\vA x_i$, we use a discrete SSM with a shift matrix $\vA$ (described formally below) that shifts the elements of a state vector (e.g., mapping $[a, b, c] \to [0, a, b]$).
+(ii) To compare tokens across the sequence, we use multiplicative interaction: the output of an SSM, containing information from previous time steps, is multiplied with the input at the current time steps, thus measuring similarity between tokens.
+
+\hthree is loosely inspired by linear attention (\cref{sec:background}): we project the input $u$ to get three signals $\vQ, \vK, \vV$.
+Then we replace the non-linearity $\phi(\vK)$ with an SSM where $\vA$ is a shift matrix ($\mathrm{SSM}_\mathrm{shift}$), and we replace the summation $S_i$ with a SSM with diagonal $\vA$ ($\mathrm{SSM}_\mathrm{diag}$).
+The output, for the case of head dimension $d_h = 1$, is:
+\begin{equation*}
+  \vQ \odot \mathrm{SSM}_\mathrm{diag}(\mathrm{SSM}_\mathrm{shift}(\vK) \odot \vV),
+\end{equation*}
+where $\odot$ denotes pointwise multiplication.
+We can view this form as stacking two SSMs with multiplicative
+interaction (each is a ``hungry hippo'', hence the name of our layer).
+A more formal connection between linear attention, time-varying systems, and \hthree can be found in Appendix~\ref{app:linear_attention}.
+
+\textbf{Remembering Key Tokens: Shift and Diagonal SSMs.}
+The shift and diagonal SSMs are designed to address the capability to log tokens after particular events.
+In the shift SSM, we constrain $\vA \in \mathbb{R}^{m \times m}$ to be a shift matrix
+$
+\vA_{i, j} = 
+    \begin{cases}
+    1 & \text{for } i - 1 = j\\
+    0 & \text{otherwise}
+    \end{cases}
+$.
+The action of this matrix on the hidden state $x_i$ is to shift each coordinate
+down by one---thereby creating a ``memory'' of the previous states.
+For example, if $\vB = e_1$, the first basis vector, then
+$x_i = [u_i, u_{i-1}, \dots, u_{i-m+1}]$ contains the inputs from the previous $m$
+time steps.
+We learn $\vB$ and $\vC$ ($\vB$ can also be fixed to $e_1$ for
+simplicity, in which case the output is a 1D conv.\ with kernel size $m$).
+
+The diagonal SSM constrains $\vA$ to be diagonal and initializes it from the diagonal version of HiPPO (S4D~\citep{gu2022parameterization}).
+This parameterization allows the model to remember state over the entire sequence.
+The shift SSM can detect when a particular event occurs, and the diagonal SSM can remember a token afterwards for the rest of the sequence.
+
+\textbf{Multiplicative Interaction for Comparison.}
+We take the multiplicative interactions from linear attention, but they provide another missing capability when combined with a shift matrix: comparing tokens across the sequence.
+The multiplicative interactions between the output of the shift SSM and the $\vV$ projection mimics local multiplicative interactions in linear attention (depending on the size of the hidden state).
+Similarly, multiplicative interactions with the $\vQ$ projection and the output of the diagonal SSM allows comparisons between tokens over the entire sequence.
+
+\textbf{\hthree Layer.} The overall layer is given in Algorithm~\ref{alg:h3} and shown schematically in Figure~\ref{fig:banner} (left).
+We use the \hthree layer to construct a model in the same style as Transformers by interleaving it with MLPs,
+connected by residual connection and layer norm (i.e., pre-norm architecture~\citep{baevski2018adaptive}).
+We will also consider a hybrid \hthree-attention model (two attention layers while the rest are \hthree, \cref{sec:expressivity,sec:evaluation}).
+\begin{algorithm}[H]
+  \algsetup{linenosize=\tiny}
+  \caption{\label{alg:h3} H3 Layer}
+  \small
+  \begin{algorithmic}[1]
+    \REQUIRE Input sequence $u \in \mathbb{R}^{N \times d}$ from the previous layer, weight
+    matrices $\vW_Q, \vW_K, \vW_V, \vW_O \in \mathbb{R}^{d \times d}$, a shift SSM $\mathrm{SSM}_\mathrm{shift}$, a diagonal SSM $\mathrm{SSM}_{\mathrm{diag}}$, head dimension $d_h$.
+    \STATE Compute $\vQ = u \vW_Q, \vK = u \vW_K, \vV = u \vW_V \in \mathbb{R}^{N \times d}$.
+    \STATE Pass $\vK$ through the shift SSM: $\overline{\vK} = \mathrm{SSM}_\mathrm{shift}(\vK) \in \mathbb{R}^{N \times d}$.
+    \STATE Split $\vQ, \overline{\vK}, \vV$ into $H$ ``heads'' ($\vQ^{(h)}, {\overline{\vK}}^{(h)}, \vV^{(h)}$
+    for $h = 1, \dots, H$), each a sequence of $N$ vectors of size $d_{h} = d / H$.
+    \FOR{$1 \leq h \leq H$}
+    \STATE Take the batched outer product ${\overline{\vK}}^{(h)} (\vV^{(h)})^\top \in \mathbb{R}^{N \times d_h \times d_h}$ (batched in the $N$-dimension) and pass it through a diagonal SSM: $\vK\vV^{(h)} = \mathrm{SSM}_{\mathrm{diag}}({\overline{\vK}}^{(h)} (\vV^{(h)})^\top) \in \mathbb{R}^{N \times d_{h} \times {d_{h}}}$.
+    \STATE Batch-multiply by $\vQ$:  $\vO^{(h)} = [\vQ^{(h)}_1 \vK\vV^{(h)}_1, \dots, \vQ^{(h)}_N \vK\vV^{(h)}_N]\in  \mathbb{R}^{N \times d_h}$ (batched in the $N$-dimension).
+    \ENDFOR
+    \STATE Concatenate the output $\vO^{(h)}$ of each head, and multiply by the output
+    projection matrix $\vW_O \in \mathbb{R}^{d \times d}$.
+  \end{algorithmic}
+\end{algorithm}
+
+\paragraph{Efficiency}
+We show that \hthree scales as $O(N \log N)$ with
+sequence length $N$---asymptotically more efficient than attention, which typically requires $O(N^2d)$ time and $O(N^2)$ space\footnote{There are several memory-efficient
+algorithms for attention~\citep{rabe2021self,dao2022flashattention}, though
+their time complexity is still quadratic in $N$, which is a lower-bound for attention~\citep{keles2022computational}.} (proof in~\cref{sec:app_h3_complexity}).
+\begin{proposition}\label{thm:h3_complexity}
+  Let $N$ be the sequence length, $d$ be the hidden dimension, and assume that
+  the head dimension $d_h$ is of order $O(1)$.
+  Then the H3 layer takes $O(d^2N + d N \log N)$ time and $O(dN)$ space to compute.
+\end{proposition}
+
+
+\subsection{Expressivity}
+\label{sec:expressivity}
+
+We show that \hthree can model our synthetic languages, as well as natural language on OpenWebText~\citep{Gokaslan2019OpenWeb}.
+We also present a hybrid \hthree-attention extension that outperforms Transformers on OpenWebText.
+
+\textbf{Mechanism for Solving Associative Recall with H3.}
+\hthree is expressive enough to solve our synthetic language modeling tasks, as shown in Table~\ref{table:synthetics}.
+Figure~\ref{fig:banner} (middle) shows a mechanism for a single \hthree layer to solve the associative recall task for a particular key-value pair $(a, 3)$.
+The shift SSM and following multiplicative interaction act as a gate on whether to let a value through to the diagonal SSM, based on whether the previous token was key $a$.
+The diagonal SSM stores the value $3$ in memory, and continually outputs it.
+The final multiplicative interaction gates whether to let the diagonal SSM's output through---based on whether the current input token is the key $a$.
+We formally construct the weights of an \hthree layer to solve this task in Appendix~\ref{sec:app_expressivity}.
+
+\input{tables/ablations.tex}
+
+\textbf{Better Synthetic Language Modeling Translates to Better Natural Language Modeling.}
+We validate that when H3 can solve these synthetic tasks, it also improves the modeling capability on natural language (e.g., on the OpenWebText dataset).
+As shown in Table~\ref{table:ablations}, \hthree comes within 0.4 perplexity points of Transformers when trained for 50B tokens on OpenWebText, and performs much better than existing SSM variants (S4D, GSS), by $3-3.9$ points.
+
+\textbf{Extension: H3-attention Hybrid Model.}
+A simple hybrid \hthree-attention language model surprisingly outperforms Transformers on OpenWebText by 1.0 point.
+Our hybrid model simply retains two self-attention layers: one in the second layer, and one in the middle (layer $2 + N / 2$ for an $N$-layer model, $N$ even).
+The \hthree-attention hybrid also outperforms the GSS-attention hybrid~\citep{mehta2022long}.
+
+
+\section{\fastfft: Efficiently Training SSMs\label{sec:efficiency}}
+
+To improve the efficiency of SSMs on modern hardware, we propose \fastfft.
+\fastfft fuses the FFT, pointwise multiply, and inverse FFT to reduce memory
+reads/writes.
+It also uses a block FFT algorithm to make use of specialized matrix multiply units (e.g., tensor cores on A100) for sequence lengths up to 8K.
+For sequences longer than 8K, the computation no longer fits in GPU SRAM\footnote{SRAM, or on-chip memory, is much faster than off-chip GPU memory, but usually much smaller, on the order of around 100KB for each streaming processor.}, so we
+propose a novel state-passing algorithm that splits the sequence into chunks to
+compute the FFT convolution one chunk at a time.
+\fastfft can speed up any SSMs (not just \hthree).
+
+
+\subsection{Fused Block FFTConv}
+\label{sec:systolic_fft}
+
+We deploy two techniques to speed up the FFT-based convolution for sequences shorter than 8K: kernel fusion and block FFT.
+Kernel fusion addresses IO bottlenecks due to reading and writing of intermediate results, while block FFT allows the FFT-based convolution to utilize specialized matrix multiplication units.
+These techniques allow us to speed up FFTConv
+by 2$\times$ (\cref{sec:eval_efficiency}) for sequences shorter than 8k.
+
+\textbf{Kernel Fusion.}
+Naive implementations of FFTConv using standard libraries such as cuFFT are IO-bound due to repeated reading and writing of intermediate results.
+The FFT convolution in an SSM with input $u$ and filter $f$ has the form $iFFT(FFT(u) \odot FFT(f))$ (where $\odot$ denotes pointwise multiplication).
+It requires reading and writing intermediate results to GPU memory---which can dominate the runtime.
+Following \textsc{FlashAttention}~\citep{dao2022flashattention}, we first fuse the entire FFTConv into a single kernel and compute it in SRAM to avoid this overhead.
+
+\textbf{Block FFT.}
+To further speed up the computation of FFT-based convolution, we exploit specialized matrix multiplication hardware on modern GPUs
+(e.g., Tensor Cores on Nvidia GPUs perform fast $16 \times 16$ matrix multiplication).
+We appeal to classical results that show that the FFT can be written as a series of block-diagonal matrix
+multiplications interleaved with permutation.
+We note that such algorithms are not new, but our setting (fused FFTConv on GPU) introduces new bottlenecks---by removing the IO bottlenecks, compute becomes the bottleneck (note that a single FFT on GPU is usually IO bound).
+
+Suppose that we want to perform an $N$-point FFT, which is equivalent to
+multiply by the DFT matrix $\vF_N$.
+Suppose that $N = N_1 N_2$ for some integers $N_1, N_2$.
+By the Cooley-Tukey decomposition of the DFT~\citep{cooley1965an,
+  bailey1990ffts} (also known as the four-step FFT algorithm),
+we can write $\vF_N = \vP (\vI_{N_2} \otimes \vF_{N_1}) \vP^\top \vD (\vI_{N_1} \otimes \vF_{N_2}) \vP$,
+where $\vP$ denotes a fixed permutation that reshapes the input as a $N_1 \times N_2$
+array and then transpose it, $\otimes$ denotes Kroneker product, $\vD$ is a $N \times N$
+diagonal matrix (called the twiddle factors)~\citep{dao2022monarch}, and $\vI_{N_i}$ and $\vF_{N_i}$ are the identity and DFT matrix of size $N_i \times N_i$.
+As $\vI_{N_2} \otimes \vF_{N_1}$ and $\vI_{N_1} \otimes \vF_{N_2}$ are just block-diagonal matrices,
+we can make use of specialized matmul units to perform these multiplications.
+Similarly, if $N = N_1 N_2 N_3$ then we can decompose the $N$-point FFT into a
+series of (block) FFT of size $N_1$, $N_2$, and $N_3$, interleaved by
+permutation.
+
+The block FFT algorithm incurs $O(N r \log N / \log r)$ FLOPs for a sequence length $N$, if $N$ can be written as $r^p$ for two integers $r, p$.
+This incurs more FLOPs than standard FFT $(O(N\log N))$, but can run faster when
+we using specialized matrix multiplication hardware.
+
+\subsection{State-Passing}
+However, the fused kernel cannot run if the sequence is too long to fit into GPU SRAM (longer than 8K on A100).
+We show how to exploit the particular form of the FFT in SSM to speed it up for long
+sequences.
+
+The recurrent nature of SSMs allows us to split the FFTConv of a length-$N$ sequence into chunks of size $N'$ each ($N'$ is the longest FFT we can fit into SRAM), assuming $N$ is a multiple of $N'$).
+We use FFTConv to compute each chunk and use a recurrence to connect the chunks.
+In particular, we split the inputs $u$ into $C = N/N'$ chunks $u^{(c)} \in \mathbb{R}^{N'}$ for $c=1, \dots, C$.
+Similarly, split the states $x$ into $x^{(c)} \in \mathbb{R}^{N' \times m}$ and the output $y$ into $y^{(c)} \in \mathbb{R}^{N'}$ for $i = 1, \dots, C$.
+We will only need the end-state $x_{N'}^{(c)}$ of each chunk $c$.
+
+Let $f = [\vC \vB, \vC\vA\vB, \vC\vA^2\vB, \dots, \vC\vA^{N'-1}\vB]$ be the SSM filter.
+Recall from \cref{sec:background} that for each chunk $c$, $y_i^{(c)} = \vC\vA^i\vB x_{N'}^{(c-1)} + (f \ast u^{(c)})_i + \vD u_i^{(c)}$, since $x_{N'}^{(c-1)}$, the end-state of the previous chunk $(c-1)$ is the initial condition for the current chunk $c$.
+In vector notation, $y^{(c)} = \vM_{xy} x_{N'}^{(c-1)} + f \ast u^{(c)} + \vD u^{(c)}$ for some matrix $\vM_{xy} \in \mathbb{R}^{N' \times m}$.
+Additionally we need to update the end-state of each chunk with $x_{N'}^{c} = \vA^{N'} x_{N'}^{(c-1)} + \vM_{ux} u^{(c)}$ for some matrix $\vM_{ux}^{m \times N'}$ (derivation in Appendix~\ref{sec:state-passing-matrices}).
+In essence, we can compute the output for each chunk with FFT-based convolution as long as we remember the end-state of the previous chunk, and the end-state of each chunk can be updated recurrently.
+This yields a state-passing algorithm for long sequences, where we only compute FFT of length $N'$, and update some hidden state each iteration.
+
+Let \textsc{BlockFFTConv} refer to our fused block FFTConv kernel.
+Then, the state-passing algorithm for 1D input is given by Algorithm~\ref{alg:statepassing}.
+For inputs of dimension $d$ where we stack $d$ SSMs, we simply batch~\cref{alg:statepassing} along the $d$-dimension.
+\begin{algorithm}[h]
+  \algsetup{linenosize=\tiny}
+  \caption{\label{alg:statepassing} State Passing Algorithm}
+  \small
+  \begin{algorithmic}[1]
+    \REQUIRE Input $u \in \mathbb{R}^{N}$, SSM parameterized by matrices $\vA \in \mathbb{R}^{m \times m}$, $\vB \in \mathbb{R}^{m \times 1}$, $\vC \in \mathbb{R}^{1 \times m}$, $\vD \in \mathbb{R}^{1 \times 1}$, chunk size $N'$ where $N$ is a multiple of $N'$.
+    \STATE Precompute $\vA^{N'} \in \mathbb{R}^{m \times m}$, $\vM_{ux} = [\vA^{N'-1}\vB, \dots, \vB] \in \mathbb{R}^{m \times N'}$, $\vM_{xy} = [\vC, \vC\vA, \dots, \vC\vA^{N'-1}] \in \mathbb{R}^{N' \times m}$.
+    \STATE Split the inputs $u_{1:N}$ into $C = N/N'$ chunks $u_{1:N'}^{(c)}$ for $c=1, \dots, C$.
+    \STATE Let the initial state be $x_{N'}^{(0)} = 0 \in \mathbb{R}^m$.
+    \FOR{$1 \leq c \leq C$}
+      \STATE Compute $y^{(c)} = \vM_{xy} x_{N'}^{(c-1)} + $ \textsc{BlockFFTConv}($f$, $u_j$) $+ \vD u^{(c)} \in \mathbb{R}^{N'}$.
+      \STATE Update state: $x_{N'}^{(c)} = \vA^{N'} x_{N'}^{(c-1)} + \vM_{ux} u^{(c)}$.
+    \ENDFOR
+    \STATE Return $y = [y^{(1)} \dots y^{(C)}]$.
+  \end{algorithmic}
+\end{algorithm}
+
+We prove that~\cref{alg:statepassing} yields the same output as if one has computed the SSM using a large FFT of size $N$ (proof in~\cref{sec:app_statepassing_correctness_proof}):
+\begin{proposition}\label{thm:statepassing_correctness}
+  For input $u \in \mathbb{R}^N$ and matrices $\vA, \vB, \vC, \vD$, the output $y \in \mathbb{R}^N$ returned by~\cref{alg:statepassing} is the same as the output defined by the SSM parameterized by $\vA, \vB, \vC, \vD$.
+\end{proposition}
+
+%%% Local Variables:
+%%% mode: latex
+%%% TeX-master: "../main"
+%%% End:

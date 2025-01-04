@@ -1,0 +1,336 @@
+\section{Experiments}
+\label{sec:experiments}
+
+We validate our approach empirically, showing that our Monarch matrix parametrization achieves a favorable efficiency--accuracy tradeoff compared to baselines on a wide range of domains (text, images, PDEs, MRI), in three settings (E2E training, S2D training, and D2S fine-tuning):
+\begin{itemize}[leftmargin=*,nosep,nolistsep,noitemsep]
+\item
+In \cref{subsec:benchmark_tasks}, on image classification and language modeling benchmarks, such as ViT / MLP Mixer on ImageNet and GPT-2 on Wikitext-103, Monarch is 2$\times$ faster to train than dense models, while achieving the same accuracy / perplexity. In \cref{subsec:pde_mri}, in scientific and medical domains where special transforms (Fourier) are common, Monarch outperforms Fourier transform based methods on PDE solving, with up to 40\% lower error, and on MRI reconstruction attains up to 15\% higher pSNR and 3.8\% higher SSIM.
+\item In \cref{subsec:pde_mri}, we show that on the large OpenWebText dataset, reverse sparsification (training with Monarch weight matrices for most of the time, then transitioning to dense weight matrices) speeds up the pretraining of GPT-2 models by 2$\times$ compared to the dense model, with no loss in upstream or downstream quality.
+Moreover, reverse sparsification speeds up BERT pretraining by 23\% even compared to the implementation from Nvidia that set the MLPerf~\citep{mattson2020mlperf} 1.1 record.
+\item In \cref{subsec:finetuning}, as a proof of concept, we demonstrate that our Monarch approximation algorithm can improve fine-tuning efficiency for pretrained models. We show that compressing BERT to a Monarch matrix model performs comparably to a finetuned dense model on GLUE, with 2$\times$ fewer parameters and 1.7$\times$ faster finetuning speed.
+\end{itemize}
+
+\subsection{End-to-End Training}
+\label{subsec:e2e_training}
+\subsubsection{Benchmark Tasks: Image Classification, Language Modeling}
+\label{subsec:benchmark_tasks}
+
+We show that replacing dense matrices with Monarch matrices in ViT, MLP-Mixer, and
+GPT-2 can speed up training by up to 2$\times$ without sacrificing model quality in~\cref{table:pretrain,table:gpt_pretrain}.
+
+\textbf{Setup.} We use the popular vision benchmark, ImageNet~\citep{deng2009imagenet}. We choose recent popular Vision Transformer~\citep{dosovitskiy2020image}, and MLP-Mixer~\citep{tolstikhin2021mlp} as representative base dense models.
+For language modeling, we evaluate GPT-2~\citep{radford2019language} on WikiText-103~\citep{merity2016pointer}.
+
+\begin{table}[h]
+  \small
+  \centering
+  \vspace{-2mm}
+  \caption{\label{table:pretrain}The performance of Monarch matrices and ViT / MLP-Mixer on ImageNet, including the number of parameters and FLOPs. We measure the Top-1 accuracy and the training time speedup compared to the corresponding dense model. %
+  \vspace{2mm}
+  }
+  \iftoggle{arxiv}{}{
+  \resizebox{\linewidth}{!}
+  }
+  {
+  \setlength{\tabcolsep}{3pt}
+  \vspace{3em}
+  \begin{tabular}{@{}c||ccccccc@{}}
+  \specialrule{.15em}{.05em}{.05em}
+    Model&\multicolumn{1}{c}{ImageNet acc.}&\multicolumn{1}{c}{Speedup} &\multicolumn{1}{c}{Params} & \multicolumn{1}{c}{FLOPs} \\
+    \specialrule{.15em}{.05em}{.05em}
+    Mixer-S/16& 74.0& - & 18.5M & 3.8G \\
+    Monarch-Mixer-S/16& 73.7& 1.7$\times$ & 7.0M & 1.5G \\
+    Mixer-B/16& 77.7& - & 59.9M & 12.6G \\
+    Monarch-Mixer-B/16& 77.8& 1.9$\times$ & 20.9M & 5.0G \\
+    \specialrule{.15em}{.05em}{.05em}
+    ViT-S/16& 79.4 & - & 48.8M & 9.9G \\
+    Monarch-ViT-S/16& 79.1 & 1.9$\times$ & 19.6M & 3.9G \\
+    ViT-B/16& 78.5 & - & 86.6M  & 17.6G \\
+    Monarch-ViT-B/16& 78.9 & 2.0$\times$ & 33.0M & 5.9G \\
+    \specialrule{.15em}{.05em}{.05em}
+  \end{tabular}
+  }
+\end{table}
+
+\begin{table}[h]
+  \small
+  \centering
+  \vspace{-3mm}
+  \caption{\label{table:gpt_pretrain} Performance of Monarch matrices and GPT-2-Small/Medium on WikiText-103, including the \# of parameters and FLOPs. Monarch achieves similar perplexity (ppl) but 2.0$\times$ faster.}
+  \vspace{1mm}
+  \iftoggle{arxiv}{}{
+    \resizebox{0.95\linewidth}{!}
+  }
+  {
+\setlength{\tabcolsep}{5pt}
+\begin{tabular}{c||cccc}
+\specialrule{.15em}{.05em}{.05em}
+\multirow{1}{*}{{ Model} } & \multicolumn{1}{c}{\multirow{1}{*}{PPL}}
+                              & \multicolumn{1}{c}{\multirow{1}{*}{Speedup}}
+                              & \multicolumn{1}{c}{\multirow{1}{*}{Params}}
+                              & \multicolumn{1}{c}{\multirow{1}{*}{FLOPs}}\\
+\specialrule{.15em}{.05em}{.05em}
+GPT-2-Small &  20.6 & - & 124M& 106G\\
+Monarch-GPT-2-Small& 20.7  & 1.8$\times$ &72M & 51G\\
+\specialrule{.15em}{.05em}{.05em}
+GPT-2-Medium &  20.9 & - & 355M& 361G\\
+Monarch-GPT-2-Medium& 20.3  & 2.0$\times$ &165M & 166G\\
+\specialrule{.15em}{.05em}{.05em}
+\end{tabular}
+}
+\vspace{-2mm}
+\end{table}
+
+
+\subsubsection{PDE solving and multi-coil MRI reconstruction}
+\label{subsec:pde_mri}
+
+Many scientific or medical imaging tasks rely on specialized transforms such as the
+Fourier transform.
+We show that replacing the fixed Fourier transform with the more expressive
+Monarch matrices yields higher model quality (lower reconstruction error) with
+comparable model speed.
+
+\textbf{Solving PDEs with Monarch Neural Operators.}
+We follow the experimental setting in FNO~\citep{li2020fourier} and apply a Monarch--based neural operator to the task of solving the Navier--Stokes PDE. Compared to baseline U-Nets~\citep{ronneberger2015u}, TF-Nets~\citep{wang2020towards}, ResNets~\citep{he2016deep} and FNOs~\cite{li2020fourier}, neural operators based on Monarch improve solution accuracy across spatial resolutions by up to $40\%$ (Table \ref{table:pde}).  
+
+
+
+
+
+\paragraph{Non-periodic boundary conditions.} Traditional spectral methods based on Fourier transform work best with periodic boundary conditions and forcing terms. However, PDEs of practical interest often exhibit non--periodic or even unknown boundary conditions. Monarch operators are not constrained to the Fourier transform and can thus still learn the solution operator with excellent accuracy.
+
+\begin{table}[h!] 
+\scriptsize
+\vspace{-4mm}
+\caption{\label{table:pde}Benchmarks on Navier-Stokes (fixing resolution 64 × 64 for both training and testing).
+Decreasing the viscosity coefficient $\nu$ makes the dynamics more chaotic.
+}
+\vspace{1mm}
+\centering
+\iftoggle{arxiv}{}{
+  \resizebox{0.9\linewidth}{!}
+}
+{
+\renewcommand{\arraystretch}{1}
+\begin{tabular}{ c||ccc }
+\specialrule{.15em}{.05em}{.05em}
+Model & $v = 10^{-3}$  &  $v = 10^{-4}$ & $v = 10^{-5}$\\
+\specialrule{.15em}{.05em}{.05em}
+U-Net & 0.025  & 0.205  &   0.198\\
+TF-Net  & 0.023  & 0.225 &  0.227 \\
+ResNet & 0.070 &  0.287 &  0.275 \\
+FNO & 0.017  & 0.178 & 0.155\\
+Monarch-NO & \textbf{0.010} & \textbf{0.145} & \textbf{0.136} \\
+\specialrule{.15em}{.05em}{.05em}
+\end{tabular}
+}
+\textbf{\vspace{-3mm}}
+\end{table}
+
+\textbf{Accelerated MRI Reconstruction.} We characterize the utility of Monarch-based FFT operations for accelerated MRI reconstruction, a task which requires methods with both structured Fourier operators and dealiasing properties to recover high quality images. On the clinically-acquired 3D MRI SKM-TEA dataset \citep{desai2021skm}, Monarch-SENSE (mSENSE) enhances image quality by over 1.5dB pSNR and 2.5\% SSIM compared to zero-filled SENSE and up to 4.4dB and 3.8\% SSIM compared to U-Net baselines in data-limited settings. Setup details are available in~\cref{sec:experiment_details_mri}.
+
+\paragraph{Expressive FFT.} By definition, standard IFFT in zero-filled SENSE cannot dealias the signal, resulting in artifacts in the reconstructed image. mSENSE replaces the inverse FFT (IFFT) operation in standard SENSE with learnable Monarch matrices. Thus, mSENSE preserves the structure of the Fourier transform while learning to reweight frequencies to suppress aliasing artifacts. Across multiple accelerations, mSENSE achieved up to +1.5dB and 2.5\% improvement in peak signal-to-noise ratio (pSNR) and structural similarity (SSIM), respectively (Table~\ref{table:mri}).
+
+\paragraph{Data Efficiency.} While CNNs have shown promise for MRI reconstruction tasks, training these networks requires extensive amounts of labeled data to avoid overfitting. However, large data corpora are difficult to acquire in practice. mSENSE can be trained efficiently with limited supervised examples. In few shot settings, mSENSE can outperform U-Net by +4.4dB ($\approx$15\%) and 3.8\% SSIM (Table~\ref{table:mri-data-limited}). 
+
+
+
+
+
+
+
+\begin{table}[h!] 
+\scriptsize
+\vspace{-3mm}
+\caption{\label{table:mri}Mean $\pm$ standard error of the mean of conventional and Monarch-SENSE (mSENSE) on dual-echo (E1,E2) MRI reconstruction at multiple acceleration factors (Acc.).
+}
+\vspace{1mm}
+\centering
+\iftoggle{arxiv}{}{
+  \resizebox{\linewidth}{!}
+}
+{
+\renewcommand{\arraystretch}{1.2}
+\begin{tabular}{c||ccccc}
+\specialrule{.15em}{.05em}{.05em}
+  & & \multicolumn{2}{c}{pSNR (dB) ($\uparrow$)} & \multicolumn{2}{c}{SSIM ($\uparrow$)} \\
+  Acc. & Model &             E1 &             E2 &                E1 &                E2 \\
+\specialrule{.15em}{.05em}{.05em}
+\multirow{2}{*}{2} & SENSE &  32.8$\pm$0.2 &  35.4$\pm$0.2 &  0.871$\pm$0.003 &  0.865$\pm$0.003 \\
+  & mSENSE &  \textbf{34.3$\pm$0.2} &  \textbf{36.6$\pm$0.2} &  \textbf{0.886$\pm$0.002} &  \textbf{0.882$\pm$0.003} \\
+\specialrule{.15em}{.05em}{.05em}
+\multirow{2}{*}{3} & SENSE &  30.9$\pm$0.2 &  33.5$\pm$0.2 &  0.819$\pm$0.004 &  0.795$\pm$0.004 \\
+  & mSENSE &  \textbf{32.3$\pm$0.2} &  \textbf{34.6$\pm$0.2} &  \textbf{0.843$\pm$0.003} &  \textbf{0.820$\pm$0.004} \\
+\specialrule{.15em}{.05em}{.05em}
+\multirow{2}{*}{4} & SENSE &  30.1$\pm$0.2 &  32.8$\pm$0.2 &  0.789$\pm$0.004 &  0.753$\pm$0.005 \\
+  & mSENSE &  \textbf{31.2$\pm$0.2} &  \textbf{33.5$\pm$0.2} &  \textbf{0.812$\pm$0.003} &  \textbf{0.767$\pm$0.005} \\
+\specialrule{.15em}{.05em}{.05em}
+\end{tabular}
+}
+\end{table}
+
+\begin{table}[h!] 
+\scriptsize
+\vspace{-5mm}
+\caption{\label{table:mri-data-limited}Impact of number of training examples ($N$) on dual-echo MRI reconstruction at 2x acceleration.
+}
+\vspace{1mm}
+\centering
+\iftoggle{arxiv}{}{
+  \resizebox{\linewidth}{!}
+}
+{
+\renewcommand{\arraystretch}{1.2}
+\begin{tabular}{c||ccccc}
+\specialrule{.15em}{.05em}{.05em}
+  &  & \multicolumn{2}{c}{pSNR (dB) ($\uparrow$)} & \multicolumn{2}{c}{SSIM ($\uparrow$)} \\
+  $N$ & Model &            E1 &            E2 &               E1 &               E2 \\
+\specialrule{.15em}{.05em}{.05em}
+N/A & SENSE &  32.8$\pm$0.2 &  35.4$\pm$0.2 &  0.871$\pm$0.003 &  0.865$\pm$0.003 \\
+\specialrule{.15em}{.05em}{.05em}
+\multirow{2}{*}{1} & U-Net &  29.4$\pm$0.2 &  34.4$\pm$0.3 &  0.848$\pm$0.004 &  0.857$\pm$0.004 \\
+  & mSENSE &  \textbf{33.8$\pm$0.2} &  \textbf{36.0$\pm$0.2} &  \textbf{0.886$\pm$0.003} &  \textbf{0.867$\pm$0.003} \\
+\specialrule{.15em}{.05em}{.05em}
+\multirow{2}{*}{2} & U-Net &  29.9$\pm$0.3 &  35.1$\pm$0.3 &  0.858$\pm$0.003 &  0.871$\pm$0.003 \\
+  & mSENSE &  \textbf{34.0$\pm$0.2} &  \textbf{36.4$\pm$0.2} &  \textbf{0.883$\pm$0.002} &  \textbf{0.877$\pm$0.003} \\
+\specialrule{.15em}{.05em}{.05em}
+\multirow{2}{*}{3} & U-Net &  31.0$\pm$0.3 &  35.2$\pm$0.3 &  0.866$\pm$0.003 &  0.867$\pm$0.004 \\
+  & mSENSE &  \textbf{33.9$\pm$0.2} & \textbf{ 36.5$\pm$0.2} &  \textbf{0.882$\pm$0.002} & \textbf{0.878$\pm$0.003} \\
+\specialrule{.15em}{.05em}{.05em}
+\multirow{2}{*}{5} & U-Net &  31.4$\pm$0.3 &  35.6$\pm$0.2 &  0.877$\pm$0.002 &  0.870$\pm$0.003 \\
+  & mSENSE &  \textbf{33.9$\pm$0.2} &  \textbf{36.5$\pm$0.2} &  \textbf{0.881$\pm$0.002} &  \textbf{0.877$\pm$0.003} \\
+\specialrule{.15em}{.05em}{.05em}
+\end{tabular}
+}
+\end{table}
+
+
+
+
+\subsection{Sparse-to-Dense Training (reverse sparsification)}
+\label{subsec:s2d_training}
+\paragraph{GPT-2 pretraining.}
+On the large OpenWebtext dataset~\citep{Gokaslan2019OpenWeb}, we train a GPT-2 model with Monarch weight
+matrices for 90\% of the training iterations, then relax the constraint on the
+weight matrices and train them as dense matrices for the remaining 10\% of the
+iterations.
+We call this technique ``reverse sparsification.''
+Previous sparse training techniques often don't speed up training, whereas our
+hardware-efficient Monarch matrices do.
+Therefore we can use them as an intermediate step to pretrain a large language
+model (GPT-2) in 2$\times$ less time. We also evaluate its downstream quality on zero-shot generation from~\citep{eval-harness} and classification tasks from~\citep{zhao2021calibrate}, achieving comparable performance to the dense counterparts (\cref{table:gpt_finetune}). 
+
+\begin{table}[h]
+  \small
+  \centering
+  \vspace{-3mm}
+  \caption{\label{table:gpt_finetune}The performance (accuracy) of GPT-2-medium trained with Monarch reverse sparsification and with conventional dense training on text classification benchmarks.}
+  \setlength{\tabcolsep}{5pt}
+  \vspace{1em}
+  \iftoggle{arxiv}{}{
+    \resizebox{\linewidth}{!}
+  }
+  {
+  \begin{tabular}{@{}c||ccc@{}}
+    \specialrule{.15em}{.05em}{.05em}
+    Model&\multicolumn{1}{c}{OpenWebText (ppl)}&\multicolumn{1}{c}{Speedup}& \multicolumn{1}{c}{Classification (avg acc)} \\
+    \specialrule{.15em}{.05em}{.05em}
+    GPT-2m& 18.0 & - & 38.9 \\
+    Monarch-GPT-2m& 18.0 & 2$\times$ & 38.8 \\
+    \specialrule{.15em}{.05em}{.05em}
+  \end{tabular}
+  }
+  \vspace{-3mm}
+\end{table}
+
+
+In \cref{fig:reverse_sparsification_bar}, we show the training time of the dense GPT-2 model, along with
+the Monarch GPT-2 model.
+After training the Monarch model for 90\% of the time, in the
+last 10\% of the training steps, by transitioning to dense weight matrices, the model is able to reach the same 
+performance of another model that was trained with dense weight matrices from
+scratch.
+By training with Monarch matrices for 90\% of the time, we reduce the total training time by 2$\times$.
+
+\paragraph{BERT pretraining.}
+On the Wikipedia + BookCorpus datasets~\citep{zhu2015aligning}, we train a BERT-large model with Monarch weight matrices for 70\% of the time and transition to dense weight matrices for the remaining 30\% of the time, which yields the same pretraining loss as conventional dense training.
+In \cref{table:bert_speed}, we compare the total training time to several baseline implementations: the widely-used implementation from HuggingFace~\citep{wolf-etal-2020-transformers}, the more optimized implementation from Megatron~\citep{shoeybi2019megatron}, and the most optimized implementation we know of from Nvidia that was used to set MLPerf 1.1 training speed record. Our method is 3.5x faster than HuggingFace and 23\% faster than Nvidia's MLPerf 1.1 implementation\footnote{Our result is not an official MLPerf submission. We train BERT for both phase 1 (sequence length 128) and phase 2 (sequence length 512) according to the standard BERT training recipe\cite{devlin2018bert}, while MLPerf only measures training time for phase 2.}.
+Experiment details are in~\cref{subsec:bert_details}.
+
+\begin{table}[h]
+  \small
+  \centering
+  \caption{\label{table:bert_speed}The total training time of BERT-large trained with Monarch reverse sparsification and with conventional dense training on 8 A100-40GB GPUs (DGX A100). Training consists of two phases, phase 1 with sequence length 128 and phase 2 with sequence length 512. Monarch training is 3.5x faster than HuggingFace and 23\% faster than Nvidia's MLPerf 1.1 implementation.}
+  \vspace{1em}
+  \iftoggle{arxiv}{}{
+    \resizebox{\linewidth}{!}
+  }
+  {
+    \begin{tabular}{@{}c||c@{}}
+      Implementation & Training time (h)  \\ \hline
+      HuggingFace &  84.5 \\
+      MegaTron & 52.5 \\
+      Nvidia MLPerf 1.1 & 30.2 \\
+      Nvidia MLPerf 1.1 + DeepSpeed & 29.3 \\
+      Monarch (ours) & \textbf{23.8} \\
+    \end{tabular}
+  }
+  \vspace{-3mm}
+\end{table}
+
+\subsection{Dense-to-Sparse Fine-tuning}
+\label{subsec:finetuning}
+
+\begin{figure}[t]
+  \centering
+  \vspace{-3mm}
+  \includegraphics[width=.3\textwidth]{figures/rv_bar_temp.png}
+  \vspace{-3mm}
+  \caption{\label{fig:reverse_sparsification_bar}Time required (in A100 GPU hours) to reach the same perplexity (18.0)
+    for GPT-2-small on OpenWebText.
+    With ``reverse sparsification'', Monarch can speed up
+    GPT-2 training by 2$\times$.\vspace{-1em}}
+\end{figure}
+
+We show that our Monarch approximation algorithm allows us to efficiently use
+pretrained models, such as speeding up BERT finetuning on GLUE.
+
+\paragraph{BERT finetuning.}
+We take the BERT pretrained weights, approximate them with Monarch matrices,
+and finetune the resulting model on the 9 GLUE tasks.
+The results in \cref{table:bert_glue} shows that we obtain a Monarch finetuned
+model with similar quality to the dense BERT model, but with 1.7$\times$ faster
+finetuning speed.
+This serves as a proof of concept, and we expect further speedup if additional model compression techniques are applied (e.g., quantization, kernel fusion).
+
+
+
+
+\begin{table}[h]
+  \small
+  \centering
+  \vspace{-5mm}
+  \caption{\label{table:bert_glue}The performance of Monarch matrices in
+    finetuning BERT on GLUE.}
+  \setlength{\tabcolsep}{5pt}
+  \vspace{1em}
+  \iftoggle{arxiv}{}{
+    \resizebox{\linewidth}{!}
+  }
+  {
+  \begin{tabular}{@{}c||ccccccc@{}}
+  \specialrule{.15em}{.05em}{.05em}
+    Model&\multicolumn{1}{c}{GLUE (avg)}&\multicolumn{1}{c}{Speedup} &\multicolumn{1}{c}{Params} & \multicolumn{1}{c}{FLOPs} \\
+    \specialrule{.15em}{.05em}{.05em}
+    BERT-base & 78.6& - & 109M & 11.2G \\
+    Monarch-BERT-base& 78.3& 1.5$\times$ & 55M & 6.2G  \\
+    BERT-large & 80.4 & - & 335M & 39.5G \\
+    Monarch-BERT-large & 79.6 & 1.7$\times$ & 144M & 14.6G  \\
+    \specialrule{.15em}{.05em}{.05em}
+  \end{tabular}
+  }
+  \vspace{-3mm}
+\end{table}
+
+

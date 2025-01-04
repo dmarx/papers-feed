@@ -1,0 +1,80 @@
+\section{Introduction}
+\label{sec:intro}
+
+% What's the problem
+Scaling up the context length of Transformers~\citep{vaswani2017attention} is a
+challenge, since the attention layer at their heart has runtime and
+memory requirements quadratic in the input sequence length.
+Ideally, we would like to go beyond the standard 2k sequence length limit to
+train models to understand books, high resolution images, and long-form videos.
+Just within the last year, there have been several language models with much
+longer context than before: GPT-4~\citep{OpenAI2023GPT4TR} with context
+length 32k, MosaicML's MPT with context length 65k, and Anthropic's
+Claude with context length 100k.
+Emerging use cases such as long document querying and story writing have
+demonstrated a need for models with such long context.
+
+To reduce the computational requirement of attention on such long context, there
+have been numerous methods proposed to approximate
+attention~\citep{kitaev2020reformer, roy2021efficient, wang2020linformer,
+  katharopoulos2020transformers, choromanski2020rethinking,
+  beltagy2020longformer, zaheer2020bigbird, scatterbrain}.
+Though these methods have seen some use cases, as far as we know, most
+large-scale training runs still use standard attention.
+Motivated by this, \citet{dao2022flashattention} proposed to reorder the
+attention computation and leverages classical techniques (tiling, recomputation)
+to significantly speed it up and reduce memory usage from quadratic to linear in
+sequence length.
+This yields 2-4$\times$ wall-clock time speedup over optimized baselines, up to
+10-20$\times$ memory saving, with no approximation, and as a result \sysnameone has
+seen wide adoption in large-scale training and inference of Transformers.
+
+However, context length increases even more, \sysnameone is still not nearly as
+efficient as other primitives such as matrix-multiply (GEMM).
+In particular, while \sysnameone is already 2-4$\times$ faster than a standard
+attention implementation, the forward pass only reaches 30-50\% of the
+theoretical maximum FLOPs/s of the device (\cref{fig:benchmark_attn_fwd}), while
+the backward pass is even more challenging, reaching only 25-35\% of maximum
+throughput on A100 GPU (\cref{fig:benchmark_attn_bwd}).
+In contrast, optimized GEMM can reach up to 80-90\% of the theoretical maximum
+device throughput.
+Through careful profiling, we observe that \sysnameone still has suboptimal work
+partitioning between different thread blocks and warps on the GPU, causing
+either low-occupancy or unnecessary shared memory reads/writes.
+
+Building on \sysnameone, we propose \sysname with better parallelism and work
+partitioning to address these challenges.
+\begin{enumerate}
+  \item In \cref{subsec:algo}, we tweak the algorithms to reduce the number of non-matmul FLOPs while not
+  changing the output.
+  While the non-matmul FLOPs only account for a small fraction of the total FLOPs,
+  they take longer to perform as GPUs have specialized units for matrix multiply,
+  and as a result the matmul throughput can be up to 16$\times$ higher than non-matmul
+  throughput.
+  It is thus important to reduce non-matmul FLOPs and spend as much time as
+  possible doing matmul FLOPs.
+
+  \item We propose to parallelize both the forward pass and backward pass along
+  the sequence length dimension, in addition to the batch and number of heads
+  dimension. This increases occupancy (utilization of GPU resources) in the case
+  where the sequences are long (and hence batch size is often small).
+
+  \item Even within one block of attention computation, we partition the work
+  between different warps of a thread block to reduce communication and shared
+  memory reads/writes.
+
+\end{enumerate}
+
+In \cref{sec:experiments}, we empirically validate that \sysname yields significant speedup compared to
+even \sysnameone. Benchmarks on different settings (with or without causal mask,
+different head dimensions) show that \sysname achieves around 2$\times$ speedup over
+\sysnameone, reaching up to 73\% of the theoretical max throughput in the
+forward pass, and up to 63\% of the theoretical max throughput in the backward pass.
+When used end-to-end to train GPT-style models, we reach training speed of up to
+225 TFLOPs/s per A100 GPU.
+
+
+%%% Local Variables:
+%%% mode: latex
+%%% TeX-master: "../flash2"
+%%% End:

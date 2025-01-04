@@ -1,0 +1,248 @@
+\clearpage
+\section{Experimental Details}
+\label{appendix:experiment-details}
+%
+An implementation of ${\sf Hyena}$ can be found at \href{https://github.com/HazyResearch/safari}{this link}.
+%
+
+\subsection{Mechanistic Design Synthetic Benchmarks}\label{app:icl}
+%
+Our synthetic reasoning are inspired by mechanistic interpretability \citep{elhage2021mathematical}, \textit{in-context learning} (ICL) \citep{garg2022can} and language model benchmarking \citep{liang2022holistic} research. The evaluation revolves around $4$ main tasks:
+\begin{itemize}[leftmargin=0.2in]
+    \item \textbf{Associative recall:} Each string is produced by concatenating key-value tuples from a different random dictionary. This test verifies whether a model is able to extract right value given a key as prompt, effectively applying a data-controlled shift (delay).
+    \item \textbf{Majority voting and counting:} Testing if a model can \textit{densely} activate its data-controlled matrix i.e., through many non-zero entries (consider the string '\textit{a a a a a a a a a a b} $\rightarrow$ \textit{a}').
+    \item \textbf{ICL of linear functions:} Verifying whether a model can perform ICL on real-valued inputs. Prompts are generated as $x_1, w^k x_1, \dots, x_n \rightarrow w^k x_n$, where both $x_k$ and $w^k \in R^{n_o}$ are sampled from a normal distribution.  
+    \item \textbf{Arithmetic:} Basic capability check. 
+\end{itemize}
+
+For each task, we train models using the hyperparameters shown in Table \ref{tab:synthetics}. We consider increasing settings of difficulty controlled by sequence length, spanning values $1024, 2048, 4098, 8196, 16392, 32784, 65568, 131136$ and vocabulary sizes $10, 20, 30, 40$. For ICL of functions, we vary instead the dimension $n_o$.
+
+Note that for associative recall on longer sequences, multiple copies of key-value tuples appear in the prompt. To see this, consider how likely it is to sample multiple copies of a particular key-value pair with a vocabulary size of $40$, in order to form a sequence of $100$k characters. Models capable of looking further back in the sequence effectively see more data, and can solve challenging versions of the in-context learning task. Increasing the vocabulary size has the increasing the average distance between instances of the same key-value pair in each prompt, highlighting performance gaps between different approaches.
+
+\begin{table}[ht]
+    % \begin{minipage}[t]{0.4\linewidth}
+      \small
+      \caption{{(\bf Hyperparameter settings for reasoning and in-context learning tasks.)}.
+      }
+        \centering
+        \begin{tabular}{lcc}
+            \toprule
+            Optimizer & AdamW \\
+            Optimizer momentum & $\beta_1,\beta_2=0.9,0.98$ \\
+            Base learning rate & 0.0005 \\
+            Weight decay & 0.1 \\
+            Dropout & None \\
+            Batch size & 32 \\\
+            Training epochs & 200 \\
+            Num samples & 2000 \\ 
+            Learning rate schedule & cosine decay \\
+            Warmup epochs & 10 \\
+            Warmup schedule & linear \\
+            Number of layers & 2 \\ 
+            Width & 64 \\
+            \bottomrule
+        \end{tabular}
+        \label{tab:synthetics}
+    % \end{minipage}
+\end{table}
+
+\paragraph{Long convolution comparisons:}
+%
+We compare different convolution parametrizations, embedding them in an order $2$ ${\sf Hyena}$ operator. All convolutions are applied separately to input channels (referred to as single-input single-output (SISO) in signal processing, or \textit{depthwise} in other machine learning contexts).
+
+\begin{itemize}[leftmargin=0.1in]
+    \item Conv1d: Explicit convolutions (regular convolution layers with fixed filter size). We use a fixed filter size of $64$, to match parameters of the other approaches.
+    \item FNO: Filters parametrized explicitly in the frequency-domain \citep{li2020fourier}. We set the number of modes to $64$.
+    \item H3: Implicit parametrization using state-space models (SSMs), and in particular the standard S4 \citep{gu2021efficiently}. We set the state dimension to $64$.
+    \item TransferFunc: Implicit parametrization via transfer functions, a classical system-theoretic generalization of SSMs. Transfer functions are defined by a ratio of polynomials (we parametrize the coefficients, and evaluate the polynomials efficiently via FFTs). We set the order to $64$.
+    \item CKConv: Implicit parametrization using {$\sf FFN$s} \citep{romero2021ckconv}. 
+    \item item ${\sf Hyena}$: Combination of implicit parametrizations via {$\sf FFN$s} (with exponential decay modulation as shown in Figure \ref{fig:modul}), and short explicit filters.
+\end{itemize}
+
+CKConv and ${\sf Hyena}$ use the same size of ${\sf FFNs}$ (width $32$ to match in parameters).  
+    
+In Table \ref{synthetic2}, we report additional results on the challenging setting of sequence length $131072$ and vocabulary size $30$. Implicit parametrizations of convolutions outperform explicit parametrizations on associative recall, with CKConv and ${\sf Hyena}$ greatly improving on the ability to extract the right key, value relations from different inputs. In Appendix \ref{app:add_results}, we discuss how results on our synthetic tasks can be indicative of performance at a larger scale. 
+
+%
+\begin{table}[h]
+\label{synthetic2}
+\small
+\centering
+\vspace{-2mm}
+\caption{Test accuracy (\%) in associative recall on sequences of length $131072$, vocabulary size $30$.}
+\vspace{2mm}
+\resizebox{0.45\linewidth}{!}
+{
+\setlength{\tabcolsep}{4pt}
+\vspace{3em}
+\begin{tabular}{@{}c|ccccccc@{}}
+%\specialrule{.15em}{.05em}{.05em}
+\toprule
+${\sf Hyena}$ &\multicolumn{1}{c}{CKConv}&\multicolumn{1}{c}{TransferFunc} & \multicolumn{1}{c}{H3} & \multicolumn{1}{c} {FNO} & \multicolumn{1}{c}{Conv1d} \\
+\midrule 
+97.2 & 14.3 & 0.5 & 0.6 & 0.3 & 0.5 \\
+\bottomrule
+\end{tabular}
+}
+\end{table}
+%
+
+\paragraph{Operator comparisons:}
+%
+We compare different models on the same associative recall task, using hyperparameters in Table \ref{tab:synthetics}. ${\sf Hyena}$ uses our filter parametrization with decay windowing for long convolutions, and short explicit convolutions of size $3$ after the dense input projections. All other models use defaults from their largest scale experiment, while keeping the size to $2$ layers and width $64$.
+
+\paragraph{A note on Transformer performance}
+%
+Transformers can solve associative recall tasks with longer sequences, provided the length does not prevent them from fitting in memory, and enough examples are present in the training data. In all our experiments, we keep the number of samples fixed ($2000$), a regime where Transformers struggle to find the generalizing solution (see Table \ref{synthetic2}).
+
+For shorter sequences (see Appendix \ref{app:add_results}), Transformers solve the task easily even with limited data, comparably to {\sf Hyena}. 
+
+More broadly, these different properties of attention and attention-free token-mixing layers may explain improved performance when they are combined in hybrid architectures \citep{dao2022hungry}. The focus on this work has been identifying an architecture capable of performing without attention, which is necessary to tackle domains where long sequences are common. However, when training with shorter sequences (up to $8$k), if final downstream performance is the only metric of interest, improved results can be obtained by hybridizing our models similarly to H3 \citep{dao2022hungry}.
+
+
+%
+\subsection{Language Modeling}
+%
+\paragraph{WikiText103:}
+%
+We train $125$M parameter models on {\sc WikiText103} and compare perplexity to Transformers, hybrid models such as H3 \citep{dao2022hungry}, and other variants of subquadratic attention. All models use the same GPT2 tokenizer with vocabulary size $50257$. We test order $3$ ${\sf Hyena}$ with our proposed filter parametrization for two long convolutions, and a shorter explicit convolution on the third. We also consider ${\sf Hyena}$ (slim) that are $1.5$x deeper than Transformers ($12$ versus $18$ layers), with width multiplier of the FFNs set to $2$. We find trading-off width for depth to be generally favourable. These modifications are made possible by the reduction in overall FLOPs of {\sf Hyena} operators compared to self-attention, in particular non-parametric FLOPs which include materialization of the attention matrix, application of softmax, and matrix-value reduction. 
+
+\begin{table}[ht]
+    % \begin{minipage}[t]{0.4\linewidth}
+      \small
+      \caption{Hyperparameter settings for {\sc The Pile}, $125$M).
+      }
+        \centering
+        \begin{tabular}{lcc}
+            \toprule
+            Optimizer & AdamW \\
+            Optimizer momentum & $\beta_1,\beta_2=0.9,0.98$ \\
+            Peak learning rate & 0.0006 \\
+            Warmup learning rate init & 0.000001 \\
+            Learning rate min &  0.00006 \\ 
+            % weight decay & \multicolumn{2}{c}{0.05} \\
+            Weight decay & 0.1 \\
+            Dropout & None \\
+            Batch size & 256 \\
+            % training epochs & \multicolumn{2}{c}{300} \\
+            Learning rate schedule & cosine decay \\
+            % warmup schedule & \multicolumn{2}{c}{linear} \\
+            Warmup schedule & linear \\
+            \bottomrule
+        \end{tabular}
+        \label{tab:pilehyper}
+    % \end{minipage}
+\end{table}
+
+\paragraph{The Pile:}
+%
+We follow a same procedure and train $125$M and $355$M-sized models on {\sc The Pile} \citep{gao2020pile}. Hyperparameters are reported in Table \ref{tab:pilehyper}. Hyperparameters for $355$M are the same beyond a reduction in peak learning rate to $4\cdot 10^{-4}$. For larger models ($1.3$B), we set a learning rate of $2.2 \cdot 10^{-4}$.
+
+We perform three experiments for each model type and size, and train for $5, 10, 15$ billion tokens at a sequence length $2024$ and global batch size $256$. All models are trained on a single node of $8$ $A100$ $80$GB GPUs. We use order $2$ ${\sf Hyena}$s, with the same architectural considerations described above for {\sc WikiText103}.
+%
+In addition to our data scaling experiments at $5$, $10$ and $15$ billion tokens, we provide preliminary results for models at the $1.3$B parameter scale ($10.8$ perplexity after $5$ billion tokens), and train a $153$M model ($130$ billion tokens), reaching a perplexity of $9.8$. The $153$M is the same used in our downstream evaluation on SuperGLUE. 
+
+Training hyperparameters match those of standard GPT training pipelines, and are thus likely suboptimal for new attention-free architectures such as {\sf Hyena}. We run some preliminary experiments and find that e.g., some modifications to the learning rate schedule, currently involving linear warmup and cosine decay, to improve perplexity at convergence of {\sf Hyena} models (we recommend slightly lower learning rates for Hyena models compared to GPT of a similar size). Despite these findings, we use standard GPT hyperparameters for both GPT and {\sf Hyena}.
+%
+\paragraph{PG-19}
+
+We also report results of additional training runs on other datasets. We train a ${\sf Hyena}$ $153$M model on the standard PG-19 long-range corpus \citep{raecompressive2019}, with a context length of $16$k tokens, reaching a test perplexity of $14.6$ (using the standard GPT2 tokenizer) in $8$ epochs.
+%
+\paragraph{Architectures}
+%
+Architectural hyperparameters for {\sf Hyena} are shown in Table \ref{hyena_arch}. We use sine as an activation function for the {\sf FFN} of {\sf Hyena} filters. 
+
+\begin{table}[!bh]
+\small
+\centering
+\caption{{\sf Hyena} architecture hyperparameters.}
+\label{hyena_arch}
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}c|cccccc@{}}
+\toprule
+Size & depth & width & {\sf FFN} width & filter {\sf FFN} width & filter {\sf FFN} depth & sine freq. \\
+\midrule 
+$125$M & $12$ & $768$ & $3072$ & $64$ & $4$ & $14$ \\ 
+$125$M-slim &$18$ & $768$ & $1536$ & $64$ & $4$ & $14$\\ 
+$153$M & $18$ & $864$ & $1728$ & $64$  & $4$ & $14$\\  
+$355$M & $36$ & $1024$ & $2048$ & $64$ & $4$ & $14$ \\ 
+$1.3$B & $36$ & $2048$ & $4096$ & $64$ & $4$ & $14$ \\ 
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+\paragraph{FLOP computation}
+%
+The number of \textit{floating point operations} (FLOPs) reported in the main text are computed using the same strategy as in \citep{hoffmann2022training}. For GPT, we do not use the approximation, opting instead for the more accurate formula based on FLOP counts of individual layers. In the case of {\sf Hyena}, FLOPs are computed using the same method, except attention layers are replaced by:
+\begin{itemize}
+    \item[i.] Projections: order $\times$ d\_model $\times$ d\_model $\times$ seq\_len.
+    \item[ii.] Short conv on projections: order $\times$ d\_model $\times$ seq\_len $\times$ filter\_len (usually $3$).
+    \item[iii.] FFTConv: $5$ $\times$ (order - 1) $\times$ d\_model $\times$ $\log(\text{seq\_len})$
+    $\times$ seq\_len.
+    \item[iv.] Output: d\_model $\times$ d\_model $\times$ seq\_len.
+\end{itemize}
+with a leading factor $2$ to account for both additions and multiplications. 
+%
+
+\subsection{Downstream Evaluation}
+%
+\paragraph{SuperGLUE:} We evaluate models on the SuperGLUE \citep{wang2019superglue} with the parsing pipeline of \citep{arora2022ask}. For all tasks except WIC, CB and BoolQ, we generate a response using greedy decoding, then check for the gold label. WIC, CB and BoolQ use logit scoring instead of generation. 
+
+\paragraph{Models}
+The models considered are the open-source checkpoint of GPTNeo $125$M trained for $300$B tokens {\sc The Pile}, and the RWKV-v4 $169$M checkpoint trained for $332$B tokens on {\sc The Pile}. {\sf Hyena} is a $153$M model trained for $137$B tokens on {\sc The Pile}.
+%
+\paragraph{LAMBADA:} We evaluate ${\sf Hyena}$ on the LAMBADA \citep{paperno2016lambada} task. We apply a stop word filter and check whether predictions for all tokens corresponding to the last word agree with the ground truth. The small ${\sf Hyena}$ model trained on $137$B tokens reaches $44.64\%$ accuracy. 
+
+\subsection{Image Classification}
+\label{appendix:image-classification}
+
+\paragraph
+a{ImageNet:} We use ImageNet-1k which consists of 1000 classes and 1.3M images and train from scratch with no outside data on 8 Nvidia A100 GPUs. In our ViT benchmark, we swap the attention layers with the Hyena operator defined in our language experiments, and remove the class token and positional embeddings, similar to S4ND \citep{nguyen2022s4nd}. The parameter count is kept similar at 87M ViT-B (base) vs 88M Hyena-ViT. The training procedure from T2T-ViT \citep{yuan2021tokens} is used, including augmentations such as RandAugment \citep{cubuk2020randaugment}, Mixup \citep{zhang2017mixup}, and AugMix \citep{hendrycks2019augmix}. See table \ref{tab:imagenet_hparams} for hyperparameter settings used.
+
+\paragraph{CIFAR-10:} We use CIFAR-10 in sequential and 2D experiments. For sequential, we use the Hyena operator defined in our language tasks and compare with an S4 model \citep{gu2021efficiently} of the same size by swapping layers in the residual blocks. In 2D, we learn Hyena filters (in both $x$ and $y$ dimensions) that are equal to the size of the input shape, and forgo the gating mechanism from our language experiments. We window (i.e., apply a soft mask spatially to) the Hyena filters with a decay term. The rate of decay varies across channels, ensuring different sizes of the filters at initialization. We compare with another implicit 2D convolution, S4ND \citep{nguyen2022s4nd}, by swapping the model layers with the 2D Hyena filters. The "isometric" model consists of 4 residual blocks of model dimension 128. We use basic image augmentations, 0.1 dropout, 0.03 weight decay and train for 100 epochs using a Nvidia T4 GPU.
+
+\begin{table}[ht]
+    % \begin{minipage}[t]{0.4\linewidth}
+      \small
+      \caption{ViT and ViT-Hyena settings for ImageNet-1k).
+      }
+        \centering
+        \begin{tabular}{lcc}
+            \toprule
+            Image size & $224^2$ \\
+            % image size & \multicolumn{2}{c}{$224^2$} \\
+            Optimizer & AdamW \\
+            % optimizer & \multicolumn{2}{c}{\textsc{AdamW}} \\
+            % optimizer momentum & \multicolumn{2}{c}{$\beta_1,\beta_2=0.9,0.999$} \\
+            Optimizer momentum & $\beta_1,\beta_2=0.9,0.999$ \\
+            Weight init & trunc. normal (std=0.02) \\
+            ViT base learning rate & $1e^{-3}$ \\
+            Hyena-ViT base learning rate & $2e^{-4}$ \\
+            % weight decay & \multicolumn{2}{c}{0.05} \\
+            ViT weight decay & 0.05 \\
+            Hyena-ViT weight decay & 0.01 \\
+            Dropout & None \\
+            Batch size & 1024 \\
+            % training epochs & \multicolumn{2}{c}{300} \\
+            Training epochs & 300 \\
+            % learning rate schedule & \multicolumn{2}{c}{cosine decay} \\
+            Learning rate schedule & cosine decay \\
+            Warmup epochs & 10 \\
+            % warmup schedule & \multicolumn{2}{c}{linear} \\
+            Warmup schedule & linear \\
+            Randaugment \citep{cubuk2020randaugment} & (9,0.5,layers=2)  \\
+            Mixup \citep{zhang2017mixup} & 0.8 \\
+            Cutmix \citep{yun2019cutmix} & 1.0 \\
+            Random erasing \citep{zhong2020random} & 0.25 \\
+            Label smoothing \citep{szegedy2016rethinking} & 0.1 \\
+            Stochastic depth \citep{huang2016deep} & 0.1 \\
+            Exp.mov. avg (EMA) \citep{polyak1992ema} & None \\
+            \bottomrule
+        \end{tabular}
+        \label{tab:imagenet_hparams}
+\end{table}
+%
+
+
+

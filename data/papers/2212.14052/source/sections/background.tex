@@ -1,0 +1,97 @@
+\section{Background}
+\label{sec:background}
+
+We present some background on state space models and linear attention, which inspired our H3 layer.
+
+\subsection{State Space Models}
+
+A continuous-time state-space representation~\citep{brogan1974modern} defines a linear mapping from an
+input signal $u(t) \in \mathbb{R}$ (as a function of time $t$) to an output signal $y(t) \in \mathbb{R}$ through a state-variable
+$x(t) \in \mathbb{R}^m$, with the following differential equation, for some matrices $\vA \in \mathbb{R}^{m \times m}$, $\vB \in \mathbb{R}^{m \times 1}$, $\vC \in \mathbb{R}^{1 \times m}$,
+$\vD \in \mathbb{R}^{1 \times 1}$: $\dot{x}(t) = \vA x(t) + \vB u(t)$, $y(t) = \vC x(t) + \vD u(t)$.
+
+Similarly, a discrete-time state-space representation defines a linear mapping
+from a discrete input signal $u_i$ (for $i = 1, 2, \dots$) to a discrete output signal
+$y_i$ though a state-variable $x_i \in \mathbb{R}^m$:
+\begin{align*}
+  x_i &= \vA x_{i-1} + \vB u_i \\
+  y_i &= \vC x_i + \vD u_i.
+\end{align*}
+
+A state-space model (SSM) uses these representations as a layer in a deep learning
+pipeline, where the matrices $\vA, \vB, \vC, \vD$ are learned from data (e.g.,
+with gradient-based optimization).
+One often has $d$ of these SSMs in parallel, each corresponding to one hidden
+dimension.
+To preserve the sequence history, HiPPO~\citep{gu2020hippo} projects the history
+on a basis of orthogonal polynomials, which translates to having SSMs whose
+$\vA, \vB$ matrices are initialized to some special matrices.
+
+This recurrent form of SSMs allows efficient inference (i.e., generation): to
+generate the output of the next time-step, one only needs the state of the
+current time-step, not the entire input history.
+Furthermore, SSMs can freely extrapolate to sequences longer than seen during training.
+
+\textbf{SSMs as Convolution.}
+For efficient training, given the
+entire sequence of the input $u_1, \dots, u_N$, the output sequence
+$y_1, \dots, y_N$ can also be written as the convolution of the input with the
+filter~\citep{gu2021combining}:
+\begin{equation*}
+  f = [\vC \vB, \vC\vA\vB, \vC\vA^2\vB, \dots, \vC\vA^{N-1}\vB].
+\end{equation*}
+That is, from an initial condition $x_0$, we have
+$y_i = \vC\vA^i\vB x_0 + (f \ast u)_i + \vD u_i$, where $(f \ast u)$ denotes a
+linear convolution between $f$ and $u$.
+If we set the initial condition $x_0$ to be zero, then $y$ is exactly a
+linear convolution of $u$, with a residual connection $\vD u$.
+More generally, any linear time-invariant system (of which SSMs are a special case) can
+be written as a convolution.
+
+Given a 1D input sequence $u \in \mathbb{R}^{N}$ of length $N$, we denote the 1D output
+sequence $y \in \mathbb{R}^N$ of an SSM parameterized by matrices $\vA, \vB, \vC, \vD$ as
+\begin{equation*}
+  y = \mathrm{SSM}_{\vA, \vB, \vC, \vD}(u).
+\end{equation*}
+To simplify notation, we omit the reference to $\vA, \vB, \vC, \vD$ and write
+$y = \mathrm{SSM}(u)$ if they are clear from context.
+When $u$ is multidimensional of dimension $d$, we stack $d$ of these SSMs
+together that defines a mapping from $u \in \mathbb{R}^{N \times d}$ to $y \in \mathbb{R}^{N \times d}$, using
+the same notation $y = \mathrm{SSM}(u)$.
+
+To construct the filter $f$ from $\vA, \vB, \vC$ efficiently, $\vA$ is often constrained to
+be diagonal~\citep{gupta2022diagonal,gu2022parameterization}, or diagonal plus
+low-rank~\citep{gu2022efficiently}.
+
+\textbf{SSM through FFTs.}
+Computing the convolution naively through conventional matrix operations is expensive
+for long kernels, scaling as $O(N^2)$.
+Instead, we can use FFTs: take the FFT of $f$ and $u$, multiply them together pointwise, and then take the inverse FFT.
+This yields an $O(N \log N)$ algorithm.
+
+\subsection{Linear attention}
+
+We describe linear attention~\citep{katharopoulos2020transformers} and its connection to RNNs, which inspired our model design~(\cref{sec:method}).
+
+In standard attention~\citep{vaswani2017attention}, we have $N$ query/key/value tokens $Q_i, K_i, V_i \in \mathbb{R}^d$ for
+$i = 1, \dots, N$, where $N$ is the sequence length and $d$ is the head dimension.
+For some similarity metric $\Sim \colon \mathbb{R}^d \times \mathbb{R}^d \to \mathbb{R}$, we want to compute the output:
+\begin{equation*}
+  O_i = \frac{\sum_{j=1}^i\Sim(Q_i, K_j) V_j}{\sum_{j=1}^i \Sim(Q_i, K_j)} \in \mathbb{R}^d.
+\end{equation*}
+For standard softmax attention, $\Sim(q, k) = e^{q^\top k}$ (often the dot
+product is scaled by $1/\sqrt{d}$).
+Linear attention makes the assumption that $\Sim$ has the form
+$\Sim(q, k) = \phi(q)^\top \phi(k),$
+for some (nonlinear) function $\phi$.
+The output is then $O_i = \frac{\phi(Q_i)^\top \sum_{j=1}^{i} \phi(K_j) V_j^\top }{\phi(Q_i)^\top \sum_{j=1}^{i} \phi(K_j)}$.
+Let
+$S_i = \sum_{j=1}^{i} \phi(K_j) V_j^\top \in \mathbb{R}^{d \times d}$, $z_i = \sum_{j=1}^{i} \phi(K_j) \in \mathbb{R}^d$, $d_i = \phi(Q_{i})^\top z_i \in \mathbb{R}$.
+Then $O_i = \frac{\phi(Q_i)^\top S_i}{d_i}$.
+This connects linear attention to RNNs: the output $O_i$ is a function of $S_i$
+and $z_i$, both of which are incrementally updated (as cumulative sums).
+
+%%% Local Variables:
+%%% mode: latex
+%%% TeX-master: "../main"
+%%% End:
