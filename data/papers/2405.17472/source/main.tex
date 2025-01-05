@@ -1,0 +1,1114 @@
+% CVPR 2025 Paper Template; see https://github.com/cvpr-org/author-kit
+
+\documentclass{article}
+
+%%%%%%%%% PAPER TYPE  - PLEASE UPDATE FOR FINAL VERSION
+% \usepackage{cvpr}              % To produce the CAMERA-READY version
+%\usepackage[review]{cvpr}      % To produce the REVIEW version
+
+\usepackage[preprint]{neurips_2024}
+\usepackage[pagebackref,breaklinks,colorlinks,allcolors=cvprblue]{hyperref}
+
+\usepackage[utf8]{inputenc} % allow utf-8 input
+\usepackage[T1]{fontenc}    % use 8-bit T1 fonts
+\usepackage{url}            % simple URL typesetting
+\usepackage{booktabs}       % professional-quality tables
+\usepackage{amsfonts}       % blackboard math symbols
+\usepackage{nicefrac}       % compact symbols for 1/2, etc.
+\usepackage{microtype}      % microtypography
+\usepackage{xcolor}         % colors
+\usepackage{wrapfig}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{subcaption}
+\usepackage{makecell}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{multirow}
+\usepackage{colortbl}
+% \usepackage[pagenumbers]{cvpr} % To force page numbers, e.g. for an arXiv version
+
+% Import additional packages in the preamble file, before hyperref
+\input{preamble}
+
+% It is strongly recommended to use hyperref, especially for the review version.
+% hyperref with option pagebackref eases the reviewers' job.
+% Please disable hyperref *only* if you encounter grave issues, 
+% e.g. with the file validation for the camera-ready version.
+%
+% If you comment hyperref and then uncomment it, you should delete *.aux before re-running LaTeX.
+% (Or just hit 'q' on the first LaTeX run, let it finish, and you should be clear).
+\definecolor{cvprblue}{rgb}{0.21,0.49,0.74}
+\definecolor{commentcolor}{RGB}{0, 128, 0} % Dark green
+
+
+
+%%%%%%%%% PAPER ID  - PLEASE UPDATE
+\def\paperID{7729} % *** Enter the Paper ID here
+\def\confName{CVPR}
+\def\confYear{2025}
+
+%%%%%%%%% TITLE - PLEASE UPDATE
+\title{FreezeAsGuard: Mitigating Illegal Adaptation of Diffusion Models via Selective Tensor Freezing}
+
+\author{%
+	Kai Huang, Haoming Wang and Wei Gao\\
+	University of Pittsburgh\\
+	\texttt{k.huang, hw.wang, weigao@pitt.edu} \\	 
+}
+
+\begin{document}
+\maketitle
+\begin{abstract}
+	Text-to-image diffusion models can be fine-tuned in custom domains to adapt to specific user preferences, but such adaptability has also been utilized for illegal purposes, such as forging public figures' portraits, duplicating copyrighted artworks and generating explicit contents. Existing work focused on detecting the illegally generated contents, but cannot prevent or mitigate illegal adaptations of diffusion models. Other schemes of model unlearning and reinitialization, similarly, cannot prevent users from relearning the knowledge of illegal model adaptation with custom data. In this paper, we present \emph{FreezeAsGuard}, a new technique that addresses these limitations and enables irreversible mitigation of illegal adaptations of diffusion models. Our approach is that the model publisher selectively freezes tensors in pre-trained diffusion models that are critical to illegal model adaptations, to mitigate the fine-tuned model's representation power in illegal adaptations, but minimize the impact on other legal adaptations. %Such tensor freezing can be enforced via APIs provided by the model publisher for fine-tuning, can motivate users' adoption due to its computational savings. 
+	Experiment results in multiple text-to-image application domains show that FreezeAsGuard provides 37\% stronger power in mitigating illegal model adaptations compared to competitive baselines, while incurring less than 5\% impact on legal model adaptations.  The source code is available at: \url{https://github.com/pittisl/FreezeAsGuard}.
+\end{abstract} 
+
+\vspace{-0.15in}
+\section{Introduction}
+\vspace{-0.05in}
+
+
+\begin{wrapfigure}{r}{0.45\textwidth}
+	\centering
+	\vspace{-0.4in}
+	\includegraphics[width=0.45\textwidth]{figures/comparison.pdf}
+	\vspace{-0.3in}
+	\caption{\label{fig:comparison} Existing work vs. FreezeAsGuard in mitigating malicious adaptation of diffusion models}
+	\vspace{-0.25in}
+\end{wrapfigure}
+
+Text-to-image diffusion models [\citenum{rombach2022high, podell2023sdxl}] are powerful tools to generate high-quality images aligned with user prompts. After pre-trained by model publishers to embed world knowledge from large image data [\citenum{schuhmann2022laion}], open-sourced diffusion models, such as Stable Diffusion (SD) [\citenum{sd15, sd21}], can be conveniently adapted by users to generate their preferred images\footnote{Many APIs, such as HuggingFace Diffusers [\citenum{wolf2019huggingface}], can be used for fine-tuning open-sourced diffusion models with the minimum user efforts.}, through fine-tuning with custom data in specific domains. For example, diffusion models can be fine-tuned on cartoon datasets to synthesize avatars in video games [\citenum{royer2020xgan}], or on datasets of landscape photos to generate wallpapers [\citenum{diffusionwallpaper}]. 
+
+
+\begin{figure*}
+	\centering
+	\vspace{-0.15in}
+	\includegraphics[width=1\linewidth]{figures/main_example1.pdf}
+	\vspace{-0.35in}
+	\caption{FreezeAsGuard ensures that portraits (left) and artworks (right) generated by diffusion models in illegal classes cannot be recognizable as target objects, even if the model has been fine-tuned with data samples in illegal classes. In contrast, unlearning schemes (UCE [\citenum{gandikota2024unified}] and IMMA [\citenum{zheng2023imma}]) cannot prevent the unlearned knowledge of illegal classes from being relearned in fine-tuning.}
+%	\vspace{-0.15in}
+	\label{fig:illustrative_examples}
+	%\vspace{-0.05in}
+\end{figure*}
+%Those malicious adaptations of diffusion models have become a major obstacle to advancing the deployment of generative AI models in the real world.
+An increasing risk of democratizing open-sourced diffusion models, however, is that the capability of model adaptation has been utilized for illegal purposes, such as forging public figures' portraits [\citenum{gamage2022deepfakes, gosse2020politics}], duplicating copyrighted artworks [\citenum{heikkila2022artist}], and generating explicit content [\citenum{harwell2017ai}]. Most existing efforts aim to deter attempts of illegal model adaptation with copyright detection [\citenum{zhao2023recipe,cui2023ft,cui2023diffusionshield}], which embeds invisible but detectable watermarks into training data and further generated images, as shown in Figure \ref{fig:comparison}. However, such detection only applies to misuse of training data, and does not mitigate the user's capability of illegal model adaptation. Users can easily bypass such detection by collecting and using their own training data without being watermarked (e.g., users' self-taken photos of public figures).
+
+
+%Naive keyword detection and AI-based methods [\citenum{derner2023beyond}] can reject improper user prompts, but users can bypass such filtering by fine-tuning the model to align innocent prompts with illegal image contents [\citenum{webson2021prompt}]. Filtering the generated images [\citenum{safetychecker}] is more effective, but is often overpowered with high false-positive rates and tend to block legal contents in generated images [\citenum{falsepositive}].
+Instead, an intuitive approach to mitigation is content filtering. However, filtering user prompts [\citenum{derner2023beyond}] can be bypassed by fine-tuning the model to align innocent prompts with illegal image contents [\citenum{webson2021prompt}], and filtering the generated images [\citenum{safetychecker}] is often overpowered with high false-positive rates [\citenum{falsepositive}]. Data poisoning techniques can avoid false positives by injecting invisible perturbations into training data [\citenum{ye2023duaw, zhang2023editguard, shan2023glaze}], but cannot apply when public web data or users' private data is used for fine-tuning. Recent unlearning methods allow model publishers to remove knowledge needed for illegal adaptation by modifying model weights [\citenum{fan2023salun, gandikota2024unified, wu2024erasediff,zheng2023imma}] , but cannot prevent relearning such knowledge via fine-tuning. 
+%Some other efforts raise the difficulty of fine-tuning via model reinitialization [\citenum{zheng2023imma}], which shifts the pre-trained model weights to a harder starting point for convergence. However, such increased difficulty equally applies to all data domains, and also impairs model adaptation in innocent domains.
+
+
+
+
+% More importantly, it places the full burden of generating perturbation on data owners, which is unfair and the model publishers should instead take the full responsibility of preventing their models from being maliciously fine-tuned [\citenum{zheng2023imma}].
+
+%Despite its blocking power over illegal domains, aggressively modifying the model weights also makes adaptation on innocent domains difficult, with over 20\% quality degradation in generating innocent content.
+
+%they either overestimate or underestimate the flexibility of the fine-tuning process by directly modifying data or model weights. 
+The key limitation of these techniques is that they focus on modifying the training data or model weights, but such modification can be reversed by users via fine-tuning with their own data. Such modification, further, cannot restrain the mitigation power only in \emph{illegal data classes} (e.g., public figures' portraits) without affecting model adaptation in other \emph{legal data classes} (e.g., the user's own portraits), due to the high ambiguity and possible overlap between these classes.
+%\footnote{In the rest of this paper, we denote the data domains with respect to illegal model adaptation, which are our targets of mitigation, as ``illegal domains'', and denote all the other data domains as ``innocent domains''.}
+
+%The objective of our design is to simultaneously mitigate illegal model adaptation in illegal domains and retain performance of model fine-tuning in innocent domains.
+To prevent users from reversing the mitigation maneuvers being applied, in this paper we present \emph{FreezeAsGuard}, a new technique that constrains the trainability of diffusion model's tensors in fine-tuning. As shown in Figure \ref{fig:comparison}, the model publisher selectively freezes tensors in pre-trained models that are critical to fine-tuning in illegal classes (e.g., public figures' portraits), to limit the model's representation power of being fine-tuned in illegal classes. In practice, since most illegal users are not professional and fine-tune diffusion models by simply following the instructions provided by model publishers, tensor freezing can be effectively enforced by model publishers through these instructions, to guide the users to adopt tensor freezing. Essentially, since freezing tensors lowers the trainable model parameters and reduces the computing costs of fine-tuning, users would be well motivated to adopt tensor freezing in fine-tuning practices.
+
+
+
+
+
+\begin{wrapfigure}{r}{0.25\textwidth}
+	\centering
+	\vspace{-0.1in}
+	\includegraphics[width=0.25\textwidth]{figures/bilevel_opt.pdf}
+	\vspace{-0.1in}
+	\caption{\label{fig:bilevel_opt} Mask learning and fine-tuning as a bilevel optimization}
+	\vspace{-0.1in}
+\end{wrapfigure}
+
+The major challenge is how to properly evaluate the importance of tensors in model fine-tuning. Popular attribution-based importance metrics [\citenum{lee2018snip,liu2021group}] are used in model pruning with fixed weight values, but cannot reflect the impact of weight variations in fine-tuning. Such impact of weight variations, in fact, cannot be condensed into a single importance metric, due to the randomness and interdependencies of weight updates in fine-tuning iterations. 
+
+Instead, as shown in Figure \ref{fig:bilevel_opt}, we formulate the selection of frozen tensors in all the illegal classes as one \emph{trainable binary mask}. Given a required ratio of frozen tensors specified by model publisher, we optimize such selection with training data in all the involved illegal classes, through bilevel optimization that combines the iterative process of mask learning and iterations of model fine-tuning. In this way, the mask being trained can timely learn the impact of weight variations on the training loss during fine-tuning. 
+
+%a straightforward method is to reduce the number of frozen tensors but the remaining frozen tensors can still be important for fine-tuning in innocent domains.
+
+With frozen tensors, the model's representation power should be retained when fine-tuned on other legal classes (e.g., user's own portraits). Hence, we  incorporate training samples from legal classes into the bilevel optimization, to provide suppressing signals for selecting tensors being frozen. Hence, the learned mask of freezing tensors should skip tensors that are important to fine-tuning in legal classes. 
+%Based on this diagram, we further apply code optimization to reduce the memory cost due to the need for maintaining multiple versions of model weights in bilevel optimization loops.
+
+We evaluated FreezeAsGuard in three different domains of illegal model adaptations: \emph{1)} forging public figures' portraits, \emph{2)} duplicating copyrighted artworks and \emph{3)} generating explicit contents. For each domain, we use open-sourced or self-collected datasets, and randomly select different data classes as illegal and legal classes. We use competitive model unlearning schemes as baselines, and multiple metrics to measure image quality. Our findings are as follows:
+%\vspace{-0.1in}
+\begin{itemize}
+	\item FreezeAsGuard has strong mitigation power in illegal classes. Compared to the competitive baselines, it further reduces the quality of images generated by fine-tuned model by up to 37\%, and ensures the generated images to be unrecognizable as subjects in illegal classes.
+	%, as shown in Figure \ref{fig:illustrative_examples}, \ref{fig:ff25_example} and \ref{fig:art_example}.
+	%Comparatively, current model unlearning techniques cannot prevent relearning the illegal domain's knowledge with custom training data.
+%	\vspace{-0.03in}
+	%Compared to the most competitive existing schemes, it introduces up to 10\% more image quality degradation to illegally fine-tuned models. 
+	\item FreezeAsGuard has the minimum impact on modal adaptation in legal classes. It ensures on-par quality of the generated images compared to regular full fine-tuning on legal data, with a difference of at most 5\%.
+%	 Compared to the competitive baselines, it improves the image quality by up to 9.7\%.
+%	\vspace{-0.03in}
+	\item FreezeAsGuard has high compute efficiency. Compared to full fine-tuning, it can save up to 48\% GPU memory and 21\% wall-clock computing time.
+\end{itemize}
+
+
+\vspace{-0.1in}
+\section{Background \& Motivation}
+%\vspace{-0.05in}
+%[may need to add some details in sec 2.1 to explain the uncertainty/instability/ambiguity in fine-tuning diffusion models, hence further explain what mentioned in the introduction - it is hard to focus only in illegal domains without affecting innocent domains.]. 
+
+
+
+
+\subsection{Fine-Tuning Diffusion Models}
+%\subsection{Fine-Tuning Diffusion Models in illegal classes}
+%\vspace{-0.05in}
+%[I revised this paragraph for better clarity. Please check for technical correctness.] 
+Given text prompts $y$ and images $x$ as training data, fine-tuning a diffusion model approximates the conditional distribution $p(x|y)$ by learning to reconstruct images that are progressively blurred with noise $\epsilon$ over step $t=1,...,T$. Training objective is to minimize the reconstruction loss:
+\vspace{-0.05in}
+\begin{align}\label{eq:dm_loss}
+    \mathcal{L}_{\theta} = \mathbb{E}_{x,y,\epsilon \sim \mathcal{N}(0,1),t}\left[\|\epsilon - \epsilon_{\theta}(\mathcal{E}(x_t), t, \tau(y))\|^2_2\right],
+    \vspace{-0.1in}
+\end{align}
+where $\mathcal{E}(\cdot)$ is the encoder of a pretrained VAE, $\tau(\cdot)$ is a pretrained text encoder, and $\epsilon_{\theta}(\cdot)$ is a denoising model with trainable parameters $\theta$. Most diffusion models adopt UNet architecture [\citenum{ronneberger2015u}] as the denoising model.
+%, which is then used to generate images from noise.
+%, conditioned by user prompts. 
+%Fine-tuning a pre-trained diffusion model in illegal domains follows the similar procedure.
+
+
+In fine-tuning, the diffusion model learns new knowledge by adapting the generic knowledge in the pre-trained model [\citenum{chefer2023hidden}]. For example, new knowledge about ``a green beetle'' can be a combination of generic knowledge on ``hornet'' and ``emerald''. This behavior implies that fine-tuning in different classes may share the same knowledge base, and it is challenging to focus the mitigation power in illegal classes without affecting fine-tuning in other legal classes. This challenge motivates us to regulate FreezeAsGuard's mitigation power by incorporating training samples in legal classes, when selecting tensors being frozen for illegal classes.
+
+%In most fine-tuning practices, LoRA adapters [\citenum{hu2021lora, ruiz2023dreambooth}] and prompt tuning [\citenum{gal2022image}] are used to reduce memory costs. These methods, however, restrict the number of trainable UNet parameters and reduce the representation power of fine-tuned models in illegal domains. In this paper, we instead consider a more challenging scenario of tensor freezing, where all UNet parameters are trainable in fine-tuning.
+
+
+% This phenomenon has been observed early in pretrained convolutional neural networks (CNNs) [\citenum{zeiler2014visualizing}], where the shallower layers are responsible for capturing edge and texture information in the image while deeper layers capture high-level semantics. To adapt to a specific image domain (e.g., human faces), fine-tuning the shallower layers doesn't help because its capability of low-level feature extraction is shared by all kinds of images. Instead, it's important to fine-tune deeper layers to revise the high-level task logic (e.g., verifying the pupillary distance for face recognition) for task-specific adaptation.
+
+
+
+\begin{table}[ht]
+	\centering
+	\vspace{0.15in}
+	\fontsize{9}{9}\selectfont
+	\begin{tabular}{cccc}
+		\toprule
+		\makecell{\textbf{Model component} \textbf{Being frozen}} & \textbf{CLIP ($\uparrow$)}	& \textbf{TOPIQ ($\uparrow$)} & \textbf{FID ($\downarrow$)} \\
+		\midrule
+		No freezing & 31.93 & 0.054 & 202.18 \\
+		\midrule
+		Attention projectors    & 31.60  & 0.051 & 208.40      \\
+		\midrule
+		Conv. layers       & 31.54  & 0.047  & 206.58   \\
+		\midrule
+		Time embeddings       &  31.46 & 0.045 & 212.79     \\
+		\midrule
+		\makecell{50\% random weights (seed 1)}  & 32.25 & 0.054 & 206.53     \\
+		\midrule
+		\makecell{50\% random weights (seed 2)} & 32.62 & 0.051 & 216.12 \\			
+		\bottomrule
+	\end{tabular}
+	\vspace{0.1in}
+	\captionof{table}{Quality of generated images with different model compoents being frozen,
+		%when fine-tuning SD v1.5 [\citenum{sd15}] 
+		using CLIP [\citenum{hessel2021clipscore}], TOPIQ [\citenum{chen2024topiq}], and FID [\citenum{heusel2017gans}] image quality metrics and the captioned pokemon dataset [\citenum{pokemon}]} 
+	\vspace{-0.1in}
+	\label{tab:different_freezing_examples_numbers}
+\end{table}
+
+
+\begin{wrapfigure}{r}{0.3\textwidth}
+	\centering
+	\vspace{-0.35in}
+	\includegraphics[width=0.3\textwidth]{figures/different_freezing_examples.pdf}
+	\vspace{-0.1in}
+	\caption{Generated images with different model components being frozen, with prompt ``a pikachu with a pink dress and a pink bow''}
+	\label{fig:different_freezing_examples_images}
+	\vspace{-0.15in}
+\end{wrapfigure}
+
+\vspace{0.15in}
+\subsection{Partial Model Fine-tuning}
+%\vspace{-0.05in}
+%Different model components have specialized functionalities, and hence fine-tuning only some of them results in different model performances. 
+%For diffusion models, we cannot mitigate illegal model adaptations in illegal classes by simply excluding some layers from being fine-tuned, 
+
+An intuitive solution to mitigating illegal model adaptation is to only allow fine-tuning some layers or components of the diffusion model. However, this solution is ineffective in practice, because shallow layers provide primary image features and deep layers enforce domain-specific semantics [\citenum{zeiler2014visualizing}]. They are, hence, both essential to the performance of the fine-tuned models in legal classes.
+%For example, shallow layers in CNNs capture edges and texture information in images, and deeper layers capture high-level semantics [\citenum{zeiler2014visualizing}].
+% For example, to fine-tune a model for generating human portraits, such semantics allow verifying the pupillary distance for correct face generation.
+%Compared to these small models, recent large diffusion models contain more parameters (1B-4B) and have more complex but modularized structures. The performance heterogeneity caused by different weight-freezing strategies can have more complex patterns.
+Similarly, %although large diffusion models have modularized structures, it is inappropriate to completely exclude specific model components from being fine-tuned. 
+as shown in Table \ref{tab:different_freezing_examples_numbers} and Figure \ref{fig:different_freezing_examples_images}, freezing critical model components such as attention projectors and time embeddings can cause large quality drop in generated images. Even when freezing the same amount of model weights (e.g., random 50\%), the exact distribution of frozen weights could also affect the generated images' quality. Such heterogeneity motivates us to instead seek for globally optimal selections of freezing tensors across all model components, by jointly taking all model components into bilevel optimization.
+ 
+%We also note that fine-tuning without freezing any weights doesn't necessarily lead to the best performance due to overfitting. This can be an incentive for users to apply our freezing strategy to improve the fine-tuning performance on innocent domains.
+
+
+%\vspace{-0.05in}
+%\subsection{Bilevel Optimization in Deep Learning}
+%\vspace{-0.05in}
+%% It has drawn much research attention due to nested structures formulated in many deep learning problems, such as hyper-parameter optimization [\citenum{chen2019lambdaopt, liu2018darts}] and meta-knowledge extraction [\citenum{finn2017model}].
+%Our design of FreezeAsGuard builds on bilevel optimization, which embeds one optimization problem within another [\citenum{chen2019lambdaopt, liu2018darts,finn2017model}] as 
+%%A commonly formulation of bilevel optimization is:
+%\vspace{-0.05in}
+%\begin{align}\label{eq:bilevel}
+%    \underbrace{x^{*} = \arg \min_{x} g(x,y^{*})}_{\text{upper-level optimization}},
+%     \ \ \ \ \text{s.t.} \ \ \ \underbrace{y^{*} = \arg \min_{y} h(x, y)}_{\text{lower-level optimization}},
+%\vspace{-0.05in}
+%\end{align}
+%where the solution $y^{*}$ to the lower-level problem is a function of $x$, and is plugged into the upper-level objective $g$ to solve $x$. Solutions to the upper-level and lower-level problems are hence interdependent. 
+%
+%In FreezeAsGuard, the lower-level problem is that the user fine-tunes a diffusion model in illegal domains, and the upper-level problem is that the model publisher learns a mask of frozen tensors that minimizes the quality of images generated by the fine-tuned model when it converges. Accordingly, both $g$ and $h$ are parameterized by diffusion model's weights. 
+
+%The specific formulation of $g$ can also be multi-objective since the freezing strategy should also minimally affect the fine-tuning quality in innocent domains.
+
+
+
+\begin{figure*}[ht]
+	\centering
+	\vspace{0.1in}
+	\includegraphics[width=\linewidth]{figures/method_overview.pdf}
+%	\vspace{-0.1in}
+	\caption{Overview of FreezeAsGuard design}
+	\vspace{-0.1in}
+	\label{fig:method_overview}
+\end{figure*}
+
+\vspace{-0.05in}
+\section{Method}
+\vspace{-0.05in}	
+% problem formulation, formulation of the partially frozen model
+% --> bilevel optimization
+%We use a binary mask ($\mathbf{m}$) to represent the freezing strategy where $m_{i}=1$ means the $i^{th}$ tensor should be frozen.
+
+%In FreezeAsGuard, the lower-level problem is that the user fine-tunes a diffusion model in illegal domains, and the upper-level problem is that the model publisher learns a mask of frozen tensors that minimizes the quality of images generated by the fine-tuned model when it converges. Accordingly, both $g$ and $h$ are parameterized by diffusion model's weights. 
+
+Our design of FreezeAsGuard builds on bilevel optimization, which embeds one optimization problem within another and both of them are multi-objective optimizations [\citenum{chen2019lambdaopt, liu2018darts,finn2017model}]. This bilevel optimization can be formulated as 
+%\vspace{-0.05in}
+\begin{align}
+\mathbf{m}^{*} &= \arg \min_{\mathbf{m}} \left(
+-\mathcal{L}_{\boldsymbol{\theta}^{*}(\mathbf{m})}(\mathbf{x}_{illegal}),
+\mathcal{L}_{\boldsymbol{\theta}^{*}(\mathbf{m})}(\mathbf{x}_{legal})
+\right) \label{eq:upper}
+\\
+\text{s.t.} & \ \ \ \boldsymbol{\theta}^{*}(\mathbf{m}) = \arg \min_{\boldsymbol{\theta}(\mathbf{m})} \left(
+\mathcal{L}_{\boldsymbol{\theta}(\mathbf{m})}(\mathbf{x}_{illegal}),
+\mathcal{L}_{\boldsymbol{\theta}(\mathbf{m})}(\mathbf{x}_{legal})
+\right), \label{eq:lower}
+%\vspace{-0.2in}
+\end{align}
+where $\mathbf{m}$ is the binary mask of selecting frozen tensors, $\mathbf{m}^*$ is the optimized binary mask, $\boldsymbol{\theta}(\mathbf{m})$ represents the model tensors frozen by $\mathbf{m}$, and $\boldsymbol{\theta}^*(\mathbf{m})$ is the converged $\boldsymbol{\theta}(\mathbf{m})$ after fine-tuning. $\mathbf{x}_{illegal}$ and $\mathbf{x}_{legal}$ denote training samples in all the illegal classes ($\mathcal{C}_{illegal}$) and legal classes ($\mathcal{C}_{legal}$), respectively.  
+%Note that when there are multiple illegal classes, we can incorporate training samples in all classes and jointly train one mask for mitigating all illegal classes.
+Such bilevel optimization is illustrated in Figure \ref{fig:method_overview}. The lower-level problem in Eq. (\ref{eq:lower}) is a \emph{simulated user loop} that the user fine-tunes the diffusion model by minimizing the loss over both illegal and legal classes. The upper-level problem in Eq. (\ref{eq:upper}) is a \emph{mask learning loop} that learns $\mathbf{m}$ to mitigate the model's representation power when fine-tuned in illegal classes, without affecting fine-tuning in legal classes. 
+%Some existing work adopts differentiable image quality metrics (e.g., MS-SSIM [\citenum{wang2003multiscale}]) to measure the convergence of fine-tuning, but suffers from gradient explosion during optimization [\citenum{ye2023duaw}]. Instead, in FreezeAsGuard 
+We use the standard diffusion loss in Eq. (\ref{eq:dm_loss}) and adopt tensor-level freezing to ensure sufficient granularity\footnote{Most existing diffusion models have parameter sizes between 1B and 3.5B, which correspond to at least 686 tensors over the UNet-based denoiser.}, 
+without incurring extra computing costs.
+
+To apply the gradient solver, $\mathbf{m}$ and $\boldsymbol{\theta}(\mathbf{m})$ should have differentiable dependencies with the loss function. We model $\boldsymbol{\theta}(\mathbf{m})$ through the weighted summation of pre-trained model tensors $\boldsymbol{\theta}_{pre}$ and fine-tuned model tensors $\boldsymbol{\theta}_{ft}$, such that
+%\vspace{-0.05in}
+\begin{align}\label{eq:frozen_weights}
+\boldsymbol{\theta}(\mathbf{m}) = \mathbf{m} \odot \boldsymbol{\theta}_{pre} + (\mathbf{1} - \mathbf{m}) \odot \boldsymbol{\theta}_{ft},
+%\vspace{-0.05in}
+\end{align}
+where $\odot$ denotes element-wise multiplication. From the user's perspective, fine-tuning the partially frozen model $\boldsymbol{\theta}(\mathbf{m})$ is equivalent to fine-tuning $\boldsymbol{\theta}_{ft}$, controlled by Eq. (\ref{eq:lower}). To improve compute efficiency, we initialize $\boldsymbol{\theta}_{ft}$ as the fully fine-tuned model tensors on both illegal and legal classes, and gradually enlarge the scope of tensor freezing. Since $\mathbf{m}$ is discrete and not differentiable, we adopt a continuous form $\mathbf{m}(\mathbf{w}) = \sigma(\mathbf{w} / T)$ that applies sigmoid function $\sigma(\cdot)$ over a trainable tensor $\mathbf{w}$. We also did code optimizations for vectorized gradient calculations as in Appendix A.
+
+Note that, although we made $\mathbf{m}$ differentiable in bilevel optimizations, the optimized values in $\mathbf{m}^*$ will be rounded to binary, to ensure complete freezing of selected tensors.
+
+% and use the hyperparameter $T$ to control its sharpness.
+%$\boldsymbol{\theta}(\mathbf{m} = \mathbf{1})$ falls back to $\boldsymbol{\theta}_{pre}$ as tensors are frozen from fine-tuning. Similarly, $\boldsymbol{\theta}(\mathbf{m} = \mathbf{0})$ equals to $\boldsymbol{\theta}_{ft}$ as all tensors are fine-tuned.
+
+
+% we use a mixture of target and innocent data for offline learning...
+
+%\vspace{-0.05in}
+\subsection{Mask Learning in the Upper-level Loop}
+%\vspace{-0.05in}
+% sparsity constraint
+% multi-objective to a single objective via weighted sum
+% the weight is the fraction of samples
+% don't fully rely on auto-diff due to...
+To solve the upper-level optimization in Eq. (\ref{eq:upper}), we adopt linear scalarization [\citenum{hwang2012multiple}] to convert it into a single objective $\mathcal{L}_{upper}$ via a weighted summation with weights $(\lambda_1, \lambda_2)$:
+%\vspace{-0.05in}
+\begin{align}\label{eq:loss_upper}
+\mathcal{L}_{upper} = -\lambda_1 \mathcal{L}_{\boldsymbol{\theta}^{*}(\mathbf{m})}(\mathbf{x}_{illegal}) + 
+\lambda_2 \mathcal{L}_{\boldsymbol{\theta}^{*}(\mathbf{m})}(\mathbf{x}_{legal}),
+%\vspace{-0.05in}
+\end{align}
+to involve training samples in both illegal and legal classes when learning $\mathbf{m}$. $(\lambda_1, \lambda_2)$ should ensure that gradient-based feedbacks from the two loss terms are not biased by inequality between the amounts of $\mathbf{x}_{illegal}$ and $\mathbf{x}_{legal}$, and their values should be proportionally set based on these amounts.
+%In practice, we can set $(\lambda_1, \lambda_2) = (1,1)$ because computing expectation in the diffusion loss in Eq. (\ref{eq:dm_loss}) has normalized the loss to sample-wise magnitude.
+
+Besides, $\mathbf{x}_{illegal}$ and $\mathbf{x}_{legal}$ could contain some knowledge in common, and masked learning from such data may hence affect model adaptation in legal classes. To address this problem, we add a sparsity constraint $\mathcal{L}_{sparsity}$ to $\mathcal{L}_{upper}$ to better control of the mask's mitigation power:
+%\vspace{-0.05in}
+\begin{align}
+\mathcal{L}_{sparsity} = \|\mathbf{1}^{\top} \mathbf{m}/N - \rho \|_2^2,
+%\vspace{-0.05in}
+\end{align}
+where $N$ is the number of tensors and $\mathbf{1}^{\top} \mathbf{m}/N$ measures the proportion of tensors being frozen. By minimizing $\mathcal{L}_{sparsity}$, the achieved ratio of tensor freezing should approach the given $\rho$. In this way, we can apply gradient descent to minimize $\mathcal{L}_{upper}$ and iteratively refine $\mathbf{m}$ towards optimum.
+%, and we will experimentally investigate the optimal value of $\rho$ in Section \ref{sec:experiments}.
+
+
+
+
+%\vspace{-0.05in}
+\subsection{Model Fine-tuning in the Lower-level Loop}
+\vspace{-0.05in}
+Effectiveness of mask learning at the upper level relies on timely feedback from the lower-level fine-tuning. Every time the mask has been updated by an iteration in the upper level, the lower-level loop should adopt the updated mask into fine-tuning, and return the fine-tuned model tensors and the correspondingly updated loss value as feedback to the upper level. Similar to Eq. (\ref{eq:loss_upper}), the fine-tuning objective is the summation of diffusion losses for illegal and legal domains:
+%\vspace{-0.05in}
+\begin{align}
+	\mathcal{L}_{lower} = \mathcal{L}_{\boldsymbol{\theta}^{*}(\mathbf{m})}(\mathbf{x}_{illegal}) + 
+	\mathcal{L}_{\boldsymbol{\theta}^{*}(\mathbf{m})}(\mathbf{x}_{legal}).
+	\label{eq:loss_lower}
+%	\vspace{-0.05in}
+\end{align}
+
+
+\begin{figure}[ht]
+	\centering
+%	\vspace{-0.05in}
+	\includegraphics[width=\linewidth]{figures/loss_illustration.pdf}
+%	\vspace{-0.25in}
+	\caption{FreezeAsGuard vs. Naive optimization iterations}
+%	\vspace{-0.1in}
+	\label{fig:loss_illustration}
+	\vspace{-0.1in}
+\end{figure}
+
+%\vspace{-0.05in}
+\subsection{Towards Efficient Bilevel Optimization}
+%\vspace{-0.05in}
+\label{sec:compute_efficiency}
+Solving bilevel optimization is computationally expensive, due to the repeated switches between upper-level and lower-level loops [\citenum{ruiz2023dreambooth, zheng2023imma}]. Rigorously, as shown in Figure \ref{fig:loss_illustration} - Left, every time when the mask has been updated, the model should be fine-tuned with a sufficient number of iterations until convergence, before the next update of the mask. 
+%In this way, the mask can be optimized to maximize the loss value when fine-tuning converges. 
+However, in practice, doing so is extremely expensive. 
+%, given the possibly large number of mask updates before reaching $\mathbf{m}^*$. 
+%For example, it requires 100 end-to-end fine-tuning processes of the diffusion model in order to update the mask only 100 times. 
+
+
+
+Instead, as shown in Figure \ref{fig:loss_illustration} - Right, we observe that the fine-tuning loss typically drops fast in the first few iterations and then violently fluctuates (see Appendix B). Hence, every time in the lower-level loop of model fine-tuning, we do not wait for the loss to converge, but only fine-tune the model for the first few iterations before updating the mask to the upper-level loop of mask learning. After the model update, the fine-tuned model weights are inherited to the next loop of model fine-tuning, to ensure consistency and improve convergence. Hence, the optimization only needs one fine-tuning process, during which the mask can be updated with shorter intervals but higher learning quality. Details of deciding such a number of iterations are in Appendix B.
+
+%This strategy has been demonstrated to well approximate the optimal in other bilevel optimization problems in deep learning [\citenum{zheng2023imma, van2023anti}].
+
+%\footnote{For example, SD v1.5 contains 1B parameters [\citenum{sd15}], and the parameter size of SD XL is as large as 3.5B [\citenum{podell2023sdxl}].}
+Further, to perform bilevel optimizations, three versions of diffusion model weights, i.e.,  $\boldsymbol{\theta}(\mathbf{m})$, $\boldsymbol{\theta}_{pre}$ and $\boldsymbol{\theta}_{ft}$, will be maintained for gradient computation. This could significantly increase the memory cost due to large sizes of diffusion models. To reduce such memory cost, we instead maintain only two versions of model weights, namely $\boldsymbol{\theta}(\mathbf{m})$ and $\boldsymbol{\theta}_{d} = \boldsymbol{\theta}_{pre} - \boldsymbol{\theta}_{ft}$. According to Appendix A, the involvement of both $\boldsymbol{\theta}_{pre}$ and $\boldsymbol{\theta}_{ft}$ can be removed by plugging $\boldsymbol{\theta}_{d}$ into the gradient descent calculation. More specifically, for a given model tensor $i$, the gradient descent to update the corresponding mask $m_i$ in the upper-level optimization is:
+%\vspace{-0.05in}
+\begin{equation}
+	w_i \leftarrow w_i - \eta_1 \left< \frac{\partial{\mathcal{L}_{upper}}}{\partial{\theta(m)_i}}, \theta_{d}^{(i)} \right> \frac{1}{T}\sigma\left(\frac{w_i}{T}\right)\sigma\left(1-\frac{w_i}{T}\right),
+	\label{eq:upper_gd}
+%\vspace{-0.05in}
+\end{equation}
+where $\eta_1$ controls the step size of updates and $m_i$ is updated as $\sigma\cdot w_i/{T}$. Further, computing the update of $\boldsymbol{\theta}(\mathbf{m})$ and $\boldsymbol{\theta}_d$ at the lower level should apply the chain rule:
+%\vspace{-0.15in}
+\begin{align}
+	\theta_{d}^{(i)} &\leftarrow \theta_{d}^{(i)} + \eta_2 \frac{\partial \mathcal{L}_{lower}}{\partial \theta(m)_{i}} (1-m_i) \label{eq:lower_gd_1}
+	\\
+	\theta(m)_i &\leftarrow \theta(m)_i - \eta_2 \frac{\partial \mathcal{L}_{lower}}{\partial \theta(m)_{i}} (1-m_i)^2. \label{eq:lower_gd_2}
+%	\vspace{-0.1in}
+\end{align}
+
+In this way, as shown in Algorithm \ref{alg:FreezeAsGuard}, FreezeAsGuard alternately runs upper and lower-level gradient descent steps, with the maximum compute efficiency and the minimum memory cost. We initialize the mask to all zeros and $\boldsymbol{\theta}(\mathbf{m})$ starts as a fully fine-tuned model, to mitigate aggressive freezing. In practice, we set random negative values to $\mathbf{w}$ to ensure the continuous form of the mask is near zero.
+
+\vspace{0.05in}
+\begin{algorithm}[ht]
+	\small
+	\caption{Freezing Strategy in FreezeAsGuard}\label{alg:FreezeAsGuard}
+	\begin{algorithmic}[1]
+		\Require Illegal and legal class data $(\mathcal{C}_{illegal}, \mathcal{C}_{legal})$, step size $\eta_1$ and $\eta_2$, model weights $\boldsymbol{\theta}_{pre}$ and $\boldsymbol{\theta}_{ft}$
+		\State $\boldsymbol{\theta}_d \leftarrow \boldsymbol{\theta}_{pre} - \boldsymbol{\theta}_{ft}$, \ \ \ $\mathbf{m} \leftarrow \mathbf{0}$, \ \ \ $\boldsymbol{\theta}(\mathbf{m}) \leftarrow \boldsymbol{\theta}_{ft}$ 
+		\For{$k = 1,...,K$}
+		
+		\For{$l = 1,...,L$}
+		\State $(\mathbf{x}_{illegal}, \mathbf{x}_{legal}) \leftarrow$ \texttt{Sample}$(\mathcal{C}_{illegal}, \mathcal{C}_{legal})$
+		\State $\frac{\partial{\mathcal{L}_{lower}}}{\partial{\boldsymbol{\theta}(\mathbf{m})}} \leftarrow$ \texttt{Backprop}$(\mathbf{x}_{illegal}, \mathbf{x}_{legal}, \mathcal{L}_{lower}, \boldsymbol{\theta}(\mathbf{m}))$
+		\State $(\boldsymbol{\theta}_d, \boldsymbol{\theta}(\mathbf{m})) \leftarrow$ \texttt{Update}$\left(\frac{\partial{\mathcal{L}_{lower}}}{\partial{\boldsymbol{\theta}(\mathbf{m})}}, \mathbf{m}, \boldsymbol{\theta}_d, \boldsymbol{\theta}(\mathbf{m})\right)$ \ \ \ \ \textcolor{commentcolor}{// Refer to Eq. (\ref{eq:lower_gd_1}) and (\ref{eq:lower_gd_2})}
+		\EndFor
+		
+		\State $(\mathbf{x}_{illegal}, \mathbf{x}_{legal}) \leftarrow$ \texttt{Sample}$(\mathcal{C}_{illegal}, \mathcal{C}_{legal})$
+		\State $\frac{\partial{\mathcal{L}_{upper}}}{\partial{\boldsymbol{\theta}(\mathbf{m})}} \leftarrow$ \texttt{Backprop}$(\mathbf{x}_{illegal}, \mathbf{x}_{legal}, \mathcal{L}_{upper}, \boldsymbol{\theta}(\mathbf{m}))$
+		\State $\mathbf{m} \leftarrow$ \texttt{Update}$\left(\frac{\partial{\mathcal{L}_{upper}}}{\partial{\boldsymbol{\theta}(\mathbf{m})}}, \mathbf{m}, \boldsymbol{\theta}_d, \eta_2\right)$ \ \ \ \ \textcolor{commentcolor}{// Refer to Eq. (\ref{eq:upper_gd})}
+		\EndFor \ \ $\Rightarrow$ \textbf{Return} \texttt{Round}$(\mathbf{m})$
+	\end{algorithmic}
+%\vspace{-0.1in}
+\end{algorithm}
+
+
+%\vspace{-0.2in}
+\section{Experiments}
+%\vspace{-0.05in}
+\label{sec:experiments}
+In our experiments, we use three open-source diffusion models, SD v1.4 [\citenum{sd14}], v1.5 [\citenum{sd15}] and v2.1 [\citenum{sd21}], to evaluate three domains of illegal model adaptations: 
+%These diffusion models have architecture variations and are pre-trained on the LAION-5B dataset [\citenum{schuhmann2022laion}] with different training configurations. 
+\emph{1)} forging public figures' portraits [\citenum{gamage2022deepfakes, gosse2020politics}], \emph{2)} duplicating copyrighted artworks [\citenum{heikkila2022artist}] and \emph{3)} generating explicit content [\citenum{harwell2017ai}]. 
+
+\noindent\textbf{Datasets:} For each domain, we use datasets as listed below, and random select different data classes as illegal and legal classes. We use 50\% of samples in the selected classes for mask learning and model training, and the other samples for testing. More details about datasets are in Appendix C.
+
+\begin{itemize}
+	\item \textbf{Portraits of public figures}: We use a self-collected dataset, namely Famous-Figures-25 (FF25), with 8,703 publicly available portraits of 25 public figures on the Web. Each image has a prompt ``a photo of \texttt{<person\_name>} showing \texttt{<content>}'' as description.
+	
+	\item \textbf{Copyrighted artworks}: We use a self-collected dataset, namely Artwork, which contains 1,134 publicly available artwork images and text captions on the Web, from five famous digital artists with unique art styles. 
+	%Being similar to FF25, each image is also paired with a text prompt as its description.
+
+	\item \textbf{Explicit contents}: We use the NSFW-caption dataset with 2,000 not-safe-for-work (NSFW) images and their captions [\citenum{explicitdata}] as the illegal class. We use the Modern-Logo-v4 [\citenum{logov4}] dataset, which contains 803 logo images labeled with informative text descriptions, as the legal class.  
+	
+\end{itemize}
+
+
+\noindent\textbf{Baseline schemes:} Our baselines include full fine-tuning (FT), random tensor freezing, and two competitive unlearning schemes, namely UCE [\citenum{gandikota2024unified} and IMMA [\citenum{zheng2023imma}]. Existing data poisoning methods [\citenum{ye2023duaw, zhang2023editguard, shan2023glaze}] cannot be used because all data we use is publicly online and cannot be poisoned.
+
+\begin{itemize}
+	\item \textbf{Full FT:} It fine-tunes all the tensors of the diffusion model's UNet and has the strongest representation power for adaptation in illegal domains.	
+	\item \textbf{Random-$\rho$:} It randomly freezes $\rho$\% of model tensors, as a naive baseline of tensor freezing.
+	\item \textbf{UCE [\citenum{gandikota2024unified}]:} It uses unlearning to guide the learned knowledge about illegal classes in the pre-trained model to be irrelevant or more generic. 
+	%In this way, it reduces the model's fine-tuning power in illegal classes by removing related knowledge in the pre-trained model.
+	\item \textbf{IMMA [\citenum{zheng2023imma}]:} It reinitializes the model weights so that it is hard for users to conduct effective fine-tuning on the reinitialized model, in both illegal and legal classes. 
+	%However, it usually has excessive mitigation power and significantly affects innocent model adaptations.
+\end{itemize}
+
+\noindent\textbf{Measuring image quality:} We used FID [\citenum{heusel2017gans}] and CLIP [\citenum{hessel2021clipscore}] scores to evaluate the quality of generated images. In addition, to better identify domain-specific details in generated images, we also adopted domain-specific image quality metrics, listed as below and described in detail in Appendix D. For each text prompt, the experiment results are averaged from 100 generated images with different random seeds.
+\begin{itemize}
+	\item \textbf{Domain-specific feature extractors:} Existing work [\citenum{verma2024many}] reported that FID and CLIP fail to measure the similarity between portraits of human subjects, and cannot reflect human perception in images. Hence, for human portraits and artworks, we apply specific feature extractors on real and generated images, and measure the quality of generated images as cosine distance between their feature vectors. For portraits, we use face feature extractors (FN-L, FN, VGG) in DeepFace [\citenum{serengil2024lightface}]. For artworks, we use a pretrained CSD model [\citenum{somepalli2024measuring}]. Details are in Appendix D.1.
+	% For portraits of public figures, we select the top three human face feature extractors (FN-L, FN, and VGG) from the DeepFace package [\citenum{serengil2024lightface}], and for copyrighted artworks, we use a pretrained CSD model to acquire the feature vectors of art styles [\citenum{somepalli2024measuring}]. In Appendix \ref{sec:metrics_details}, we illustrate why using domain-specific feature extractors can better evaluate image quality and explain other details about how the cosine distance is computed.	
+	\item \textbf{NudeNet:} We used NudeNet [\citenum{nudenet}] to decide the probability of whether the generated images contain explicit contents, as the image's safety score. Details are in Appendix D.2.
+	%    The probability that detected content is explicit is then used as the image's safety score. 
+	\item \textbf{Human Evaluation:} To better capture human perception in generated images, we recruited 16 volunteers with diverse backgrounds to provide human evaluations on image quality. For each image, volunteers scored how the generated image is likely to depict the same subject as in the real image from 1 to 7, where 1 means ``very unlikely'' and 7 means ``very likely''. Details are in Appendix D.3.
+\end{itemize}
+% metric and hyper-parameter configuration
+%During training, we center-crop all the images to be 512$\times$512 and apply default data augmentation (e.g., random flip) before feeding to the diffusion model.
+
+%Details about configurations of training and testing data for mask learning and model fine-tuning, as well as hyperparameter setup, are in Appendix \ref{sec:hyperparameter}.
+
+\begin{table}
+	\centering
+%\vspace{-0.05in}
+%	\hspace{-0.15in}
+	{\fontsize{9}{9}\selectfont
+		\begin{tabular}{ccccccc}
+			\toprule
+			\multicolumn{2}{c}{\textbf{Metric}} & \textbf{FN-L($\downarrow$)} & \textbf{FN($\downarrow$)} & \textbf{VGG($\downarrow$)} & \textbf{FID($\downarrow$)} & \textbf{Human ($\downarrow$)}\\
+			\midrule[1pt]
+			\multicolumn{2}{c}{\textbf{Pre-trained model}} & 0.96 &0.92&0.93&164.8& -\\ 			\midrule[1pt]
+			\multirow{2}{*}{\textbf{Full FT}}
+			&\textbf{illegal} &0.436& 0.455& 0.581& 144.6&6.7 \\ \cmidrule(ll){2-7}
+			&\textbf{legal}  &0.436& 0.455& 0.581& 144.6&6.7\\  			\midrule[1pt]
+			\multirow{2}{*}{\textbf{UCE}}
+			&\textbf{illegal} &0.445 & 0.464 & 0.598 &152.9&4.6  \\ \cmidrule(ll){2-7}
+			&\textbf{legal} &0.442& 0.465& 0.583& 151.4&5.4 \\  			\midrule[1pt]
+			\multirow{2}{*}{\textbf{IMMA}}
+			&\textbf{illegal}&0.467& 0.493& 0.624& 148.8&5.1  \\ \cmidrule(ll){2-7}
+			&\textbf{legal}&0.462& 0.475& 0.610& 145.9&5.8  \\  			\midrule[1pt]
+			\multirow{2}{*}{\textbf{FG-10\%}}
+			&\textbf{illegal}&\textbf{\underline{0.441}}&0.451&0.603& 148.0&\textbf{\underline{4.9}}  \\ \cmidrule(ll){2-7}
+			&\textbf{legal}&0.429&0.45& 0.585& 143.6&6.2\\  			\midrule[1pt]
+			\multirow{2}{*}{\textbf{R-10\%}}
+			&\textbf{illegal}&0.433& 0.451& 0.588& 143.7&6.8  \\ \cmidrule(ll){2-7}
+			&\textbf{legal}&0.431&0.457&0.582&144.0 &6.8 \\  			\midrule[1pt]
+			\multirow{2}{*}{\textbf{FG-30\%}}
+			&\textbf{illegal}&\textbf{\underline{0.482}}& \textbf{\underline{0.504}}&\textbf{\underline{ 0.631}}& \textbf{\underline{153.7}}&\textbf{\underline{3.6}}  \\ \cmidrule(ll){2-7}
+			&\textbf{legal} &0.449& 0.478& 0.590& 146.7&6.0 \\  			\midrule[1pt]
+			\multirow{2}{*}{\textbf{R-30\%}}
+			&\textbf{illegal}&0.429& 0.456& 0.590& 145.0 &5.9 \\ \cmidrule(ll){2-7}
+			&\textbf{legal}&0.429& 0.456&0.590&145.0 &5.9 \\  			\midrule[1pt]
+			\multirow{2}{*}{\textbf{FG-50\%}}
+			&\textbf{illegal}&\textbf{\underline{0.530}}&\textbf{\underline{0.638}}&\textbf{\underline{0.647}}&\textbf{\underline{155.5}}&\textbf{\underline{2.1}}  \\ \cmidrule(ll){2-7}
+			&\textbf{legal}&0.499&0.527&0.608&149.5&4.3  \\  			\midrule[1pt]
+			\multirow{2}{*}{\textbf{R-50\%}}
+			&\textbf{illegal}&0.513& 0.543& 0.638& 151.6 &3.7 \\ \cmidrule(ll){2-7}
+			&\textbf{legal}&0.512&0.522&0.632&153.2&3.7  \\  \bottomrule
+	\end{tabular}}
+	\vspace{0.1in}
+	\caption{Mitigation power in 10 illegal classes and 10 legal classes from the FF25 dataset, where worse image quality indicates stronger mitigation power. FG-$\rho$\% means using FreezeAsGuard to freeze $\rho$\% tensors and R-$\rho$\% means random freezing. }
+	\vspace{-0.1in}
+	\label{tab:ff25_main}
+\end{table}
+
+\subsection{Mitigating Forgery of Public Figures' Portraits}
+\label{subsec:result_portraits}
+We evaluate FreezeAsGuard in mitigating forgery of public figures' portraits, using FF25 dataset and SD v1.5 model. 10 classes are randomly selected from FF25 as illegal and legal classes, respectively. As shown in Table \ref{tab:ff25_main}, FreezeAsGuard can mitigate illegal model adaptation 
+%measured by the quality of images generated by the fine-tuned model, 
+by 40\% compared to Full FT. When $\rho$ varies from 10\% to 50\%, it also outperforms the unlearning schemes by 37\%, because these schemes cannot prevent relearning knowledge in illegal classes with new training data. It also ensures better legal model adaptation. With $\rho$=30\%, the impact on legal adaptation is $<$5\%.
+
+\begin{figure}
+	\centering
+	\vspace{-0.05in}
+	\includegraphics[width=0.85\linewidth]{figures/ff25_ratios_3row.pdf}
+%	\vspace{-0.15in}
+	\caption{Examples of public figures' portraits generated by FreezeAsGuard under different freezing ratios ($\rho$)}
+	\label{fig:ff25_ratio}
+	\vspace{-0.25in}
+\end{figure}
+
+When the freezing ratio ($\rho$) increases, the difference between FreezeAsGuard and random freezing diminishes, and their mitigation powers also reach a similar level. This means that only a portion of tensors are important for adaptation in specific illegal classes. With a high freezing ratio, random freezing is more likely to freeze these important tensors. Meanwhile, it could also freeze tensors that are important to legal classes, resulting in low performance in legal model adaptations. Hence, as shown in Figure \ref{fig:ff25_ratio}, when $\rho$=30\%, the mitigation power is high enough that the generated images no longer resemble those in training data, and further increasing $\rho$ could largely affect legal model adaptation.
+
+\begin{figure}
+	\centering
+	\vspace{-0.05in}
+	\includegraphics[width=0.9\linewidth]{figures/ff25_example_3row.pdf}
+	%\vspace{-0.3in}
+	\caption{Examples of generated public figures' portraits by FreezeAsGuard with $\rho$=30\% and other baseline methods}
+        \label{fig:ff25_example}
+%	\vspace{-0.2in}
+\end{figure}
+
+Based on these results, we empirically consider $\rho$=30\% as the optimal freezing ratio on SD v1.5 for the domain of public figures' portraits. Figure \ref{fig:ff25_example} shows example images of baseline methods and FreezeAsGuard with $\rho$=30\%. We can find that FreezeAsGuard effectively prevents the generated images from being recognized as the subjects in illegal classes. Meanwhile, the fine-tuned model can still generate detailed background content and subjects' postures aligned with the prompt, indicating that the mitigation power is highly selective and focuses only on subjects' faces. More examples of generated images are in Appendix F.1.
+
+\begin{table}[ht]
+	\centering
+%	\vspace{-0.05in}
+	{\fontsize{9}{9}\selectfont
+		\begin{tabular}{cccccc}
+			\toprule
+			\multicolumn{2}{c}{\textbf{Metric}} & \textbf{CSD($\downarrow$)} & \textbf{FID($\downarrow$)} &\textbf{CLIP($\uparrow$)}& \textbf{Human($\downarrow$)}\\
+			\midrule[1pt]
+			\multicolumn{2}{c}{\textbf{Pre-trained model}} &0.841& 323.8 &-&- \\ \midrule[1pt]
+			\multirow{2}{*}{\textbf{Full}}
+			&\textbf{illegal}&0.347&187.6&32.31&5.9  \\ \cmidrule(ll){2-6}
+			&\textbf{legal}&0.365&194.0&32.19&5.4 \\  \midrule[1pt]
+			\multirow{2}{*}{\textbf{UCE}}
+			&\textbf{illegal}&0.426& 190.9&32.28&3.3 \\ \cmidrule(ll){2-6}
+			&\textbf{legal}&0.381&195.1 &32.17&3.1 \\  \midrule[1pt]
+			\multirow{2}{*}{\textbf{IMMA}}
+			&\textbf{illegal}&0.396&190.8&32.61&4.6 \\ \cmidrule(ll){2-6}
+			&\textbf{legal}&0.377&195&32.98&5.1  \\  \midrule[1pt]
+			\multirow{2}{*}{\textbf{FG-30\%}}
+			&\textbf{illegal}&\textbf{\underline{0.373}}&\textbf{\underline{190.6}}&32.37&5.7  \\ \cmidrule(ll){2-6}
+			&\textbf{legal}&0.382&194.1&32.10&5.2  \\  \midrule[1pt]
+			\multirow{2}{*}{\textbf{R-30\%}}
+			&\textbf{illegal}&0.351&186.7 &32.45&5.6 \\ \cmidrule(ll){2-6}
+			&\textbf{legal}&0.363&194.1&32.56&5.1  \\  \midrule[1pt]
+			\multirow{2}{*}{\textbf{FG-50\%}}
+			&\textbf{illegal}&\textbf{\underline{0.453}}&\textbf{\underline{194.5}} &\textbf{\underline{32.04}}&\textbf{\underline{3.5}} \\ \cmidrule(ll){2-6}
+			&\textbf{legal}&0.40&195.3 &32.49&3.9 \\ \midrule[1pt]
+			\multirow{2}{*}{\textbf{R-50\%}}
+			&\textbf{illegal}&0.383&189.7 &32.21&5.3 \\ \cmidrule(ll){2-6}
+			&\textbf{legal}&0.405&196.0 &32.43&3.7 \\  \midrule[1pt]
+			\multirow{2}{*}{\textbf{FG-70\%}}
+			&\textbf{illegal}&\textbf{\underline{0.511}}&\textbf{\underline{195.7}}&\textbf{\underline{31.96}}&\textbf{\underline{1.7}} \\ \cmidrule(ll){2-6}
+			&\textbf{legal}&0.41&195.3&32.58&3.8  \\  \midrule[1pt]
+			\multirow{2}{*}{\textbf{R-70\%}}
+			&\textbf{illegal}&0.441&189.2 &32.12&4.9 \\ \cmidrule(ll){2-6}
+			&\textbf{legal}&0.454& 196.4 &32.15&4.2 \\  \midrule[1pt]
+			\multirow{2}{*}{\textbf{FG-85\%}}
+			&\textbf{illegal}&\textbf{\underline{0.574}}& \textbf{\underline{201.2}}&31.74&\textbf{\underline{1.6}}\\ \cmidrule(ll){2-6}
+			&\textbf{legal}&0.526& 214.8 &31.91&2.1\\  \midrule[1pt]
+			\multirow{2}{*}{\textbf{R-85\%}}
+			&\textbf{illegal}&0.565 & 197.6&32.08&2.8\\ \cmidrule(ll){2-6}
+			&\textbf{legal}&0.586 & 210.4&32.09&2.7\\ \bottomrule
+	\end{tabular}}
+	\vspace{0.1in}
+	\caption{Mitigation power in one illegal class and one legal class from the Artwork dataset, where worse image quality indicates stronger mitigation power. FG-$\rho$\% means using FreezeAsGuard to freeze $\rho$\% tensors and R-$\rho$\% means random freezing.}
+	%	CSD [\citenum{somepalli2024measuring}] is a feature extractor for image art styles and the numbers are the cosine distance between the features of training images and generated images, smaller means more similar.
+	\vspace{-0.1in}
+	\label{tab:main_results}
+\end{table}
+
+\begin{figure}[ht]
+	\centering
+	\vspace{-0.15in}
+	\includegraphics[width=0.9\linewidth]{figures/art_ratios_3rows.pdf}
+	\vspace{-0.1in}
+	\caption{Examples of artwork images generated by FreezeAsGuard with different freezing ratios}
+	\label{fig:art_ratio}
+	\vspace{-0.2in}
+\end{figure}
+
+\vspace{-0.05in}
+\subsection{Mitigating Duplication of Copyright Artworks}
+\vspace{-0.05in}
+We evaluate the capability of FreezeAsGuard in mitigating the duplication of copyrighted artworks, using the Artwork dataset and SD v2.1 model. One artist is randomly selected as the illegal class and the legal class, respectively. 
+
+
+
+%The quantitative results of baseline methods and FreezeAsGuard under different freezing ratios are shown in the table \ref{tab:main_results}. 
+The results with different freezing ratios are shown in Table \ref{tab:main_results} and Figure \ref{fig:art_ratio}. Unlike results in Section \ref{subsec:result_portraits} where data classes exhibit only subtle differences in facial features, different artists' artworks demonstrate markedly different styles. Hence, a higher freezing ratio is required for sufficient mitigation power. We empirically decide the optimal freezing ratio for the domain of artwork is 70\%. When $\rho$=70\%, FreezeAsGuard can provide 47\% more mitigation power in illegal classes compared to full fine-tuning, and 30\% more compared to unlearning schemes. Figure \ref{fig:art_example} further shows example images generated by FreezeAsGuard with $\rho$=70\%, and more examples can be found in Appendix F.2.
+
+\begin{figure}[ht]
+	\centering
+	\vspace{-0.1in}
+	\includegraphics[width=0.9\linewidth]{figures/art_example_3rows.pdf}
+%	\vspace{-0.3in}
+	\caption{Examples of generated artworks by FreezeAsGuard with $\rho$=70\% and other baseline methods}
+        \label{fig:art_example}
+	\vspace{-0.1in}
+\end{figure}
+
+\begin{table}[ht]
+	\centering
+	%\vspace{-0.15in}
+	{\fontsize{9}{9}\selectfont
+		\begin{tabular}{cccc}
+			\toprule
+			\textbf{Method} &\multicolumn{2}{c}{\textbf{Illegal}} & \textbf{Legal}\\ \cmidrule(ll){2-3}\cmidrule(ll){4-4}
+			& NudeNet($\uparrow$) & FID($\downarrow$) & CLIP($\uparrow$)\\ \midrule
+			\textbf{Pre-trained model}& 0.47 & - & - \\ \midrule[1pt]
+			\textbf{Full FT}& 1.29& 158.1 &32.79 \\ \midrule[1pt]
+			\textbf{UCE}&1.20& 158.5& 30.07 \\ \midrule[1pt]
+			\textbf{IMMA}&1.17& 162.0& 28.71 \\ \midrule[1pt]
+			\textbf{FG-30\%}&\textbf{\underline{1.27}}&\textbf{\underline{159.5}}&32.50\\ \midrule[1pt]
+			\textbf{R-30\%}&1.30&158.8&32.79\\ \midrule
+			\textbf{FG-50\%}&\textbf{\underline{1.06}}&\textbf{\underline{163.2}}&31.83\\ \midrule[1pt]
+			\textbf{R-50\%}&1.20&160.6&30.43\\ \midrule
+			\textbf{FG-70\%}&\textbf{\underline{0.87}}&\textbf{\underline{166.1}}&31.56\\ \midrule[1pt]
+			\textbf{R-70\%}&1.12&161.8&28.66\\ \midrule
+			\textbf{FG-85\%}&\textbf{\underline{0.85}}&\textbf{\underline{166.5}}&30.34\\ \midrule[1pt]
+			\textbf{R-85\%}&0.93&164.6&30.81\\ 
+			\bottomrule
+	\end{tabular}}
+	\vspace{0.1in}
+	\caption{Mitigation power in illegal class (NSFW-caption dataset) and legal class (Modern-Logo-v4 dataset), where worse image quality (in FID or CLIP) or lower NudeNet score indicates stronger mitigation power. FG-$\rho$\% means using FreezeAsGuard to freeze $\rho$\% tensors and R-$\rho$\% means random freezing.}
+%	\vspace{-0.2in}
+	\label{tab:explicit}
+\end{table}
+
+
+\subsection{Mitigating Generation of Explicit Contents}
+
+%Another important application of our method is to prevent the generation of explicit content. 
+To evaluate FreezeAsGuard's mitigation of explicit contents, we designate the NSFW-caption dataset as illegal class, %and use the FID score and NudeNet (a network that detects nudity) to evaluate the generated image quality. 
+and the Modern-Logo-v4 dataset as legal class. Results in Table \ref{tab:explicit} and Figure \ref{fig:explicit_example} show that, with $\rho$=70\%, FreezeAsGuard significantly reduces the model's capability of generating explicit contents by up to 38\% compared to unlearning schemes, while maintaining the model's adaptability in legal class. More image examples are in Appendix F.3.
+
+
+
+\subsection{Scalability of Mitigation Power}
+
+To evaluate FreezeAsGuard's scalability over multiple illegal classes, we randomly pick 2, 5 and 10 public figures in the FF25 dataset, and  1, 2 and 3 artists in the Artworks dataset, as illegal classes. As shown in Table \ref{tab:ff25_classes} and \ref{tab:art_classes}, when the number of illegal classes increases, FreezeAsGuard can retain strong mitigation power in both cases, and continuously outperforms the unlearning schemes. 
+%In contrast, UCE exhibits no mitigation power in some cases since fine-tuning can relearn the unlearned knowledge in illegal classes. IMMA aggressively modifies the weights and results in significant performance drops in legal classes. 
+Note that, with more illegal classes, the difference of mitigation power between FreezeAsGuard and random freezing is smaller, because more illegal classes correspond to more adaptation-critical tensors, and random freezing is more likely to cover them. 
+
+
+
+
+\begin{figure}
+	\centering
+%	\vspace{-0.1in}
+	\includegraphics[width=0.8\linewidth]{figures/explicit_example.pdf}
+%	\vspace{-0.15in}
+	\caption{Examples of generated images with explicit contents by FreezeAsGuard with $\rho$=70\% and other baseline methods}
+	\label{fig:explicit_example}
+	\vspace{-0.1in}
+\end{figure}
+
+\begin{table}[ht]
+	\centering
+	%\vspace{-0.15in}
+	{\fontsize{9}{9}\selectfont
+		\begin{tabular}{ccccccc}
+			\toprule
+			\multirow{2}{*}{\textbf{Method}} & \multicolumn{2}{c}{\textbf{2 classes}} & \multicolumn{2}{c}{\textbf{5 classes}} & \multicolumn{2}{c}{\textbf{10 classes}}\\
+			\cmidrule(ll){2-7}
+			& illegal &legal& illegal &legal& illegal &legal\\
+			\midrule[1pt]
+			\textbf{Full FT} &0.397&0.397&0.424&0.424&0.436&0.436\\ \midrule
+			\textbf{UCE} &0.435&0.444&0.443&0.437&0.445&0.442\\ \midrule
+			\textbf{IMMA} &0.412&0.428&0.461&0.463&0.467&0.462\\ \midrule
+			\textbf{FG-30\%} &0.467&0.426&0.474&0.458&0.482&0.449\\
+			\bottomrule
+	\end{tabular}}
+	\vspace{0.1in}
+	\caption{Mitigation power in the FF25 dataset, measured by the FN-L score, with different numbers of illegal classes.}
+	\vspace{-0.1in}
+	\label{tab:ff25_classes}
+\end{table}
+\vspace{-0.05in}
+
+
+\begin{table}[ht]
+	\centering
+	%\vspace{-0.15in}
+	{\fontsize{7.5}{9}\selectfont
+		\begin{tabular}{ccccccc}
+			\toprule
+			\multirow{2}{*}{\textbf{Method}} & \multicolumn{2}{c}{\textbf{1 class}} & \multicolumn{2}{c}{\textbf{2 classes}} & \multicolumn{2}{c}{\textbf{3 classes}}\\
+			\cmidrule(ll){2-7}
+			& illegal &legal& illegal &legal& illegal &legal\\
+			\midrule
+			\textbf{Full FT} &0.348& 0.356& 0.415& 0.411& 0.434& 0.458\\ \midrule
+			\textbf{UCE} &0.426& 0.381& 0.538& 0.521& 0.552& 0.574 \\ \midrule
+			\textbf{IMMA} &0.396 &0.377 &0.483 &0.463 &0.536& 0.496 \\ \midrule
+			\textbf{FG-70\%} &0.511 &0.410& 0.609& 0.473& 0.648& 0.525 \\
+			\bottomrule
+	\end{tabular}}
+	\vspace{0.1in}
+	\caption{Mitigation power in the Artwork dataset, measured by the CSD score, with different numbers of illegal classes}
+	\vspace{-0.2in}
+	\label{tab:art_classes}
+\end{table}
+
+
+\subsection{The Learned Selection of Frozen Tensors}
+In Figure \ref{fig:tensor_ff25} and \ref{fig:tensor_art}, we visualized the learned binary masks of tensor freezing for different illegal classes on the FF-25 and Artwork datasets, respectively, with the SD v1.5 model. These results show that on both datasets, the tensors being frozen for different illegal classes largely vary, indicating that our mask learning method can properly capture the unique tensors that are critical to each class, hence ensuring scalability. Note that in practice, no matter how many illegal classes are involved, the total amount of frozen tensors will always be constrained by the freezing ratio ($\rho$). When more illegal classes are involved, our results show that FreezeAsGuard is capable of identifying the most critical set of tensors for mitigating the fine-tuned model's representation power.
+
+
+\subsection{Mitigation Power with Different Models}
+%We apply FreezeAsGuard to three different SD models with the FF25 dataset. 
+As shown in Table \ref{tab:ff25_models}, when applied to different SD models, FreezeAsGuard constantly outperforms baseline schemes. SD v1.4 and v1.5 are generally stronger than SD v2.1, and the gap between illegal and legal classes in FreezeAsGuard is slightly better for v1.4 and v1.5 models. We hypothesize that better pre-trained models have more modularized knowledge distribution over model parameters, and hence allow FreezeAsGuard to have less impact on legal classes.
+
+
+
+\begin{table}[ht]
+	\centering
+	\vspace{-0.05in}
+	{\fontsize{9}{9}\selectfont
+		\begin{tabular}{ccccccc}
+			\toprule
+			\multirow{2}{*}{\textbf{Method}} & \multicolumn{2}{c}{\textbf{SD 1.4}} & \multicolumn{2}{c}{\textbf{SD 1.5}} & \multicolumn{2}{c}{\textbf{SD 2.1}}\\
+			\cmidrule(ll){2-7}
+			& illegal &legal& illegal &legal& illegal &legal\\
+			\midrule[1pt]
+			\textbf{Full} &0.435&0.435&0.436&0.436&0.439&0.439\\ \midrule
+			\textbf{UCE} &0.447&0.442&0.445&0.442&0.445&0.441\\ \midrule
+			\textbf{IMMA} &0.451&0.448&0.467&0.462&0.463&0.454\\ \midrule
+			\textbf{FG-30\%} &0.489&0.453&0.482&0.449&0.474&0.450\\
+			\bottomrule
+	\end{tabular}}
+	\vspace{0.1in}
+	\caption{Mitigation power in the FF25 dataset, measured by the FN-L score, with different diffusion models}
+	\vspace{-0.15in}
+	\label{tab:ff25_models}
+\end{table}
+\vspace{-0.05in}
+
+\vspace{-0.05in}
+\subsection{Reduction of Computing Costs}
+One advantage of freezing tensors is that it reduces the computing costs of fine-tuning.
+%, motivating users to adopt tensor freezing in fine-tuning practices. 
+As shown in Table \ref{tab:fine-tuning_cost}, when fine-tuning the model on a A6000 GPU, by applying FreezeAsGuard's selection of tensor freezing, users can save 22\%-48\% GPU memory and 13\%-21\% wall-clock computing time, compared to other baselines without freezing ($\rho$=0\%). Such savings, hence, well motivate users to adopt the FreezeAsGuard's tensor freezing in their fine-tuning practices.
+\begin{table}[ht]
+	\centering
+	\vspace{-0.05in}
+	{\fontsize{9}{9}\selectfont
+		\begin{tabular}{ccccc}
+			\toprule
+			\textbf{Fine-tuning Cost} & $\boldsymbol{\rho}$\textbf{=0\%} & $\boldsymbol{\rho}$\textbf{=1\%} & $\boldsymbol{\rho}$\textbf{=5\%} & $\boldsymbol{\rho}$\textbf{=10\%}  \\
+			\midrule
+			GPU Memory (GB) & 18.28 & 18.26 & 16.97 & 16.96 \\
+			Per-batch computing time (s) & 1.17 & 1.14 & 1.09 & 1.06 \\
+			\midrule[1pt]
+               \textbf{Fine-tuning Cost} & $\boldsymbol{\rho}$\textbf{=20\%} & $\boldsymbol{\rho}$\textbf{=30\%} & $\boldsymbol{\rho}$\textbf{=40\%} & $\boldsymbol{\rho}$\textbf{=80\%} \\
+               \midrule
+               GPU Memory (GB)  & 15.43 & 14.15 & 13.61 & 9.49 \\
+		    Per-batch computing time (s)  & 1.05 & 1.02 & 1.00 & 0.91 \\
+                \bottomrule
+	\end{tabular}}
+\vspace{0.1in}
+\captionof{table}{Computing cost with FreezeAsGuard-$\rho$ on SD v1.5 model, using an NVidia A6000 GPU}
+%\vspace{-0.15in}
+	\label{tab:fine-tuning_cost}
+\end{table}
+
+
+
+
+
+
+\vspace{-0.05in}
+\section{Conclusion \& Broader Impact}
+\vspace{-0.05in}
+In this paper, we present FreezeAsGuard, a new technique for mitigating illegal adaptation of diffusion models by freezing model tensors that are adaptation-critical only for illegal classes. FreezeAsGuard largely outperforms existing model unlearning schemes. Our rationale for tensor freezing is generic and can be applied to other large generative models. 
+%We hope our study can stimulate further exploration about task-dependent parameters in large generative models in the community.
+
+\begin{figure}
+	\centering
+	\vspace{-0.05in}
+	\includegraphics[width=0.7\linewidth]{figures/tensor_ff25.pdf}
+	%	\vspace{-0.3in}
+	\caption{The frozen tensors for illegal classes on the FF-25 dataset, with $\rho$=30\%}
+	\label{fig:tensor_ff25}
+	\vspace{-0.05in}
+\end{figure}
+
+\begin{figure}
+	\centering
+	\vspace{-0.05in}
+	\includegraphics[width=0.7\linewidth]{figures/tensor_art.pdf}
+	%	\vspace{-0.3in}
+	\caption{The frozen tensors for illegal classes on the Artwork dataset, with $\rho$=70\%}
+	\label{fig:tensor_art}
+	\vspace{-0.05in}
+\end{figure}
+
+
+\setcitestyle{numbers}
+\bibliographystyle{abbrvnat}
+\bibliography{ref}
+
+% WARNING: do not forget to delete the supplementary pages from your submission 
+% \input{sec/X_suppl}
+
+\newpage
+\appendix
+
+\section{Vectorizing the Gradient Calculations in Bilevel Optimization}
+\label{sec:vectorizing}
+In practice, the solutions to bilevel optimization in Eq. (2) and Eq. (3) can usually be approximated through gradient-based optimizers. However, existing deep learning APIs (e.g., TensorFlow and PyTorch) maintain model tensors in either list or dictionary-like structures, and hence the gradient calculation for Eq. (4) cannot be automatically vectorized with the mask vector $\mathbf{m}$. To enhance the compute efficiency, we decompose the process of gradient calculation and assign the majority of compute workload to the highly optimized APIs. 
+
+Specifically, in mask learning in the upper-level loop specified in Eq. (5), $\mathcal{L}_{upper}$'s gradient w.r.t a model tensor's $w_i$ can be decomposed via the chain rule as:
+\begin{align}\label{eq:bp_upper}
+\frac{\partial{\mathcal{L}_{upper}}}{\partial{w_i}} & =
+\left< \frac{\partial{\mathcal{L}_{upper}}}{\partial{\theta(m)_i}}, 
+\frac{\partial{\theta(m)_i}}{m_i} \right>
+\frac{\partial m_i}{\partial w_i} \\
+&= \left< \frac{\partial{\mathcal{L}_{upper}}}{\partial{\theta(m)_i}},
+\theta_{pre}^{(i)} - \theta_{ft}^{(i)} \right> 
+\frac{1}{T}\sigma\left(\frac{w_i}{T}\right)\sigma\left(1-\frac{w_i}{T}\right),
+\end{align}
+where $<\cdot,\cdot>$ denotes the inner product. The calculation of the gradient component, i.e., $\partial \mathcal{L}_{upper} / \partial \theta (m)_i$, is then done by automatic differentiation APIs, because it is equivalent to standard backpropagation in diffusion model training. The other calculations are implemented by traversing over the list of model tensors.
+
+Similarly, when fine-tuning the model tensors $\boldsymbol{\theta}(\mathbf{m})$ in the lower-level loop specified in Eq. (7), we also decompose its gradient calculation process. In particular, fine-tuning $\boldsymbol{\theta}(\mathbf{m})$ is equivalent to fine-tuning $\boldsymbol{\theta}_{ft}$, and the gradient descent is hence to update $\boldsymbol{\theta}_{ft}$. More specifically, the gradient of a given tensor $i$ is:
+\begin{align}\label{eq:bp_lower}
+\frac{\partial \mathcal{L}_{lower}}{\partial \theta_{ft}^{(i)}} =
+\frac{\partial \mathcal{L}_{lower}}{\partial \theta(m)_{i}} 
+\frac{\partial \theta(m)_{i}}{\partial \theta_{ft}^{(i)}} = 
+\frac{\partial \mathcal{L}_{lower}}{\partial \theta(m)_{i}} (1-m_i),
+\end{align}
+where we leave $\partial \mathcal{L}_{lower} / \partial \theta_{ft}^{(i)}$ to automatic differentiation APIs because it is equivalent to standard backpropagation in diffusion model training. Note that this backpropagation shares the same model weights as $\partial \mathcal{L}_{upper} / \partial \theta (m)_i$ in Eq. (11), with different training objectives, and the other calculations are similarly implemented by traversing over the list of model tensors.
+%Although users can adopt diverse hyper-parameter configurations (e.g., learning rate and batch size), we argue that such variation of hyper-parameters is small in practice for fine-tuning diffusion models, and we can choose the most popular set to represent the user preference.
+
+In addition, computing gradients over large diffusion models is expensive when using automatic differentiation in existing deep learning APIs (e.g., PyTorch and TensorFlow). Instead, we apply code optimization in the backpropagation path of fine-tuning, to reuse the intermediate gradient results and hence reduce the peak memory.
+
+
+\begin{figure}[h]
+	\centering
+	\vspace{-0.05in}
+	\includegraphics[width=0.9\linewidth]{figures/loss_fluctuation.pdf}
+%	\vspace{-0.05in}
+	\caption{Fine-tuning loss after the 5th and 10th mask updates during bilevel optimization}
+	%\vspace{-0.1in}
+	\label{fig:loss_fluctuation}
+	%\vspace{-0.05in}
+\end{figure}
+
+\section{Deciding the Number of Fine-tuning Iterations in Bilevel Optimization}
+\label{sec:finetune_interval}
+As shown in Figure \ref{fig:loss_fluctuation}, we observe that in the lower-level loop of model fine-tuning, the fine-tuning loss typically drops fast in the first 5-10 iterations, but then starts to violently fluctuate. Such quick drop of loss at the initial stage of fine-tuning is particularly common in fine-tuning large generative models, because the difference between the fine-tuned and pre-trained weights can be so small that only a few weight updates can get close [\citenum{yu2023language}]. The violent fluctuation afterwards, on the other hand, exhibits $>$60\% of loss value changes, which indicates that the loss plateau is very unsmooth although the model can quickly enter it.
+
+Since the first few iterations contribute to most of the loss reduction during fine-tuning, we believe that the model weights have already been very close to those in the completely fine-tuned model. In that case, we do not wait for the fine-tuning loss to converge, but instead only fine-tune the model for the first 10 iterations before updating the mask to the upper-level loop of mask learning. In practice, the model publisher can still adopt large numbers of fine-tuning iterations as necessary, depending on the availability of computing resources and the specific requirements of mitigating illegal domain adaptations. Similar approximation schemes are also adopted in existing work [\citenum{ruiz2023dreambooth, zheng2023imma}] to solve bilevel optimization problems, but most of them aggressively set the interval to be only one iteration, leading to arguably high approximation errors. 
+
+
+\begin{figure}[h]
+	\centering
+	%	\vspace{-0.05in}
+	%\hspace{-0.4in}
+	\includegraphics[width=0.9\linewidth]{figures/dataset_statistics.pdf}
+%	\vspace{-0.15in}
+	\caption{Statistics of the Famous-Figures-25 dataset}
+	%\vspace{-0.1in}
+	\label{fig:dataset_statistics}
+	%\vspace{-0.05in}
+\end{figure}
+
+
+\section{Details of Datasets}\label{sec:dataset_details}
+
+
+% statistics, name list, example images
+\noindent\textbf{The Famous-Figures-25 (FF25) Dataset:} Our FF25 dataset contains 8,703 portrait images of 25 public figures and the corresponding text descriptions. These 25 subjects include politicians, movie stars, writers, athletes and businessmen, with diverse genders, races, and career domains. As shown in Figure \ref{fig:dataset_statistics}, the dataset contains 400-1,300 images of each subject. 
+
+All the images were crawled from publicly available sources on the Web, using the AutoCrawler tool [\citenum{autocrawler}]. We only consider images that 1) has a resolution higher than 512$\times$512 and 2) contains $>$3 faces detected by OpenCV face recognition API [\citenum{opencvfacedet}] as valid. Each raw image is then center-cropped to a resolution of 512$\times$512. For each image, we use a pre-trained BLIP2 image captioning model [\citenum{li2023blip}] to generate the corresponding text description, and prompt BLIP2 with the input of ``a photo of \texttt{<person\_name>} which shows'' to avoid hallucination. For example, ``a photo of Cristiano Ronaldo which shows'', when being provided to the BLIP2 model as input, could result in text description of ``a photo of Cristiano Ronaldo which shows him smiling in a hotel hallway''. We empirically find that adopting this input structure to the BLIP2 model produces much fewer irrelevant captions. More sample images and their corresponding text descriptions are shown in Figure \ref{fig:dataset_examples}.
+
+
+\begin{figure}[h]
+	\centering
+	\vspace{-0.05in}
+	\includegraphics[width=0.9\linewidth]{figures/dataset_examples.pdf}
+%	\vspace{-0.15in}
+	\caption{Examples of portrait images in the Famous-Figures-25 dataset}
+	%\vspace{-0.1in}
+	\label{fig:dataset_examples}
+	%\vspace{-0.05in}
+\end{figure}
+
+\vspace{0.1in}
+\noindent\textbf{The Artwork Dataset:} We selected five renowned digital artists, each of which has a unique art style, and manually downloaded 100–300 representative images from their Instagram accounts. The total amount of images in the dataset is hence 1,134. We then used a pre-trained BLIP2 image captioning model [\citenum{li2023blip}] to generate text prompts for each image. In Figure \ref{fig:dataset_examples_artwork}, we show a sample image and its text prompt for each artist.
+
+\begin{figure}[h]
+	\centering
+	\vspace{-0.05in}
+	\includegraphics[width=0.8\linewidth]{figures/artwork_example_raw.pdf}
+%	\vspace{-0.15in}
+	\caption{Examples of collected painting from 5 artists}
+	%\vspace{-0.1in}
+	\label{fig:dataset_examples_artwork}
+	%\vspace{-0.05in}
+\end{figure}
+
+
+\vspace{0.1in}
+\noindent\textbf{The NSFW-Caption Dataset:} This dataset contains 2,000 NSFW images collected from MetArt, and each image has a very detailed caption, as shown in Figure \ref{fig:dataset_examples_explicit}.
+
+\begin{figure}[h]
+	\centering
+	\vspace{-0.05in}
+	\includegraphics[width=0.8\linewidth]{figures/explicit_example_raw.pdf}
+	\vspace{-0.15in}
+	\caption{One sample in the  NSFW-Caption dataset}
+	%\vspace{-0.1in}
+	\label{fig:dataset_examples_explicit}
+	%\vspace{-0.05in}
+\end{figure}
+
+Also, in evaluations of FreezeAsGuard's capability of mitigating the generation of explicit contents, we use the Modern-Logo-v4 dataset [\citenum{logov4}], which contains 803 logo images that are labeled with informative text descriptions, as the legal class.  As the examples in Figure \ref{fig:dataset_examples_logo} shown, these logos are minimalist, meeting modern design requirements and reflecting the corresponding company's industry.
+
+\begin{figure}[h]
+	\centering
+	\vspace{-0.05in}
+	\includegraphics[width=0.7\linewidth]{figures/logo_examples.pdf}
+%	\vspace{-0.1in}
+	\caption{Examples in the Modern-Logo-v4 dataset}
+	%\vspace{-0.1in}
+	\label{fig:dataset_examples_logo}
+	%\vspace{-0.05in}
+\end{figure}
+
+\section{Details of Image Quality Metrics}\label{sec:metrics_details}
+
+\subsection{Domain-specific feature extractor}\label{sec:metrics_details_feature_extractor}
+
+In general, we measure the quality of images generated by the fine-tuned diffusion model by comparing their similarity with the original training images used to fine-tune the diffusion model. Most commonly used image similarity metrics, such as FID [\citenum{heusel2017gans}], LPIPS [\citenum{jinjin2020pipal}] and CLIP score [\citenum{hessel2021clipscore}], compute the similarity between the distributions of the extracted features from the generated and original images [\citenum{podell2023sdxl,hessel2021clipscore}]. The feature vectors are obtained using image feature extractors like the Inception model [\citenum{heusel2017gans}]. They often perform reasonably well in measuring similarity between images of common objects, such as those included in the ImageNet data samples [\citenum{russakovsky2015imagenet}].
+%that constitute most of their training data. 
+
+However, existing studies find that these metrics cannot reliably measure the similarity between very similar subjects, such as human faces of different human subjects or artworks in different art styles [\citenum{jayasumana2024rethinking,verma2024many}]. In practice, we observe that the measured image quality by these metrics could even contradict human perception. For example, as shown in Figure \ref{fig:lpips}, while images generated with FreezeAsGuard are significantly lower in quality and differ more from the training images from a human perspective, the LPIPS scores of images generated by the fully fine-tuned model (without applying FreezeAsGuard) are similar to ours, even though they look quite different visually. 
+
+\begin{figure}[h]
+	\centering
+	\vspace{-0.05in}
+	\includegraphics[width=0.8\linewidth]{figures/LPIPS_example.pdf}
+%	\vspace{-0.15in}
+	\caption{Evaluating the similarity in art style using the LPIPS score [\citenum{jinjin2020pipal}], where a higher score means more difference from the original training image.}
+	%\vspace{-0.1in}
+	\label{fig:lpips}
+	%\vspace{-0.05in}
+\end{figure}
+
+Therefore, to address the limitations of these generic image quality metrics, as described in the paper, we use domain-specific feature extractors to obtain features from the training and generated images, then compute the cosine distance between the feature vectors as the final measure of the generated images' quality. For human faces, we select three top feature extractors, namely FaceNet-512 (FN-L), FaceNet (FN), and VGG-Face (VGG), as provided in the DeepFace package [\citenum{serengil2024lightface}]. For art styles in artworks, we use a pretrained CSD model from [\citenum{somepalli2024measuring}].
+
+
+\subsection{NudeNet score}\label{sec:metrics_details_nudenet}
+We use a NSFW detector, namely NudeNet [\citenum{nudenet}], to decide if the generated images contain any explicit content. For an input image, NudeNet can output a list of detected human body parts (such as ANUS\_EXPOSED and FACE\_FEMALE), along with the corresponding probabilities of these body parts' appearances in the image. We sum all these probabilities together as the NudeNet score of the image, with a lower score indicating a lower probability of containing explicit content. The full list of the detectable human body parts is as follows: 
+
+\vspace{0.1in}
+\noindent FEMALE\_GENITALIA\_COVERED,FACE\_FEMALE,\\
+BUTTOCKS\_EXPOSED,FEMALE\_BREAST\_EXPOSED,\\
+FEMALE\_GENITALIA\_EXPOSED,\\
+MALE\_BREAST\_EXPOSED,ANUS\_EXPOSED,\\
+FEET\_EXPOSED,BELLY\_COVERED,FEET\_COVERED,\\
+ARMPITS\_COVERED,ARMPITS\_EXPOSED,FACE\_MALE,\\
+BELLY\_EXPOSED,MALE\_GENITALIA\_EXPOSED,\\
+ANUS\_COVERED,FEMALE\_BREAST\_COVERED,\\
+BUTTOCKS\_COVERED,
+\vspace{0.1in}
+
+\noindent and we select the following 5 from them as indicators of explicit content:
+
+\vspace{0.1in}
+\noindent UTTOCKS\_EXPOSED,FEMALE\_BREAST\_EXPOSED,\\
+FEMALE\_GENITALIA\_EXPOSED,ANUS\_EXPOSED,\\
+MALE\_GENITALIA\_EXPOSED
+
+
+\subsection{Details of Human Evaluations}
+Our human evaluation involves 16 participants of college students. These participants ranged in age from 19 to 28, with 14 identifying as male and 2 as female. 
+%All participants are based in the United States.
+We conduct our human evaluation by distributing the images being examined by participants via an online questionnaire, which consists of multiple sets of images. In each set of images, a training image is first shown as a reference, and then several images generated by the fine-tuned diffusion models in different ways (e.g., unprotected full fine-tuning, UCE, IMMA, FreezeAsGuard) are shown, with respect to the same text prompt. The participants are asked to rate each generated image based on how closely it resembles the same subject (public figures or art styles) as shown in the reference image. The rating scale ranges from 1 to 7, with 1 indicating ``very unlikely'' and 7 indicating ``very likely''. In each set of images, we also randomly shuffle the order of images generated by different methods, to avoid bias of ordering. 
+
+Figure \ref{fig:human_eval_questionnaire} shows an example of such a set of images in the questionnaire. The questionnaire contains a total number of 220 sets of images for participants to rate.
+
+\begin{figure}[h]
+	\centering
+	\vspace{-0.05in}
+	\includegraphics[width=0.9\linewidth]{figures/human_evaluation_example.pdf}
+%	\vspace{-0.15in}
+	\caption{Example of the questionnaire for human evaluation }
+	%\vspace{-0.1in}
+	\label{fig:human_eval_questionnaire}
+	%\vspace{-0.05in}
+\end{figure}
+
+\section{Details of Evaluation Setup}\label{sec:hyperparameter}
+
+For each illegal class and legal class in FF25 and the artwork dataset, we generally select 100 images in each class for mask learning, but if the number of images in the class is smaller than 150, we select half of the images for mask learning. For explicit content generation, we use 500 images from legal and illegal class, separately, for mask learning, and the remaining data samples in the dataset are used for illegal model fine-tuning. Note that, to mitigate model adaptation in specific illegal classes, we will need to use data samples in the same class for mask learning. However, in our evaluations, the set of data samples used for mask learning and the set of data samples used for illegal model fine-tuning never have any overlap. For example, to mitigate the fine-tuned model's capability of generating portrait images of Barack Obama, we will use a set of portrait images of Barack Obama to learn the mask for tensor freezing. Then, another set of Barack Obama's portrait images are used to emulate illegal users' fine-tuning the diffusion model, and FreezeAsGuard's performance of mitigating illegal model adaptation is then evaluated by the quality of images generated by the fine-tuned model regarding this subject.
+
+For mask learning, we set the gradient step size to 10, the simulated user learning rate to 1e-5, and iterate sufficient steps with the batch size of 16. The temperature for the mask's continuous form is set to 0.2, which we empirically find to ensure sufficient sharpness without impairing trainability. When fine-tuning the diffusion model as an illegal user, we adopt a learning rate of 1e-5 and the batch size of 4 with Adam [\citenum{kingma2014adam}] optimizer. For FF25 and artwork datasets, we fine-tune 2,000 iterations on illegal user's data samples. And for explicit content, since the pre-trained diffusion model has little knowledge about the explicit contents, we fine-tune 5,000 iterations to ensure the quality of generated images. Following the standard sampling setting of diffusion models, the loss is only calculated from a random denoising step during fine-tuning for every iteration, to ensure training efficiency. For image generation, we adopt the PNDMScheduler [\citenum{karras2022elucidating}] and proceed with 50 denoising steps to ensure sufficient image quality.
+
+\section{More Qualitative Examples of Images Generated by the Fine-tuned Model}\label{sec:more_qualitative_examples}
+
+\subsection{Forgery of Public Figures' Portraits}\label{sec:more_examples_figures}
+
+We provided more image examples in Figure \ref{fig:other_qualitative_target}, to show how FreezeAsGuard can effectively mitigate forgery of different public figures' portraits. In most cases, FreezeAsGuard is able to create noticeable artifacts on the generated human portraits, such as stretched faces or exaggerated motions that help distinguish the generated images from the original training images. In some cases, such as the second row of Nancy Pelosi's photos, the generated images contain unrealistic duplication of subjects. Moreover, for the first row of Lionel Messi's photos, the subject in the generated image with FreezeAsGuard is a cartoon image, which is not aligned with the prompt. This is because, with FreezeAsGuard's tensor freezing, the model cannot correctly convert the text features extracted by the text encoder to the aligned image tokens.
+
+\begin{figure*}[ht]
+	\centering
+	\vspace{-0.05in}
+	\includegraphics[width=1\linewidth]{figures/example_ff25_extra.pdf}
+%	\vspace{-0.15in}
+	\caption{Examples of generated images after applying FreezeAsGuard-30\% to Stable Diffusion v1.5 on illegal classes, where each prompt adopts the same seed for generation}
+	%\vspace{-0.1in}
+	\label{fig:other_qualitative_target}
+	%\vspace{-0.05in}
+\end{figure*}
+
+
+\subsection{Duplication of Copyrighted Artworks}\label{sec:more_examples_artworks}
+Similarly, as more image examples in Figure \ref{fig:other_qualitative_artwork} have shown, in most cases, images generated with baseline methods can exactly replicate the artistic style of the original training image. However, with FreezeAsGuard, the generated artwork follows the text instructions but adopts a significantly different art style.
+\begin{figure*}[ht]
+	\centering
+	\vspace{-0.1in}
+	\includegraphics[width=0.9\linewidth]{figures/example_5artists.pdf}
+%	\vspace{-0.25in}
+	\caption{Examples of generated images after applying FreezeAsGuard-70\% to Stable Diffusion v2.1 on illegal classes, where each prompt adopts the same seed for generation}
+	%\vspace{-0.1in}
+	\label{fig:other_qualitative_artwork}
+	%\vspace{-0.05in}
+\end{figure*}
+
+\subsection{Generation of Explicit Contents}\label{sec:more_examples_explicit}
+As shown in Figure \ref{fig:other_qualitative_explicit}, the generated images with FreezeAsGuard can effectively avoid explicit contents from being shown in different ways. In rows 4 and 5, the human subjects in images generated with FreezeAsGuard are all clothed. In Rows 1, 2 and 3, the image is zoomed in to prevent explicit content from being shown. In Row 6, the image quality is degraded so that no recognizable human appears.
+
+\begin{figure*}[ht]
+	\centering
+	\vspace{-0.05in}
+	\includegraphics[width=0.8\linewidth]{figures/explicit_example_appendix.pdf}
+%	\vspace{-0.15in}
+	\caption{Examples of generated images after applying FreezeAsGuard-70\% to Stable Diffusion v1.4 on illegal classes, where each prompt adopts the same seed for generation}
+	%\vspace{-0.1in}
+	\label{fig:other_qualitative_explicit}
+	%\vspace{-0.05in}
+\end{figure*}
+
+
+
+\section{Ethical Issues of Using the Public Portrait Images and Artwork Images}\label{sec:ethical}
+In this section, we affirm that the use of our self-collected public portrait images and artwork image dataset does not raise ethical issues.
+
+\subsection{Image Source}
+For the FF-25 dataset, we use the Google images search API to crawl the images from the Web. Since the crawled images are from a large collection of websites, we cannot list all the websites here or associate each image with the corresponding website. However, we can confirm that the majority of websites from which images are crawled allow non-restricted non-commercial use, i.e., the CC NC or CC BY-NC license. Some examples of these websites are listed as follows:
+
+\vspace{0.1in}
+\begin{itemize}
+	\item Wikipedia.org
+	\item whitehouse.gov
+	\item ifeng.com
+	\item theconversation.com
+	\item house.gov
+	\item cartercenter.org
+	\item newstatesman.com
+	\item esportsobserver.com
+	\item slate.fr
+	\item letemps.ch
+\end{itemize}
+
+\vspace{0.1in}
+For the artwork image dataset, we use artist's posted images on their public Instagram accounts. The following keywords can be used to search these public Instagram accounts:
+
+
+\begin{itemize}
+	\item Beeple\_crap
+	\item Saonserey
+	\item Kylelambertartist
+	\item Davidsossella
+	\item Thebutcherbilly
+\end{itemize}
+
+\subsection{Image Usage}
+Our collection and use of these images are strictly limited to non-commercial research use, and these images will only be released to a small group of professional audience (i.e., CVPR reviewers) instead of the wide public. Hence, our use complies with the fair use policy of copyrighted images, which allows researchers to use copyrighted images for non-commercial research purpose without the permission from copyright owners. More information about such policy can be found at most university's libraries. 
+%For example, please check this one: https://libguides.mit.edu/graphicdesign/copyrightandfairuse.
+
+\subsection{Use Policy in the Research Community}
+We noticed that such fair use policy mentioned before has been widely applied in the research community to allow usage of copyrighted images of public figures' portraits and artworks for research purposes. For example, many datasets of celebrities' portraits such as CelebA [\citenum{liu2015faceattributes}], PubFig [\citenum{kumar2009attribute}] and MillionCelebs [\citenum{zhang2020global}]) and artwork such as Wikiart [\citenum{artgan2018}] and LION [\citenum{schuhmann2022laion}] are publicly available online. These datasets have been also used in a large quantity of research papers published at AI, ML and CV conferences. For examples: [\citenum{kim2022learning,dash2022evaluating}] used the CelebA dataset, [\citenum{kahla2022label,kim2021testing}] used the PubFig dataset and [\citenum{xu2023learning}] use the WikiArt dataset.
+
+
+\end{document}
