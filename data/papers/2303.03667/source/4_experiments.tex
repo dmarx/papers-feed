@@ -1,0 +1,58 @@
+\section{Experimental Results}
+\label{sec:experiments}
+We first examine the computational speed of our PConv and its effectiveness when combined with a PWConv. We then comprehensively evaluate the performance of our FasterNet for classification, detection, and segmentation tasks. Finally, we conduct a brief ablation study. 
+
+To benchmark the latency and throughput, we choose the following three typical processors, which cover a wide range of computational capacity: GPU (2080Ti), CPU (Intel i9-9900X, using a single thread), and ARM (Cortex-A72, using a single thread). We report their latency for inputs with a batch size of 1 and throughput for inputs with a batch size of 32. During inference, the BN layers are merged to their adjacent layers wherever applicable.
+
+\subsection{PConv is fast with high FLOPS}
+\input{tables/compare_ope0}
+We below show that our PConv is fast and better exploits the on-device computational capacity. Specifically, we stack 10 layers of pure PConv and take feature maps of typical dimensions as inputs. We then measure FLOPs and latency/throughput on GPU, CPU, and ARM processors, which also allow us to further compute FLOPS. We repeat the same procedure for other convolutional variants and make comparisons. 
+
+Results in~\cref{FLOPS_compare} show that PConv is overall an appealing choice for high FLOPS with reduced FLOPs. It has only $\frac{1}{16}$ FLOPs of a regular Conv and achieves $10.5\times$, $6.2\times$, and $22.8\times$ higher FLOPS than the DWConv on GPU, CPU, and ARM, respectively. We are unsurprised to see that the regular Conv has the highest FLOPS as it has been constantly optimized for years. However, its total FLOPs and latency/throughput are unaffordable. GConv and DWConv, despite their significant reduction in FLOPs, suffer from a drastic decrease in FLOPS. In addition, they tend to increase the number of channels to compensate for the performance drop, which, however, increase their latency.
+
+\subsection{PConv is effective together with PWConv}
+We next show that a PConv followed by a PWConv is effective in approximating a regular Conv to transform the feature maps. To this end, we first build four datasets by feeding the ImageNet-1k val split images into a pre-trained ResNet50, and extract the feature maps before and after the first Conv $3\times3$ in each of the four stages. Each feature map dataset is further spilt into the train (70\%), val (10\%), and test (20\%) subsets. We then build a simple network consisting of a PConv followed by a PWConv and train it on the feature map datasets with a mean squared error loss. For comparison, we also build and train networks for DWConv + PWConv and GConv + PWConv under the same setting.
+
+
+\cref{tab:PConvPWConv} shows that PConv + PWConv achieve the lowest test loss, meaning that they better approximate a regular Conv in feature transformation. The results also suggest that it is sufficient and efficient to capture spatial features from only a part of the feature maps. PConv shows a great potential to be the new go-to choice in designing fast and effective neural networks.
+
+\input{tables/pconv_pwconv}
+
+
+\subsection{FasterNet on ImageNet-1k classification}
+
+\begin{figure}
+    \centering
+    \vspace{-0.05in}
+    \includegraphics[width=1\linewidth]{figures/fps_latency_gpu_st-cropped.pdf}
+    
+    \includegraphics[width=1\linewidth]{figures/acc_latency_cpu_st-cropped.pdf}
+    
+    \includegraphics[width=1\linewidth]{figures/acc_latency_arm_st-cropped.pdf}
+    
+    \vspace{-0.15in}
+    \caption{FasterNet has the highest efficiency in balancing accuracy-throughput and accuracy-latency trade-offs for different devices. To save space and make the plots more proportionate, we showcase network variants within a certain range of latency. Full plots can be found in the appendix, which show consistent results.}
+    \label{fig:imageent}
+    \vspace{-0.15in}
+\end{figure}
+
+\input{tables/imagenet.tex}
+\input{tables/coco.tex}
+\input{tables/ablation.tex}
+
+To verify the effectiveness and efficiency of our FasterNet, we first conduct experiments on the large-scale ImageNet-1k classification dataset~\cite{russakovsky2015imagenet}. It covers 1k categories of common objects and contains about 1.3M labeled images for training and 50k labeled images for validation. We train our models for 300 epochs using AdamW optimizer~\cite{loshchilov2017decoupled}. We set the batch size to 2048 for the FasterNet-M/L and 4096 for other variants. We use cosine learning rate scheduler~\cite{loshchilov2016sgdr} with a peak value of $0.001\cdot\text{batch size}/1024$ and a 20-epoch linear warmup. We apply commonly-used regularization and augmentation techniques, including Weight Decay~\cite{krogh1991simple}, Stochastic Depth~\cite{huang2016deep}, Label Smoothing~\cite{szegedy2016rethinking}, Mixup~\cite{zhang2017mixup}, Cutmix~\cite{yun2019cutmix} and Rand Augment~\cite{cubuk2020randaugment}, with varying magnitudes for different FasterNet variants. To reduce the training time, we use $192 \times 192$ resolution for the first 280 training epochs and $224 \times 224$ for the remaining 20 epochs. For fair comparison, we do not use knowledge distillation~\cite{hinton2015distilling} and neural architecture search~\cite{zoph2016neural}. We report our top-1 accuracy on the validation set with a center crop at $224 \times 224$ resolution and a 0.9 crop ratio. Detailed training and validation settings are provided in the appendix.
+
+\cref{fig:imageent} and \cref{tab:imagenet} demonstrate the superiority of our FasterNet over state-of-the-art classification models. The trade-off curves in~\cref{fig:imageent} clearly show that FasterNet sets the new state-of-the-art in balancing accuracy and latency/throughput among all the networks examined. From another perspective, FasterNet runs faster than various CNN, ViT and MLP models on a wide range of devices, when having similar top-1 accuracy. As quantitatively shown in~\cref{tab:imagenet}, FasterNet-T0 is $2.8\times$, $3.3\times$, and $2.4\times$
+faster than MobileViT-XXS~\cite{mehta2021mobilevit} on GPU, CPU, and ARM processors, respectively, while being 2.9\% more accurate.
+Our large FasterNet-L achieves 83.5\% top-1 accuracy, comparable to the emerging Swin-B~\cite{liu2021swin} and ConvNeXt-B~\cite{liu2022convnet} while having 36\% and 28\% higher inference throughput on GPU, as well as saving 37\% and 15\% compute time on CPU. Given such promising results, we highlight that our FasterNet is much simpler than many other models in terms of architectural design, which showcases the feasibility of designing simple yet powerful neural networks.
+
+
+\subsection{FasterNet on downstream tasks}
+To further evaluate the generalization ability of FasterNet, we conduct experiments on the challenging COCO dataset~\cite{lin2014microsoft} for object detection and instance segmentation. As a common practice, we employ the ImageNet pre-trained FasterNet as a backbone and equip it with the popular Mask R-CNN detector~\cite{he2017mask}. To highlight the effectiveness of the backbone itself, we simply follow PoolFormer~\cite{yu2022metaformer} and adopt an AdamW optimizer, a $1 \times$ training schedule (12 epochs), a batch size of 16, and other training settings without further hyper-parameter tuning.
+
+\cref{tab:coco} shows the results for comparison between FasterNet and representative models. FasterNet consistently outperforms ResNet and ResNext by having higher average precision (AP) with similar latency. Specifically, FasterNet-S yields $+1.9$ higher box AP and $+2.4$ higher mask AP compared to the standard baseline ResNet50. FasterNet is also competitive against the ViT variants. Under similar FLOPs, FasterNet-L reduces PVT-Large's latency by 38\%, \ie, from 152.2 ms to 93.8 ms on GPU, and achieves $+1.1$ higher box AP and $+0.4$ higher mask AP.
+
+\subsection{Ablation study}
+We conduct a brief ablation study on the value of partial ratio $r$ and the choices of activation and normalization layers. We compare different variants in terms of ImageNet top-1 accuracy and on-device latency/throughput. Results are summarized in~\cref{tab:ablation}. For the partial ratio $r$, we set it to $\frac{1}{4}$ for all FasterNet variants by default, which achieves higher accuracy, higher throughput, and lower latency at similar complexity. A too large partial ratio $r$ would make PConv degrade to a regular Conv, while a too small value would render PConv less effective in capturing the spatial features. 
+For the normalization layers, we choose BatchNorm over LayerNorm because BatchNorm can be merged into its adjacent convolutional layers for faster inference while it is as effective as LayerNorm in our experiment.
+For the activation function, interestingly, we empirically found that GELU fits FasterNet-T0/T1 models more efficiently than ReLU. It, however, becomes opposite for FasterNet-T2/S/M/L. Here we only show two examples in~\cref{tab:ablation} due to space constraint. We conjecture that GELU strengthens FasterNet-T0/T1 by having higher non-linearity, while the benefit fades away for larger FasterNet variants.

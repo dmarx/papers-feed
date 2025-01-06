@@ -1,0 +1,72 @@
+\appendix
+\addcontentsline{toc}{section}{Appendix}
+\section*{\Large Appendix}
+In this appendix, we provide further details on the experimental settings, full comparison plots, architectural configurations, PConv implementations, comparisons with related work, limitations, and future work.
+
+\section{ImageNet-1k experimental settings}
+\label{imagenet_settings}
+We provide ImageNet-1k training and evaluation settings in~\cref{tab:imagenet_settings}. They can be used for reproducing our main results in~\cref{tab:imagenet} and \cref{fig:imageent}. Different FasterNet variants vary in the magnitude of regularization and augmentation techniques. The magnitude increases as the model becomes larger to alleviate overfitting and improve accuracy. Note that most of the compared works in~\cref{tab:imagenet} and \cref{fig:imageent}, \eg, MobileViT, EdgeNext, PVT, CycleMLP, ConvNeXt, Swin, \etc, also adopt such advanced training techniques (ADT). Some even heavily rely on the hyper-parameter search. For others w/o ADT, \ie, ShuffleNetV2, MobileNetV2, and GhostNet, though the comparison is not totally fair, we include them for reference.
+
+\section{Downstream tasks experimental settings}
+For object detection and instance segmentation on the COCO2017 dataset, we equip our FasterNet backbone with the popular Mask R-CNN detector. 
+We use ImageNet-1k pre-trained weights to initialize the backbone and Xavier to initialize the add-on layers. Detailed settings are summarized in~\cref{tab:coco_settings}.
+
+\section{Full comparison plots on ImageNet-1k}
+\cref{fig:imagenet_full} shows the full comparison plots on ImageNet-1k, which is the extension of~\cref{fig:imageent} in the main paper with a larger range of latency. \cref{fig:imagenet_full} shows consistent results that FasterNet strikes better trade-offs than others in balancing accuracy and latency/throughput on GPU, CPU, and ARM processors.
+
+\section{Detailed architectural configurations}
+We present the detailed architectural configurations in~\cref{tab:configuration}. While different FasterNet variants share a unified architecture, they vary in the network width (the number of channels) and network depth (the number of FasterNet blocks at each stage). The classifier at the end of the architecture is used for classification tasks but removed for other downstream tasks. 
+
+
+\input{tables/training_recipe}
+\input{tables/coco_settings.tex}
+\begin{figure*}
+    \centering
+    \includegraphics[width=1.\linewidth]{figures/fps_latency_gpu-cropped.pdf}
+
+    \includegraphics[width=1.\linewidth]{figures/acc_latency_cpu-cropped.pdf}
+    
+    \includegraphics[width=1.\linewidth]{figures/acc_latency_arm-cropped.pdf}
+    
+    \vspace{-0.1in}
+    \caption{Comparison of FasterNet with state-of-the-art networks. FasterNet consistently achieves better accuracy-throughput (the top plot) and accuracy-latency (the medium and bottom plots) trade-offs than others.}
+    \label{fig:imagenet_full}
+\end{figure*}
+
+% \section{Implementation of PConv}
+% We provide the PyTorch-based implementation of PConv in~\cref{lst:code}. There are two forward pass choices, namely forward\_slicing and forward\_split\_cat. The forward\_slicing choice writes the convolutional output in place of the input, which is used for faster inference, but not for training, as the in-place operation modifies the gradient computation. By contrast, the forward\_split\_cat choice concatenates the convolutional output with the feature maps untouched, which preserves the intermediate gradient computation and is used for training. \cref{tab:pconv_implementation} shows the speed comparison of these two choices during inference. The forward\_slicing implementation runs faster than the other one, especially for tiny models and more computation-powerful devices, \eg, for FasterNet-T0 on GPU.
+
+\section{More comparisons with related work}
+\medskip\noindent\textbf{Improving FLOPS.} \enspace 
+There are a few other works~\cite{ding2022scaling_short,xia2022trt_short} also looking into the FLOPS issue and trying to improve it. They generally follow existing operators and try to find their proper configurations, \eg, RepLKNet~\cite{ding2022scaling_short} simply increases the kernel size while TRT-ViT~\cite{xia2022trt_short} reorders different blocks in the architecture. By contrast, this paper advances the field by proposing a novel and efficient PConv, opening up new directions and potentially larger room for FLOPS improvement.
+
+% \clearpage
+\input{tables/configuration.tex}
+% \input{tables/pconv_implementation.tex}
+% \input{tables/pconv_code.tex}
+% \clearpage
+
+\medskip\noindent\textbf{PConv vs. GConv.} \enspace 
+PConv is schematically equivalent to a modified GConv~\cite{krizhevsky2012imagenet} that operates on a single group and leaves other groups untouched. Though simple, such a modification remains unexplored before. It's also significant in the sense that it prevents the operator from excessive memory access and is computationally more efficient. From the perspective of low-rank approximations, PConv improves GConv by further reducing the intra-filter redundancy beyond the inter-filter redundancy~\cite{haase2020rethinking_short}.
+
+\medskip\noindent\textbf{FasterNet vs. ConvNeXt.} \enspace 
+Our FasterNet appears similar to ConvNeXt~\cite{liu2022convnet} after substituting DWConv with our PConv. However, they are different in motivations. While ConvNeXt searches for a better structure by trial and error, we append PWConv after PConv to better aggregate information from all channels. Moreover, ConvNeXt follows ViT to use fewer activation functions, while we intentionally remove them from the middle of PConv and PWConv, to minimize their error in approximating a regular Conv. 
+
+\medskip\noindent\textbf{Other paradigms for efficient inference.} \enspace 
+Our work focuses on efficient network design, orthogonal to the other paradigms, \eg, neural architecture search (NAS)~\cite{elsken2019neural}, network pruning~\cite{molchanov2016pruning}, and knowledge distillation~\cite{hinton2015distilling}. They can be applied in this paper for better performance. However, we opt not to do so to keep our core idea centered and to make the performance gain clear and fair.
+
+\medskip\noindent\textbf{Other partial/masked convolution works.} \enspace 
+There are several works~\cite{liu2018image,gao2022convmae,liu2022partial} sharing similar names with our PConv. However, they differ a lot in objectives and methods. For example, they apply filters on partial pixels to exclude invalid patches~\cite{liu2018image}, enable self-supervised learning~\cite{gao2022convmae}, or synthesize novel images~\cite{liu2022partial}, while we target at the channel dimension for efficient inference. 
+
+\section{Limitations and future work}
+We have demonstrated that PConv and FasterNet are fast and effective, being competitive with existing operators and networks. Yet there are some minor technical limitations of this paper. For one thing, PConv is designed to apply a regular convolution on only a part of the input channels while leaving the remaining ones untouched. Thus, the stride of the partial convolution should always be 1, in order to align the spatial resolution of the convolutional output and that of the untouched channels. Note that it is still feasible to down-sample the spatial resolution as there can be additional downsampling layers in the architecture. 
+And for another, our FasterNet is simply built upon convolutional operators with a possibly limited receptive field. Future efforts can be made to enlarge its receptive field and combine it with other operators to pursue higher accuracy.
+
+
+
+
+
+% \input{tables/configuration.tex}
+% \input{tables/pconv_implementation.tex}
+% \clearpage
+% \input{tables/pconv_code.tex}

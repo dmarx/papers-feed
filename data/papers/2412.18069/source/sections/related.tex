@@ -1,0 +1,30 @@
+\section{Related work}
+\label{sec:related}
+
+Aiming to reduce hallucination and make the LLMs generate more factual responses, our proposed framework, \model, detects knowledge gaps and acquires relevant information as needed, incorporating feedback from auxiliary models when available.  Unlike chain-of-verification approaches~\cite[CoVe]{dhuliawala-etal-2024-chain}, which rely solely on the LLM for reasoning, \model combines adaptive retrieval augmentation and explicit memories with a focus on factuality. This section discusses related work on these two aspects. 
+
+\subsection{Iterative and Adaptive Retrieval Augmentation}
+
+Retrieval-augmented generation (RAG) typically involves a single retrieval step, followed by the language model generating a complete response. However, iterative retrieval methods~\cite[\S5]{gao2024retrievalaugmentedgenerationlargelanguage} have been proposed to generate responses in multiple segments, with each segment generated using different additional information retrieved through iterative retrieval.
+One such approach is ITER-RETGEN~\citep{shao-etal-2023-enhancing}, which uses the model output of the previous iteration to formulate the query and retrieve more relevant knowledge for the current generation.
+Extending iterative retrieval, the process of adaptive retrieval~\cite[\S5]{gao2024retrievalaugmentedgenerationlargelanguage} examines partially generated responses in previous iterations to decide whether retrieving new information or regenerating a segment response is needed. 
+For instance, FLARE~\citep{jiang-etal-2023-active} follows a simple sentence-by-sentence generation process to answer fact-seeking questions. 
+In each step, it generates a temporary next sentence and examines its acceptability based on model confidence. 
+If the sentence is deemed questionable, it retrieves new text chunks using a query based on the temporary sentence and re-generates the next sentence using standard RAG.
+DRAGIN~\citep{su-etal-2024-dragin} improves upon FLARE by introducing a new model confidence measure that combines attention scores and entropy values. This allows the model to pause the generation immediately after the confidence score of a token falls below a threshold. Additionally, DRAGIN uses preceding tokens with high attention scores on the stopping token to form a keyword-based query, which helps the model make a more confident next-token prediction.
+
+Our work shares similarities with Self-RAG~\citep{asai2024selfrag}, particularly in the use of an auxiliary model to provide feedback. Unlike confidence measures based on token probability or attention score, Self-RAG fine-tunes the model to introspectively decide when to pause generation by outputting a special \texttt{retrieve} token. This triggers the retrieval of multiple passages, which are then used separately to generate candidate segments via standard RAG.
+Each segment is evaluated by a ``critique'' model for relevance, usefulness to the original prompt, and support from the retrieved passage. The critique model's output determines whether a candidate segment is included in the final output.
+
+Our approach, \model, differs from existing iterative and adaptive retrieval augmentation methods in two key aspects. Firstly, traditional retrieval augmentation is replaced with memory augmentation, where the representation is the KV cache (similar to TurboRAG~\citep{lu2024turborag}) instead of the raw text, and different memory chunks that encode different passages are processed in parallel. This design allows for greater flexibility in incorporating diverse information types and improves efficiency when only part of the memory is updated, as the remaining portion can be reused. Secondly, feedback from the auxiliary model is passed to the language model through memory, enabling the core language model to naturally incorporate multiple streams of information and produce better responses. This design difference sets our approach apart from existing methods and allows for more effective integration of factuality feedback from the auxiliary model.
+
+\subsection{Memories in Long-context LLMs}
+
+Incorporating a large-scale corpus as additional knowledge can be achieved by prepending the given prompt with all documents in the corpus as an extremely long context input~\citep{lee2024longcontextlanguagemodelssubsume} to language models. It is thus natural to see that long-context LLMs share some technical components that apply to retrieval augmentation.
+The memory module in \model is analogous to the explicit memory design in Memory$^3$~\citep{yang2024text}.
+Instead of encoding the knowledge in the training corpus completely in model parameters, or incorporating the knowledge primarily through retrieval augmentation, Memory$^3$ encodes 128-token chunks of the training corpus using their KV caches as memories. 
+During inference, the model generates segments of 64 tokens. At the generation of each segment, it first uses the previous segment as query to retrieve 5 most relevant memories, and attends to them when generating the next segment.
+Retrieving memories of KV caches has been proposed in earlier work. For instance, Memorizing Transformers~\citep{wu2022memorizing} effectively extends the context of the language model by $k$ nearest neighbor lookup of the past key-value pairs (i.e., long-range memory) and attends them in the last layer of the models. 
+LongMem~\citep{Wang-augmenting-2023} proposed a decoupled network architecture, using the backbone language model as memory encoder and a trained residual side-network as memory retriever and reader. The top-$k$ attention key-value pairs stored in the memory are retrieved and incorporated at inference.
+
+While we also use explicit memories to store KV caches in \model, our goal is to pass new information at each step in the iterative decoding process, such as new information relevant to the current context via online retrieval and feedback from auxiliary models. We allow different operations on existing memories, including update, append, or delete, providing more flexibility for various downstream tasks.
