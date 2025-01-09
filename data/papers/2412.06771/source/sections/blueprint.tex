@@ -1,0 +1,167 @@
+\section{Proactive T2I agent design}
+\label{sec:blueprints}
+
+
+
+
+
+We provide high-level principles and design that guide our agent how to behave and interact with users to generate desired images from text through multi-turn interactions. The goal of the agent is to generate images that match the user's intended image as closely as possible with minimal back-and-forth, particularly in cases with underspecified prompts and the agent needs to gather information proactively. This requires a decision strategy on information gathering to trade off between the cost of interactions and the quality of generated images. The formal problem definition can be found in \S\ref{ssec:objective}.
+
+
+
+
+We equip the agent with the ability to gather information in two ways: ask clarification questions (\S\ref{ssec:question}) and express its uncertainty and understanding in a way that users can edit (\S\ref{ssec:structure_bs}). Once a piece of information is collected from a user, the agent also need to update its questions and uncertainty (\S\ref{ssec:transition}). To enable all these agent behaviors, we need to situate the agent in an interface to effectively communicate with users (\S\ref{app:interface}). %
+In the following, we introduce the design of the above components under the interface, to ensure information efficiency for T2I generation.
+
+
+
+
+
+
+\vspace{-.5em}
+\subsection{What kind of questions should be asked?}
+\label{ssec:question}
+\vspace{-.5em}
+We explain considerations in question asking and examples of strategies in this section.
+
+
+
+\vspace{-.5em}
+\subsubsection{Principles} \label{ssec:principles}
+We identify the following principles for an agent to ask the user questions about the underspecified prompt and their intended image: (i) \textbf{Relevance}: The question should be based on the user prompt. (ii) \textbf{Uncertainty Reduction}: The question should aim to reduce the agent's uncertainty about the attributes and contents of the image, the objects, the spatial layout, and the style. (iii) \textbf{Easy-to-Answer}: The question should be as concise and direct as possible to ensure it is not too difficult for the user to answer. (iv) \textbf{No Redundancy}: The question should not collect information present in the history of interactions with the user. The Relevance and No Redundancy principles are self-explanatory, we detail the other two principles below.
+
+\textbf{The Uncertainty Reduction principle} aims to let agent  elicit information about various characteristics of the desired image, which the agent is unsure of. 
+
+
+First, the agent needs to know what characteristics of images are important. Some examples include: (i) Attributes of the subjects, such as breed, size, or color, with questions like \textit{What kind of rabbit? What color is the cat?}; (ii) Spatial relationships between the subjects, such as proximity and relative position (\textit{Are the rabbit and cat close to each other? Are they facing each other?}); (iii) Background information, such as location, style and time of day (\textit{Are they in a park or at home?}); and (iv) Implicit entities that might not be explicitly mentioned in the initial prompt but are relevant to the user's vision (\textit{Are there any other animals or people present?}).
+
+Second, the agent needs to know its own uncertainty about those characteristics. In the agent's belief, the uncertainty is explicit. One strategy is to form questions about the image characteristics that the agent is most uncertain about. We discuss more in \S\ref{sssec:action_implementation}.
+
+Third, the agent needs to update its own uncertainty once the user gives a response to its question (a.k.a. transition in \S\ref{ssec:transition}). Then, it can construct questions again based on its updated uncertainty estimates. This iterative clarification process allows the agent to progressively refine its understanding of the user's intent and generate an image that more accurately reflects their desired output.
+
+\textbf{The Easy-to-Answer principle} aims to reduce users' effort to respond to questions. One way is to have the agent provide some answer options, where options are what the agent believes likely to appear. E.g., \textit{What color is the cat? (a) Black (b) Brown (c) Orange (d) Other (please specify)}.
+
+
+
+\vspace{-.5em}
+\subsubsection{Examples of question-asking strategies}
+\label{sssec:question-asking-agents}
+\vspace{-.5em}
+Given the agent belief constructed from the user prompt (more details in \S \ref{ssec:structure_bs}), several basic approaches can be employed following the above principles. We construct simple agents with the following strategies, which are implemented and used in our experiments. 
+\begin{itemize}[wide, labelwidth=0pt, labelindent=10pt]
+\item Ag1 (\S\ref{ssec:ag1}): Rule-based question generation, which leverages predefined rules or heuristics to identify salient attributes, entities, or relationships that require clarification. For example, an LLM could be used to estimate the importance and likelihood of different components within the belief, and a heuristic could be applied to prioritize the most crucial elements for questioning.
+\item Ag2 (\S\ref{ssec:ag2}): Belief-guided question generation, which involves using natural language to represent the current understanding encapsulated in the belief. This representation, along with the conversation history, is provided as input to an LLM, guiding it to generate clarification questions.
+\item Ag3 (\S\ref{ssec:ag3}): Direct question generation, which write the above question-asking principles in a prompt for an LLM to generate a question. %
+\end{itemize}
+
+
+\vspace{-.5em}
+\subsection{Interacting with the user based on agent beliefs} \label{ssec:structure_bs}
+\vspace{-.5em}
+
+The Uncertainty Reduction principle inspires the usage of belief graphs for the agent to directly express uncertainty, in addition to reflecting uncertainty through questions. %
+Instead of using hardcoded symbols in classic belief representations~\citep{fikes1971strips} described in \S\ref{sec:background}, we employ LLMs to generate names and values for entities, attributes and relations. As a result, this belief construction method can generalize across any prompts. %
+Algorithm~\ref{alg:beliefparsing} summarizes how an agent parses a prompt to a belief graph and allows user interaction\footnote{The clarification question part of the interaction is omitted for simplicity}. All agents in  \S\ref{sssec:question-asking-agents} use the same kind of belief graphs.
+
+\begin{wrapfigure}{R}{0.5\textwidth} 
+    \begin{minipage}{0.5\textwidth}
+    \vspace{-2em}
+      \begin{algorithm}[H]
+        \caption{Belief Parsing and interaction}
+        \begin{algorithmic}[1]
+         \STATE \textbf{Input:} Initial Prompt (IP) 
+          \STATE \textbf{Initialization:} Merged Prompt (MP) $\leftarrow$ IP
+          \FOR{$turn \gets 1$ \textbf{to} $max\_turn$} 
+             \STATE Parse entities from MP (\ref{ssec:entity_parser})
+             \STATE Parse entity attributes and relations from entities and MP (\ref{ssec:attribute_parser}, \ref{ssec:relation_parser})
+             \STATE Display belief graph, and collect interaction feedback (F)
+             \STATE Update MP: MP $\leftarrow$ MP + F (\ref{ssec:merge_prompt}) 
+          \ENDFOR
+        \end{algorithmic}
+        \label{alg:beliefparsing}
+      \end{algorithm}
+      \vspace{-2em}
+    \end{minipage}
+  \end{wrapfigure}
+  
+  
+
+
+\textbf{Entities.\;} In addition to (a) entities mentioned in the user prompt, a belief graph also includes (b) implicit entities not mentioned in the prompt but likely to appear, e.g., \textit{pet owner} in the context of a pet-related scene; and (c) background entities, such as \textit{image style, time of day, location}, which play important roles in constructing the image.
+
+\textbf{Attributes and relations.\;} While the prompt might mention some attributes of a certain entity, they are not enough to describe the exact details of that entity. Hence the agent have to imagine the relevant attributes for each entity, and construct a list of possible values along with their associated probabilities (e.g., the \textit{color} attribute for the \textit{cat} entity might have values like \textit{black, white, gray} with corresponding probabilities). Similarly the agent may have to imagine the possible relations between entities, e.g., \textit{spatial relation} between \textit{rabbit} and \textit{cat} might include values like \textit{close, far, touching}.
+
+
+\textbf{Importance scores.\;} While the agent can be uncertain about many aspects of the user's intended image, some are more important than others. %
+E.g., for prompt ``a rabbit and a cat'', the agent might be very uncertain about the exact color of a carpet that might appear in the image, but \textit{rabbit} and \textit{cat} are more important than the carpet. We enable agents to estimate an importance score for each entity, attribute and relation. %
+
+
+\textbf{Extracting beliefs and enabling interactions.\;} A simple idea is to use a large language model (LLM) via in-context learning. \S\ref{sssec:state_implementation} details how an LLM may analyze the user prompt to identify entities, their attributes, and the relations between them, effectively translating the natural language input into a structured representation within the belief. Once the belief is extracted, a user can edit the belief to adjust uncertainty levels, confirm existence of entities etc, as shown in \Cref{fig:first_figure_interface}.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+\vspace{-.5em}
+\subsection{Transition} \label{ssec:transition}
+\vspace{-.5em}
+The agent belief undergoes a transition whenever the agent receives new information through user feedback, either user answers from the agent question or user interactions with the graph-based belief interface (\Cref{fig:first_figure_interface}). This transition process integrates information from the initial user prompt, the conversation history, interaction and the previous belief to generate an updated belief of the user's desired image.  We use a simple approach: Generate a comprehensive prompt that summarizes all interactions and information gathered thus far. This merged prompt is then used to re-generate the belief, effectively incorporating the new information into a refreshed representation. The implementation details can be found in \S\ref{sssec:transition_implementation}.%
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
