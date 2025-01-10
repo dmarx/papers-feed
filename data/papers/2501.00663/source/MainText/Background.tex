@@ -1,0 +1,58 @@
+\section{Preliminaries}\label{sec:prelim}
+\lettrine[lines=3]{I}{}n this section, we discuss the notation and some background concepts that we use though the paper. We let $x \in \mathbb{R}^{N \times d_{\text{in}}}$ be the input, $\M$ be a neural network (neural memory module), $\mathbf{Q}, \mathbf{K}, \mathbf{V}$ be the query, key and value of the attention mechanism, and $\mathbf{M}$ be the attention mask. When segmenting the sequence, we use $\texttt{S}^{(i)}$ to refer to the $i$-th segment. Through the paper, we abuse the notation and use subscripts to refer to a specific element of a matrix, vector, or segments. For example, we let $\texttt{S}^{(i)}_j$ be the $j$-th token in the $i$-th segment. The only exception is subscripts with $t$, which we reserved to index recurrence over time, or the state of a neural network at time $t$. Given a neural network $\mathcal{N}$ and a data sample $x$, we use $\mathcal{N}(x)$ (resp. $\mathcal{N}^*(x)$) to refer to the forward pass with (resp. without) weight adjustment. Also, we abuse the notation and use $\mathcal{N}^{(k)}$ to refer to the $k$-th layer of the neural network. In the following, we first, discuss the backgrounds for attention and its efficient variants followed by a review of modern linear RNNs. Finally, we discuss a memory perspective of these architectures that motivates us to design Titans. 
+
+\subsection{Backgrounds}\label{sec:background}
+\head{Attention}
+Transformers~\citep{transformers} as the de facto backbone for many deep learning models are based on attention mechanism. Given input $x \in \R^{N \times d_{\text{in}}}$, causal attention computes output $\mathbf{y} \in \R^{N \times d_{\text{in}}}$ based on softmax over input dependent key, value, and query matrices:
+\begin{align}
+    \mathbf{Q} = x \mathbf{W}_{\mathbf{Q}}, \qquad \mathbf{K} = x \mathbf{W}_{\mathbf{K}}, \qquad \mathbf{V} = x \mathbf{W}_{\mathbf{V}}, \\
+    \mathbf{y}_i = \sum_{j = 1}^{i} \frac{ \exp\left( \mathbf{Q}_i^{\top} \mathbf{K}_j/\sqrt{d_{\text{in}}}\right) \mathbf{V}_j }{\sum_{\ell = 1}^{i} \exp\left( \mathbf{Q}_i^{\top} \mathbf{K}_{\ell}/\sqrt{d_{\text{in}}}\right)},
+\end{align}
+where $\mathbf{W}_{\mathbf{Q}}, \mathbf{W}_{\mathbf{K}},$ and $\mathbf{W}_{\mathbf{V}} \in \R^{d_{\text{in}} \times d_{\text{in}}}$ are learnable parameters. Despite the power and effectiveness in recall, transformers need at least $N\times d$ operators to calculate the output, resulting in larger memory consumption and lower-throughput for longer sequences.  
+
+
+\head{Efficient Attentions}
+To improve the memory consumption and throughput of softmax attention for longer sequences, various studies focused on I/O aware implementations of attention~\citep{flashattention-1, dao2024flashattention}, designing more efficient attention mechanisms by sparsifying the attention matrix~\citep{choromanski2021rethinking, dai2019transformerxl, chen2021scatterbrain}, approximating the softmax~\citep{arora2024simple}, or developing kernel-based (linear) attentions~\citep{kacham2024polysketchformer, schlag2021linear, yang2024gatedattn, aksenov2024linear}. In this part, we focus on the later, i.e., linear attentions, where the softmax in standard attention is replaced with an alternative kernel function $\phi(., .)$, such that $ \phi(x, y) = \phi(x)\phi(y)$. Accordingly, the attention can be written as:
+\begin{align}
+    \mathbf{y}_i = \sum_{j = 1}^{i} \frac{\phi(Q_i^\top K_j)}{\sum_{\ell = 1}^{i} \phi(Q_i^{\top} K_{\ell})} \: V_j = \sum_{j = 1}^{i} \frac{\phi(Q_i)^\top \phi(K_j)}{\sum_{\ell = 1}^{i} \phi(Q_i)^{\top} \phi(K_{\ell})} \: V_j = \frac{\phi(Q_i)^{\top} \sum_{j=1}^{i} \phi(K_j) V_j}{\phi(Q_i)^{\top} \sum_{\ell = 1}^{i} \phi(K_{\ell})}, 
+\end{align}
+resulting in a higher-throughput as terms $\sum_{j=1}^{i} \phi(K_j)$ and $\sum_{\ell = 1}^{i} \phi(K_{\ell})$ are re-using in each step. When choosing the kernel as identity matrix~\citep{sun2023retentive}, the above formulation can also be written in a recurrent format:
+\begin{align}\label{eq:linear-transformer}
+    & \M_{t} = \M_{t-1} + K_t^\top V_t\:,\\
+    &\mathbf{y}_t = Q_t \M_t\:,
+\end{align}
+which allows efficient inference for linear attentions.
+
+
+\head{Modern Linear Models and Their Memory Perspective}
+As discussed earlier, one can define learning as a process for acquiring effective and useful memory. Building upon this, one can see the hidden state of Recurrent Neural Networks (RNNs) as a memory unit, which the model aims to compress the information into. Accordingly, in a general form of recurrent neural network, the hidden state can be treated as a memory unit and the recurrence process can be split into the \textcolor{c1}{\emph{read}} and \textcolor{c1}{\emph{write}} operations in the memory unit. That is, we let $x \in \R^{N \times d_{\text{in}}}$ be the input, $\M \in \R^{d}$ is the memory unit, and $\mb{y} \in \R^{d_{\text{in}}}$ is the output, then the general form of the recurrent neural network is defined as:
+\begin{align}
+    &\qquad \qquad \qquad \qquad \M_t = f(\M_{t-1}, x_t) , \qquad \qquad & \textcolor{c1}{\text{Write Operation}}\\
+    &\qquad \qquad \qquad \qquad \mb{y}_{t} = g(\M_t, x_t), \qquad \qquad &\textcolor{c1}{\text{Read Operation}}
+\end{align}
+where $f(.,.)$ is the \textcolor{c1}{\emph{read}} and $g(.,.)$ is the \textcolor{c1}{\emph{write}} corresponding functions. Note that here the subscript of $\M_t$ shows the state of the memory at time $t$. 
+
+
+In this perspective, the recurrence formula of linear Transformers (see \autoref{eq:linear-transformer}) is equivalent to additively compress and write keys and values, $(K_t, V_t)$, into a matrix-valued memory unit $\M_t$. Therefore, when dealing with long context data, this additive nature of the process results in memory overflow, significantly damaging the performance of the model. To address this, studies have focused on two promising directions: (1) Adding forget mechanism: several studies have presented adaptive (data-dependent) forgetting gate mechanisms for linear models, where it can erase the memory when it is needed. As examples of such models, we refer to GLA~\citep{yang2024gatedattn}, LRU~\citep{orvieto2023resurrecting}, Griffin~\citep{de2024griffin}, xLSTM~\citep{beck2024xlstm}, and Mamba2~\citep{dao2024transformers}, which the later is also connected to the discretized version of traditional state space models~\citep{gu2024mamba}.(2) Improving the write operation: To overcome the additive nature of memory write operation in traditional recurrent models, \citet{widrow1988adaptive} presented Delta Rule, in which before adding a memory (i.e., a pair of key and value), the model first removes its past value. To enhance the parallelizable training and scaling, \citet{yang2024parallelizing} present a fast paralellizable algorithm.  Finally, very recently, \citet{yang2024gated} improved the DeltaNets by adding a forget gate.   
+
+\head{Memory Modules} Memory has always been one of the core parts of the neural network designs~\citep{schmidhuber1992learning, LSTM, graves2014neuralturingmachines, zhang2024memory}. The idea of seeing linear layers as the key-value (associative) memory system backs to fast weight programs, in which dynamic fast programs are incorporated into recurrent neural networks to serve as writable memory~\citep{schmidhuber1992learning}. The two learning rules of Hebbian~\citep{hebb2005organization} and delta~\citep{prados1989neural} are the most popular learning rules for fast weight programs, which have been extensively explored in various studies~\citep{munkhdalai2017neural, schmidhuber1992learning, munkhdalai2019metalearned, schlag2021linear, irie2021going, yang2024parallelizing, yang2024gated}. All these models, however, are based on momentary surprise, missing the token flow in the sequences (see \autoref{sec:long-memory}), and most of them lacks a forgetting gate, resulting in a poor memory management. 
+  
+
+We further discuss the connection of our architectures with recent models in \autoref{app:MAS}. Additional related work are discussed in \autoref{app:rw}.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
