@@ -1,13 +1,35 @@
 /* frontend/src/js/main.js */
 
-async function initializeApp() {
+async function loadGitInfo() {
     try {
-        // Fetch the papers data
-        const response = await fetch('data/papers.json');
+        const response = await fetch('data/git-info.json');
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
-        window.yamlData = await response.json();
+        const gitInfo = await response.json();
+        
+        // Update the footer elements
+        document.querySelector('.git-info-repo').textContent = gitInfo.repo;
+        document.querySelector('.git-info-branch').textContent = gitInfo.branch;
+        document.querySelector('.git-info-commit').textContent = gitInfo.commit;
+    } catch (error) {
+        console.error('Failed to load git info:', error);
+        document.querySelector('.git-info').style.display = 'none';
+    }
+}
+
+async function initializeApp() {
+    try {
+        // Load both data sources in parallel
+        const [papersResponse] = await Promise.all([
+            fetch('data/papers.json'),
+            loadGitInfo() // We don't need to await its result directly
+        ]);
+
+        if (!papersResponse.ok) {
+            throw new Error(`HTTP error! status: ${papersResponse.status}`);
+        }
+        window.yamlData = await papersResponse.json();
         
         // Initialize all components
         initializeControls();
