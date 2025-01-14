@@ -19,7 +19,7 @@ const STYLES = `
 }
 
 .arxiv-popup {
-    position: fixed;
+    position: absolute;  /* Changed from fixed to absolute */
     background: white;
     border: 1px solid #ddd;
     border-radius: 6px;
@@ -27,6 +27,7 @@ const STYLES = `
     box-shadow: 0 4px 12px rgba(0,0,0,0.15);
     width: 300px;
     z-index: 10000;
+    box-sizing: border-box;  /* Added to ensure padding is included in width */
 }
 
 .arxiv-popup-header {
@@ -70,7 +71,7 @@ const STYLES = `
 }
 
 .arxiv-popup textarea {
-    width: 100%;
+    width: calc(100% - 16px);  /* Account for padding */
     min-height: 80px;
     margin: 8px 0;
     padding: 8px;
@@ -80,6 +81,7 @@ const STYLES = `
     font-family: inherit;
     font-size: 0.9em;
     line-height: 1.4;
+    box-sizing: border-box;  /* Added to ensure padding is included in width */
 }
 
 .arxiv-popup textarea:focus {
@@ -131,11 +133,12 @@ document.head.appendChild(styleSheet);
 // Track active popup
 let activePopup = null;
 
-// Close popup when clicking outside
+// Update the click-outside handler to account for wrapper
 document.addEventListener('click', (e) => {
-    if (activePopup && !activePopup.contains(e.target) && 
+    if (activePopup && 
+        !activePopup.contains(e.target) && 
         !e.target.classList.contains('arxiv-annotator')) {
-        activePopup.remove();
+        activePopup.parentElement?.remove(); // Remove the wrapper
         activePopup = null;
     }
 });
@@ -290,14 +293,22 @@ async function processArxivLink(link) {
     annotator.textContent = '📝';
     annotator.title = 'Add annotation';
     
-    // Handle click
+    // Create a wrapper for the popup that will help with positioning
+    function createPopupWrapper(annotator) {
+        const wrapper = document.createElement('div');
+        wrapper.style.position = 'relative';
+        wrapper.style.zIndex = '10000';
+        return wrapper;
+    }
+    
+    // Update the click handler
     annotator.addEventListener('click', async (e) => {
         e.preventDefault();
         e.stopPropagation();
     
         // Remove existing popup if any
         if (activePopup) {
-            activePopup.remove();
+            activePopup.parentElement?.remove(); // Remove the wrapper
             if (activePopup.arxivId === arxivId) {
                 activePopup = null;
                 return;
@@ -307,26 +318,27 @@ async function processArxivLink(link) {
         // Create popup first
         const popup = await createPopup(arxivId);
         
-        // Get element position relative to viewport
-        const rect = annotator.getBoundingClientRect();
-        const popupWidth = 300;
+        // Create wrapper and add popup to it
+        const wrapper = createPopupWrapper(annotator);
+        wrapper.appendChild(popup);
         
-        // Calculate left position to keep popup visible
-        let left = rect.left;
-        if (left + popupWidth > window.innerWidth) {
-            left = window.innerWidth - popupWidth - 10;
+        // Position popup relative to annotator
+        const annotatorRect = annotator.getBoundingClientRect();
+        const available_width = window.innerWidth - annotatorRect.left;
+        
+        if (available_width < 320) { // if not enough space on right
+            popup.style.right = '0';  // align to right edge
+            popup.style.left = 'auto';
+        } else {
+            popup.style.left = '0';
         }
-        
-        // Set position (no need for scroll offsets with fixed positioning)
-        popup.style.left = `${Math.max(10, left)}px`;
-        popup.style.top = `${rect.bottom + 5}px`;
+        popup.style.top = `${annotatorRect.height + 5}px`;
         
         // Keep reference and show
         popup.arxivId = arxivId;
-        document.body.appendChild(popup);
+        annotator.parentNode.insertBefore(wrapper, annotator.nextSibling);
         activePopup = popup;
     });
-
     // Add to page
     link.parentNode.insertBefore(annotator, link.nextSibling);
 }
