@@ -145,10 +145,17 @@ async function fetchPaperMetadata(arxivId) {
 
 // Create popup element
 async function createPopup(arxivId, initialTitle = '') {
+    console.log('Creating popup for:', arxivId);
+    
+    // Fetch metadata first
+    const metadata = await fetchPaperMetadata(arxivId);
+    console.log('Fetched metadata:', metadata);
+
     const popup = document.createElement('div');
     popup.className = 'arxiv-popup';
     popup.innerHTML = `
-        <div class="arxiv-popup-header">${initialTitle || 'Loading...'}</div>
+        <div class="arxiv-popup-header">${metadata?.title || initialTitle || arxivId}</div>
+        <div class="arxiv-popup-meta">${metadata?.authors || ''}</div>
         <div class="arxiv-popup-buttons">
             <button class="vote-button" data-vote="thumbsup">👍 Interesting</button>
             <button class="vote-button" data-vote="thumbsdown">👎 Not Relevant</button>
@@ -158,18 +165,6 @@ async function createPopup(arxivId, initialTitle = '') {
             <button class="save-button">Save</button>
         </div>
     `;
-
-    // Fetch metadata and update popup
-    const metadata = await fetchPaperMetadata(arxivId);
-    if (metadata && popup.isConnected) {  // Only update if popup still exists
-        popup.querySelector('.arxiv-popup-header').textContent = metadata.title;
-        
-        // Add more metadata if desired
-        // const metaDiv = document.createElement('div');
-        // metaDiv.className = 'arxiv-popup-meta';
-        // metaDiv.textContent = metadata.authors;
-        // popup.querySelector('.arxiv-popup-header').after(metaDiv);
-    }
 
     // Handle voting
     popup.querySelectorAll('.vote-button').forEach(button => {
@@ -183,7 +178,6 @@ async function createPopup(arxivId, initialTitle = '') {
     popup.querySelector('.save-button').addEventListener('click', () => {
         const vote = popup.querySelector('.vote-button.active')?.dataset.vote;
         const notes = popup.querySelector('textarea').value;
-        const metadata = metadataCache.get(arxivId);
         
         // Send to background script
         if (vote || notes) {
@@ -244,7 +238,7 @@ async function processArxivLink(link) {
     annotator.addEventListener('click', async (e) => {
         e.preventDefault();
         e.stopPropagation();
-
+    
         // Remove existing popup if any
         if (activePopup) {
             activePopup.remove();
@@ -253,11 +247,21 @@ async function processArxivLink(link) {
                 return;
             }
         }
-
-        // Create and position new popup
+    
+        // Create popup first
         const popup = await createPopup(arxivId);
+        
+        // Position the popup
         const rect = annotator.getBoundingClientRect();
-        popup.style.left = `${rect.left}px`;
+        const popupWidth = 300; // matches CSS width
+        
+        // Calculate left position to keep popup visible
+        let left = rect.left;
+        if (left + popupWidth > window.innerWidth) {
+            left = window.innerWidth - popupWidth - 10;
+        }
+        
+        popup.style.left = `${Math.max(10, left)}px`;
         popup.style.top = `${rect.bottom + 5}px`;
         
         // Keep reference and show
