@@ -109,39 +109,40 @@ async function parseXMLResponse(xmlText) {
 
 // Fetch paper metadata
 async function fetchPaperMetadata(arxivId) {
+    console.log('Starting metadata fetch for:', arxivId);
+    
     // Check cache first
     if (metadataCache.has(arxivId)) {
-        console.log('Returning cached metadata for:', arxivId);
+        console.log('Found in cache:', arxivId);
         return metadataCache.get(arxivId);
     }
 
-    console.log('Fetching metadata for:', arxivId);
-    const popup = activePopup;
-    if (popup) {
-        popup.querySelector('.arxiv-popup-header').textContent = 'Loading...';
-    }
-
+    console.log('Fetching from arXiv API:', arxivId);
     try {
         const apiUrl = `https://export.arxiv.org/api/query?id_list=${arxivId}`;
+        console.log('API URL:', apiUrl);
+        
         const response = await fetch(apiUrl);
+        console.log('API response status:', response.status);
+        
         const text = await response.text();
+        console.log('API response length:', text.length);
+        
         const metadata = await parseXMLResponse(text);
+        console.log('Parsed metadata:', metadata);
 
         if (metadata) {
-            // Store in cache
             metadataCache.set(arxivId, metadata);
-            console.log('Fetched and cached metadata:', metadata);
             return metadata;
+        } else {
+            console.log('Failed to parse metadata');
         }
     } catch (error) {
-        console.error('Error fetching paper metadata:', error);
+        console.error('Error fetching metadata:', error);
     }
 
     return null;
 }
-
-
-
 
 // Create popup element
 async function createPopup(arxivId, initialTitle = '') {
