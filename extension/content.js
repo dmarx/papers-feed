@@ -85,12 +85,70 @@ document.addEventListener('click', (e) => {
     }
 });
 
+// Cache for paper metadata
+const metadataCache = new Map();
+
+// Parse arXiv API response
+async function parseXMLResponse(xmlText) {
+    const parser = new DOMParser();
+    const xmlDoc = parser.parseFromString(xmlText, "text/xml");
+    
+    // Get entry element
+    const entry = xmlDoc.querySelector('entry');
+    if (!entry) return null;
+    
+    return {
+        title: entry.querySelector('title')?.textContent?.trim(),
+        authors: Array.from(entry.querySelectorAll('author name'))
+            .map(name => name.textContent.trim())
+            .join(', '),
+        abstract: entry.querySelector('summary')?.textContent?.trim(),
+        published: entry.querySelector('published')?.textContent?.trim(),
+    };
+}
+
+// Fetch paper metadata
+async function fetchPaperMetadata(arxivId) {
+    // Check cache first
+    if (metadataCache.has(arxivId)) {
+        console.log('Returning cached metadata for:', arxivId);
+        return metadataCache.get(arxivId);
+    }
+
+    console.log('Fetching metadata for:', arxivId);
+    const popup = activePopup;
+    if (popup) {
+        popup.querySelector('.arxiv-popup-header').textContent = 'Loading...';
+    }
+
+    try {
+        const apiUrl = `https://export.arxiv.org/api/query?id_list=${arxivId}`;
+        const response = await fetch(apiUrl);
+        const text = await response.text();
+        const metadata = await parseXMLResponse(text);
+
+        if (metadata) {
+            // Store in cache
+            metadataCache.set(arxivId, metadata);
+            console.log('Fetched and cached metadata:', metadata);
+            return metadata;
+        }
+    } catch (error) {
+        console.error('Error fetching paper metadata:', error);
+    }
+
+    return null;
+}
+
+
+
+
 // Create popup element
-function createPopup(arxivId, title = '') {
+async function createPopup(arxivId, initialTitle = '') {
     const popup = document.createElement('div');
     popup.className = 'arxiv-popup';
     popup.innerHTML = `
-        <div class="arxiv-popup-header">${title || arxivId}</div>
+        <div class="arxiv-popup-header">${initialTitle || 'Loading...'}</div>
         <div class="arxiv-popup-buttons">
             <button class="vote-button" data-vote="thumbsup">👍 Interesting</button>
             <button class="vote-button" data-vote="thumbsdown">👎 Not Relevant</button>
@@ -100,6 +158,18 @@ function createPopup(arxivId, title = '') {
             <button class="save-button">Save</button>
         </div>
     `;
+
+    // Fetch metadata and update popup
+    const metadata = await fetchPaperMetadata(arxivId);
+    if (metadata && popup.isConnected) {  // Only update if popup still exists
+        popup.querySelector('.arxiv-popup-header').textContent = metadata.title;
+        
+        // Add more metadata if desired
+        // const metaDiv = document.createElement('div');
+        // metaDiv.className = 'arxiv-popup-meta';
+        // metaDiv.textContent = metadata.authors;
+        // popup.querySelector('.arxiv-popup-header').after(metaDiv);
+    }
 
     // Handle voting
     popup.querySelectorAll('.vote-button').forEach(button => {
@@ -113,6 +183,7 @@ function createPopup(arxivId, title = '') {
     popup.querySelector('.save-button').addEventListener('click', () => {
         const vote = popup.querySelector('.vote-button.active')?.dataset.vote;
         const notes = popup.querySelector('textarea').value;
+        const metadata = metadataCache.get(arxivId);
         
         // Send to background script
         if (vote || notes) {
@@ -122,7 +193,11 @@ function createPopup(arxivId, title = '') {
                 data: {
                     paperId: arxivId,
                     vote,
-                    notes
+                    notes,
+                    title: metadata?.title,
+                    authors: metadata?.authors,
+                    abstract: metadata?.abstract,
+                    timestamp: new Date().toISOString()
                 }
             }, (response) => {
                 console.log('Annotation saved:', response);
@@ -165,7 +240,7 @@ async function processArxivLink(link) {
     annotator.textContent = '📝';
     annotator.title = 'Add annotation';
     
-    // Handle click
+    // Handle click (updated)
     annotator.addEventListener('click', async (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -180,7 +255,7 @@ async function processArxivLink(link) {
         }
 
         // Create and position new popup
-        const popup = createPopup(arxivId);
+        const popup = await createPopup(arxivId);
         const rect = annotator.getBoundingClientRect();
         popup.style.left = `${rect.left}px`;
         popup.style.top = `${rect.bottom + 5}px`;
@@ -189,16 +264,6 @@ async function processArxivLink(link) {
         popup.arxivId = arxivId;
         document.body.appendChild(popup);
         activePopup = popup;
-
-        // Fetch paper metadata if we don't have it
-        chrome.runtime.sendMessage({
-            type: 'getCurrentPaper',
-            arxivId
-        }, (paperData) => {
-            if (paperData) {
-                popup.querySelector('.arxiv-popup-header').textContent = paperData.title;
-            }
-        });
     });
 
     // Add to page
