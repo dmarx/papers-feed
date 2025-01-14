@@ -486,3 +486,70 @@ async function updatePaperRating(issueNumber, rating) {
         throw error;
     }
 }
+
+// Handle annotation updates
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    if (request.type === 'updateAnnotation') {
+        handleAnnotationUpdate(request.annotationType, request.data)
+            .then(() => sendResponse({ success: true }))
+            .catch(error => sendResponse({ success: false, error: error.message }));
+        return true; // Will respond asynchronously
+    }
+});
+
+// Create GitHub issue for annotation
+async function handleAnnotationUpdate(type, data) {
+    if (!githubToken || !githubRepo) {
+        throw new Error('GitHub credentials not set');
+    }
+
+    const { paperId } = data;
+    let title, body, labels;
+
+    switch (type) {
+        case 'vote':
+            title = `[Vote] ${paperId}`;
+            body = JSON.stringify({
+                type: 'vote',
+                paperId,
+                vote: data.vote,
+                timestamp: new Date().toISOString()
+            }, null, 2);
+            labels = ['annotation', 'vote', `rating:${data.vote}`];
+            break;
+            
+        case 'notes':
+            title = `[Notes] ${paperId}`;
+            body = JSON.stringify({
+                type: 'notes',
+                paperId,
+                notes: data.notes,
+                timestamp: new Date().toISOString()
+            }, null, 2);
+            labels = ['annotation', 'notes'];
+            break;
+            
+        default:
+            throw new Error(`Unknown annotation type: ${type}`);
+    }
+
+    try {
+        const response = await fetch(`https://api.github.com/repos/${githubRepo}/issues`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `token ${githubToken}`,
+                'Accept': 'application/vnd.github.v3+json'
+            },
+            body: JSON.stringify({ title, body, labels })
+        });
+
+        if (!response.ok) {
+            throw new Error(`GitHub API error: ${response.status}`);
+        }
+
+        return await response.json();
+    } catch (error) {
+        console.error('Error creating annotation:', error);
+        throw error;
+    }
+}
