@@ -235,7 +235,7 @@ async function processArxivLink(link) {
     annotator.textContent = '📝';
     annotator.title = 'Add annotation';
     
-    // Handle click (updated)
+    // Handle click
     annotator.addEventListener('click', async (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -252,9 +252,9 @@ async function processArxivLink(link) {
         // Create popup first
         const popup = await createPopup(arxivId);
         
-        // Position the popup
+        // Get element position relative to viewport
         const rect = annotator.getBoundingClientRect();
-        const popupWidth = 300; // matches CSS width
+        const popupWidth = 300;
         
         // Calculate left position to keep popup visible
         let left = rect.left;
@@ -262,6 +262,7 @@ async function processArxivLink(link) {
             left = window.innerWidth - popupWidth - 10;
         }
         
+        // Set position (no need for scroll offsets with fixed positioning)
         popup.style.left = `${Math.max(10, left)}px`;
         popup.style.top = `${rect.bottom + 5}px`;
         
