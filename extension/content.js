@@ -2,6 +2,7 @@
 console.log('ArXiv extension content script loaded');
 
 // CSS for the annotation UI
+// Updated styles section
 const STYLES = `
 .arxiv-annotator {
     display: inline-block;
@@ -10,6 +11,7 @@ const STYLES = `
     font-size: 0.9em;
     opacity: 0.7;
     transition: opacity 0.2s;
+    vertical-align: baseline;
 }
 
 .arxiv-annotator:hover {
@@ -22,7 +24,7 @@ const STYLES = `
     border: 1px solid #ddd;
     border-radius: 6px;
     padding: 12px;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
     width: 300px;
     z-index: 10000;
 }
@@ -30,6 +32,15 @@ const STYLES = `
 .arxiv-popup-header {
     font-weight: bold;
     margin-bottom: 8px;
+    line-height: 1.4;
+    font-size: 1em;
+}
+
+.arxiv-popup-meta {
+    color: #666;
+    font-size: 0.85em;
+    margin-bottom: 12px;
+    line-height: 1.4;
 }
 
 .arxiv-popup-buttons {
@@ -39,11 +50,18 @@ const STYLES = `
 }
 
 .arxiv-popup button {
-    padding: 4px 8px;
+    padding: 6px 12px;
     border: 1px solid #ddd;
     border-radius: 4px;
     background: #f5f5f5;
     cursor: pointer;
+    transition: all 0.2s ease;
+    font-size: 0.9em;
+}
+
+.arxiv-popup button:hover {
+    background: #e8e8e8;
+    border-color: #ccc;
 }
 
 .arxiv-popup button.active {
@@ -55,16 +73,53 @@ const STYLES = `
     width: 100%;
     min-height: 80px;
     margin: 8px 0;
-    padding: 4px;
+    padding: 8px;
     border: 1px solid #ddd;
     border-radius: 4px;
     resize: vertical;
+    font-family: inherit;
+    font-size: 0.9em;
+    line-height: 1.4;
+}
+
+.arxiv-popup textarea:focus {
+    outline: none;
+    border-color: #aaa;
 }
 
 .arxiv-popup-actions {
     display: flex;
     justify-content: flex-end;
     gap: 8px;
+    margin-top: 12px;
+}
+
+.arxiv-popup .save-button {
+    background: #2563eb;
+    color: white;
+    border-color: #2563eb;
+}
+
+.arxiv-popup .save-button:hover {
+    background: #1d4ed8;
+    border-color: #1d4ed8;
+}
+
+/* Loading state */
+.arxiv-popup-header:empty::after,
+.arxiv-popup-header:contains('Loading...') {
+    content: '';
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border: 2px solid #ddd;
+    border-top-color: #666;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
 }
 `;
 
