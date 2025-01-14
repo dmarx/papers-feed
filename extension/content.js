@@ -17,7 +17,7 @@ const STYLES = `
 }
 
 .arxiv-popup {
-    position: absolute;
+    position: fixed;
     background: white;
     border: 1px solid #ddd;
     border-radius: 6px;
