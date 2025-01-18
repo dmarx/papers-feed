@@ -56,8 +56,8 @@ export type InteractionLog = {
   interactions: Interaction[];
 }
 
-// Type guards for runtime type checking
-export function isReadingSession(data: unknown): data is ReadingSession {
+// Type guards for runtime type checking - export as values, not types
+export const isReadingSession = (data: unknown): data is ReadingSession => {
   const session = data as ReadingSession;
   return (
     typeof session === 'object' &&
@@ -65,9 +65,9 @@ export function isReadingSession(data: unknown): data is ReadingSession {
     typeof session.duration_seconds === 'number' &&
     typeof session.session_config === 'object'
   );
-}
+};
 
-export function isInteractionLog(data: unknown): data is InteractionLog {
+export const isInteractionLog = (data: unknown): data is InteractionLog => {
   const log = data as InteractionLog;
   return (
     typeof log === 'object' &&
@@ -75,4 +75,4 @@ export function isInteractionLog(data: unknown): data is InteractionLog {
     typeof log.paper_id === 'string' &&
     Array.isArray(log.interactions)
   );
-}
+};
