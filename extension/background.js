@@ -1,15 +1,15 @@
 // background.js
-import { GitHubStoreClient } from 'gh-store-client';
+import { StorageClient } from './storage/client';
 import { loadSessionConfig, getConfigurationInMs } from './config/session.js';
 
 let githubToken = '';
 let githubRepo = '';
-let storeClient = null;
 let currentPaperData = null;
 let currentSession = null;
 let activityInterval = null;
 let activityTimeout = null;
 let sessionConfig = null;
+let storageClient = null;
 
 // Load credentials and configuration when extension starts
 async function loadCredentials() {
@@ -18,8 +18,10 @@ async function loadCredentials() {
     githubRepo = items.githubRepo || '';
     console.log('Credentials loaded:', { hasToken: !!githubToken, hasRepo: !!githubRepo });
     
+    // Initialize storage client if we have credentials
     if (githubToken && githubRepo) {
-        storeClient = new GitHubStoreClient(githubToken, githubRepo);
+        storageClient = new StorageClient(githubToken, githubRepo);
+        console.log('Storage client initialized');
     }
     
     // Load session configuration
@@ -41,15 +43,15 @@ chrome.storage.onChanged.addListener(async (changes) => {
         console.log('Session configuration updated:', sessionConfig);
     }
     
-    // Reinitialize client if credentials changed
+    // Reinitialize storage client if credentials changed
     if (changes.githubToken || changes.githubRepo) {
         if (githubToken && githubRepo) {
-            storeClient = new GitHubStoreClient(githubToken, githubRepo);
-        } else {
-            storeClient = null;
+            storageClient = new StorageClient(githubToken, githubRepo);
+            console.log('Storage client reinitialized');
         }
     }
 });
+
 // Reading Session class to track individual reading sessions
 class ReadingSession {
     constructor(arxivId, config) {
@@ -120,23 +122,39 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     }
     else if (request.type === 'updateRating') {
         console.log('Rating update requested:', request.rating);
-        if (currentPaperData && currentPaperData.objectId) {
-            updatePaperRating(currentPaperData.objectId, request.rating)
-                .then(() => {
-                    currentPaperData.rating = request.rating;
-                    sendResponse({success: true});
-                })
-                .catch(error => {
-                    console.error('Error updating rating:', error);
-                    sendResponse({success: false, error: error.message});
-                });
-            return true; // Will respond asynchronously
-        } else {
-            sendResponse({success: false, error: 'No current paper or object ID'});
-        }
+        handleUpdateRating(request.rating, sendResponse);
+        return true; // Will respond asynchronously
+    }
+    else if (request.type === 'updateAnnotation') {
+        console.log('Annotation update requested:', request.annotationType, request.data);
+        handleAnnotationUpdate(request.annotationType, request.data)
+            .then(response => sendResponse(response))
+            .catch(error => sendResponse({ success: false, error: error.message }));
+        return true; // Will respond asynchronously
     }
     return true;
 });
+
+async function handleUpdateRating(rating, sendResponse) {
+    if (!storageClient) {
+        sendResponse({ success: false, error: 'Storage client not initialized' });
+        return;
+    }
+
+    if (!currentPaperData) {
+        sendResponse({ success: false, error: 'No current paper' });
+        return;
+    }
+
+    try {
+        await storageClient.updateRating(currentPaperData.arxivId, rating, currentPaperData);
+        currentPaperData.rating = rating;
+        sendResponse({ success: true });
+    } catch (error) {
+        console.error('Error updating rating:', error);
+        sendResponse({ success: false, error: error.message });
+    }
+}
 
 // Tab and window management
 chrome.tabs.onActivated.addListener(async (activeInfo) => {
@@ -219,9 +237,9 @@ function stopActivityTracking() {
 }
 
 async function createReadingEvent(paperData, sessionDuration) {
-    if (!storeClient || !paperData) {
+    if (!storageClient || !paperData) {
         console.error('Missing required data for creating reading event:', {
-            hasClient: !!storeClient,
+            hasStorageClient: !!storageClient,
             hasPaperData: !!paperData
         });
         return;
@@ -233,21 +251,8 @@ async function createReadingEvent(paperData, sessionDuration) {
         return;
     }
 
-    console.log('Creating reading event:', {
-        arxivId: paperData.arxivId,
-        duration: seconds,
-        title: paperData.title
-    });
-
-    const eventData = {
-        type: 'reading_session',
-        arxivId: paperData.arxivId,
-        timestamp: new Date().toISOString(),
+    const sessionData = {
         duration_seconds: seconds,
-        title: paperData.title,
-        authors: paperData.authors,
-        abstract: paperData.abstract,
-        url: paperData.url,
         session_config: {
             idle_threshold_seconds: sessionConfig.idleThreshold / 1000,
             min_duration_seconds: sessionConfig.minSessionDuration / 1000,
@@ -257,28 +262,73 @@ async function createReadingEvent(paperData, sessionDuration) {
     };
 
     try {
-        // Create a new stored object with a unique ID
-        const objectId = `reading-${paperData.arxivId}-${Date.now()}`;
-        console.log('Creating stored object with ID:', objectId);
-        const result = await storeClient.getObject(objectId).catch(() => null);
+        await storageClient.logReadingSession(
+            paperData.arxivId,
+            sessionData,
+            paperData
+        );
+        console.log('Reading session logged:', sessionData);
         
-        if (result) {
-            // Update existing object
-            await storeClient.update(objectId, eventData);
-        } else {
-            // Create new object
-            await storeClient.create(objectId, eventData);
-        }
-        
-        console.log('Reading event created successfully');
-        return objectId;
+        // Get and log total reading time
+        const totalTime = await storageClient.getPaperReadingTime(paperData.arxivId);
+        console.log('Total reading time:', totalTime, 'seconds');
     } catch (error) {
-        console.error('Error creating reading event:', error);
+        console.error('Error logging reading session:', error);
+    }
+}
+
+// Update paper creation to use storage client
+async function createGithubIssue(paperData) {
+    if (!storageClient) {
+        console.error('Storage client not initialized');
+        return;
+    }
+
+    try {
+        const existingPaper = await storageClient.getOrCreatePaperMetadata(paperData);
+        console.log('Paper metadata stored/retrieved:', existingPaper.arxivId);
+        return existingPaper;
+    } catch (error) {
+        console.error('Error handling paper metadata:', error);
+    }
+}
+
+// Update annotation handler to use interaction log
+async function handleAnnotationUpdate(type, data) {
+    if (!storageClient) {
+        throw new Error('Storage client not initialized');
+    }
+
+    try {
+        // Include paper data if provided
+        const paperData = data.title ? {
+            title: data.title,
+            authors: data.authors,
+            abstract: data.abstract
+        } : undefined;
+
+        if (type === 'vote') {
+            await storageClient.updateRating(
+                data.paperId,
+                data.vote,
+                paperData
+            );
+        } else {
+            await storageClient.logAnnotation(
+                data.paperId,
+                'notes',  // For now using 'notes' as default key
+                data.notes,
+                paperData
+            );
+        }
+
+        return { success: true };
+    } catch (error) {
+        console.error('Error logging interaction:', error);
         throw error;
     }
 }
 
-// Update parseXMLText function to extract publication date and categories
 async function parseXMLText(xmlText) {
     console.log('Parsing XML response...');
     try {
@@ -305,17 +355,14 @@ async function parseXMLText(xmlText) {
             return authors;
         };
 
-        // Extract categories/tags
         const getCategories = (text) => {
             const categories = new Set();
             
-            // Get primary category
             const primaryMatch = text.match(/<arxiv:primary_category[^>]*term="([^"]+)"/);
             if (primaryMatch) {
                 categories.add(primaryMatch[1]);
             }
             
-            // Get all categories
             const categoryRegex = /<category[^>]*term="([^"]+)"/g;
             let match;
             while (match = categoryRegex.exec(text)) {
@@ -325,7 +372,6 @@ async function parseXMLText(xmlText) {
             return Array.from(categories);
         };
 
-        // Get publication date (first version)
         const getPublishedDate = (text) => {
             const match = text.match(/<published>([^<]+)<\/published>/);
             return match ? match[1].trim() : null;
@@ -347,7 +393,6 @@ async function parseXMLText(xmlText) {
     }
 }
 
-// Update processArxivUrl function to include new fields
 async function processArxivUrl(url) {
     console.log('Processing URL:', url);
     
@@ -405,113 +450,5 @@ async function processArxivUrl(url) {
     } catch (error) {
         console.error('Error processing arXiv URL:', error);
         return null;
-    }
-}
-
-async function createGithubIssue(paperData) {
-    if (!storeClient) {
-        console.error('GitHub client not initialized. Please configure extension options.');
-        return;
-    }
-
-    try {
-        const objectId = `paper-${paperData.arxivId}`;
-        console.log('Creating GitHub issue for paper:', objectId);
-
-        // Check if paper already exists
-        const existingPaper = await storeClient.getObject(objectId).catch(() => null);
-        
-        if (existingPaper) {
-            // Update existing paper
-            await storeClient.update(objectId, {
-                ...paperData,
-                labels: ['paper', `rating:${paperData.rating}`]
-            });
-        } else {
-            // Create new paper
-            await storeClient.create(objectId, {
-                ...paperData,
-                labels: ['paper', `rating:${paperData.rating}`]
-            });
-        }
-
-        console.log('GitHub issue created/updated successfully');
-        currentPaperData = { ...paperData, objectId }; // Changed from issueNumber to objectId
-        return objectId;
-    } catch (error) {
-        console.error('Error creating/updating Github issue:', error);
-        throw error;
-    }
-}
-
-async function updatePaperRating(objectId, rating) {
-    if (!storeClient) {
-        console.error('GitHub client not initialized. Please configure extension options.');
-        return;
-    }
-
-    try {
-        console.log(`Updating rating for paper ${objectId} to ${rating}`);
-        await storeClient.update(objectId, {
-            rating,
-            labels: ['paper', `rating:${rating}`]
-        });
-        console.log('Rating updated successfully');
-    } catch (error) {
-        console.error('Error updating rating:', error);
-        throw error;
-    }
-}
-
-// Handle annotation updates
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-    if (request.type === 'updateAnnotation') {
-        handleAnnotationUpdate(request.annotationType, request.data)
-            .then(() => sendResponse({ success: true }))
-            .catch(error => sendResponse({ success: false, error: error.message }));
-        return true; // Will respond asynchronously
-    }
-});
-
-async function handleAnnotationUpdate(type, data) {
-    if (!storeClient) {
-        throw new Error('GitHub credentials not set');
-    }
-
-    const { paperId } = data;
-    let objectData;
-
-    switch (type) {
-        case 'vote':
-            objectData = {
-                type: 'vote',
-                paperId,
-                vote: data.vote,
-                timestamp: new Date().toISOString(),
-                labels: ['annotation', 'vote', `rating:${data.vote}`]
-            };
-            break;
-            
-        case 'notes':
-            objectData = {
-                type: 'notes',
-                paperId,
-                notes: data.notes,
-                timestamp: new Date().toISOString(),
-                labels: ['annotation', 'notes']
-            };
-            break;
-            
-        default:
-            throw new Error(`Unknown annotation type: ${type}`);
-    }
-
-    try {
-        const objectId = `${type}-${paperId}-${Date.now()}`;
-        await storeClient.create(objectId, objectData);
-        return objectId;
-    } catch (error) {
-        console.error('Error creating annotation:', error);
-        throw error;
     }
 }
