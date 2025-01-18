@@ -1,8 +1,10 @@
 // background.js
+import { GitHubStoreClient } from 'gh-store-client';
 import { loadSessionConfig, getConfigurationInMs } from './config/session.js';
 
 let githubToken = '';
 let githubRepo = '';
+let storeClient = null;
 let currentPaperData = null;
 let currentSession = null;
 let activityInterval = null;
@@ -15,6 +17,10 @@ async function loadCredentials() {
     githubToken = items.githubToken || '';
     githubRepo = items.githubRepo || '';
     console.log('Credentials loaded:', { hasToken: !!githubToken, hasRepo: !!githubRepo });
+    
+    if (githubToken && githubRepo) {
+        storeClient = new GitHubStoreClient(githubToken, githubRepo);
+    }
     
     // Load session configuration
     sessionConfig = getConfigurationInMs(await loadSessionConfig());
@@ -34,8 +40,16 @@ chrome.storage.onChanged.addListener(async (changes) => {
         sessionConfig = getConfigurationInMs(changes.sessionConfig.newValue);
         console.log('Session configuration updated:', sessionConfig);
     }
+    
+    // Reinitialize client if credentials changed
+    if (changes.githubToken || changes.githubRepo) {
+        if (githubToken && githubRepo) {
+            storeClient = new GitHubStoreClient(githubToken, githubRepo);
+        } else {
+            storeClient = null;
+        }
+    }
 });
-
 // Reading Session class to track individual reading sessions
 class ReadingSession {
     constructor(arxivId, config) {
@@ -205,10 +219,9 @@ function stopActivityTracking() {
 }
 
 async function createReadingEvent(paperData, sessionDuration) {
-    if (!githubToken || !githubRepo || !paperData) {
+    if (!storeClient || !paperData) {
         console.error('Missing required data for creating reading event:', {
-            hasToken: !!githubToken,
-            hasRepo: !!githubRepo,
+            hasClient: !!storeClient,
             hasPaperData: !!paperData
         });
         return;
@@ -228,7 +241,7 @@ async function createReadingEvent(paperData, sessionDuration) {
 
     const eventData = {
         type: 'reading_session',
-        arxivId: paperData.arxivId, // TODO: change to arxiv_id throughout
+        arxivId: paperData.arxivId,
         timestamp: new Date().toISOString(),
         duration_seconds: seconds,
         title: paperData.title,
@@ -243,29 +256,13 @@ async function createReadingEvent(paperData, sessionDuration) {
         }
     };
 
-    const issueBody = JSON.stringify(eventData, null, 2);
-
     try {
-        const response = await fetch(`https://api.github.com/repos/${githubRepo}/issues`, {
-            method: 'POST',
-            headers: {
-                'Authorization': `token ${githubToken}`,
-                'Accept': 'application/vnd.github.v3+json'
-            },
-            body: JSON.stringify({
-                title: `[Reading] ${paperData.title || paperData.arxivId} (${seconds}s)`,
-                body: issueBody,
-                labels: ['reading-session']
-            })
-        });
-
-        if (!response.ok) {
-            throw new Error(`GitHub API error: ${response.status}`);
-        }
-
-        const issueData = await response.json();
-        console.log('Reading event created:', issueData.html_url);
-        return issueData;
+        const result = await storeClient.create(
+            `reading-${paperData.arxivId}-${Date.now()}`,
+            eventData
+        );
+        console.log('Reading event created:', result);
+        return result;
     } catch (error) {
         console.error('Error creating reading event:', error);
     }
@@ -401,83 +398,43 @@ async function processArxivUrl(url) {
     }
 }
 
-// Update createGithubIssue to add tags to labels
 async function createGithubIssue(paperData) {
-    if (!githubToken || !githubRepo) {
-        console.error('GitHub credentials not set. Please configure extension options.');
+    if (!storeClient) {
+        console.error('GitHub client not initialized. Please configure extension options.');
         return;
     }
 
     try {
         console.log('Creating GitHub issue for paper:', paperData.arxivId);
-        const issueBody = JSON.stringify(paperData, null, 2);
-
-        // Create issue labels starting with paper and rating
-        const issueLabels = ['paper', `rating:${paperData.rating}`];
         
-        // // Add arXiv tags as labels if they exist
-        // if (paperData.arxiv_tags && paperData.arxiv_tags.length > 0) {
-        //     // Add tags in format "arxiv:cs.AI", "arxiv:cs.LG", etc.
-        //     issueLabels.push(...paperData.arxiv_tags.map(tag => `arxiv:${tag}`));
-        // }
-
-        const response = await fetch(`https://api.github.com/repos/${githubRepo}/issues`, {
-            method: 'POST',
-            headers: {
-                'Authorization': `token ${githubToken}`,
-                'Accept': 'application/vnd.github.v3+json'
-            },
-            body: JSON.stringify({
-                title: `[Paper] ${paperData.title || paperData.arxivId}`,
-                body: issueBody,
-                labels: issueLabels
-            })
-        });
-
-        if (!response.ok) {
-            throw new Error(`GitHub API error: ${response.status}`);
-        }
-
-        const issueData = await response.json();
-        console.log('GitHub issue created successfully:', issueData.html_url);
-        return issueData;
+        const result = await storeClient.create(
+            `paper-${paperData.arxivId}`,
+            {
+                ...paperData,
+                labels: ['paper', `rating:${paperData.rating}`]
+            }
+        );
+        
+        console.log('GitHub issue created successfully:', result);
+        currentPaperData = { ...paperData, issueNumber: result.meta.objectId };
+        return result;
     } catch (error) {
         console.error('Error creating Github issue:', error);
     }
 }
 
-async function updatePaperRating(issueNumber, rating) {
-    if (!githubToken || !githubRepo) {
-        console.error('GitHub credentials not set. Please configure extension options.');
+async function updatePaperRating(issueId, rating) {
+    if (!storeClient) {
+        console.error('GitHub client not initialized. Please configure extension options.');
         return;
     }
 
     try {
-        console.log(`Updating rating for issue ${issueNumber} to ${rating}`);
+        console.log(`Updating rating for paper ${issueId} to ${rating}`);
         
-        // Update issue labels
-        await fetch(`https://api.github.com/repos/${githubRepo}/issues/${issueNumber}/labels`, {
-            method: 'PUT',
-            headers: {
-                'Authorization': `token ${githubToken}`,
-                'Accept': 'application/vnd.github.v3+json'
-            },
-            body: JSON.stringify([
-                'paper',
-                `rating:${rating}`
-            ])
-        });
-
-        // Add comment about rating change
-        await fetch(`https://api.github.com/repos/${githubRepo}/issues/${issueNumber}/comments`, {
-            method: 'POST',
-            headers: {
-                'Authorization': `token ${githubToken}`,
-                'Accept': 'application/vnd.github.v3+json'
-            },
-            body: JSON.stringify({
-                body: `Updated paper rating to: ${rating}`
-            })
+        await storeClient.update(issueId, {
+            rating,
+            labels: ['paper', `rating:${rating}`]
         });
 
         console.log('Rating updated successfully');
