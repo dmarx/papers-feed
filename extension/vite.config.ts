@@ -1,4 +1,5 @@
 import { defineConfig } from 'vite';
+import { resolve } from 'path';
 
 export default defineConfig({
   build: {
@@ -8,9 +9,9 @@ export default defineConfig({
     // Configure output for extension
     rollupOptions: {
       input: {
-        background: 'background.js',
-        content: 'content.js',
-        popup: 'popup.js'
+        background: resolve(__dirname, 'background.js'),
+        content: resolve(__dirname, 'content.js'),
+        popup: resolve(__dirname, 'popup.js')
       },
       output: {
         entryFileNames: '[name].bundle.js',
@@ -21,8 +22,19 @@ export default defineConfig({
     // Don't minify for better debugging
     minify: false,
     
-    // Put built files in extension root
-    outDir: '.',
-    emptyOutDir: false
+    // Put built files in extension root but not in src
+    outDir: 'dist',
+    emptyOutDir: true
+  },
+  
+  resolve: {
+    // Help Vite find gh-store-client
+    mainFields: ['module', 'main'],
+    extensions: ['.mjs', '.js', '.ts', '.jsx', '.tsx', '.json']
+  },
+
+  // Handle Node.js built-in modules
+  optimizeDeps: {
+    include: ['gh-store-client']
   }
 });
