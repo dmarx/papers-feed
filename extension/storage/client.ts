@@ -1,11 +1,11 @@
 // extension/storage/client.ts
 import { GitHubStoreClient } from 'gh-store-client';
 import type { Json } from 'gh-store-client';
-import type { 
-  PaperMetadata, 
-  InteractionLog, 
-  Interaction,
-  ReadingSession,
+import { 
+  type PaperMetadata, 
+  type InteractionLog, 
+  type Interaction,
+  type ReadingSession,
   isReadingSession,
   isInteractionLog
 } from './types';
@@ -46,7 +46,7 @@ export class StorageClient {
           arxiv_tags: paperData.arxiv_tags || []
         };
 
-        await this.client.setObject(objectId, defaultPaperData);
+        await this.client.createObject(objectId, defaultPaperData);
         return defaultPaperData;
       }
       throw error;
@@ -71,7 +71,7 @@ export class StorageClient {
           paper_id: arxivId,
           interactions: []
         };
-        await this.client.setObject(objectId, newLog);
+        await this.client.createObject(objectId, newLog);
         return newLog;
       }
       throw error;
@@ -139,7 +139,7 @@ export class StorageClient {
       ...paperData
     });
     
-    await this.client.setObject(`paper:${arxivId}`, { ...paper, rating });
+    await this.client.updateObject(`paper:${arxivId}`, { rating });
 
     // Log rating interaction
     const interaction: Interaction = {
@@ -161,7 +161,7 @@ export class StorageClient {
       interactions: [...log.interactions, interaction]
     };
 
-    await this.client.setObject(`interactions:${arxivId}`, updatedLog);
+    await this.client.updateObject(`interactions:${arxivId}`, updatedLog);
   }
 
   // Get interactions for a paper
