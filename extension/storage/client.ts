@@ -1,10 +1,13 @@
 // extension/storage/client.ts
 import { GitHubStoreClient } from 'gh-store-client';
+import type { Json } from 'gh-store-client';
 import type { 
   PaperMetadata, 
   InteractionLog, 
   Interaction,
-  ReadingSession 
+  ReadingSession,
+  isReadingSession,
+  isInteractionLog
 } from './types';
 
 export class StorageClient {
@@ -15,13 +18,19 @@ export class StorageClient {
   }
 
   // Paper metadata methods
-  async getOrCreatePaperMetadata(paperData: Partial<PaperMetadata>): Promise<PaperMetadata> {
+  async getOrCreatePaperMetadata(paperData: Partial<PaperMetadata> & { arxivId: string }): Promise<PaperMetadata> {
     const objectId = `paper:${paperData.arxivId}`;
     
     try {
       // Try to get existing paper
       const obj = await this.client.getObject(objectId);
-      return obj.data as PaperMetadata;
+      const data = obj.data as unknown;
+      
+      // Runtime type check (could add more validation here)
+      if (typeof data === 'object' && data !== null) {
+        return data as PaperMetadata;
+      }
+      throw new Error('Invalid paper metadata format');
     } catch (error) {
       if (error instanceof Error && error.message.includes('No object found')) {
         // Create new paper with default fields if it doesn't exist
@@ -37,7 +46,7 @@ export class StorageClient {
           arxiv_tags: paperData.arxiv_tags || []
         };
 
-        await this.client.createObject(objectId, defaultPaperData);
+        await this.client.setObject(objectId, defaultPaperData);
         return defaultPaperData;
       }
       throw error;
@@ -50,14 +59,19 @@ export class StorageClient {
     
     try {
       const obj = await this.client.getObject(objectId);
-      return obj.data as InteractionLog;
+      const data = obj.data as unknown;
+      
+      if (isInteractionLog(data)) {
+        return data;
+      }
+      throw new Error('Invalid interaction log format');
     } catch (error) {
       if (error instanceof Error && error.message.includes('No object found')) {
         const newLog: InteractionLog = {
           paper_id: arxivId,
           interactions: []
         };
-        await this.client.createObject(objectId, newLog);
+        await this.client.setObject(objectId, newLog);
         return newLog;
       }
       throw error;
@@ -82,7 +96,7 @@ export class StorageClient {
     const interaction: Interaction = {
       type: 'reading_session',
       timestamp: new Date().toISOString(),
-      data: session
+      data: session as unknown as Json // Safe because ReadingSession matches Json structure
     };
 
     await this.addInteraction(arxivId, interaction);
@@ -125,7 +139,7 @@ export class StorageClient {
       ...paperData
     });
     
-    await this.client.updateObject(`paper:${arxivId}`, { rating });
+    await this.client.setObject(`paper:${arxivId}`, { ...paper, rating });
 
     // Log rating interaction
     const interaction: Interaction = {
@@ -147,7 +161,7 @@ export class StorageClient {
       interactions: [...log.interactions, interaction]
     };
 
-    await this.client.updateObject(`interactions:${arxivId}`, updatedLog);
+    await this.client.setObject(`interactions:${arxivId}`, updatedLog);
   }
 
   // Get interactions for a paper
@@ -191,7 +205,12 @@ export class StorageClient {
   async getPaperReadingTime(arxivId: string): Promise<number> {
     const interactions = await this.getInteractions(arxivId, { type: 'reading_session' });
     return interactions.reduce(
-      (total, i) => total + (i.data as ReadingSession).duration_seconds,
+      (total, i) => {
+        if (isReadingSession(i.data)) {
+          return total + i.data.duration_seconds;
+        }
+        return total;
+      },
       0
     );
   }
