@@ -8,7 +8,8 @@ export default {
   },
   output: {
     filename: '[name].bundle.js',
-    clean: true
+    path: process.cwd(), // Output to extension root
+    clean: false // Don't clean extension root directory
   },
   experiments: {
     topLevelAwait: true
