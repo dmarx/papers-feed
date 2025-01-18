@@ -120,8 +120,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     }
     else if (request.type === 'updateRating') {
         console.log('Rating update requested:', request.rating);
-        if (currentPaperData && currentPaperData.issueNumber) {
-            updatePaperRating(currentPaperData.issueNumber, request.rating)
+        if (currentPaperData && currentPaperData.objectId) {
+            updatePaperRating(currentPaperData.objectId, request.rating)
                 .then(() => {
                     currentPaperData.rating = request.rating;
                     sendResponse({success: true});
@@ -132,7 +132,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 });
             return true; // Will respond asynchronously
         } else {
-            sendResponse({success: false, error: 'No current paper or issue number'});
+            sendResponse({success: false, error: 'No current paper or object ID'});
         }
     }
     return true;
@@ -257,14 +257,24 @@ async function createReadingEvent(paperData, sessionDuration) {
     };
 
     try {
-        const result = await storeClient.create(
-            `reading-${paperData.arxivId}-${Date.now()}`,
-            eventData
-        );
-        console.log('Reading event created:', result);
-        return result;
+        // Create a new stored object with a unique ID
+        const objectId = `reading-${paperData.arxivId}-${Date.now()}`;
+        console.log('Creating stored object with ID:', objectId);
+        const result = await storeClient.getObject(objectId).catch(() => null);
+        
+        if (result) {
+            // Update existing object
+            await storeClient.update(objectId, eventData);
+        } else {
+            // Create new object
+            await storeClient.create(objectId, eventData);
+        }
+        
+        console.log('Reading event created successfully');
+        return objectId;
     } catch (error) {
         console.error('Error creating reading event:', error);
+        throw error;
     }
 }
 
@@ -405,38 +415,47 @@ async function createGithubIssue(paperData) {
     }
 
     try {
-        console.log('Creating GitHub issue for paper:', paperData.arxivId);
+        const objectId = `paper-${paperData.arxivId}`;
+        console.log('Creating GitHub issue for paper:', objectId);
+
+        // Check if paper already exists
+        const existingPaper = await storeClient.getObject(objectId).catch(() => null);
         
-        const result = await storeClient.create(
-            `paper-${paperData.arxivId}`,
-            {
+        if (existingPaper) {
+            // Update existing paper
+            await storeClient.update(objectId, {
                 ...paperData,
                 labels: ['paper', `rating:${paperData.rating}`]
-            }
-        );
-        
-        console.log('GitHub issue created successfully:', result);
-        currentPaperData = { ...paperData, issueNumber: result.meta.objectId };
-        return result;
+            });
+        } else {
+            // Create new paper
+            await storeClient.create(objectId, {
+                ...paperData,
+                labels: ['paper', `rating:${paperData.rating}`]
+            });
+        }
+
+        console.log('GitHub issue created/updated successfully');
+        currentPaperData = { ...paperData, objectId }; // Changed from issueNumber to objectId
+        return objectId;
     } catch (error) {
-        console.error('Error creating Github issue:', error);
+        console.error('Error creating/updating Github issue:', error);
+        throw error;
     }
 }
 
-async function updatePaperRating(issueId, rating) {
+async function updatePaperRating(objectId, rating) {
     if (!storeClient) {
         console.error('GitHub client not initialized. Please configure extension options.');
         return;
     }
 
     try {
-        console.log(`Updating rating for paper ${issueId} to ${rating}`);
-        
-        await storeClient.update(issueId, {
+        console.log(`Updating rating for paper ${objectId} to ${rating}`);
+        await storeClient.update(objectId, {
             rating,
             labels: ['paper', `rating:${rating}`]
         });
-
         console.log('Rating updated successfully');
     } catch (error) {
         console.error('Error updating rating:', error);
@@ -454,36 +473,33 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     }
 });
 
-// Create GitHub issue for annotation
 async function handleAnnotationUpdate(type, data) {
-    if (!githubToken || !githubRepo) {
+    if (!storeClient) {
         throw new Error('GitHub credentials not set');
     }
 
     const { paperId } = data;
-    let title, body, labels;
+    let objectData;
 
     switch (type) {
         case 'vote':
-            title = `[Vote] ${paperId}`;
-            body = JSON.stringify({
+            objectData = {
                 type: 'vote',
                 paperId,
                 vote: data.vote,
-                timestamp: new Date().toISOString()
-            }, null, 2);
-            labels = ['annotation', 'vote', `rating:${data.vote}`];
+                timestamp: new Date().toISOString(),
+                labels: ['annotation', 'vote', `rating:${data.vote}`]
+            };
             break;
             
         case 'notes':
-            title = `[Notes] ${paperId}`;
-            body = JSON.stringify({
+            objectData = {
                 type: 'notes',
                 paperId,
                 notes: data.notes,
-                timestamp: new Date().toISOString()
-            }, null, 2);
-            labels = ['annotation', 'notes'];
+                timestamp: new Date().toISOString(),
+                labels: ['annotation', 'notes']
+            };
             break;
             
         default:
@@ -491,20 +507,9 @@ async function handleAnnotationUpdate(type, data) {
     }
 
     try {
-        const response = await fetch(`https://api.github.com/repos/${githubRepo}/issues`, {
-            method: 'POST',
-            headers: {
-                'Authorization': `token ${githubToken}`,
-                'Accept': 'application/vnd.github.v3+json'
-            },
-            body: JSON.stringify({ title, body, labels })
-        });
-
-        if (!response.ok) {
-            throw new Error(`GitHub API error: ${response.status}`);
-        }
-
-        return await response.json();
+        const objectId = `${type}-${paperId}-${Date.now()}`;
+        await storeClient.create(objectId, objectData);
+        return objectId;
     } catch (error) {
         console.error('Error creating annotation:', error);
         throw error;
