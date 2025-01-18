@@ -1,8 +1,8 @@
 // extension/storage/types.ts
 import type { Json } from 'gh-store-client';
 
-// Base paper metadata - kept lean
-export interface PaperMetadata {
+// Convert interfaces to type aliases to help with Json compatibility
+export type PaperMetadata = {
   arxivId: string;
   url: string;
   title: string;
@@ -14,47 +14,65 @@ export interface PaperMetadata {
   rating: string;
 }
 
-// Reading session interaction
-export interface ReadingSession {
-  duration_seconds: number;
-  session_config: {
-    idle_threshold_seconds: number;
-    min_duration_seconds: number;
-    continuous_activity_required: boolean;
-    partial_sessions_logged: boolean;
-  };
+// Make session config a separate type for clarity
+export type SessionConfig = {
+  idle_threshold_seconds: number;
+  min_duration_seconds: number;
+  continuous_activity_required: boolean;
+  partial_sessions_logged: boolean;
 }
 
-// Base interaction type
-export interface Interaction {
+// Reading session as a plain object type
+export type ReadingSession = {
+  duration_seconds: number;
+  session_config: SessionConfig;
+}
+
+// Base interaction type that ensures data is Json-compatible
+export type Interaction = {
   type: string;
   timestamp: string;
   data: Json;
 }
 
-// Typed interactions
-export interface ReadingInteraction extends Interaction {
-  type: 'reading_session';
-  data: ReadingSession;
+// Typed interaction data (these are the actual data shapes we'll use)
+export type ReadingInteractionData = {
+  duration_seconds: number;
+  session_config: SessionConfig;
 }
 
-export interface AnnotationInteraction extends Interaction {
-  type: 'annotation';
-  data: {
-    key: string;
-    value: Json;
-  };
+export type AnnotationInteractionData = {
+  key: string;
+  value: Json;
 }
 
-export interface RatingInteraction extends Interaction {
-  type: 'rating';
-  data: {
-    rating: string;
-  };
+export type RatingInteractionData = {
+  rating: string;
 }
 
 // Collection of interactions for a paper
-export interface InteractionLog {
+export type InteractionLog = {
   paper_id: string;
   interactions: Interaction[];
+}
+
+// Type guards for runtime type checking
+export function isReadingSession(data: unknown): data is ReadingSession {
+  const session = data as ReadingSession;
+  return (
+    typeof session === 'object' &&
+    session !== null &&
+    typeof session.duration_seconds === 'number' &&
+    typeof session.session_config === 'object'
+  );
+}
+
+export function isInteractionLog(data: unknown): data is InteractionLog {
+  const log = data as InteractionLog;
+  return (
+    typeof log === 'object' &&
+    log !== null &&
+    typeof log.paper_id === 'string' &&
+    Array.isArray(log.interactions)
+  );
 }
