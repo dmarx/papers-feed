@@ -14,16 +14,19 @@ export default defineConfig({
         popup: resolve(__dirname, 'popup.js')
       },
       output: {
+        dir: resolve(__dirname, 'dist'),
         entryFileNames: '[name].bundle.js',
-        format: 'es'
+        format: 'es',
+        // Ensure all files go in dist directory
+        assetFileNames: 'assets/[name].[ext]'
       }
     },
     
     // Don't minify for better debugging
     minify: false,
     
-    // Put built files in extension root but not in src
-    outDir: 'dist',
+    // Put built files in dist directory
+    outDir: resolve(__dirname, 'dist'),
     emptyOutDir: true
   },
   
@@ -36,5 +39,11 @@ export default defineConfig({
   // Handle Node.js built-in modules
   optimizeDeps: {
     include: ['gh-store-client']
+  },
+
+  // Ensure we're building for browser environment
+  build: {
+    target: 'esnext',
+    modulePreload: false
   }
 });
