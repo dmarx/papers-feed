@@ -2,7 +2,7 @@ var u=class{constructor(t,e,s={}){this.token=t,this.repo=e,this.config={baseLabe
 
 const isReadingSession = (data) => {
   const session = data;
-  return typeof session === "object" && session !== null && typeof session.duration_seconds === "number" && typeof session.session_config === "object";
+  return typeof session === "object" && session !== null && typeof session.duration_seconds === "number";
 };
 const isInteractionLog = (data) => {
   const log = data;
@@ -260,9 +260,9 @@ class ReadingSession {
             
             if (timeSinceLastActive < this.config.idleThreshold) {
                 this.activeTime += timeSinceLastActive;
-            } else if (this.config.requireContinuousActivity) {
-                // Reset active time if continuous activity is required
-                this.activeTime = 0;
+            // } else if (this.config.requireContinuousActivity) {
+            //     // Reset active time if continuous activity is required
+            //     this.activeTime = 0;
             }
             
             this.lastActiveTime = now;
@@ -270,12 +270,12 @@ class ReadingSession {
     }
 
     end() {
-        this.isTracking = false;
         this.update();
-        
-        if (this.config.logPartialSessions) {
-            return this.activeTime;
-        }
+        this.isTracking = false;
+          
+        // if (this.config.logPartialSessions) {
+        //     return this.activeTime;
+        // }
         return this.activeTime >= this.config.minSessionDuration ? this.activeTime : 0;
     }
 }
@@ -438,13 +438,13 @@ async function createReadingEvent(paperData, sessionDuration) {
     }
 
     const sessionData = {
-        duration_seconds: seconds,
-        session_config: {
-            idle_threshold_seconds: sessionConfig.idleThreshold / 1000,
-            min_duration_seconds: sessionConfig.minSessionDuration / 1000,
-            continuous_activity_required: sessionConfig.requireContinuousActivity,
-            partial_sessions_logged: sessionConfig.logPartialSessions
-        }
+        duration_seconds: seconds //,
+        // session_config: {
+        //     idle_threshold_seconds: sessionConfig.idleThreshold / 1000,
+        //     min_duration_seconds: sessionConfig.minSessionDuration / 1000,
+        //     continuous_activity_required: sessionConfig.requireContinuousActivity,
+        //     partial_sessions_logged: sessionConfig.logPartialSessions
+        // }
     };
 
     try {
@@ -489,20 +489,26 @@ async function handleAnnotationUpdate(type, data) {
         // Include paper data if provided
         const paperData = data.title ? {
             title: data.title,
-            authors: data.authors,
-            abstract: data.abstract
+            //authors: data.authors,
+            //abstract: data.abstract
         } : undefined;
 
         if (type === 'vote') {
-            await storageClient.updateRating(
+            // await storageClient.updateRating(
+            //     data.paperId,
+            //     data.vote,
+            //     paperData
+            // );
+            await storageClient.logAnnotation(
                 data.paperId,
+                'vote',
                 data.vote,
                 paperData
             );
         } else {
             await storageClient.logAnnotation(
                 data.paperId,
-                'notes',  // For now using 'notes' as default key
+                'notes',  // todo: let user provide custom key
                 data.notes,
                 paperData
             );
