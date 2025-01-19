@@ -25,7 +25,7 @@ export type SessionConfig = {
 // Reading session as a plain object type
 export type ReadingSession = {
   duration_seconds: number;
-  session_config: SessionConfig;
+  //session_config: SessionConfig;
 }
 
 // Base interaction type that ensures data is Json-compatible
@@ -38,7 +38,7 @@ export type Interaction = {
 // Typed interaction data (these are the actual data shapes we'll use)
 export type ReadingInteractionData = {
   duration_seconds: number;
-  session_config: SessionConfig;
+  //session_config: SessionConfig;
 }
 
 export type AnnotationInteractionData = {
@@ -62,8 +62,8 @@ export const isReadingSession = (data: unknown): data is ReadingSession => {
   return (
     typeof session === 'object' &&
     session !== null &&
-    typeof session.duration_seconds === 'number' &&
-    typeof session.session_config === 'object'
+    typeof session.duration_seconds === 'number' //&&
+    //typeof session.session_config === 'object'
   );
 };
 
