@@ -27,7 +27,11 @@ export default defineConfig({
     
     // Put built files in dist directory
     outDir: resolve(__dirname, 'dist'),
-    emptyOutDir: true
+    emptyOutDir: true,
+
+    // Ensure we're building for browser environment
+    target: 'esnext',
+    modulePreload: false
   },
   
   resolve: {
@@ -39,11 +43,5 @@ export default defineConfig({
   // Handle Node.js built-in modules
   optimizeDeps: {
     include: ['gh-store-client']
-  },
-
-  // Ensure we're building for browser environment
-  build: {
-    target: 'esnext',
-    modulePreload: false
   }
 });
