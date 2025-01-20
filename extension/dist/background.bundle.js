@@ -1,13 +1,203 @@
+var u=class{constructor(t,e,s={}){this.token=t,this.repo=e,this.config={baseLabel:s.baseLabel??"stored-object",uidPrefix:s.uidPrefix??"UID:",reactions:{processed:s.reactions?.processed??"+1",initialState:s.reactions?.initialState??"rocket"}};}async fetchFromGitHub(t,e={}){let s=new URL(`https://api.github.com/repos/${this.repo}${t}`);e.params&&(Object.entries(e.params).forEach(([i,n])=>{s.searchParams.append(i,n);}),delete e.params);let r=await fetch(s.toString(),{...e,headers:{Authorization:`token ${this.token}`,Accept:"application/vnd.github.v3+json",...e.headers}});if(!r.ok)throw new Error(`GitHub API error: ${r.status}`);return r.json()}async getObject(t){let e=await this.fetchFromGitHub("/issues",{method:"GET",params:{labels:[this.config.baseLabel,`${this.config.uidPrefix}${t}`].join(","),state:"closed"}});if(!e||e.length===0)throw new Error(`No object found with ID: ${t}`);let s=e[0],r=JSON.parse(s.body);return {meta:{objectId:t,label:`${this.config.uidPrefix}${t}`,createdAt:new Date(s.created_at),updatedAt:new Date(s.updated_at),version:await this._getVersion(s.number)},data:r}}async createObject(t,e){let s=`${this.config.uidPrefix}${t}`,r=await this.fetchFromGitHub("/issues",{method:"POST",body:JSON.stringify({title:`Stored Object: ${t}`,body:JSON.stringify(e,null,2),labels:[this.config.baseLabel,s]})}),i={type:"initial_state",data:e,timestamp:new Date().toISOString()},n=await this.fetchFromGitHub(`/issues/${r.number}/comments`,{method:"POST",body:JSON.stringify({body:JSON.stringify(i,null,2)})});return await this.fetchFromGitHub(`/issues/comments/${n.id}/reactions`,{method:"POST",body:JSON.stringify({content:this.config.reactions.processed})}),await this.fetchFromGitHub(`/issues/comments/${n.id}/reactions`,{method:"POST",body:JSON.stringify({content:this.config.reactions.initialState})}),await this.fetchFromGitHub(`/issues/${r.number}`,{method:"PATCH",body:JSON.stringify({state:"closed"})}),{meta:{objectId:t,label:s,createdAt:new Date(r.created_at),updatedAt:new Date(r.updated_at),version:1},data:e}}async updateObject(t,e){let s=await this.fetchFromGitHub("/issues",{method:"GET",params:{labels:[this.config.baseLabel,`${this.config.uidPrefix}${t}`].join(","),state:"all"}});if(!s||s.length===0)throw new Error(`No object found with ID: ${t}`);let r=s[0];return await this.fetchFromGitHub(`/issues/${r.number}/comments`,{method:"POST",body:JSON.stringify({body:JSON.stringify(e,null,2)})}),await this.fetchFromGitHub(`/issues/${r.number}`,{method:"PATCH",body:JSON.stringify({state:"open"})}),this.getObject(t)}async listAll(){let t=await this.fetchFromGitHub("/issues",{method:"GET",params:{labels:this.config.baseLabel,state:"closed"}}),e={};for(let s of t)if(!s.labels.some(r=>r.name==="archived"))try{let r=this._getObjectIdFromLabels(s),i=JSON.parse(s.body),n={objectId:r,label:r,createdAt:new Date(s.created_at),updatedAt:new Date(s.updated_at),version:await this._getVersion(s.number)};e[r]={meta:n,data:i};}catch{continue}return e}async listUpdatedSince(t){let e=await this.fetchFromGitHub("/issues",{method:"GET",params:{labels:this.config.baseLabel,state:"closed",since:t.toISOString()}}),s={};for(let r of e)if(!r.labels.some(i=>i.name==="archived"))try{let i=this._getObjectIdFromLabels(r),n=JSON.parse(r.body),o=new Date(r.updated_at);if(o>t){let h={objectId:i,label:i,createdAt:new Date(r.created_at),updatedAt:o,version:await this._getVersion(r.number)};s[i]={meta:h,data:n};}}catch{continue}return s}async getObjectHistory(t){let e=await this.fetchFromGitHub("/issues",{method:"GET",params:{labels:[this.config.baseLabel,`${this.config.uidPrefix}${t}`].join(","),state:"all"}});if(!e||e.length===0)throw new Error(`No object found with ID: ${t}`);let s=e[0],r=await this.fetchFromGitHub(`/issues/${s.number}/comments`),i=[];for(let n of r)try{let o=JSON.parse(n.body);i.push({timestamp:n.created_at,type:o.type||"update",data:o.data||o,commentId:n.id});}catch{continue}return i}async _getVersion(t){return (await this.fetchFromGitHub(`/issues/${t}/comments`)).length+1}_getObjectIdFromLabels(t){for(let e of t.labels)if(e.name!==this.config.baseLabel&&e.name.startsWith(this.config.uidPrefix))return e.name.slice(this.config.uidPrefix.length);throw new Error(`No UID label found with prefix ${this.config.uidPrefix}`)}};
+
+const isReadingSession = (data) => {
+  const session = data;
+  return typeof session === "object" && session !== null && typeof session.duration_seconds === "number";
+};
+const isInteractionLog = (data) => {
+  const log = data;
+  return typeof log === "object" && log !== null && typeof log.paper_id === "string" && Array.isArray(log.interactions);
+};
+
+class StorageClient {
+  constructor(token, repo) {
+    this.client = new u(token, repo);
+  }
+  // Paper metadata methods
+  async getOrCreatePaperMetadata(paperData) {
+    const objectId = `paper:${paperData.arxivId}`;
+    try {
+      const obj = await this.client.getObject(objectId);
+      const data = obj.data;
+      if (typeof data === "object" && data !== null) {
+        return data;
+      }
+      throw new Error("Invalid paper metadata format");
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("No object found")) {
+        const defaultPaperData = {
+          arxivId: paperData.arxivId,
+          url: paperData.url || `https://arxiv.org/abs/${paperData.arxivId}`,
+          title: paperData.title || paperData.arxivId,
+          authors: paperData.authors || "",
+          abstract: paperData.abstract || "",
+          timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+          rating: "novote",
+          published_date: paperData.published_date || "",
+          arxiv_tags: paperData.arxiv_tags || []
+        };
+        await this.client.createObject(objectId, defaultPaperData);
+        return defaultPaperData;
+      }
+      throw error;
+    }
+  }
+  // Interaction log methods
+  async getOrCreateInteractionLog(arxivId) {
+    const objectId = `interactions:${arxivId}`;
+    try {
+      const obj = await this.client.getObject(objectId);
+      const data = obj.data;
+      if (isInteractionLog(data)) {
+        return data;
+      }
+      throw new Error("Invalid interaction log format");
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("No object found")) {
+        const newLog = {
+          paper_id: arxivId,
+          interactions: []
+        };
+        await this.client.createObject(objectId, newLog);
+        return newLog;
+      }
+      throw error;
+    }
+  }
+  // Log a reading session
+  async logReadingSession(arxivId, session, paperData) {
+    if (paperData) {
+      await this.getOrCreatePaperMetadata({
+        arxivId,
+        ...paperData
+      });
+    }
+    const interaction = {
+      type: "reading_session",
+      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+      data: session
+      // Safe because ReadingSession matches Json structure
+    };
+    await this.addInteraction(arxivId, interaction);
+  }
+  // Log an annotation
+  async logAnnotation(arxivId, key, value, paperData) {
+    if (paperData) {
+      await this.getOrCreatePaperMetadata({
+        arxivId,
+        ...paperData
+      });
+    }
+    const interaction = {
+      type: "annotation",
+      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+      data: { key, value }
+    };
+    await this.addInteraction(arxivId, interaction);
+  }
+  // Update paper rating
+  async updateRating(arxivId, rating, paperData) {
+    await this.getOrCreatePaperMetadata({
+      arxivId,
+      ...paperData
+    });
+    await this.client.updateObject(`paper:${arxivId}`, { rating });
+    const interaction = {
+      type: "rating",
+      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+      data: { rating }
+    };
+    await this.addInteraction(arxivId, interaction);
+  }
+  // Add interaction to log
+  async addInteraction(arxivId, interaction) {
+    const log = await this.getOrCreateInteractionLog(arxivId);
+    const updatedLog = {
+      ...log,
+      interactions: [...log.interactions, interaction]
+    };
+    await this.client.updateObject(`interactions:${arxivId}`, updatedLog);
+  }
+  // Get interactions for a paper
+  async getInteractions(arxivId, options = {}) {
+    try {
+      const log = await this.getOrCreateInteractionLog(arxivId);
+      let interactions = log.interactions;
+      if (options.type) {
+        interactions = interactions.filter((i) => i.type === options.type);
+      }
+      if (options.startTime || options.endTime) {
+        interactions = interactions.filter((i) => {
+          const time = new Date(i.timestamp);
+          if (options.startTime && time < options.startTime) return false;
+          if (options.endTime && time > options.endTime) return false;
+          return true;
+        });
+      }
+      return interactions;
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("No object found")) {
+        return [];
+      }
+      throw error;
+    }
+  }
+  // Get total reading time for a paper
+  async getPaperReadingTime(arxivId) {
+    const interactions = await this.getInteractions(arxivId, { type: "reading_session" });
+    return interactions.reduce(
+      (total, i) => {
+        if (isReadingSession(i.data)) {
+          return total + i.data.duration_seconds;
+        }
+        return total;
+      },
+      0
+    );
+  }
+  // Paper history
+  async getPaperHistory(arxivId) {
+    const objectId = `paper:${arxivId}`;
+    return this.client.getObjectHistory(objectId);
+  }
+}
+
+// extension/config/session.js
+
+// Default configuration values
+const DEFAULT_CONFIG = {
+    idleThresholdMinutes: 5,
+    minSessionDurationSeconds: 30,
+    // Adding more granular control
+    requireContinuousActivity: true,  // If true, resets timer on idle
+    logPartialSessions: false,        // If true, logs sessions even if under minimum duration
+    activityUpdateIntervalSeconds: 1  // How often to update active time
+};
+
+// Load session configuration from storage
+async function loadSessionConfig() {
+    const items = await chrome.storage.sync.get('sessionConfig');
+    return { ...DEFAULT_CONFIG, ...items.sessionConfig };
+}
+
+// Convert configuration to milliseconds for internal use
+function getConfigurationInMs(config) {
+    return {
+        idleThreshold: config.idleThresholdMinutes * 60 * 1000,
+        minSessionDuration: config.minSessionDurationSeconds * 1000,
+        activityUpdateInterval: config.activityUpdateIntervalSeconds * 1000,
+        requireContinuousActivity: config.requireContinuousActivity,
+        logPartialSessions: config.logPartialSessions
+    };
+}
+
 // background.js
-import { StorageClient } from './storage/client';
-import { loadSessionConfig, getConfigurationInMs } from './config/session.js';
 
 let githubToken = '';
 let githubRepo = '';
 let currentPaperData = null;
 let currentSession = null;
 let activityInterval = null;
-let activityTimeout = null;
 let sessionConfig = null;
 let storageClient = null;
 
@@ -229,10 +419,6 @@ function stopActivityTracking() {
     if (activityInterval) {
         clearInterval(activityInterval);
         activityInterval = null;
-    }
-    if (activityTimeout) {
-        clearTimeout(activityTimeout);
-        activityTimeout = null;
     }
 }
 
@@ -458,3 +644,4 @@ async function processArxivUrl(url) {
         return null;
     }
 }
+//# sourceMappingURL=background.bundle.js.map
