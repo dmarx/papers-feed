@@ -9,20 +9,16 @@ const isInteractionLog = (data) => {
   return typeof log === "object" && log !== null && typeof log.paper_id === "string" && Array.isArray(log.interactions);
 };
 
-class StorageClient {
-  constructor(token, repo) {
-    this.client = new u(token, repo);
+class PaperManager {
+  constructor(client) {
+    this.client = client;
   }
-  // Paper metadata methods
-  async getOrCreatePaperMetadata(paperData) {
+  async getOrCreatePaper(paperData) {
     const objectId = `paper:${paperData.arxivId}`;
     try {
       const obj = await this.client.getObject(objectId);
       const data = obj.data;
-      if (typeof data === "object" && data !== null) {
-        return data;
-      }
-      throw new Error("Invalid paper metadata format");
+      return data;
     } catch (error) {
       if (error instanceof Error && error.message.includes("No object found")) {
         const defaultPaperData = {
@@ -42,7 +38,6 @@ class StorageClient {
       throw error;
     }
   }
-  // Interaction log methods
   async getOrCreateInteractionLog(arxivId) {
     const objectId = `interactions:${arxivId}`;
     try {
@@ -64,61 +59,52 @@ class StorageClient {
       throw error;
     }
   }
-  // Log a reading session
   async logReadingSession(arxivId, session, paperData) {
     if (paperData) {
-      await this.getOrCreatePaperMetadata({
+      await this.getOrCreatePaper({
         arxivId,
         ...paperData
       });
     }
-    const interaction = {
+    await this.addInteraction(arxivId, {
       type: "reading_session",
       timestamp: (/* @__PURE__ */ new Date()).toISOString(),
       data: session
-      // Safe because ReadingSession matches Json structure
-    };
-    await this.addInteraction(arxivId, interaction);
+    });
   }
-  // Log an annotation
   async logAnnotation(arxivId, key, value, paperData) {
     if (paperData) {
-      await this.getOrCreatePaperMetadata({
+      await this.getOrCreatePaper({
         arxivId,
         ...paperData
       });
     }
-    const interaction = {
+    await this.addInteraction(arxivId, {
       type: "annotation",
       timestamp: (/* @__PURE__ */ new Date()).toISOString(),
       data: { key, value }
-    };
-    await this.addInteraction(arxivId, interaction);
+    });
   }
-  // Update paper rating
   async updateRating(arxivId, rating, paperData) {
-    await this.getOrCreatePaperMetadata({
+    const paper = await this.getOrCreatePaper({
       arxivId,
       ...paperData
     });
-    await this.client.updateObject(`paper:${arxivId}`, { rating });
-    const interaction = {
+    await this.client.updateObject(`paper:${arxivId}`, {
+      ...paper,
+      rating
+    });
+    await this.addInteraction(arxivId, {
       type: "rating",
       timestamp: (/* @__PURE__ */ new Date()).toISOString(),
       data: { rating }
-    };
-    await this.addInteraction(arxivId, interaction);
+    });
   }
-  // Add interaction to log
   async addInteraction(arxivId, interaction) {
     const log = await this.getOrCreateInteractionLog(arxivId);
-    const updatedLog = {
-      ...log,
-      interactions: [...log.interactions, interaction]
-    };
-    await this.client.updateObject(`interactions:${arxivId}`, updatedLog);
+    log.interactions.push(interaction);
+    await this.client.updateObject(`interactions:${arxivId}`, log);
   }
-  // Get interactions for a paper
   async getInteractions(arxivId, options = {}) {
     try {
       const log = await this.getOrCreateInteractionLog(arxivId);
@@ -142,20 +128,15 @@ class StorageClient {
       throw error;
     }
   }
-  // Get total reading time for a paper
   async getPaperReadingTime(arxivId) {
     const interactions = await this.getInteractions(arxivId, { type: "reading_session" });
-    return interactions.reduce(
-      (total, i) => {
-        if (isReadingSession(i.data)) {
-          return total + i.data.duration_seconds;
-        }
-        return total;
-      },
-      0
-    );
+    return interactions.reduce((total, i) => {
+      if (isReadingSession(i.data)) {
+        return total + i.data.duration_seconds;
+      }
+      return total;
+    }, 0);
   }
-  // Paper history
   async getPaperHistory(arxivId) {
     const objectId = `paper:${arxivId}`;
     return this.client.getObjectHistory(objectId);
@@ -199,7 +180,7 @@ let currentPaperData = null;
 let currentSession = null;
 let activityInterval = null;
 let sessionConfig = null;
-let storageClient = null;
+let paperManager = null;
 
 // Load credentials and configuration when extension starts
 async function loadCredentials() {
@@ -208,10 +189,11 @@ async function loadCredentials() {
     githubRepo = items.githubRepo || '';
     console.log('Credentials loaded:', { hasToken: !!githubToken, hasRepo: !!githubRepo });
     
-    // Initialize storage client if we have credentials
+    // Initialize paper manager if we have credentials
     if (githubToken && githubRepo) {
-        storageClient = new StorageClient(githubToken, githubRepo);
-        console.log('Storage client initialized');
+        const githubClient = new u(githubToken, githubRepo);
+        paperManager = new PaperManager(githubClient);
+        console.log('Paper manager initialized');
     }
     
     // Load session configuration
@@ -233,11 +215,12 @@ chrome.storage.onChanged.addListener(async (changes) => {
         console.log('Session configuration updated:', sessionConfig);
     }
     
-    // Reinitialize storage client if credentials changed
+    // Reinitialize paper manager if credentials changed
     if (changes.githubToken || changes.githubRepo) {
         if (githubToken && githubRepo) {
-            storageClient = new StorageClient(githubToken, githubRepo);
-            console.log('Storage client reinitialized');
+            const githubClient = new u(githubToken, githubRepo);
+            paperManager = new PaperManager(githubClient);
+            console.log('Paper manager reinitialized');
         }
     }
 });
@@ -326,8 +309,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 });
 
 async function handleUpdateRating(rating, sendResponse) {
-    if (!storageClient) {
-        sendResponse({ success: false, error: 'Storage client not initialized' });
+    if (!paperManager) {
+        sendResponse({ success: false, error: 'Paper manager not initialized' });
         return;
     }
 
@@ -337,7 +320,7 @@ async function handleUpdateRating(rating, sendResponse) {
     }
 
     try {
-        await storageClient.updateRating(currentPaperData.arxivId, rating, currentPaperData);
+        await paperManager.updateRating(currentPaperData.arxivId, rating, currentPaperData);
         currentPaperData.rating = rating;
         sendResponse({ success: true });
     } catch (error) {
@@ -420,12 +403,16 @@ function stopActivityTracking() {
         clearInterval(activityInterval);
         activityInterval = null;
     }
+    if (activityTimeout) {
+        clearTimeout(activityTimeout);
+        activityTimeout = null;
+    }
 }
 
 async function createReadingEvent(paperData, sessionDuration) {
-    if (!storageClient || !paperData) {
+    if (!paperManager || !paperData) {
         console.error('Missing required data for creating reading event:', {
-            hasStorageClient: !!storageClient,
+            hasPaperManager: !!paperManager,
             hasPaperData: !!paperData
         });
         return;
@@ -438,17 +425,11 @@ async function createReadingEvent(paperData, sessionDuration) {
     }
 
     const sessionData = {
-        duration_seconds: seconds //,
-        // session_config: {
-        //     idle_threshold_seconds: sessionConfig.idleThreshold / 1000,
-        //     min_duration_seconds: sessionConfig.minSessionDuration / 1000,
-        //     continuous_activity_required: sessionConfig.requireContinuousActivity,
-        //     partial_sessions_logged: sessionConfig.logPartialSessions
-        // }
+        duration_seconds: seconds
     };
 
     try {
-        await storageClient.logReadingSession(
+        await paperManager.logReadingSession(
             paperData.arxivId,
             sessionData,
             paperData
@@ -456,22 +437,21 @@ async function createReadingEvent(paperData, sessionDuration) {
         console.log('Reading session logged:', sessionData);
         
         // Get and log total reading time
-        const totalTime = await storageClient.getPaperReadingTime(paperData.arxivId);
+        const totalTime = await paperManager.getPaperReadingTime(paperData.arxivId);
         console.log('Total reading time:', totalTime, 'seconds');
     } catch (error) {
         console.error('Error logging reading session:', error);
     }
 }
 
-// Update paper creation to use storage client
 async function createGithubIssue(paperData) {
-    if (!storageClient) {
-        console.error('Storage client not initialized');
+    if (!paperManager) {
+        console.error('Paper manager not initialized');
         return;
     }
 
     try {
-        const existingPaper = await storageClient.getOrCreatePaperMetadata(paperData);
+        const existingPaper = await paperManager.getOrCreatePaper(paperData);
         console.log('Paper metadata stored/retrieved:', existingPaper.arxivId);
         return existingPaper;
     } catch (error) {
@@ -479,36 +459,27 @@ async function createGithubIssue(paperData) {
     }
 }
 
-// Update annotation handler to use interaction log
 async function handleAnnotationUpdate(type, data) {
-    if (!storageClient) {
-        throw new Error('Storage client not initialized');
+    if (!paperManager) {
+        throw new Error('Paper manager not initialized');
     }
 
     try {
-        // Include paper data if provided
         const paperData = data.title ? {
             title: data.title,
-            //authors: data.authors,
-            //abstract: data.abstract
         } : undefined;
 
         if (type === 'vote') {
-            // await storageClient.updateRating(
-            //     data.paperId,
-            //     data.vote,
-            //     paperData
-            // );
-            await storageClient.logAnnotation(
+            // TODO: probably can replace this with logAnnotation
+            await paperManager.updateRating(
                 data.paperId,
-                'vote',
                 data.vote,
                 paperData
             );
         } else {
-            await storageClient.logAnnotation(
+            await paperManager.logAnnotation(
                 data.paperId,
-                'notes',  // todo: let user provide custom key
+                'notes',
                 data.notes,
                 paperData
             );
