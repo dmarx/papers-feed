@@ -1,5 +1,6 @@
 // background.js
-import { StorageClient } from './storage/client';
+import { GitHubStoreClient } from 'gh-store-client';
+import { PaperManager } from './papers/manager';
 import { loadSessionConfig, getConfigurationInMs } from './config/session.js';
 
 let githubToken = '';
@@ -7,9 +8,8 @@ let githubRepo = '';
 let currentPaperData = null;
 let currentSession = null;
 let activityInterval = null;
-let activityTimeout = null;
 let sessionConfig = null;
-let storageClient = null;
+let paperManager = null;
 
 // Load credentials and configuration when extension starts
 async function loadCredentials() {
@@ -18,10 +18,11 @@ async function loadCredentials() {
     githubRepo = items.githubRepo || '';
     console.log('Credentials loaded:', { hasToken: !!githubToken, hasRepo: !!githubRepo });
     
-    // Initialize storage client if we have credentials
+    // Initialize paper manager if we have credentials
     if (githubToken && githubRepo) {
-        storageClient = new StorageClient(githubToken, githubRepo);
-        console.log('Storage client initialized');
+        const githubClient = new GitHubStoreClient(githubToken, githubRepo);
+        paperManager = new PaperManager(githubClient);
+        console.log('Paper manager initialized');
     }
     
     // Load session configuration
@@ -43,11 +44,12 @@ chrome.storage.onChanged.addListener(async (changes) => {
         console.log('Session configuration updated:', sessionConfig);
     }
     
-    // Reinitialize storage client if credentials changed
+    // Reinitialize paper manager if credentials changed
     if (changes.githubToken || changes.githubRepo) {
         if (githubToken && githubRepo) {
-            storageClient = new StorageClient(githubToken, githubRepo);
-            console.log('Storage client reinitialized');
+            const githubClient = new GitHubStoreClient(githubToken, githubRepo);
+            paperManager = new PaperManager(githubClient);
+            console.log('Paper manager reinitialized');
         }
     }
 });
@@ -136,8 +138,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 });
 
 async function handleUpdateRating(rating, sendResponse) {
-    if (!storageClient) {
-        sendResponse({ success: false, error: 'Storage client not initialized' });
+    if (!paperManager) {
+        sendResponse({ success: false, error: 'Paper manager not initialized' });
         return;
     }
 
@@ -147,7 +149,7 @@ async function handleUpdateRating(rating, sendResponse) {
     }
 
     try {
-        await storageClient.updateRating(currentPaperData.arxivId, rating, currentPaperData);
+        await paperManager.updateRating(currentPaperData.arxivId, rating, currentPaperData);
         currentPaperData.rating = rating;
         sendResponse({ success: true });
     } catch (error) {
@@ -237,9 +239,9 @@ function stopActivityTracking() {
 }
 
 async function createReadingEvent(paperData, sessionDuration) {
-    if (!storageClient || !paperData) {
+    if (!paperManager || !paperData) {
         console.error('Missing required data for creating reading event:', {
-            hasStorageClient: !!storageClient,
+            hasPaperManager: !!paperManager,
             hasPaperData: !!paperData
         });
         return;
@@ -252,17 +254,11 @@ async function createReadingEvent(paperData, sessionDuration) {
     }
 
     const sessionData = {
-        duration_seconds: seconds //,
-        // session_config: {
-        //     idle_threshold_seconds: sessionConfig.idleThreshold / 1000,
-        //     min_duration_seconds: sessionConfig.minSessionDuration / 1000,
-        //     continuous_activity_required: sessionConfig.requireContinuousActivity,
-        //     partial_sessions_logged: sessionConfig.logPartialSessions
-        // }
+        duration_seconds: seconds
     };
 
     try {
-        await storageClient.logReadingSession(
+        await paperManager.logReadingSession(
             paperData.arxivId,
             sessionData,
             paperData
@@ -270,22 +266,21 @@ async function createReadingEvent(paperData, sessionDuration) {
         console.log('Reading session logged:', sessionData);
         
         // Get and log total reading time
-        const totalTime = await storageClient.getPaperReadingTime(paperData.arxivId);
+        const totalTime = await paperManager.getPaperReadingTime(paperData.arxivId);
         console.log('Total reading time:', totalTime, 'seconds');
     } catch (error) {
         console.error('Error logging reading session:', error);
     }
 }
 
-// Update paper creation to use storage client
 async function createGithubIssue(paperData) {
-    if (!storageClient) {
-        console.error('Storage client not initialized');
+    if (!paperManager) {
+        console.error('Paper manager not initialized');
         return;
     }
 
     try {
-        const existingPaper = await storageClient.getOrCreatePaperMetadata(paperData);
+        const existingPaper = await paperManager.getOrCreatePaper(paperData);
         console.log('Paper metadata stored/retrieved:', existingPaper.arxivId);
         return existingPaper;
     } catch (error) {
@@ -293,36 +288,27 @@ async function createGithubIssue(paperData) {
     }
 }
 
-// Update annotation handler to use interaction log
 async function handleAnnotationUpdate(type, data) {
-    if (!storageClient) {
-        throw new Error('Storage client not initialized');
+    if (!paperManager) {
+        throw new Error('Paper manager not initialized');
     }
 
     try {
-        // Include paper data if provided
         const paperData = data.title ? {
             title: data.title,
-            //authors: data.authors,
-            //abstract: data.abstract
         } : undefined;
 
         if (type === 'vote') {
-            // await storageClient.updateRating(
-            //     data.paperId,
-            //     data.vote,
-            //     paperData
-            // );
-            await storageClient.logAnnotation(
+            // TODO: probably can replace this with logAnnotation
+            await paperManager.updateRating(
                 data.paperId,
-                'vote',
                 data.vote,
                 paperData
             );
         } else {
-            await storageClient.logAnnotation(
+            await paperManager.logAnnotation(
                 data.paperId,
-                'notes',  // todo: let user provide custom key
+                'notes',
                 data.notes,
                 paperData
             );
