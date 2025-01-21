@@ -615,11 +615,4 @@ async function processArxivUrl(url) {
         return null;
     }
 }
-
-// Try to expose some objects to facilitate debugging
-// @ts-ignore
-window._debug = {
-    paperManager,
-    getGithubClient: () => paperManager?.client
-};
 //# sourceMappingURL=background.bundle.js.map
