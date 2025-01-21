@@ -8,7 +8,7 @@ import {
   type ReadingSession,
   isReadingSession,
   isInteractionLog
-} from '../storage/types';
+} from './types';
 
 export class PaperManager {
   constructor(private client: GitHubStoreClient) {}
@@ -150,11 +150,11 @@ export class PaperManager {
       let interactions = log.interactions;
 
       if (options.type) {
-        interactions = interactions.filter(i => i.type === options.type);
+        interactions = interactions.filter((i: Interaction) => i.type === options.type);
       }
 
       if (options.startTime || options.endTime) {
-        interactions = interactions.filter(i => {
+        interactions = interactions.filter((i: Interaction) => {
           const time = new Date(i.timestamp);
           if (options.startTime && time < options.startTime) return false;
           if (options.endTime && time > options.endTime) return false;
