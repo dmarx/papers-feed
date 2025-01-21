@@ -1,4 +1,4 @@
-// extension/storage/client.ts
+// extension/papers/manager.ts
 import { GitHubStoreClient } from 'gh-store-client';
 import type { Json } from 'gh-store-client';
 import { 
@@ -10,27 +10,15 @@ import {
   isInteractionLog
 } from './types';
 
-export class StorageClient {
-  private client: GitHubStoreClient;
-  
-  constructor(token: string, repo: string) {
-    this.client = new GitHubStoreClient(token, repo);
-  }
+export class PaperManager {
+  constructor(private client: GitHubStoreClient) {}
 
-  // Paper metadata methods
-  async getOrCreatePaperMetadata(paperData: Partial<PaperMetadata> & { arxivId: string }): Promise<PaperMetadata> {
+  async getOrCreatePaper(paperData: Partial<PaperMetadata> & { arxivId: string }): Promise<PaperMetadata> {
     const objectId = `paper:${paperData.arxivId}`;
-    
     try {
-      // Try to get existing paper
       const obj = await this.client.getObject(objectId);
-      const data = obj.data as unknown;
-      
-      // Runtime type check (could add more validation here)
-      if (typeof data === 'object' && data !== null) {
-        return data as PaperMetadata;
-      }
-      throw new Error('Invalid paper metadata format');
+      const data = obj.data as PaperMetadata;
+      return data;
     } catch (error) {
       if (error instanceof Error && error.message.includes('No object found')) {
         // Create new paper with default fields if it doesn't exist
@@ -53,14 +41,11 @@ export class StorageClient {
     }
   }
 
-  // Interaction log methods
   private async getOrCreateInteractionLog(arxivId: string): Promise<InteractionLog> {
     const objectId = `interactions:${arxivId}`;
-    
     try {
       const obj = await this.client.getObject(objectId);
       const data = obj.data as unknown;
-      
       if (isInteractionLog(data)) {
         return data;
       }
@@ -78,7 +63,6 @@ export class StorageClient {
     }
   }
 
-  // Log a reading session
   async logReadingSession(
     arxivId: string,
     session: ReadingSession,
@@ -86,23 +70,20 @@ export class StorageClient {
   ): Promise<void> {
     // Ensure paper exists
     if (paperData) {
-      await this.getOrCreatePaperMetadata({
+      await this.getOrCreatePaper({
         arxivId,
         ...paperData
       });
     }
 
-    // Add to interaction log
-    const interaction: Interaction = {
+    // Log the session as an interaction
+    await this.addInteraction(arxivId, {
       type: 'reading_session',
       timestamp: new Date().toISOString(),
-      data: session as unknown as Json // Safe because ReadingSession matches Json structure
-    };
-
-    await this.addInteraction(arxivId, interaction);
+      data: session
+    });
   }
 
-  // Log an annotation
   async logAnnotation(
     arxivId: string,
     key: string,
@@ -111,60 +92,51 @@ export class StorageClient {
   ): Promise<void> {
     // Ensure paper exists
     if (paperData) {
-      await this.getOrCreatePaperMetadata({
+      await this.getOrCreatePaper({
         arxivId,
         ...paperData
       });
     }
 
-    // Add to interaction log
-    const interaction: Interaction = {
+    // Log the annotation as an interaction
+    await this.addInteraction(arxivId, {
       type: 'annotation',
       timestamp: new Date().toISOString(),
       data: { key, value }
-    };
-
-    await this.addInteraction(arxivId, interaction);
+    });
   }
 
-  // Update paper rating
   async updateRating(
     arxivId: string,
     rating: string,
     paperData?: Partial<PaperMetadata>
   ): Promise<void> {
-    // Update paper metadata
-    const paper = await this.getOrCreatePaperMetadata({
+    // Ensure paper exists and get current data
+    const paper = await this.getOrCreatePaper({
       arxivId,
       ...paperData
     });
-    
-    await this.client.updateObject(`paper:${arxivId}`, { rating });
 
-    // Log rating interaction
-    const interaction: Interaction = {
+    // Update paper metadata with new rating
+    await this.client.updateObject(`paper:${arxivId}`, { 
+      ...paper,
+      rating 
+    });
+
+    // Log rating change as a single interaction
+    await this.addInteraction(arxivId, {
       type: 'rating',
       timestamp: new Date().toISOString(),
       data: { rating }
-    };
-
-    await this.addInteraction(arxivId, interaction);
+    });
   }
 
-  // Add interaction to log
   private async addInteraction(arxivId: string, interaction: Interaction): Promise<void> {
     const log = await this.getOrCreateInteractionLog(arxivId);
-    
-    // Add new interaction
-    const updatedLog = {
-      ...log,
-      interactions: [...log.interactions, interaction]
-    };
-
-    await this.client.updateObject(`interactions:${arxivId}`, updatedLog);
+    log.interactions.push(interaction);
+    await this.client.updateObject(`interactions:${arxivId}`, log);
   }
 
-  // Get interactions for a paper
   async getInteractions(
     arxivId: string,
     options: {
@@ -177,14 +149,12 @@ export class StorageClient {
       const log = await this.getOrCreateInteractionLog(arxivId);
       let interactions = log.interactions;
 
-      // Filter by type if specified
       if (options.type) {
-        interactions = interactions.filter(i => i.type === options.type);
+        interactions = interactions.filter((i: Interaction) => i.type === options.type);
       }
 
-      // Filter by time range if specified
       if (options.startTime || options.endTime) {
-        interactions = interactions.filter(i => {
+        interactions = interactions.filter((i: Interaction) => {
           const time = new Date(i.timestamp);
           if (options.startTime && time < options.startTime) return false;
           if (options.endTime && time > options.endTime) return false;
@@ -201,21 +171,16 @@ export class StorageClient {
     }
   }
 
-  // Get total reading time for a paper
   async getPaperReadingTime(arxivId: string): Promise<number> {
     const interactions = await this.getInteractions(arxivId, { type: 'reading_session' });
-    return interactions.reduce(
-      (total, i) => {
-        if (isReadingSession(i.data)) {
-          return total + i.data.duration_seconds;
-        }
-        return total;
-      },
-      0
-    );
+    return interactions.reduce((total, i) => {
+      if (isReadingSession(i.data)) {
+        return total + i.data.duration_seconds;
+      }
+      return total;
+    }, 0);
   }
 
-  // Paper history
   async getPaperHistory(arxivId: string): Promise<Json[]> {
     const objectId = `paper:${arxivId}`;
     return this.client.getObjectHistory(objectId);
