@@ -3,6 +3,17 @@ import { GitHubStoreClient } from 'gh-store-client';
 import { PaperManager } from './papers/manager';
 import { loadSessionConfig, getConfigurationInMs } from './config/session.js';
 
+// TypeScript declarations for debugging support
+declare const self: ServiceWorkerGlobalScope & {
+    __DEBUG__?: {
+        paperManager: typeof paperManager;
+        getGithubClient: () => GitHubStoreClient | undefined;
+        getCurrentPaper: () => typeof currentPaperData;
+        getCurrentSession: () => typeof currentSession;
+        getConfig: () => typeof sessionConfig;
+    }
+};
+
 let githubToken = '';
 let githubRepo = '';
 let currentPaperData = null;
@@ -445,9 +456,14 @@ async function processArxivUrl(url) {
     }
 }
 
-// Try to expose some objects to facilitate debugging
-// @ts-ignore
-window._debug = {
-    paperManager,
-    getGithubClient: () => paperManager?.client
+
+// Register debug objects in service worker scope
+self.__DEBUG__ = {
+    get paperManager() { return paperManager; },
+    getGithubClient: () => paperManager?.client,
+    getCurrentPaper: () => currentPaperData,
+    getCurrentSession: () => currentSession,
+    getConfig: () => sessionConfig
 };
+
+console.log('Debug objects registered, access via self.__DEBUG__ in service worker console');
