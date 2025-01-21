@@ -199,6 +199,9 @@ async function loadCredentials() {
     // Load session configuration
     sessionConfig = getConfigurationInMs(await loadSessionConfig());
     console.log('Session configuration loaded:', sessionConfig);
+
+    // Initialize debug objects after everything is loaded
+    initializeDebugObjects();
 }
 
 // Listen for credential changes
@@ -614,5 +617,19 @@ async function processArxivUrl(url) {
         console.error('Error processing arXiv URL:', error);
         return null;
     }
+}
+
+// Initialize debug objects in service worker scope
+function initializeDebugObjects() {
+    // @ts-ignore
+    globalThis.__DEBUG__ = {
+        get paperManager() { return paperManager; },
+        getGithubClient: () => paperManager?.client,
+        getCurrentPaper: () => currentPaperData,
+        getCurrentSession: () => currentSession,
+        getConfig: () => sessionConfig
+    };
+
+    console.log('Debug objects registered, access via __DEBUG__ in service worker console');
 }
 //# sourceMappingURL=background.bundle.js.map
