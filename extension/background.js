@@ -28,6 +28,9 @@ async function loadCredentials() {
     // Load session configuration
     sessionConfig = getConfigurationInMs(await loadSessionConfig());
     console.log('Session configuration loaded:', sessionConfig);
+
+    // Initialize debug objects after everything is loaded
+    initializeDebugObjects();
 }
 
 // Listen for credential changes
