@@ -399,7 +399,7 @@ async function parseXMLText(xmlText) {
     }
 }
 
-async function processArxivUrl(url) {
+async function processArxivUrl(url: string) {
     console.log('Processing URL:', url);
     
     const patterns = [
@@ -425,11 +425,15 @@ async function processArxivUrl(url) {
     console.log('Found arXiv ID:', arxivId);
     
     try {
-        const apiUrl = `http://export.arxiv.org/api/query?id_list=${arxivId}`;
+        const apiUrl = `https://export.arxiv.org/api/query?id_list=${arxivId}`;
         console.log('Fetching from arXiv API:', apiUrl);
         
         const response = await fetch(apiUrl);
         console.log('API response status:', response.status);
+        
+        if (!response.ok) {
+            throw new Error(`ArXiv API error: ${response.status}`);
+        }
         
         const text = await response.text();
         const parsed = await parseXMLText(text);
