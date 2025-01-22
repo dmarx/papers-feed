@@ -281,8 +281,6 @@ async function createReadingEvent(paperData, sessionData) {
             totalTime: sessionData.total_elapsed_seconds
         });
         
-        const totalTime = await paperManager.getPaperReadingTime(paperData.arxivId);
-        console.log('Total reading time across all sessions:', totalTime, 'seconds');
     } catch (error) {
         console.error('Error logging reading session:', error);
     }
