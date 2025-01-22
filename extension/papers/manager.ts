@@ -5,7 +5,7 @@ import {
   type PaperMetadata, 
   type InteractionLog, 
   type Interaction,
-  type ReadingSession,
+  type ReadingSessionData,
   isReadingSession,
   isInteractionLog
 } from './types';
@@ -65,7 +65,7 @@ export class PaperManager {
 
   async logReadingSession(
     arxivId: string,
-    session: ReadingSession,
+    session: ReadingSessionData,
     paperData?: Partial<PaperMetadata>
   ): Promise<void> {
     // Ensure paper exists
@@ -123,7 +123,7 @@ export class PaperManager {
       rating 
     });
 
-    // Log rating change as a single interaction
+    // Log rating change as an interaction
     await this.addInteraction(arxivId, {
       type: 'rating',
       timestamp: new Date().toISOString(),
