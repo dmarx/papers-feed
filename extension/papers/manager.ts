@@ -5,7 +5,7 @@ import {
   type PaperMetadata, 
   type InteractionLog, 
   type Interaction,
-  type ReadingSession,
+  type ReadingSessionData,
   isReadingSession,
   isInteractionLog
 } from './types';
@@ -65,7 +65,7 @@ export class PaperManager {
 
   async logReadingSession(
     arxivId: string,
-    session: ReadingSession,
+    session: ReadingSessionData,
     paperData?: Partial<PaperMetadata>
   ): Promise<void> {
     // Ensure paper exists
@@ -123,7 +123,7 @@ export class PaperManager {
       rating 
     });
 
-    // Log rating change as a single interaction
+    // Log rating change as an interaction
     await this.addInteraction(arxivId, {
       type: 'rating',
       timestamp: new Date().toISOString(),
@@ -170,15 +170,19 @@ export class PaperManager {
       throw error;
     }
   }
-
+    
   async getPaperReadingTime(arxivId: string): Promise<number> {
-    const interactions = await this.getInteractions(arxivId, { type: 'reading_session' });
-    return interactions.reduce((total, i) => {
-      if (isReadingSession(i.data)) {
-        return total + i.data.duration_seconds;
-      }
-      return total;
-    }, 0);
+      const interactions = await this.getInteractions(arxivId, { type: 'reading_session' });
+      return interactions.reduce((total, i) => {
+          // Log the interaction data for debugging
+          console.log('Calculating from interaction:', i);
+          
+          const data = i.data;
+          if (typeof data === 'object' && data !== null && 'duration_seconds' in data) {
+              return total + (data.duration_seconds as number);
+          }
+          return total;
+      }, 0);
   }
 
   async getPaperHistory(arxivId: string): Promise<Json[]> {

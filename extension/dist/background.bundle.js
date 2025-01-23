@@ -1,9 +1,5 @@
 var u=class{constructor(e={}){this.cache=new Map,this.maxSize=e.maxSize??1e3,this.ttl=e.ttl??1e3*60*60,this.accessOrder=[];}get(e){let s=this.cache.get(e);if(s){if(Date.now()-s.lastAccessed>this.ttl){this.cache.delete(e),this.removeFromAccessOrder(e);return}return s.lastAccessed=Date.now(),this.updateAccessOrder(e),s.issueNumber}}set(e,s,t){if(this.cache.size>=this.maxSize&&!this.cache.has(e)){let r=this.accessOrder[this.accessOrder.length-1];r&&(this.cache.delete(r),this.removeFromAccessOrder(r));}this.cache.set(e,{issueNumber:s,lastAccessed:Date.now(),createdAt:t.createdAt,updatedAt:t.updatedAt}),this.updateAccessOrder(e);}remove(e){this.cache.delete(e),this.removeFromAccessOrder(e);}clear(){this.cache.clear(),this.accessOrder=[];}getStats(){return {size:this.cache.size,maxSize:this.maxSize,ttl:this.ttl}}shouldRefresh(e,s){let t=this.cache.get(e);return t?s>t.updatedAt:true}updateAccessOrder(e){this.removeFromAccessOrder(e),this.accessOrder.unshift(e);}removeFromAccessOrder(e){let s=this.accessOrder.indexOf(e);s>-1&&this.accessOrder.splice(s,1);}};var h=class{constructor(e,s,t={}){this.token=e,this.repo=s,this.config={baseLabel:t.baseLabel??"stored-object",uidPrefix:t.uidPrefix??"UID:",reactions:{processed:t.reactions?.processed??"+1",initialState:t.reactions?.initialState??"rocket"}},this.cache=new u(t.cache);}async fetchFromGitHub(e,s={}){let t=new URL(`https://api.github.com/repos/${this.repo}${e}`);s.params&&(Object.entries(s.params).forEach(([i,a])=>{t.searchParams.append(i,a);}),delete s.params);let r=await fetch(t.toString(),{...s,headers:{Authorization:`token ${this.token}`,Accept:"application/vnd.github.v3+json",...s.headers}});if(!r.ok)throw new Error(`GitHub API error: ${r.status}`);return r.json()}async getObject(e){let s=this.cache.get(e),t;if(s)try{t=await this.fetchFromGitHub(`/issues/${s}`),this._verifyIssueLabels(t,e)||(this.cache.remove(e),t=void 0);}catch{this.cache.remove(e);}if(!t){let c=await this.fetchFromGitHub("/issues",{method:"GET",params:{labels:[this.config.baseLabel,`${this.config.uidPrefix}${e}`].join(","),state:"closed"}});if(!c||c.length===0)throw new Error(`No object found with ID: ${e}`);t=c[0];}if(!t?.body)throw new Error(`Invalid issue data received for ID: ${e}`);let r=JSON.parse(t.body),i=new Date(t.created_at),a=new Date(t.updated_at);return this.cache.set(e,t.number,{createdAt:i,updatedAt:a}),{meta:{objectId:e,label:`${this.config.uidPrefix}${e}`,createdAt:i,updatedAt:a,version:await this._getVersion(t.number)},data:r}}async createObject(e,s){let t=`${this.config.uidPrefix}${e}`,r=await this.fetchFromGitHub("/issues",{method:"POST",body:JSON.stringify({title:`Stored Object: ${e}`,body:JSON.stringify(s,null,2),labels:[this.config.baseLabel,t]})});this.cache.set(e,r.number,{createdAt:new Date(r.created_at),updatedAt:new Date(r.updated_at)});let i={type:"initial_state",data:s,timestamp:new Date().toISOString()},a=await this.fetchFromGitHub(`/issues/${r.number}/comments`,{method:"POST",body:JSON.stringify({body:JSON.stringify(i,null,2)})});return await this.fetchFromGitHub(`/issues/comments/${a.id}/reactions`,{method:"POST",body:JSON.stringify({content:this.config.reactions.processed})}),await this.fetchFromGitHub(`/issues/comments/${a.id}/reactions`,{method:"POST",body:JSON.stringify({content:this.config.reactions.initialState})}),await this.fetchFromGitHub(`/issues/${r.number}`,{method:"PATCH",body:JSON.stringify({state:"closed"})}),{meta:{objectId:e,label:t,createdAt:new Date(r.created_at),updatedAt:new Date(r.updated_at),version:1},data:s}}_verifyIssueLabels(e,s){let t=new Set([this.config.baseLabel,`${this.config.uidPrefix}${s}`]);return e.labels.some(r=>t.has(r.name))}async updateObject(e,s){let t=await this.fetchFromGitHub("/issues",{method:"GET",params:{labels:[this.config.baseLabel,`${this.config.uidPrefix}${e}`].join(","),state:"all"}});if(!t||t.length===0)throw new Error(`No object found with ID: ${e}`);let r=t[0];return await this.fetchFromGitHub(`/issues/${r.number}/comments`,{method:"POST",body:JSON.stringify({body:JSON.stringify(s,null,2)})}),await this.fetchFromGitHub(`/issues/${r.number}`,{method:"PATCH",body:JSON.stringify({state:"open"})}),this.getObject(e)}async listAll(){let e=await this.fetchFromGitHub("/issues",{method:"GET",params:{labels:this.config.baseLabel,state:"closed"}}),s={};for(let t of e)if(!t.labels.some(r=>r.name==="archived"))try{let r=this._getObjectIdFromLabels(t),i=JSON.parse(t.body),a={objectId:r,label:r,createdAt:new Date(t.created_at),updatedAt:new Date(t.updated_at),version:await this._getVersion(t.number)};s[r]={meta:a,data:i};}catch{continue}return s}async listUpdatedSince(e){let s=await this.fetchFromGitHub("/issues",{method:"GET",params:{labels:this.config.baseLabel,state:"closed",since:e.toISOString()}}),t={};for(let r of s)if(!r.labels.some(i=>i.name==="archived"))try{let i=this._getObjectIdFromLabels(r),a=JSON.parse(r.body),o=new Date(r.updated_at);if(o>e){let c={objectId:i,label:i,createdAt:new Date(r.created_at),updatedAt:o,version:await this._getVersion(r.number)};t[i]={meta:c,data:a};}}catch{continue}return t}async getObjectHistory(e){let s=await this.fetchFromGitHub("/issues",{method:"GET",params:{labels:[this.config.baseLabel,`${this.config.uidPrefix}${e}`].join(","),state:"all"}});if(!s||s.length===0)throw new Error(`No object found with ID: ${e}`);let t=s[0],r=await this.fetchFromGitHub(`/issues/${t.number}/comments`),i=[];for(let a of r)try{let o=JSON.parse(a.body);i.push({timestamp:a.created_at,type:o.type||"update",data:o.data||o,commentId:a.id});}catch{continue}return i}async _getVersion(e){return (await this.fetchFromGitHub(`/issues/${e}/comments`)).length+1}_getObjectIdFromLabels(e){for(let s of e.labels)if(s.name!==this.config.baseLabel&&s.name.startsWith(this.config.uidPrefix))return s.name.slice(this.config.uidPrefix.length);throw new Error(`No UID label found with prefix ${this.config.uidPrefix}`)}};
 
-const isReadingSession = (data) => {
-  const session = data;
-  return typeof session === "object" && session !== null && typeof session.duration_seconds === "number";
-};
 const isInteractionLog = (data) => {
   const log = data;
   return typeof log === "object" && log !== null && typeof log.paper_id === "string" && Array.isArray(log.interactions);
@@ -131,8 +127,10 @@ class PaperManager {
   async getPaperReadingTime(arxivId) {
     const interactions = await this.getInteractions(arxivId, { type: "reading_session" });
     return interactions.reduce((total, i) => {
-      if (isReadingSession(i.data)) {
-        return total + i.data.duration_seconds;
+      console.log("Calculating from interaction:", i);
+      const data = i.data;
+      if (typeof data === "object" && data !== null && "duration_seconds" in data) {
+        return total + data.duration_seconds;
       }
       return total;
     }, 0);
@@ -182,6 +180,73 @@ let activityInterval = null;
 let sessionConfig = null;
 let paperManager = null;
 
+class ReadingSession {
+    constructor(arxivId, config) {
+       this.arxivId = arxivId;
+       this.sessionId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+       this.startTime = new Date();
+       this.activeTime = 0;
+       this.idleTime = 0;
+       this.lastActiveTime = new Date();
+       this.isTracking = true;
+       this.config = config;
+       this.endTime = null;
+       this.finalizedData = null;
+    }
+    
+    update() {
+       if (this.isTracking && !this.finalizedData) {
+           const now = new Date();
+           const timeSinceLastActive = now.getTime() - this.lastActiveTime.getTime();
+           
+           if (timeSinceLastActive < this.config.idleThreshold) {
+               this.activeTime += timeSinceLastActive;
+           } else {
+               this.idleTime += timeSinceLastActive;
+           }
+           
+           this.lastActiveTime = now;
+       }
+    }
+    
+    finalize() {
+       if (this.finalizedData) {
+           return this.finalizedData;
+       }
+    
+       this.update();
+       this.isTracking = false;
+       this.endTime = new Date();
+       const totalElapsed = this.endTime.getTime() - this.startTime.getTime();
+    
+       if (this.activeTime >= this.config.minSessionDuration) {
+           this.finalizedData = {
+               session_id: this.sessionId,
+               duration_seconds: Math.round(this.activeTime / 1000),
+               idle_seconds: Math.round(this.idleTime / 1000),
+               start_time: this.startTime.toISOString(),
+               end_time: this.endTime.toISOString(),
+               total_elapsed_seconds: Math.round(totalElapsed / 1000)
+           };
+           return this.finalizedData;
+       }
+       return null;
+    }
+    
+    end() {
+       return this.finalize();
+    }
+    
+    getMetadata() {
+       return {
+           sessionId: this.sessionId,
+           startTime: this.startTime.toISOString(),
+           activeSeconds: Math.round(this.activeTime / 1000),
+           idleSeconds: Math.round(this.idleTime / 1000)
+       };
+    }
+    }
+
 // Load credentials and configuration when extension starts
 async function loadCredentials() {
     const items = await chrome.storage.sync.get(['githubToken', 'githubRepo']);
@@ -228,65 +293,8 @@ chrome.storage.onChanged.addListener(async (changes) => {
     }
 });
 
-// Reading Session class to track individual reading sessions
-class ReadingSession {
-    constructor(arxivId, config) {
-        this.arxivId = arxivId;
-        this.startTime = Date.now();
-        this.activeTime = 0;
-        this.lastActiveTime = Date.now();
-        this.isTracking = true;
-        this.config = config;
-    }
-
-    update() {
-        if (this.isTracking) {
-            const now = Date.now();
-            const timeSinceLastActive = now - this.lastActiveTime;
-            
-            if (timeSinceLastActive < this.config.idleThreshold) {
-                this.activeTime += timeSinceLastActive;
-            // } else if (this.config.requireContinuousActivity) {
-            //     // Reset active time if continuous activity is required
-            //     this.activeTime = 0;
-            }
-            
-            this.lastActiveTime = now;
-        }
-    }
-
-    end() {
-        this.update();
-        this.isTracking = false;
-          
-        // if (this.config.logPartialSessions) {
-        //     return this.activeTime;
-        // }
-        return this.activeTime >= this.config.minSessionDuration ? this.activeTime : 0;
-    }
-}
-
 // Initialize credentials
 loadCredentials();
-
-// Listen for URL changes
-chrome.webNavigation.onCompleted.addListener(async (details) => {
-    console.log('Navigation detected:', details.url);
-    if (details.url.includes('arxiv.org')) {
-        console.log('arXiv URL detected, processing...');
-        const paperData = await processArxivUrl(details.url);
-        if (paperData) {
-            console.log('Paper data extracted:', paperData);
-            await createGithubIssue(paperData);
-        } else {
-            console.log('Failed to extract paper data');
-        }
-    }
-}, {
-    url: [{
-        hostSuffix: 'arxiv.org'
-    }]
-});
 
 // Message passing between background and popup
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
@@ -350,6 +358,25 @@ chrome.windows.onFocusChanged.addListener((windowId) => {
     }
 });
 
+// Listen for URL changes
+chrome.webNavigation.onCompleted.addListener(async (details) => {
+    console.log('Navigation detected:', details.url);
+    if (details.url.includes('arxiv.org')) {
+        console.log('arXiv URL detected, processing...');
+        const paperData = await processArxivUrl(details.url);
+        if (paperData) {
+            console.log('Paper data extracted:', paperData);
+            await createGithubIssue(paperData);
+        } else {
+            console.log('Failed to extract paper data');
+        }
+    }
+}, {
+    url: [{
+        hostSuffix: 'arxiv.org'
+    }]
+});
+
 async function handleTabChange(tab) {
     const isArxiv = tab.url?.includes('arxiv.org/');
     console.log('Tab change detected:', { isArxiv, url: tab.url });
@@ -360,18 +387,18 @@ async function handleTabChange(tab) {
         return;
     }
 
-    // End any existing session before starting a new one
     if (currentSession) {
         console.log('Ending existing session before starting new one');
         await endCurrentSession();
     }
 
-    // Always process the URL and start a new session
     console.log('Processing arXiv URL for new session');
     currentPaperData = await processArxivUrl(tab.url);
     if (currentPaperData) {
         console.log('Starting new session for:', currentPaperData.arxivId);
         currentSession = new ReadingSession(currentPaperData.arxivId, sessionConfig);
+        const metadata = currentSession.getMetadata();
+        console.log('New session created:', metadata);
         startActivityTracking();
     }
 }
@@ -379,10 +406,10 @@ async function handleTabChange(tab) {
 async function endCurrentSession() {
     if (currentSession && currentPaperData) {
         console.log('Ending session for:', currentPaperData.arxivId);
-        const duration = currentSession.end();
-        if (duration > 0) {
-            console.log('Creating reading event with duration:', duration);
-            await createReadingEvent(currentPaperData, duration);
+        const sessionData = currentSession.finalize();
+        if (sessionData) {
+            console.log('Creating reading event:', sessionData);
+            await createReadingEvent(currentPaperData, sessionData);
         }
         currentSession = null;
         currentPaperData = null;
@@ -406,13 +433,9 @@ function stopActivityTracking() {
         clearInterval(activityInterval);
         activityInterval = null;
     }
-    if (activityTimeout) {
-        clearTimeout(activityTimeout);
-        activityTimeout = null;
-    }
 }
 
-async function createReadingEvent(paperData, sessionDuration) {
+async function createReadingEvent(paperData, sessionData) {
     if (!paperManager || !paperData) {
         console.error('Missing required data for creating reading event:', {
             hasPaperManager: !!paperManager,
@@ -421,27 +444,20 @@ async function createReadingEvent(paperData, sessionDuration) {
         return;
     }
 
-    const seconds = Math.round(sessionDuration / 1000);
-    if (sessionDuration < sessionConfig.minSessionDuration) {
-        console.log('Session too short to log:', seconds, 'seconds');
-        return;
-    }
-
-    const sessionData = {
-        duration_seconds: seconds
-    };
-
     try {
         await paperManager.logReadingSession(
             paperData.arxivId,
             sessionData,
             paperData
         );
-        console.log('Reading session logged:', sessionData);
+        console.log('Reading session logged:', {
+            arxivId: paperData.arxivId,
+            sessionId: sessionData.session_id,
+            activeTime: sessionData.duration_seconds,
+            idleTime: sessionData.idle_seconds,
+            totalTime: sessionData.total_elapsed_seconds
+        });
         
-        // Get and log total reading time
-        const totalTime = await paperManager.getPaperReadingTime(paperData.arxivId);
-        console.log('Total reading time:', totalTime, 'seconds');
     } catch (error) {
         console.error('Error logging reading session:', error);
     }
@@ -473,7 +489,6 @@ async function handleAnnotationUpdate(type, data) {
         } : undefined;
 
         if (type === 'vote') {
-            // TODO: probably can replace this with logAnnotation
             await paperManager.updateRating(
                 data.paperId,
                 data.vote,
@@ -576,11 +591,15 @@ async function processArxivUrl(url) {
     console.log('Found arXiv ID:', arxivId);
     
     try {
-        const apiUrl = `http://export.arxiv.org/api/query?id_list=${arxivId}`;
+        const apiUrl = `https://export.arxiv.org/api/query?id_list=${arxivId}`;
         console.log('Fetching from arXiv API:', apiUrl);
         
         const response = await fetch(apiUrl);
         console.log('API response status:', response.status);
+        
+        if (!response.ok) {
+            throw new Error(`ArXiv API error: ${response.status}`);
+        }
         
         const text = await response.text();
         const parsed = await parseXMLText(text);

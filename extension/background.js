@@ -2,6 +2,7 @@
 import { GitHubStoreClient } from 'gh-store-client';
 import { PaperManager } from './papers/manager';
 import { loadSessionConfig, getConfigurationInMs } from './config/session.js';
+import { ReadingSessionData } from './papers/types';
 
 let githubToken = '';
 let githubRepo = '';
@@ -10,6 +11,73 @@ let currentSession = null;
 let activityInterval = null;
 let sessionConfig = null;
 let paperManager = null;
+
+class ReadingSession {
+    constructor(arxivId, config) {
+       this.arxivId = arxivId;
+       this.sessionId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+       this.startTime = new Date();
+       this.activeTime = 0;
+       this.idleTime = 0;
+       this.lastActiveTime = new Date();
+       this.isTracking = true;
+       this.config = config;
+       this.endTime = null;
+       this.finalizedData = null;
+    }
+    
+    update() {
+       if (this.isTracking && !this.finalizedData) {
+           const now = new Date();
+           const timeSinceLastActive = now.getTime() - this.lastActiveTime.getTime();
+           
+           if (timeSinceLastActive < this.config.idleThreshold) {
+               this.activeTime += timeSinceLastActive;
+           } else {
+               this.idleTime += timeSinceLastActive;
+           }
+           
+           this.lastActiveTime = now;
+       }
+    }
+    
+    finalize() {
+       if (this.finalizedData) {
+           return this.finalizedData;
+       }
+    
+       this.update();
+       this.isTracking = false;
+       this.endTime = new Date();
+       const totalElapsed = this.endTime.getTime() - this.startTime.getTime();
+    
+       if (this.activeTime >= this.config.minSessionDuration) {
+           this.finalizedData = {
+               session_id: this.sessionId,
+               duration_seconds: Math.round(this.activeTime / 1000),
+               idle_seconds: Math.round(this.idleTime / 1000),
+               start_time: this.startTime.toISOString(),
+               end_time: this.endTime.toISOString(),
+               total_elapsed_seconds: Math.round(totalElapsed / 1000)
+           };
+           return this.finalizedData;
+       }
+       return null;
+    }
+    
+    end() {
+       return this.finalize();
+    }
+    
+    getMetadata() {
+       return {
+           sessionId: this.sessionId,
+           startTime: this.startTime.toISOString(),
+           activeSeconds: Math.round(this.activeTime / 1000),
+           idleSeconds: Math.round(this.idleTime / 1000)
+       };
+    }
+    }
 
 // Load credentials and configuration when extension starts
 async function loadCredentials() {
@@ -57,65 +125,8 @@ chrome.storage.onChanged.addListener(async (changes) => {
     }
 });
 
-// Reading Session class to track individual reading sessions
-class ReadingSession {
-    constructor(arxivId, config) {
-        this.arxivId = arxivId;
-        this.startTime = Date.now();
-        this.activeTime = 0;
-        this.lastActiveTime = Date.now();
-        this.isTracking = true;
-        this.config = config;
-    }
-
-    update() {
-        if (this.isTracking) {
-            const now = Date.now();
-            const timeSinceLastActive = now - this.lastActiveTime;
-            
-            if (timeSinceLastActive < this.config.idleThreshold) {
-                this.activeTime += timeSinceLastActive;
-            // } else if (this.config.requireContinuousActivity) {
-            //     // Reset active time if continuous activity is required
-            //     this.activeTime = 0;
-            }
-            
-            this.lastActiveTime = now;
-        }
-    }
-
-    end() {
-        this.update();
-        this.isTracking = false;
-          
-        // if (this.config.logPartialSessions) {
-        //     return this.activeTime;
-        // }
-        return this.activeTime >= this.config.minSessionDuration ? this.activeTime : 0;
-    }
-}
-
 // Initialize credentials
 loadCredentials();
-
-// Listen for URL changes
-chrome.webNavigation.onCompleted.addListener(async (details) => {
-    console.log('Navigation detected:', details.url);
-    if (details.url.includes('arxiv.org')) {
-        console.log('arXiv URL detected, processing...');
-        const paperData = await processArxivUrl(details.url);
-        if (paperData) {
-            console.log('Paper data extracted:', paperData);
-            await createGithubIssue(paperData);
-        } else {
-            console.log('Failed to extract paper data');
-        }
-    }
-}, {
-    url: [{
-        hostSuffix: 'arxiv.org'
-    }]
-});
 
 // Message passing between background and popup
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
@@ -179,6 +190,25 @@ chrome.windows.onFocusChanged.addListener((windowId) => {
     }
 });
 
+// Listen for URL changes
+chrome.webNavigation.onCompleted.addListener(async (details) => {
+    console.log('Navigation detected:', details.url);
+    if (details.url.includes('arxiv.org')) {
+        console.log('arXiv URL detected, processing...');
+        const paperData = await processArxivUrl(details.url);
+        if (paperData) {
+            console.log('Paper data extracted:', paperData);
+            await createGithubIssue(paperData);
+        } else {
+            console.log('Failed to extract paper data');
+        }
+    }
+}, {
+    url: [{
+        hostSuffix: 'arxiv.org'
+    }]
+});
+
 async function handleTabChange(tab) {
     const isArxiv = tab.url?.includes('arxiv.org/');
     console.log('Tab change detected:', { isArxiv, url: tab.url });
@@ -189,18 +219,18 @@ async function handleTabChange(tab) {
         return;
     }
 
-    // End any existing session before starting a new one
     if (currentSession) {
         console.log('Ending existing session before starting new one');
         await endCurrentSession();
     }
 
-    // Always process the URL and start a new session
     console.log('Processing arXiv URL for new session');
     currentPaperData = await processArxivUrl(tab.url);
     if (currentPaperData) {
         console.log('Starting new session for:', currentPaperData.arxivId);
         currentSession = new ReadingSession(currentPaperData.arxivId, sessionConfig);
+        const metadata = currentSession.getMetadata();
+        console.log('New session created:', metadata);
         startActivityTracking();
     }
 }
@@ -208,10 +238,10 @@ async function handleTabChange(tab) {
 async function endCurrentSession() {
     if (currentSession && currentPaperData) {
         console.log('Ending session for:', currentPaperData.arxivId);
-        const duration = currentSession.end();
-        if (duration > 0) {
-            console.log('Creating reading event with duration:', duration);
-            await createReadingEvent(currentPaperData, duration);
+        const sessionData = currentSession.finalize();
+        if (sessionData) {
+            console.log('Creating reading event:', sessionData);
+            await createReadingEvent(currentPaperData, sessionData);
         }
         currentSession = null;
         currentPaperData = null;
@@ -235,13 +265,9 @@ function stopActivityTracking() {
         clearInterval(activityInterval);
         activityInterval = null;
     }
-    if (activityTimeout) {
-        clearTimeout(activityTimeout);
-        activityTimeout = null;
-    }
 }
 
-async function createReadingEvent(paperData, sessionDuration) {
+async function createReadingEvent(paperData, sessionData) {
     if (!paperManager || !paperData) {
         console.error('Missing required data for creating reading event:', {
             hasPaperManager: !!paperManager,
@@ -250,27 +276,20 @@ async function createReadingEvent(paperData, sessionDuration) {
         return;
     }
 
-    const seconds = Math.round(sessionDuration / 1000);
-    if (sessionDuration < sessionConfig.minSessionDuration) {
-        console.log('Session too short to log:', seconds, 'seconds');
-        return;
-    }
-
-    const sessionData = {
-        duration_seconds: seconds
-    };
-
     try {
         await paperManager.logReadingSession(
             paperData.arxivId,
             sessionData,
             paperData
         );
-        console.log('Reading session logged:', sessionData);
+        console.log('Reading session logged:', {
+            arxivId: paperData.arxivId,
+            sessionId: sessionData.session_id,
+            activeTime: sessionData.duration_seconds,
+            idleTime: sessionData.idle_seconds,
+            totalTime: sessionData.total_elapsed_seconds
+        });
         
-        // Get and log total reading time
-        const totalTime = await paperManager.getPaperReadingTime(paperData.arxivId);
-        console.log('Total reading time:', totalTime, 'seconds');
     } catch (error) {
         console.error('Error logging reading session:', error);
     }
@@ -302,7 +321,6 @@ async function handleAnnotationUpdate(type, data) {
         } : undefined;
 
         if (type === 'vote') {
-            // TODO: probably can replace this with logAnnotation
             await paperManager.updateRating(
                 data.paperId,
                 data.vote,
@@ -405,11 +423,15 @@ async function processArxivUrl(url) {
     console.log('Found arXiv ID:', arxivId);
     
     try {
-        const apiUrl = `http://export.arxiv.org/api/query?id_list=${arxivId}`;
+        const apiUrl = `https://export.arxiv.org/api/query?id_list=${arxivId}`;
         console.log('Fetching from arXiv API:', apiUrl);
         
         const response = await fetch(apiUrl);
         console.log('API response status:', response.status);
+        
+        if (!response.ok) {
+            throw new Error(`ArXiv API error: ${response.status}`);
+        }
         
         const text = await response.text();
         const parsed = await parseXMLText(text);

@@ -13,8 +13,13 @@ export type PaperMetadata = {
   rating: string;
 }
 
-export type ReadingSession = {
+export type ReadingSessionData = {
+  session_id: string;
   duration_seconds: number;
+  idle_seconds: number;
+  start_time: string;
+  end_time: string;
+  total_elapsed_seconds: number;
 }
 
 export type Interaction = {
@@ -28,12 +33,17 @@ export type InteractionLog = {
   interactions: Interaction[];
 }
 
-export const isReadingSession = (data: unknown): data is ReadingSession => {
-  const session = data as ReadingSession;
+export const isReadingSession = (data: unknown): data is ReadingSessionData => {
+  const session = data as ReadingSessionData;
   return (
     typeof session === 'object' &&
     session !== null &&
-    typeof session.duration_seconds === 'number'
+    typeof session.session_id === 'string' &&
+    typeof session.duration_seconds === 'number' &&
+    typeof session.idle_seconds === 'number' &&
+    typeof session.start_time === 'string' &&
+    typeof session.end_time === 'string' &&
+    typeof session.total_elapsed_seconds === 'number'
   );
 };
 
