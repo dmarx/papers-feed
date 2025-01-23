@@ -391,19 +391,10 @@ async function parseXMLText(xmlText) {
 async function processArxivUrl(url) {
     console.log('Processing URL:', url);
     
-    const patterns = [
-        /arxiv\.org\/abs\/([0-9.]+)/,
-        /arxiv\.org\/pdf\/([0-9.]+)\.pdf/,
-        /arxiv\.org\/\w+\/([0-9.]+)/
-    ];
-    
     let arxivId = null;
-    for (const pattern of patterns) {
-        const match = url.match(pattern);
-        if (match) {
-            arxivId = match[1];
-            break;
-        }
+    const match = url.match(/arxiv\.org\/(abs|pdf|html)\/([0-9.]+)/);
+    if (match) {
+        arxivId = match[2];
     }
     
     if (!arxivId) {
