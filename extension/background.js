@@ -238,7 +238,7 @@ async function handleTabChange(tab) {
 async function endCurrentSession() {
     if (currentSession && currentPaperData) {
         console.log('Ending session for:', currentPaperData.arxivId);
-        const sessionData = currentSession.end();
+        const sessionData = currentSession.finalize();
         if (sessionData) {
             console.log('Creating reading event:', sessionData);
             await createReadingEvent(currentPaperData, sessionData);
