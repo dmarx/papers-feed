@@ -397,7 +397,7 @@ async function parseXMLText(xmlText) {
     }
 }
 
-async function processArxivUrl(url: string) {
+async function processArxivUrl(url) {
     console.log('Processing URL:', url);
     
     const patterns = [
