@@ -1,5 +1,6 @@
 # scripts/toggle_issues.py
 import os
+import requests
 from github import Github
 from loguru import logger
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeRemainingColumn
@@ -13,6 +14,24 @@ label = os.environ["LABEL"]
 perform_close = os.environ["PERFORM_CLOSE"].lower() == "true"
 perform_reopen = os.environ["PERFORM_REOPEN"].lower() == "true"
 reopen_all_matching = os.environ["REOPEN_ALL_MATCHING"].lower() == "true"
+
+# Setup for direct API calls that will trigger webhooks
+api_headers = {
+    "Accept": "application/vnd.github.v3+json",
+    "Authorization": f"token {os.environ['GITHUB_TOKEN']}",
+    # This header is crucial - it tells GitHub to trigger webhooks
+    "X-GitHub-Api-Version": "2022-11-28"
+}
+api_base_url = f"https://api.github.com/repos/{os.environ['REPO']}/issues"
+
+def reopen_issue_with_webhook(issue_number: int) -> None:
+    """Reopen an issue using the REST API to ensure webhook triggering."""
+    response = requests.patch(
+        f"{api_base_url}/{issue_number}",
+        headers=api_headers,
+        json={"state": "open"}
+    )
+    response.raise_for_status()
 
 # Track which issues we close for potential reopening
 closed_issue_numbers = []
@@ -68,7 +87,7 @@ with progress:
                 
                 for issue in closed_issues:
                     logger.info(f"Reopening issue #{issue.number}")
-                    issue.edit(state="open")
+                    reopen_issue_with_webhook(issue.number)
                     progress.update(reopen_task, advance=1)
         
         elif closed_issue_numbers:
@@ -80,9 +99,8 @@ with progress:
             )
             
             for number in closed_issue_numbers:
-                issue = repo.get_issue(number)
                 logger.info(f"Reopening issue #{number}")
-                issue.edit(state="open")
+                reopen_issue_with_webhook(number)
                 progress.update(reopen_task, advance=1)
         else:
             logger.info("No issues to reopen")
