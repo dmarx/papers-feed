@@ -1,6 +1,5 @@
 # scripts/toggle_issues.py
 import os
-
 from github import Github
 from loguru import logger
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeRemainingColumn
@@ -13,6 +12,7 @@ repo = g.get_repo(os.environ["REPO"])
 label = os.environ["LABEL"]
 perform_close = os.environ["PERFORM_CLOSE"].lower() == "true"
 perform_reopen = os.environ["PERFORM_REOPEN"].lower() == "true"
+reopen_all_matching = os.environ["REOPEN_ALL_MATCHING"].lower() == "true"
 
 # Track which issues we close for potential reopening
 closed_issue_numbers = []
@@ -51,21 +51,41 @@ with progress:
     else:
         logger.info("Skipping close step")
 
-    if perform_reopen and closed_issue_numbers:
-        # Reopen all previously closed issues
-        logger.info("Reopening closed issues")
-        reopen_task = progress.add_task(
-            "[green]Reopening issues...", 
-            total=len(closed_issue_numbers)
-        )
+    if perform_reopen:
+        if reopen_all_matching:
+            # Get all closed issues with the specified label
+            logger.info(f"Finding all closed issues with label: {label}")
+            closed_issues = list(repo.get_issues(state="closed", labels=[label]))
+            
+            if not closed_issues:
+                logger.warning("No closed issues found with specified label")
+            else:
+                logger.info(f"Found {len(closed_issues)} issues to reopen")
+                reopen_task = progress.add_task(
+                    "[green]Reopening all matching issues...", 
+                    total=len(closed_issues)
+                )
+                
+                for issue in closed_issues:
+                    logger.info(f"Reopening issue #{issue.number}")
+                    issue.edit(state="open")
+                    progress.update(reopen_task, advance=1)
         
-        for number in closed_issue_numbers:
-            issue = repo.get_issue(number)
-            logger.info(f"Reopening issue #{number}")
-            issue.edit(state="open")
-            progress.update(reopen_task, advance=1)
-    elif perform_reopen:
-        logger.info("No issues to reopen")
+        elif closed_issue_numbers:
+            # Reopen only issues we just closed
+            logger.info("Reopening previously closed issues")
+            reopen_task = progress.add_task(
+                "[green]Reopening issues from this run...", 
+                total=len(closed_issue_numbers)
+            )
+            
+            for number in closed_issue_numbers:
+                issue = repo.get_issue(number)
+                logger.info(f"Reopening issue #{number}")
+                issue.edit(state="open")
+                progress.update(reopen_task, advance=1)
+        else:
+            logger.info("No issues to reopen")
     else:
         logger.info("Skipping reopen step")
 
