@@ -1,0 +1,68 @@
+# gh-store-snapshot.yml
+name: Gh-Store Snapshot Management
+
+on:
+  # schedule:
+  #   # Run daily at midnight UTC
+  #   - cron: '0 0 * * *'
+  workflow_dispatch:
+    # Allow manual triggering
+    inputs:
+      force_new:
+        description: 'Force creation of new snapshot'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # Needed for pushing snapshot changes
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install gh-store
+
+      - name: Check for existing snapshot
+        id: check_snapshot
+        run: |
+          if [ -f "${{ env.SNAPSHOT_PATH }}" ] && [ "${{ github.event.inputs.force_new }}" != "true" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create new snapshot
+        if: steps.check_snapshot.outputs.exists == 'false'
+        run: |
+          # Ensure directory exists
+          mkdir -p $(dirname ${{ env.SNAPSHOT_PATH }})
+          
+          # Create snapshot using CLI
+          python -m gh_store snapshot \
+            --token ${{ secrets.GITHUB_TOKEN }} \
+            --repo ${{ github.repository }}
+
+      - name: Update existing snapshot
+        if: steps.check_snapshot.outputs.exists == 'true'
+        run: |
+          python -m gh_store update-snapshot \
+            --token ${{ secrets.GITHUB_TOKEN }} \
+            --repo ${{ github.repository }}
+            
+      - name: Commit changes
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "${{ steps.check_snapshot.outputs.exists == 'true' && 'chore: Update data store snapshot' || 'chore: Create initial data store snapshot' }}"
+          file_pattern: "${{ env.SNAPSHOT_PATH }}"
