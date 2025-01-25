@@ -15,7 +15,16 @@ def format_authors(authors: str) -> str:
         return f"{', '.join(author_list[:3])} and {len(author_list) - 3} others"
     return ', '.join(author_list)
 
-def process_paper(paper_id: str, paper_data: dict[str, Any]) -> dict[str, Any]:
+def get_reading_time(interactions: list[dict[str, Any]]) -> int:
+    """Calculate total reading time from interaction records."""
+    total_seconds = 0
+    for interaction in interactions:
+        if interaction['type'] == 'reading_session':
+            if isinstance(interaction['data'], dict):
+                total_seconds += interaction['data'].get('duration_seconds', 0)
+    return total_seconds
+
+def process_paper(paper_id: str, paper_data: dict[str, Any], interactions: list[dict[str, Any]]) -> dict[str, Any]:
     """Process single paper data into frontend format."""
     return {
         'id': paper_id,
@@ -26,7 +35,7 @@ def process_paper(paper_id: str, paper_data: dict[str, Any]) -> dict[str, Any]:
         'arxivId': paper_data.get('arxivId', ''),
         'last_visited': paper_data.get('timestamp', ''),
         'last_read': paper_data.get('timestamp', ''),  # Using same timestamp for now
-        'total_reading_time_seconds': 0,  # Not processing interactions for now
+        'total_reading_time_seconds': get_reading_time(interactions),
         'published_date': paper_data.get('published_date', ''),
         'arxiv_tags': paper_data.get('arxiv_tags', [])
     }
@@ -54,13 +63,23 @@ def convert_store(
     
     # Process papers
     papers = {}
+    interaction_data = {}
+    
+    # First pass - collect interaction data
+    for obj_id, obj in snapshot['objects'].items():
+        if obj_id.startswith('interactions:'):
+            paper_id = obj_id.split(':', 1)[1]
+            interaction_data[paper_id] = obj['data']['interactions']
+    
+    # Second pass - process papers with their interactions
     for obj_id, obj in snapshot['objects'].items():
         if not obj_id.startswith('paper:'):
             continue
             
         paper_id = obj_id.split(':', 1)[1]
         paper_data = obj['data']
-        papers[paper_id] = process_paper(paper_id, paper_data)
+        interactions = interaction_data.get(paper_id, [])
+        papers[paper_id] = process_paper(paper_id, paper_data, interactions)
     
     # Write output
     logger.info(f"Writing {len(papers)} papers to {output_path}")
