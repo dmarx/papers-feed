@@ -1,0 +1,80 @@
+name: Deploy Paper Feed to GitHub Pages
+
+on:
+  push:
+    paths:
+      - 'data/papers/gh-store-snapshot.json'
+      - '.github/workflows/deploy_frontend.yaml'
+      - 'frontend/scripts/convert_store.py'
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * *'  # Run daily at midnight UTC
+
+concurrency:
+  group: ${{ github.repository }}-event-processing
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install fire loguru
+
+      - name: Prepare web directory
+        run: |
+          mkdir -p web/{styles,js,data}
+          cp frontend/src/styles/*.css web/styles/
+          cp frontend/src/js/*.js web/js/
+          cp frontend/src/templates/index.html web/index.html
+          
+      - name: Convert data
+        run: |
+          python frontend/scripts/convert_store.py \
+            --snapshot_path data/papers/gh-store-snapshot.json \
+            --output_path web/data/papers.json
+
+      - name: Ensure presence of .nojekyll file
+        run: touch web/.nojekyll
+
+      - name: Get git info
+        id: git-info
+        run: |
+          echo "branch=${GITHUB_REF#refs/heads/}" >> $GITHUB_OUTPUT
+          echo "commit=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "repo=${GITHUB_REPOSITORY}" >> $GITHUB_OUTPUT
+
+      - name: Create git info JSON
+        run: |
+          echo "{\"branch\": \"${{ steps.git-info.outputs.branch }}\", \"commit\": \"${{ steps.git-info.outputs.commit }}\", \"repo\": \"${{ steps.git-info.outputs.repo }}\"}" > web/data/git-info.json
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+  
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./web
+          force_orphan: true
