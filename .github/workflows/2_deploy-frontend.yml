@@ -1,5 +1,3 @@
-# .github/workflows/2_deploy-frontend.yml
-
 name: Deploy Frontend
 
 on:
@@ -8,6 +6,10 @@ on:
     paths:
       - 'data/papers/gh-store-snapshot.json'
 
+concurrency:
+  group: store-deploy
+  cancel-in-progress: false
+
 permissions:
   contents: write
   pages: write
@@ -15,11 +17,10 @@ permissions:
   actions: read
 
 jobs:
-  wait-syncs:
+  update-snapshot:
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch'
     steps:
-      - name: Wait for syncs
+      - name: Wait for updates
         uses: actions/github-script@v7
         with:
           script: |
@@ -30,17 +31,43 @@ jobs:
                 workflow_id: '1_store-sync.yml',
               });
               
-              const activeGroupRuns = runs.data.workflow_runs.filter(run => 
+              const activeUpdates = runs.data.workflow_runs.filter(run => 
                 (run.status === 'in_progress' || run.status === 'queued')
               );
               
-              if (activeGroupRuns.length === 0) break;
-              console.log(`Waiting for ${activeGroupRuns.length} active syncs to complete...`);
+              if (activeUpdates.length === 0) break;
+              console.log(`Waiting for ${activeUpdates.length} active updates to complete...`);
               await new Promise(r => setTimeout(r, 10000));
             }
+
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          
+      - name: Install dependencies
+        run: pip install gh-store
+
+      - name: Update snapshot
+        env:
+          SNAPSHOT_PATH: data/papers/gh-store-snapshot.json
+        run: |
+          mkdir -p $(dirname ${{ env.SNAPSHOT_PATH }})
+          python -m gh_store update-snapshot \
+            --token ${{ secrets.GITHUB_TOKEN }} \
+            --repo ${{ github.repository }} \
+            --snapshot-path ${{ env.SNAPSHOT_PATH }}
+            
+      - name: Commit changes
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore: Update store snapshot [${{ github.run_id }}]"
+          file_pattern: "${{ env.SNAPSHOT_PATH }}"
       
   deploy:
-    needs: [wait-syncs]
+    needs: update-snapshot
     if: always()
     environment:
       name: github-pages
