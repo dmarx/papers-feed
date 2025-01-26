@@ -7,20 +7,12 @@ on:
   schedule:
     - cron: '0 0 * * *'
 
-env:
-  SNAPSHOT_PATH: data/papers/gh-store-snapshot.json
-
-concurrency:
-  group: store-sync
-  cancel-in-progress: false
-
 jobs:
-  sync:
+  process-updates:
     runs-on: ubuntu-latest
     if: contains(github.event.issue.labels.*.name, 'stored-object')
     permissions:
       issues: write
-      contents: write
     steps:
       - uses: actions/checkout@v4
       
@@ -32,32 +24,17 @@ jobs:
       - name: Install dependencies
         run: pip install gh-store
           
-      - name: Sync Store
+      - name: Process Updates
         run: |
           python -m gh_store process-updates \
             --issue ${{ github.event.issue.number }} \
             --token ${{ secrets.GITHUB_TOKEN }} \
             --repo ${{ github.repository }}
-            
-          mkdir -p $(dirname ${{ env.SNAPSHOT_PATH }})
-          python -m gh_store update-snapshot \
-            --token ${{ secrets.GITHUB_TOKEN }} \
-            --repo ${{ github.repository }} \
-            --snapshot-path ${{ env.SNAPSHOT_PATH }}
-            
-      - name: Commit changes
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "chore: Update store snapshot [${{ github.run_id }}]"
-          file_pattern: "${{ env.SNAPSHOT_PATH }}"
 
   notify-deploy:
-    needs: sync
+    needs: process-updates
     runs-on: ubuntu-latest
     steps:
-      # This step apparently needs to be a manual API request like this because 
-      # of security stuff around how workflows are allowed to trigger other workflows
-      # or something to do with the token or some such, I don't really get it.
       - name: Trigger frontend deploy
         run: |
           curl -L \
