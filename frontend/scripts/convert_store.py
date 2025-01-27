@@ -43,6 +43,7 @@ def process_paper(paper_id: str, paper_data: dict[str, Any], interactions: list[
 def convert_store(
     snapshot_path: str,
     output_path: str,
+    archive_path: str | None,
 ) -> None:
     """Convert gh-store snapshot to frontend JSON format.
     
@@ -52,6 +53,7 @@ def convert_store(
     """
     snapshot_path = Path(snapshot_path)
     output_path = Path(output_path)
+    archive_path = Path(archive_path)
     
     # Create output directory
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -60,10 +62,17 @@ def convert_store(
     logger.info(f"Reading snapshot from {snapshot_path}")
     with open(snapshot_path, 'r', encoding='utf-8') as f:
         snapshot = json.load(f)
+
+    # Backpopulate from archive if provided
+    papers = {}
+    if archive_path:
+        with open(archive_path, 'r', encoding='utf-8') as f:
+            papers = json.load(f)
     
     # Process papers
-    papers = {}
     interaction_data = {}
+
+    
     
     # First pass - collect interaction data
     for obj_id, obj in snapshot['objects'].items():
