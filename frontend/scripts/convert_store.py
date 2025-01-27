@@ -43,7 +43,7 @@ def process_paper(paper_id: str, paper_data: dict[str, Any], interactions: list[
 def convert_store(
     snapshot_path: str,
     output_path: str,
-    archive_path: str | None,
+    archive_path: str | None = None,
 ) -> None:
     """Convert gh-store snapshot to frontend JSON format.
     
