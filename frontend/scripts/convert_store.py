@@ -53,7 +53,6 @@ def convert_store(
     """
     snapshot_path = Path(snapshot_path)
     output_path = Path(output_path)
-    archive_path = Path(archive_path)
     
     # Create output directory
     output_path.parent.mkdir(parents=True, exist_ok=True)
