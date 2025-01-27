@@ -62,17 +62,10 @@ def convert_store(
     logger.info(f"Reading snapshot from {snapshot_path}")
     with open(snapshot_path, 'r', encoding='utf-8') as f:
         snapshot = json.load(f)
-
-    # Backpopulate from archive if provided
-    papers = {}
-    if archive_path:
-        with open(archive_path, 'r', encoding='utf-8') as f:
-            papers = json.load(f)
     
     # Process papers
+    papers = {}
     interaction_data = {}
-
-    
     
     # First pass - collect interaction data
     for obj_id, obj in snapshot['objects'].items():
@@ -90,6 +83,13 @@ def convert_store(
         interactions = interaction_data.get(paper_id, [])
         papers[paper_id] = process_paper(paper_id, paper_data, interactions)
     
+    # Backpopulate from archive if provided
+    papers_new = papers
+    if archive_path:
+        with open(archive_path, 'r', encoding='utf-8') as f:
+            papers = json.load(f)
+        papers.update(papers_new)
+            
     # Write output
     logger.info(f"Writing {len(papers)} papers to {output_path}")
     with open(output_path, 'w', encoding='utf-8') as f:
