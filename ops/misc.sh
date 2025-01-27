@@ -3,5 +3,5 @@
 pip install fire
 python \
   frontend/scripts/convert_data.py \
-  --yaml-path data/papers/papers.yml \
+  --yaml-path data/papers/papers.yaml \
   --json-path data/papers/papers-archive.json
