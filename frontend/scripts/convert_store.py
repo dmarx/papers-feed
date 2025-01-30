@@ -86,8 +86,9 @@ def convert_store(
     papers_new = papers
     if archive_path:
         with open(archive_path, 'r', encoding='utf-8') as f:
-            papers = json.load(f)
-        papers.update(papers_new)
+            archive = json.load(f)
+        archive.update(papers_new)
+        papers=archive
             
     # Write output
     logger.info(f"Writing {len(papers)} papers to {output_path}")
