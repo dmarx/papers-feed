@@ -83,11 +83,13 @@ def convert_store(
         papers[paper_id] = process_paper(paper_id, paper_data, interactions)
     
     # Backpopulate from archive if provided
-    papers_new = papers
+    logger.info(f"Loaded {len(papers)} from snapshot")
     if archive_path:
+        logger.info(f"Reading archive from {archive_path}")
         with open(archive_path, 'r', encoding='utf-8') as f:
             archive = json.load(f)
-        archive.update(papers_new)
+        logger.info(f"Loaded {len(archive)} from archive")
+        archive.update(papers)
         papers=archive
             
     # Write output
