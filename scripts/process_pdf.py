@@ -25,27 +25,18 @@ def process_pdf(pdf_path: str, format: OutputFormat = 'markdown') -> None:
 
     logger.info(f"Processing {pdf_path}")
     
-    # Wait for Grobid to be ready
-    base_url = "http://localhost:8070"
-    for _ in range(30):
-        try:
-            resp = requests.get(f"{base_url}/api/isalive")
-            if resp.status_code == 200:
-                break
-        except requests.exceptions.ConnectionError:
-            time.sleep(1)
-    else:
-        raise RuntimeError("Grobid service not available")
-
     # Process the PDF
+    base_url = "http://localhost:8070"
+    
     with open(pdf_path, 'rb') as f:
         files = {'input': (pdf_path.name, f, 'application/pdf')}
         
-        # Get TEI XML
+        # Get TEI XML first
         resp = requests.post(
             f"{base_url}/api/processFulltextDocument",
             files=files,
-            headers={'Accept': 'application/xml'}
+            headers={'Accept': 'application/xml'},
+            timeout=300  # 5 minute timeout
         )
         
         if resp.status_code != 200:
