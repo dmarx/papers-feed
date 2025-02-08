@@ -19,21 +19,23 @@ on:
 jobs:
   convert:
     runs-on: ubuntu-latest
+
     services:
       grobid:
         image: lfoppiano/grobid:latest-crf
         ports:
           - 8070:8070
-        options: >-
-          --health-cmd "curl -sf --max-time 5 http://localhost:8070/api/isalive || exit 1"
-          --health-interval 30s
-          --health-timeout 20s
-          --health-retries 5
-          --health-start-period 240s
+          - 8071:8071
         env:
           JAVA_OPTS: "-Xmx3g"
         volumes:
           - ${{ github.workspace }}:/opt/grobid/input
+        options: >-
+          --health-cmd "wget --no-verbose --tries=1 --spider http://localhost:8070/api/isalive || exit 1"
+          --health-interval 60s
+          --health-timeout 30s
+          --health-retries 5
+          --health-start-period 180s
 
     steps:
       - uses: actions/checkout@v4
@@ -48,26 +50,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests loguru fire lxml
 
-      - name: Wait for Grobid
-        timeout-minutes: 5
+      - name: Verify network configuration
         run: |
-          echo "Waiting for Grobid to start..."
-          attempt=1
-          max_attempts=60
-          
-          while ! curl -sf --max-time 5 http://localhost:8070/api/isalive > /dev/null; do
-            if [ $attempt -ge $max_attempts ]; then
-              echo "Grobid failed to start after 5 minutes. Showing logs:"
-              docker logs $(docker ps -q --filter ancestor=lfoppiano/grobid:latest-crf)
-              exit 1
-            fi
-            
-            echo "Attempt $attempt/$max_attempts: Waiting for Grobid..."
-            sleep 5
-            attempt=$((attempt + 1))
-          done
-          
-          echo "Grobid is ready!"
+          echo "Network configuration:"
+          ip addr
+          echo "Checking service connectivity:"
+          curl -v http://localhost:8070/api/isalive || true
+          echo "Checking service logs:"
+          docker logs $(docker ps -q --filter ancestor=lfoppiano/grobid:latest-crf)
 
       - name: Process PDF
         run: python .github/scripts/process_pdf.py ${{ github.event.inputs.pdf_path }} --format ${{ github.event.inputs.output_format }}
