@@ -25,12 +25,16 @@ jobs:
         ports:
           - 8070:8070
         options: >-
-          --entrypoint "sh -c"
+          --health-cmd "curl -sf --max-time 5 http://localhost:8070/api/isalive || exit 1"
+          --health-interval 30s
+          --health-timeout 20s
+          --health-retries 5
+          --health-start-period 240s
         env:
           JAVA_OPTS: "-Xmx3g"
         volumes:
           - ${{ github.workspace }}:/opt/grobid/input
-    
+
     steps:
       - uses: actions/checkout@v4
 
@@ -44,30 +48,26 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests loguru fire lxml
 
-      - name: Start Grobid
+      - name: Wait for Grobid
+        timeout-minutes: 5
         run: |
-          # Start Grobid in the background
-          docker run -d --name grobid \
-            -p 8070:8070 \
-            -v ${{ github.workspace }}:/opt/grobid/input \
-            -e JAVA_OPTS="-Xmx3g" \
-            lfoppiano/grobid:latest-crf
-
           echo "Waiting for Grobid to start..."
-          timeout=180
-          while [ $timeout -gt 0 ]; do
-            if curl -sf http://localhost:8070/api/isalive > /dev/null; then
-              echo "Grobid is ready!"
-              exit 0
+          attempt=1
+          max_attempts=60
+          
+          while ! curl -sf --max-time 5 http://localhost:8070/api/isalive > /dev/null; do
+            if [ $attempt -ge $max_attempts ]; then
+              echo "Grobid failed to start after 5 minutes. Showing logs:"
+              docker logs $(docker ps -q --filter ancestor=lfoppiano/grobid:latest-crf)
+              exit 1
             fi
+            
+            echo "Attempt $attempt/$max_attempts: Waiting for Grobid..."
             sleep 5
-            timeout=$((timeout - 5))
-            echo "Still waiting... ($timeout seconds remaining)"
+            attempt=$((attempt + 1))
           done
           
-          echo "Grobid failed to start. Showing logs:"
-          docker logs grobid
-          exit 1
+          echo "Grobid is ready!"
 
       - name: Process PDF
         run: python .github/scripts/process_pdf.py ${{ github.event.inputs.pdf_path }} --format ${{ github.event.inputs.output_format }}
@@ -78,7 +78,3 @@ jobs:
           name: processed-document
           path: output.*
           if-no-files-found: error
-
-      - name: Cleanup
-        if: always()
-        run: docker stop grobid || true
