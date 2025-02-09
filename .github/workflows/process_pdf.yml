@@ -15,6 +15,10 @@ on:
           - markdown
           - tei
         default: 'markdown'
+      tag:
+        description: 'Optional tag to append to the output filename'
+        required: false
+        default: ''
 
 jobs:
   convert:
@@ -45,43 +49,26 @@ jobs:
     
       - name: Process PDF
         env:
-          GROBID_HOST: localhost  # Updated from "grobid" to "localhost"
+          GROBID_HOST: localhost  # Use localhost since the service is mapped to that port
         run: |
-          # Test service using localhost since the job is running on a VM
+          # Wait until Grobid is ready
           for i in {1..30}; do
             if curl -sSf http://localhost:8070/api/isalive > /dev/null; then
               echo "Grobid is ready!"
-              curl -v http://localhost:8070/api/version
-              python scripts/process_pdf.py ${{ github.event.inputs.pdf_path }} --format ${{ github.event.inputs.output_format }}
-              exit 0
+              break
             fi
             echo "Attempt $i: Service not ready yet, waiting..."
             sleep 10
           done
-          echo "Grobid failed to start. Displaying logs:"
-          docker logs $(docker ps -q --filter ancestor=lfoppiano/grobid:latest-crf)
-          exit 1
-
-      - name: Upload processed file
-        uses: actions/upload-artifact@v4
+          python .github/scripts/process_pdf.py ${{ github.event.inputs.pdf_path }} --format ${{ github.event.inputs.output_format }} --tag "${{ github.event.inputs.tag }}"
+    
+      # Commit and push the generated output back to the repository.
+      - name: Commit and Push Output
+        uses: EndBug/add-and-commit@v9
         with:
-          name: processed-document
-          path: output.*
-          if-no-files-found: error
-
-      # Option 2: Query the GitHub API to get the artifact download URL.
-      - name: Get Artifact URL
-        id: get_artifact
+          # The 'add' value here could be the folder or file pattern where the output is created.
+          # For example, if the PDF is in a subdirectory, you might want to commit changes in that folder.
+          add: '.'
+          message: "Add processed output for ${{ github.event.inputs.pdf_path }}"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          echo "Fetching artifact URL for 'processed-document'"
-          RUN_ID=${{ github.run_id }}
-          REPO=${{ github.repository }}
-          RESPONSE=$(curl -s -H "Authorization: token $GITHUB_TOKEN" "https://api.github.com/repos/${REPO}/actions/runs/${RUN_ID}/artifacts")
-          ARTIFACT_URL=$(echo "$RESPONSE" | jq -r '.artifacts[] | select(.name=="processed-document") | .archive_download_url')
-          echo "Artifact URL: ${ARTIFACT_URL}"
-          echo "artifact_url=${ARTIFACT_URL}" >> $GITHUB_OUTPUT
-
-      - name: Echo Artifact URL
-        run: echo "Artifact URL is ${{ steps.get_artifact.outputs.artifact_url }}"
