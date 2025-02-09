@@ -144,7 +144,7 @@ def generate_missing_conversions(
     modified_files = []
     for i, pdf_fpath in enumerate(data_path.rglob("*.pdf")):
         # skip PDFs that snuck in via latex source dirs downloaded from arxiv 
-        if "source" in pdf_path:
+        if "source" in pdf_fpath:
             continue
         outname = f"{pdf_fpath.stem}{suffix}" if not tag else f"{pdf_fpath.stem}_{tag}{suffix}"
         md_fpath = pdf_fpath.parent / outname
