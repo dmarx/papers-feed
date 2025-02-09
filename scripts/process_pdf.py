@@ -2,7 +2,6 @@
 
 import os
 from pathlib import Path
-import time
 from typing import Literal
 
 import fire
@@ -12,62 +11,79 @@ from lxml import etree
 
 OutputFormat = Literal['markdown', 'tei']
 
-def process_pdf(pdf_path: str, format: OutputFormat = 'markdown') -> None:
+def process_pdf(pdf_path: str, format: OutputFormat = 'markdown', tag: str = "") -> None:
     """
-    Process a PDF file using Grobid and convert to specified format.
+    Process a PDF file using Grobid and convert to the specified format.
+    
+    The output file will be saved in the same directory as the input PDF, using the
+    same base name with a new extension. If a tag is provided, it will be appended
+    to the base name after an underscore.
+    
+    For example, if pdf_path is "papers/document.pdf", then:
+      - with format "markdown" and tag "v1" the output will be "papers/document_v1.md"
+      - with format "markdown" and no tag, the output will be "papers/document.md"
+      - with format "tei" and tag "v1" the output will be "papers/document_v1.tei.xml"
     
     Args:
-        pdf_path: Path to the PDF file relative to repository root
-        format: Output format, either 'markdown' or 'tei'
+        pdf_path: Path to the PDF file relative to the repository root.
+        format: Output format, either 'markdown' or 'tei'.
+        tag: Optional tag to append to the output filename (default: empty string).
     """
     pdf_path = Path(pdf_path)
     if not pdf_path.exists():
         raise FileNotFoundError(f"PDF file not found: {pdf_path}")
-
+    
     logger.info(f"Processing {pdf_path}")
     
-    # Get base URL from environment or use default
+    # Get Grobid host from environment (default: localhost)
     grobid_host = os.environ.get('GROBID_HOST', 'localhost')
     base_url = f"http://{grobid_host}:8070"
     
-    # Process the PDF
+    # Call Grobid to process the PDF into TEI XML
     with open(pdf_path, 'rb') as f:
         files = {'input': (pdf_path.name, f, 'application/pdf')}
-        
-        # Get TEI XML
         resp = requests.post(
             f"{base_url}/api/processFulltextDocument",
             files=files,
             headers={'Accept': 'application/xml'},
             timeout=300  # 5 minute timeout
         )
+    
+    if resp.status_code != 200:
+        raise RuntimeError(f"Grobid processing failed: {resp.status_code}")
+    
+    # Compute base output filename based on the input PDF filename
+    base_name = pdf_path.stem  # removes .pdf
+    if tag:
+        tei_filename = f"{base_name}_{tag}.tei.xml"
+        md_filename = f"{base_name}_{tag}.md"
+    else:
+        tei_filename = f"{base_name}.tei.xml"
+        md_filename = f"{base_name}.md"
+    
+    # Save the TEI output
+    tei_path = pdf_path.parent / tei_filename
+    tei_path.write_text(resp.text)
+    logger.info(f"Saved TEI XML to {tei_path}")
+    
+    if format == 'markdown':
+        # Convert TEI to Markdown using XSLT
+        xslt_path = Path(__file__).parent / 'tei2md.xslt'
+        if not xslt_path.exists():
+            raise FileNotFoundError(f"XSLT stylesheet not found: {xslt_path}")
         
-        if resp.status_code != 200:
-            raise RuntimeError(f"Grobid processing failed: {resp.status_code}")
+        xslt = etree.parse(str(xslt_path))
+        transform = etree.XSLT(xslt)
         
-        # Save TEI output
-        tei_path = Path('output.tei.xml')
-        tei_path.write_text(resp.text)
-        logger.info(f"Saved TEI XML to {tei_path}")
+        tei_doc = etree.parse(str(tei_path))
+        markdown = str(transform(tei_doc))
         
-        if format == 'markdown':
-            # Convert TEI to Markdown using XSLT
-            xslt_path = Path(__file__).parent / 'tei2md.xslt'
-            if not xslt_path.exists():
-                raise FileNotFoundError(f"XSLT stylesheet not found: {xslt_path}")
-            
-            # Load XSLT stylesheet
-            xslt = etree.parse(str(xslt_path))
-            transform = etree.XSLT(xslt)
-            
-            # Load and transform TEI document
-            tei_doc = etree.parse(str(tei_path))
-            markdown = str(transform(tei_doc))
-            
-            # Save Markdown output
-            md_path = Path('output.md')
-            md_path.write_text(markdown)
-            logger.info(f"Saved Markdown to {md_path}")
+        # Save Markdown output
+        md_path = pdf_path.parent / md_filename
+        md_path.write_text(markdown)
+        logger.info(f"Saved Markdown to {md_path}")
+    else:
+        logger.info(f"Output TEI XML saved at {tei_path}")
 
 if __name__ == '__main__':
     fire.Fire(process_pdf)
