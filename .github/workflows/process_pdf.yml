@@ -30,11 +30,11 @@ jobs:
           - ${{ github.workspace }}:/opt/grobid/input
         options: >-
           --init
-          --health-cmd "curl -f http://127.0.0.1:8070/api/isalive"
+          --health-cmd "nc -z localhost 8070"
           --health-interval 30s
-          --health-timeout 5s
+          --health-timeout 10s
           --health-retries 5
-          --health-start-period 180s
+          --health-start-period 240s
 
     steps:
       - uses: actions/checkout@v4
@@ -49,12 +49,25 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests loguru fire lxml
 
-      - name: Process PDF
+      - name: Verify Grobid Service
+        timeout-minutes: 5
         run: |
-          # Verify service is running and show version
-          curl -v http://localhost:8070/api/version
-          echo "Processing PDF with Grobid..."
-          python .github/scripts/process_pdf.py ${{ github.event.inputs.pdf_path }} --format ${{ github.event.inputs.output_format }}
+          echo "Waiting for Grobid to be ready..."
+          for i in {1..30}; do
+            if curl -sSf http://localhost:8070/api/isalive > /dev/null; then
+              echo "Grobid is ready!"
+              curl -v http://localhost:8070/api/version
+              exit 0
+            fi
+            echo "Attempt $i: Service not ready yet, waiting..."
+            sleep 10
+          done
+          echo "Grobid failed to start. Displaying logs:"
+          docker logs $(docker ps -q --filter ancestor=lfoppiano/grobid:latest-crf)
+          exit 1
+
+      - name: Process PDF
+        run: python .github/scripts/process_pdf.py ${{ github.event.inputs.pdf_path }} --format ${{ github.event.inputs.output_format }}
 
       - name: Upload processed file
         uses: actions/upload-artifact@v4
