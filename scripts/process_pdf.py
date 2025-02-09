@@ -35,7 +35,7 @@ def process_pdf_grobid(pdf_path: str, format: OutputFormat = 'markdown', tag: st
     
     logger.info(f"Processing {pdf_path}")
     
-    # Get Grobid host from environment (default: localhost)
+    # https://github.com/dmarx/papers-feed/blob/b080a0b373bf953b1dc7df36b08398e8be2b7536/.github/workflows/process_pdf.yml#L26-L35
     grobid_host = os.environ.get('GROBID_HOST', 'localhost')
     base_url = f"http://{grobid_host}:8070"
     
@@ -88,4 +88,6 @@ def process_pdf_grobid(pdf_path: str, format: OutputFormat = 'markdown', tag: st
 process_pdf = process_pdf_grobid
 
 if __name__ == '__main__':
-    fire.Fire(process_pdf)
+    fire.Fire(
+        {"process_pdf":process_pdf,
+        })
