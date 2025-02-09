@@ -150,10 +150,10 @@ def generate_missing_conversions(
             modified_files.append(md_fpath)
         if (i % checkpoint_cadence) == 0:
             msg="persisting markdown conversions"
-            commit_and_push(files_to_commit=modified_files, message = msg):
+            commit_and_push(files_to_commit=modified_files, message = msg)
             modified_files=[]
     if modified_files:
-        commit_and_push(files_to_commit=modified_files, message = msg):
+        commit_and_push(files_to_commit=modified_files, message = msg)
 
         
 
