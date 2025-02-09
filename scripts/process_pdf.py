@@ -146,7 +146,7 @@ def generate_missing_conversions(
         outname = f"{pdf_fpath.stem}{suffix}" if not tag else f"{pdf_fpath.stem}_{tag}{suffix}"
         md_fpath = pdf_fpath.parent / outname
         if not md_fpath.exists():
-            process_pdf_grobid(pdf_path, output_path=md_fpath)
+            process_pdf_grobid(pdf_fpath, output_path=md_fpath)
             modified_files.append(md_fpath)
         if (i % checkpoint_cadence) == 0:
             msg="persisting markdown conversions"
