@@ -1,0 +1,63 @@
+name: REFRESH ALL Markdown Conversions (grobid)
+
+on:
+  workflow_dispatch:
+      # tag:
+      #   description: 'Optional tag to append to the output filename'
+      #   required: false
+      #   default: ''
+
+jobs:
+  convert:
+    runs-on: ubuntu-latest
+    services:
+      grobid:
+        image: lfoppiano/grobid:latest-crf
+        ports:
+          - 8070:8070
+        env:
+          JAVA_OPTS: "-Xmx4g"
+        volumes:
+          - ${{ github.workspace }}:/opt/grobid/input
+        options: "--init"
+        
+    steps:
+      - uses: actions/checkout@v4
+    
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+    
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install llamero lxml 
+    
+      - name: Process PDF
+        env:
+          GROBID_HOST: localhost  # Use localhost since the service is mapped to that port
+        run: |
+          # Wait until Grobid is ready
+          for i in {1..30}; do
+            if curl -sSf http://localhost:8070/api/isalive > /dev/null; then
+              echo "Grobid is ready!"
+              break
+            fi
+            echo "Attempt $i: Service not ready yet, waiting..."
+            sleep 10
+          done
+          python scripts/process_pdf.py flush_old_conversions --tag=""
+          python scripts/process_pdf.py flush_old_conversions --tag="grobid"
+          python scripts/process_pdf.py generate_missing_conversions
+    
+      # Commit and push the generated output back to the repository.
+      - name: Commit and Push Output
+        uses: EndBug/add-and-commit@v9
+        with:
+          # The 'add' value here could be the folder or file pattern where the output is created.
+          # For example, if the PDF is in a subdirectory, you might want to commit changes in that folder.
+          add: '.'
+          message: "Add processed output for ${{ github.event.inputs.pdf_path }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
