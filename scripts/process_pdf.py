@@ -11,7 +11,7 @@ from lxml import etree
 
 OutputFormat = Literal['markdown', 'tei']
 
-def process_pdf(pdf_path: str, format: OutputFormat = 'markdown', tag: str = "") -> None:
+def process_pdf_grobid(pdf_path: str, format: OutputFormat = 'markdown', tag: str = "grobid") -> None:
     """
     Process a PDF file using Grobid and convert to the specified format.
     
@@ -84,6 +84,8 @@ def process_pdf(pdf_path: str, format: OutputFormat = 'markdown', tag: str = "")
         logger.info(f"Saved Markdown to {md_path}")
     else:
         logger.info(f"Output TEI XML saved at {tei_path}")
+
+process_pdf = process_pdf_grobid
 
 if __name__ == '__main__':
     fire.Fire(process_pdf)
