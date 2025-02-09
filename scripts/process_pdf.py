@@ -148,6 +148,7 @@ def generate_missing_conversions(
         if not md_fpath.exists():
             process_pdf_grobid(pdf_fpath, output_path=md_fpath)
             modified_files.append(md_fpath)
+            logger.info(md_fpath)
         if (i % checkpoint_cadence) == 0:
             msg="persisting markdown conversions"
             commit_and_push(files_to_commit=modified_files, message = msg)
