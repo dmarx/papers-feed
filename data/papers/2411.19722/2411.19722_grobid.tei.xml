@@ -1,0 +1,2563 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<TEI xml:space="preserve" xmlns="http://www.tei-c.org/ns/1.0" 
+xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" 
+xsi:schemaLocation="http://www.tei-c.org/ns/1.0 https://raw.githubusercontent.com/kermitt2/grobid/master/grobid-home/schemas/xsd/Grobid.xsd"
+ xmlns:xlink="http://www.w3.org/1999/xlink">
+	<teiHeader xml:lang="en">
+		<fileDesc>
+			<titleStmt>
+				<title level="a" type="main">JETFORMER: AN AUTOREGRESSIVE GENERATIVE MODEL OF RAW IMAGES AND TEXT</title>
+			</titleStmt>
+			<publicationStmt>
+				<publisher/>
+				<availability  status="unknown">
+					<licence/>
+				</availability>
+				<date type="published" when="2024-11-29">29 Nov 2024</date>
+			</publicationStmt>
+			<sourceDesc>
+				<biblStruct>
+					<analytic>
+						<author>
+							<persName><forename type="first">Michael</forename><surname>Tschannen</surname></persName>
+							<email>tschannen@google.com</email>
+						</author>
+						<author>
+							<persName><forename type="first">Susano</forename><surname>André</surname></persName>
+						</author>
+						<author>
+							<persName><surname>Pinto</surname></persName>
+						</author>
+						<author>
+							<persName><forename type="first">Alexander</forename><surname>Kolesnikov</surname></persName>
+							<email>akolesnikov@google.com</email>
+						</author>
+						<author>
+							<persName><forename type="first">Google</forename><surname>Deepmind</surname></persName>
+						</author>
+						<title level="a" type="main">JETFORMER: AN AUTOREGRESSIVE GENERATIVE MODEL OF RAW IMAGES AND TEXT</title>
+					</analytic>
+					<monogr>
+						<imprint>
+							<date type="published" when="2024-11-29">29 Nov 2024</date>
+						</imprint>
+					</monogr>
+					<idno type="MD5">E510E25B96165C14EDF0C79BD6F18F02</idno>
+					<idno type="arXiv">arXiv:2411.19722v1[cs.LG]</idno>
+				</biblStruct>
+			</sourceDesc>
+		</fileDesc>
+		<encodingDesc>
+			<appInfo>
+				<application version="0.8.2-SNAPSHOT" ident="GROBID" when="2025-02-09T23:21+0000">
+					<desc>GROBID - A machine learning software for extracting information from scholarly documents</desc>
+					<ref target="https://github.com/kermitt2/grobid"/>
+				</application>
+			</appInfo>
+		</encodingDesc>
+		<profileDesc>
+			<abstract>
+<div xmlns="http://www.tei-c.org/ns/1.0"><p>Removing modeling constraints and unifying architectures across domains has been a key driver of the recent progress in training large multimodal models. However, most of these models still rely on many separately trained components such as modality-specific encoders and decoders. In this work, we further streamline joint generative modeling of images and text. We propose an autoregressive decoder-only transformer-JetFormer-which is trained to directly maximize the likelihood of raw data, without relying on any separately pretrained components, and can understand and generate both text and images. Specifically, we leverage a normalizing flow model to obtain a soft-token image representation that is jointly trained with an autoregressive multimodal transformer. The normalizing flow model serves as both an image encoder for perception tasks and an image decoder for image generation tasks during inference. JetFormer achieves text-toimage generation quality competitive with recent VQVAE-and VAE-based baselines. These baselines rely on pretrained image autoencoders, which are trained with a complex mixture of losses, including perceptual ones. At the same time, JetFormer demonstrates robust image understanding capabilities. To the best of our knowledge, JetFormer is the first model that is capable of generating highfidelity images and producing strong log-likelihood bounds.</p></div>
+			</abstract>
+		</profileDesc>
+	</teiHeader>
+	<text xml:lang="en">
+		<body>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="1">INTRODUCTION</head><p>The "Bitter lesson" <ref type="bibr" target="#b59">(Sutton, 2019)</ref> has been the prime force behind the recent progress in machine learning and artificial intelligence research. It suggests that general-purpose methods which effectively leverage large amounts of compute and data prevail over specialized techniques designed by domain experts. Arguably the most prominent examples in this context are transformer decoder-only models trained for next-token prediction <ref type="bibr" target="#b67">(Vaswani et al., 2017;</ref><ref type="bibr" target="#b45">Radford et al., 2018)</ref>, that outperform task-specific NLP systems, and transformer encoders in computer vision <ref type="bibr" target="#b16">(Dosovitskiy et al., 2021;</ref><ref type="bibr" target="#b58">Strudel et al., 2021;</ref><ref type="bibr" target="#b31">Li et al., 2022)</ref>, that achieve better quality than CNN-based models. This trend is also visible in the current pursuit of extending LLMs to both understand and generate multiple modalities such as text and images with a single model. A powerful paradigm in the literature <ref type="bibr" target="#b0">(Aghajanyan et al., 2022;</ref><ref type="bibr" target="#b25">Kim et al., 2023;</ref><ref type="bibr" target="#b1">Aghajanyan et al., 2023;</ref><ref type="bibr" target="#b71">You et al., 2023)</ref> is to model the image tokens using discrete tokens obtained via (VQ)VAEs (van den <ref type="bibr" target="#b66">Oord et al., 2017;</ref><ref type="bibr" target="#b17">Esser et al., 2020;</ref><ref type="bibr" target="#b48">Ramesh et al., 2021)</ref>. One limitation of these approaches is that the conversion from image into tokens and vice-versa is performed by a separate, frozen, modality-specific and lossy encoder (and decoder) trained ahead of time. As a result, this image encoder may be agnostic to the actual task at hand and limit the performance of the resulting model <ref type="bibr" target="#b15">(Dong et al., 2023;</ref><ref type="bibr" target="#b42">Pan et al., 2024;</ref><ref type="bibr" target="#b70">Xu et al., 2024)</ref>.</p><p>To obtain a general architecture that can generate multiple modalities but does not have (limiting) components pretrained ahead of time, we develop a new generative model: the JetFormer. It can be trained from scratch and optimized end-to-end for the log-likelihood of raw training data. We demonstrate this for text and pixels. To this end, we combine a normalizing flow <ref type="bibr" target="#b14">(Dinh et al., 2016;</ref><ref type="bibr" target="#b27">Kingma &amp; Dhariwal, 2018)</ref> for computing a soft-token image representation with a decoder-only transformer <ref type="bibr" target="#b67">(Vaswani et al., 2017)</ref> and a soft-token Gaussian mixture loss <ref type="bibr">(Tschannen et al., 2024)</ref>. The key insight behind the JetFormer model, is that a powerful normalizing flow (which we call a "jet", hence the model name) can be used to encode images into a latent representation suitable for autoregressive modeling. Intuitively, raw image patches encoded as pixels have very complex structure, which makes direct autoregression futile: to date, there is no convincing demonstration of this. At the same time, the flow model is lossless and can be trained together with the (multimodal) autoregressive model end-to-end. At inference time an image decoder is readily available, since our flow model is invertible in closed form.</p><p>Although we only optimize for log-likelihood, it is worth noting that doing so naively does not guarantee being able to generate images with global coherence. Similarly to the vast majority of work on high-fidelity image generation <ref type="bibr" target="#b17">(Esser et al., 2020;</ref><ref type="bibr" target="#b9">Dhariwal &amp; Nichol, 2021;</ref><ref type="bibr" target="#b21">Ho &amp; Salimans, 2022)</ref>, we guide the model to focus on the high-level information. To this end, we explore two approaches.</p><p>First, we introduce a novel technique that is based on image augmentation during training. The main idea is to add Gaussian noise during training, but reduce it through the course of training. Intuitively, this pushes the model towards prioritizing high-level information early on; see Section 3.2.1 for more details. Even though a noise curriculum during training is inspired by diffusion models <ref type="bibr" target="#b57">(Sohl-Dickstein et al., 2015)</ref>, it is very different on the technical level, and the resulting model does not perform progressive image denoising at inference time.</p><p>Second, we explore two ways of managing redundancy in natural images. JetFormer readily allows excluding a subset of redundant dimensions from the autoregressive model. As an alternative, we explore PCA for reducing image dimensionality.</p><p>We conduct experiments on ImageNet class-conditional image generation and on web-scale multimodal generation, thereby demonstrating the JetFormer works and scales to both text-to-image generation and vision-language understanding with a single model.</p><p>In summary, our contributions are:</p><p>• We present JetFormer, a generative model composed of a transformer and a normalizing flow that can be trained from scratch to model text and raw pixels jointly, end-to-end.</p><p>• We show that image augmentation based on a noise curriculum can significantly boost image generation quality of such likelihood-based models. • We demonstrate our proposed end-to-end model is competitive with less flexible techniques when trained on web-scale data, and can generate both images and text. </p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="2">RELATED WORK</head><p>Generating natural images autoregressively as a sequence of discrete-valued (sub-)pixels was extensively explored in the literature using CNNs ( <ref type="bibr">Van den Oord et al., 2016b;</ref><ref type="bibr">a;</ref><ref type="bibr" target="#b55">Salimans et al., 2016)</ref> or transformers <ref type="bibr" target="#b43">(Parmar et al., 2018;</ref><ref type="bibr" target="#b6">Chen et al., 2020)</ref>. While achieving excellent results in log-likelihood, these models are computationally expensive and do not scale well to high image resolutions. A related family of models are normalizing flows <ref type="bibr" target="#b13">(Dinh et al., 2014;</ref><ref type="bibr">2016;</ref><ref type="bibr" target="#b27">Kingma &amp; Dhariwal, 2018;</ref><ref type="bibr" target="#b22">Ho et al., 2019)</ref>, invertible models which are trained to map image pixels to a simple prior by maximizing log-likelihood. These models scale better but achieve lower likelihood than autoregressive models and empirically fail to generate high-fidelity images, even for low resolutions.</p><p>More recently, compressing the high-dimensional image pixel space to a lower-dimensional sequence of discrete tokens via a pretrained, frozen VQ-VAE (van den <ref type="bibr" target="#b66">Oord et al., 2017;</ref><ref type="bibr" target="#b50">Razavi et al., 2019)</ref>, and then modeling the compressed sequence with a transformer decoder has emerged as a scalable technique for high-fidelity image generation <ref type="bibr" target="#b17">(Esser et al., 2020;</ref><ref type="bibr">Yu et al., 2022a;</ref><ref type="bibr" target="#b48">Ramesh et al., 2021;</ref><ref type="bibr">Yu et al., 2022c;</ref><ref type="bibr" target="#b18">Gafni et al., 2022)</ref>. To enable semantic compression, VQ-VAEs typically rely on perceptual and GAN losses. Moreover, VQ-VAE-based representations are common in the context of dense prediction tasks <ref type="bibr" target="#b29">(Kolesnikov et al., 2022;</ref><ref type="bibr" target="#b34">Lu et al., 2022;</ref><ref type="bibr" target="#b38">Mizrahi et al., 2024;</ref><ref type="bibr" target="#b37">Mentzer et al., 2024)</ref>, in particular when modeling multiple modalities jointly. <ref type="bibr">GIVT (Tschannen et al., 2024)</ref> showed that combining an autoencoder and an autoregressive transformer can be applied to continuous-valued sequences, by directly modeling feature vectors in the latent space of a VAE, without any quantization. Somewhat related, <ref type="bibr" target="#b39">(Nachmani et al., 2023;</ref><ref type="bibr" target="#b35">Meng et al., 2024)</ref> explored soft tokens for speech synthesis.</p><p>VQ-VAEs are also becoming popular in the context of Vision-Language Models (VLMs). Such models are typically either trained from scratch <ref type="bibr" target="#b46">(Radford et al., 2021;</ref><ref type="bibr" target="#b24">Jia et al., 2021;</ref><ref type="bibr">Wang et al., 2022b;</ref><ref type="bibr">Yu et al., 2022b)</ref> on web-scale data or constructed by combining and tuning a pretrained vision encoder and a pretrained language model <ref type="bibr" target="#b2">(Alayrac et al., 2022;</ref><ref type="bibr">Chen et al., 2023b;</ref><ref type="bibr">Wang et al., 2022a;</ref><ref type="bibr" target="#b30">Li et al., 2023;</ref><ref type="bibr" target="#b23">Huang et al., 2023;</ref><ref type="bibr" target="#b33">Liu et al., 2024;</ref><ref type="bibr" target="#b4">Beyer et al., 2024)</ref>, and can solve a broad range of task which can be cast as text output. To enable pixel outputs for such models a simple way is to extend the text vocabulary with VQ-VAE tokens <ref type="bibr" target="#b0">(Aghajanyan et al., 2022;</ref><ref type="bibr" target="#b25">Kim et al., 2023;</ref><ref type="bibr" target="#b1">Aghajanyan et al., 2023;</ref><ref type="bibr" target="#b71">You et al., 2023;</ref><ref type="bibr" target="#b42">Pan et al., 2024)</ref>. Other works <ref type="bibr" target="#b15">(Dong et al., 2023;</ref><ref type="bibr" target="#b19">Ge et al., 2024;</ref><ref type="bibr" target="#b75">Zhou et al., 2024)</ref> combine VLMs with (latent) diffusion models <ref type="bibr" target="#b57">(Sohl-Dickstein et al., 2015;</ref><ref type="bibr" target="#b9">Dhariwal &amp; Nichol, 2021;</ref><ref type="bibr" target="#b51">Rombach et al., 2022;</ref><ref type="bibr" target="#b53">Saharia et al., 2022;</ref><ref type="bibr" target="#b49">Ramesh et al., 2022)</ref> to enable image generation capabilities. JetFormer is related to this category of models, but unlike previous models does not rely on any pretrained (VQ-)VAE vision encoder/decoder.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3">METHOD</head><p>Modeling natural images with autoregressive transformers poses many obstacles. Doing so in pixel space is a viable approach <ref type="bibr" target="#b43">(Parmar et al., 2018;</ref><ref type="bibr" target="#b6">Chen et al., 2020)</ref>, but it quickly becomes computationally prohibitive. Even an image of size 256×256×3 would require predicting/sampling nearly 200 000 tokens. Alternatively, modeling images at the patch-level to tame the computational complexity creates its own challenges. Each patch is a sample from a complex distribution, and producing all of its dimensions in a single forward pass fails to model pixel interactions.</p><p>Currently, the most common approach to overcome these issues is to leverage a standalone image encoder/tokenizer (and decoder/detokenizer) model, which encodes an image as a sequence of (usually discrete) tokens. Such an image encoder performs semantic compression and thus reduces the computational burden. However, this type of approach has significant shortcomings: one needs to tolerate precision loss due to compression and to commit to the image encoder that was trained ahead of time and may not be suitable for the modeling task at hand.</p><p>In this paper we overcome both of these issues and propose JetFormer, a generative autoregressive decoder-only model able to model both text and images, and directly learn from the raw training data. The JetFormer model is trained end-to-end, without relying on any lossy modality-specific encoders/tokenizers. Our model is built on two key insights. First, we use continuous (also called "soft") tokens to represent images. As shown in GIVT (Tschannen et al., 2024), transformer decoders can generate the soft-token-sequence produced by a VAE encoder for high-fidelity image generation. Specifically, GIVT replaces the categorical prediction head with a Gaussian Mixture Model (GMM) that models log-likelihood of soft image embeddings. Second, instead of a VAE (that needs to be trained ahead of time), we use a normalizing flow model to learn a soft-token image representation suitable for autoregressive modeling. As flow models are lossless by design, they won't suffer from representation collapse and can be trained simultaneously with the transformer model without auxiliary losses, eliminating the necessity to use pretrained encoders and enabling full end-to-end learning of autoregressive transformers from raw images.</p><p>Naturally, the above two insights can be combined with the standard transformer for text, forming a simple and unified multimodal model, capable of learning from image and text data.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.1">MODELING IMAGES IN PIXEL SPACE WITH SOFT TOKENS AND NORMALIZING FLOWS</head><p>As outlined above, we model an image x using a normalizing flow model <ref type="bibr" target="#b13">(Dinh et al., 2014;</ref><ref type="bibr">2016;</ref><ref type="bibr" target="#b27">Kingma &amp; Dhariwal, 2018)</ref> f (x) that losslessly maps an image into a sequence of embeddings {z 1 , . . . , z n }, which we also call "soft tokens". Note that the flow preserves the total number of the input dimensions. These embeddings are then modeled by the deep autoregressive model p, where the outputs are modeled with a GMM, as proposed in GIVT. We then maximize the image log-likelihood lower bound L:</p><formula xml:id="formula_0">L(x) = log p(f (x)) + log det ∂f (x) ∂x T , where<label>(1)</label></formula><formula xml:id="formula_1">f (x) = [z 1 , z 2 , . . . , z n ] and p(z) = n i=1 p(z i |z i-1 , . . . , z 1 ).<label>(2)</label></formula><p>Note the log-determinant term arises from the normalizing flow model, as a part of the data loglikelihood, see <ref type="bibr" target="#b14">Dinh et al. (2016)</ref>. Further, to ensure correctness, we apply image dequantization, as outlined in <ref type="bibr" target="#b60">Theis et al. (2015)</ref>. This amounts to adding uniform noise u to the input images I, s.t.</p><p>x = I +u, where u ∼ U [0, 1]. This guarantees that we optimize a lower bound on the discrete image log-likelihood. For clarity, we point out that both p and f both have learnable parameters which are optimized with gradient-based method (training via teacher forcing is illustrated in Figure <ref type="figure" target="#fig_0">1</ref>).</p><p>In simple words, JetFormer for images is an autoregressive model, where inputs and targets are produced by the flow model, which re-encodes input images. Due to the end-to-end nature of the objective, the flow model is incentivized to learn a sequence of embeddings, that makes autoregressive modeling as effective as possible. During inference, the autoregressive model generates a sequence of soft tokens, which then need to be decoded into an image using the inverse of the flow.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.2">IMPROVING MODEL QUALITY FOR NATURAL IMAGES</head><p>While JetFormer works out of the box, we have found several modeling enhancements which greatly improve the quality of the generated images. In particular, factoring out latent dimensions, the use of classifier-free-guidance during sampling, and a novel noise curriculum.</p><p>Factoring out redundant dimensions Natural images are redundant, intrinsically lowdimensional signals with low-frequency components dominating the spectrum. The design of Jet-Former enables a simple and effective way to leverage this observation and improve model quality, while also reducing computational burden.</p><p>The key observations is that not all output dimensions of the invertible flow need to be further processed by the autoregressive model. We can model a subset of dimensions (i.e. a subset of channels) with a Gaussian distribution, p N , and the remaining ones with the autoregressive transformer:</p><formula xml:id="formula_2">L(x) = log p(ẑ) + log p N (z) + log det ∂f (x) ∂x T , where [ẑ, z] = f (x)</formula><p>Intuitively, we expect redundant dimensions to be "factored out" as z, as they do not require further heavy processing. We verify our intuition empirically in the experimental section and in Figure <ref type="figure" target="#fig_5">6c</ref>.</p><p>As a strong baseline to the above approach, we also consider a more direct approach to handle redundancy in images. Before feeding x to the flow model, we reshape it into a sequence of flattened patches and apply a learnable, invertible linear map W along the channel dimension. We want this map to learn to separate important dimensions of the flattened patches from redundant ones. To this end, we feed the first d channels of its output xW ⊤ to the normalizing flow and model the remaining channels with a Gaussian distribution. Intuitively, given the simplicity of the transform W applied before factoring out part of the sequence, minimizing the NLL while training will ensure that the hard-to-model part of the sequence is modelled by JetFormer, whereas the low-level noise will be mapped to the Gaussian prior. This is similar to the reasoning behind probabilistic PCA <ref type="bibr" target="#b61">(Tipping &amp; Bishop, 1999)</ref>. Indeed, we observe that the transform learned by the model is close to applying PCA to image patches (see Figure <ref type="figure" target="#fig_5">6d</ref>), and we observe that when initializing W with PCA and freezing it we obtain similar results. See Appendix B for formal definition of this approach.</p><p>Classifier-free guidance Following common practice in the diffusion and autoregressive image modeling literature, we employ classifier-free guidance (CFG) <ref type="bibr" target="#b21">(Ho &amp; Salimans, 2022)</ref> which was previously shown to substantially improve sample quality. We reuse the distribution-based variant implemented via rejection sampling for GMMs from (Tschannen et al., 2024) without modification.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.2.1">RGB NOISE CURRICULUM DURING TRAINING</head><p>It is common to explicitly factorize data into semantically meaningful parts to improve image quality.</p><p>One approach is to model RGB pixels as sequences of increasing color depth and/or resolution <ref type="bibr" target="#b28">(Kolesnikov &amp; Lampert, 2017;</ref><ref type="bibr" target="#b36">Menick &amp; Kalchbrenner, 2019;</ref><ref type="bibr" target="#b40">Nash et al., 2021)</ref>. Similarly, adding noise to RGB pixels is closely related to reducing the color depth and effective resolution. This has led to the interpretation of diffusion models, where denoisers are trained at different noise levels according to a predefined noise schedule, as learning a hierarchical representation in pixel space induced by the noise schedule <ref type="bibr" target="#b26">(Kingma &amp; Gao, 2023;</ref><ref type="bibr" target="#b10">Dieleman, 2024)</ref>.</p><p>Building on this intuition, we alter the training procedure by introducing a "noise curriculum": additive Gaussian pixel noise during JetFormer training. The noise is strongest in the beginning of the training and decays towards zero. We use cosine decay schedule for the noise standard deviation.</p><p>In the beginning of the training, when strong (high-variance) noise is added to the image, JetFormer learns to model coarse image information (see Figure <ref type="figure" target="#fig_5">6b</ref>). As training progresses, the model gradually learns a finer level of detail, while "remembering" previously learned patterns. In the end of the training, JetFormer uses the correct distribution for training. Intuitively, this scheme prioritizes modeling of high-level image structure without sacrificing overall performance.</p><p>Importantly, unlike in diffusion, the noise curriculum merely acts as a data augmentation during training. The model is not conditioned on the noise magnitude and, at inference, an image is not gradually denoised, but generated autoregressively in the latent space of a normalizing flow.</p><p>For an integer-valued RGB image I, the noisy image is obtained as ⌊I + σ t N (0, I)⌋, where the noise scale σ t as a function of the training progresses t ∈ [0, 1] follows the cosine schedule σ t = σ 0 1+cos(tπ) 2</p><p>. The shape of the noise schedule is visualized in Figure <ref type="figure" target="#fig_2">3</ref>. </p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.3">JOINT GENERATIVE MODELING OF PIXELS AND TEXT</head><p>We explore JetFormer for multimodal generative modeling, where the model can perform both discriminative and generative tasks on all modalities, focusing on images and text. Sophisticated models of this class are trained on interleaved sequences of images and text <ref type="bibr" target="#b0">(Aghajanyan et al., 2022;</ref><ref type="bibr" target="#b25">Kim et al., 2023;</ref><ref type="bibr" target="#b1">Aghajanyan et al., 2023)</ref>, often with post-training refinement, which enables fewshot image-to-text (e.g. captioning) and text-to-image (e.g. image editing) capabilities. Here, we follow <ref type="bibr" target="#b25">(Kim et al., 2023;</ref><ref type="bibr" target="#b71">You et al., 2023)</ref> and consider image-text pairs from the web as a proxy for more complex, interleaved setups, and do not involve a post-training step. While conceptually simple, this allows us to explore vision-language understanding tasks such as captioning and VQA, as well as text-to-image generation. Extending the image generation approach discussed in the previous section to this setup is straight-forward: We simply extend the transformer backbone generating soft tokens to modeling language tokens produced by a standard language tokenizer with a separate prediction head and a softmax.</p><p>We train on sequences of both image tokens followed by text tokens, and vice versa, only applying a loss to the second part (modality) of the sequence. We use the respective negative log-likelihood, and a weight to balance the two. We observed that applying the loss to the full sequence leads to worse results, possibly because predicting an image prefix effectively means unconditionally modeling web images, which is very challenging. We expect this to change for interleaved sequences, which may provide a stronger conditioning signal.</p><p>For text-to-image generation, the text prefix acts as a conditioning, and image generation is performed as described in Section 3.1. For image-to-text generation the normalizing flow acts as an image encoder. The model uses the same soft token space for generation and understanding.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4">EXPERIMENTS</head><p>Architecture We rely on the simple, transformer-based design from <ref type="bibr" target="#b3">(Anonymous, 2024)</ref> for the normalizing flow model. This design uses affine coupling layers (predicting an element-wise scale and shift) consisting of spatial and channel-wise splitting functions to split the activations in two parts, and a stack ViT blocks <ref type="bibr" target="#b16">(Dosovitskiy et al., 2021)</ref> applied to half of the activations to infer the affine transform. Here, we only use channel-wise splitting as we found in preliminary experiments that spatial splitting did not improve modeling quality. We set the depth to 32 coupling blocks, each consisting of a stack of 4 or 6 ViT blocks of width 512, and with 8 attention heads. The (input and output) feature shape for this model is ( H p , W p , 3p 2 ) when feeding the full image, and ( H p , W p , d) when using a dense invertible map or PCA to reduce dimensionality prior to applying flow. For image size H = W = 256 and patch size p = 16 this amounts to 256×768, after flattening spatial dimensions and with dimensionality reduction to d = 128 to 256×128. Training recipe We train the latent decoder-only backbone on concatenated sequences of discrete text and soft tokens (flow latents) via teacher forcing for NLL according to the respective distribution of the tokens (categorical for text tokens and GMM for soft tokens). Whether the sequence is an image-text or text-image sequence is sampled at random for every example. Normalizing flow (or learnable invertible patch embedding) is trained along with the transformer-backbone end-to-end. This does not require any dedicated techniques thanks to the NLL for the GMM being differentiable both w.r.t. to the GMM parameters as well as the soft tokens/features it is evaluated w.r.t. When training for captioning with an image prefix (i.e. for image-text sequences, where normalizing flow serves as a vision encoder), we stop the gradient at the flow output during pretraining. We did not observe improved performance when passing the gradients.</p><p>We use the Adam optimizer with learning rate 10 -3 , decoupled weight decay of 10 -4 , β 2 parameter 0.95 and clip the gradient norms to 1.0. We set the batch size to 4k. We also apply dropout with probability 0.1 at the output of the self-attention and MLP blocks, which we found to improve image sample quality. For both class conditional image generation and text-to-image generation we drop the conditioning with 10% probablilty and replace it with a learned [NOLABEL] token for CFG. Unless explicitly stated, we apply the RGB noise schedule to the input images described in Section 3.1 with initial noise standard deviation σ 0 = 64 (for pixel values in the range [0, 255]). We decay to 0 for ImageNet setup and to 3 for multimodal setup. Inspired by the VAE-based GIVT, where for every example a latent is sampled from the VAE encoder (i.e. approximate posterior) which might have a regularizing effect, we add Gaussian noise with standard deviation 0.3 to the flow latents. We normalize the image NLL to bits per dimension as is common in the image generative modeling literature and apply a weight of 0.0025 to the text NLL such that the loss magnitude per token is roughly identical for both modalities.</p><p>Training data For training class-conditional image generation models we use ImageNet1k <ref type="bibr" target="#b52">(Russakovsky et al., 2015)</ref>. For multimodal generation we rely on the image-text pairs from WebLI data set <ref type="bibr">(Chen et al., 2023b)</ref>. In both cases, we resize the images so that the shorter side is 256 pixels while preserving the aspect ratio and extract a 256×256 central crop. Besides the RGB noise described earlier we do not apply any augmentation, except for random left-right flipping on Im- Evaluations and metrics Following the diffusion literature, we use the ADM FID evaluation suite <ref type="bibr" target="#b9">(Dhariwal &amp; Nichol, 2021)</ref> (with 50k reference samples) and precision/recall <ref type="bibr" target="#b54">(Sajjadi et al., 2018)</ref> to assess image sample quality on ImageNet1k. For text-to-image, we adopt the common MS-COCO FID-30k, generating images for captions from 30k randomly sampled COCO validation images and evaluating FID against reference statistics from the full COCO validation set. We report this metric both zero-shot and after fine-tuning on the COCO training set. As image understanding tasks we consider ImageNet zero-shot classification and fine-tune for image captioning (reporting CIDEr score) and visual question answering (VQA, measuring VQAv2 accuracy).</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4.1">CLASS-CONDITIONAL IMAGE GENERATION</head><p>Table <ref type="table" target="#tab_2">1</ref> shows the sample quality of JetFormer trained on ImageNet with image resolution of 256×256 along with some baselines from the literature. Model samples are show in Figure <ref type="figure" target="#fig_1">2</ref> and Appendix F. Despite being an explicit NLL model and not using advanced image encoders, our Jet-Former model is competitive with those baselines. Interestingly, JetFormer has high recall of 0.56. We hypothesize that this is a consequence of our model being an explicit log-likelihood model and thus not suffering from the mode collapse.</p><p>Table <ref type="table" target="#tab_3">2</ref> shows ablations of key design choices of JetFormer:</p><p>-Removing the normalizing flow results in a catastrophic loss in performance. This confirms our intuition that re-encoding image pixels with a flow model is essential. -Omitting the noise curriculum also results in much worse results.</p><p>-We also confirm that not factoring out dimensions after the flow model leads to quality loss.</p><p>-First training the normalizing flow to minimize NLL w.r.t. a Gaussian prior, and then training the autoregressive transformer on the latent representation of the frozen flow model leads to lower sample quality than end-to-end training. -Factoring out dimensions with learnable linear mapping before the flow leads to better results, but underperforms post-flow factoring out. -Reducing the number of GMM components from 1024 to 1 for the soft-token loss result in a relatively mild performance drop and a significant drop in recall, indicating more mixtures enable a better coverage of the distribution. -Finally, doing class-conditioning with a single class token (instead of 16 tokens) leads to slight performance drop, likely due to the weaker conditioning signal.</p><p>Interestingly, we observe that modeling images after the PCA transform leads to somewhat worse results. However, in the presence of PCA, the noise curriculum becomes less important. It highlights  <ref type="bibr" target="#b11">(Ding et al., 2021)</ref> VQ-VAE 4B 27.10 CogView2 <ref type="bibr" target="#b12">(Ding et al., 2022)</ref> VQ-VAE 6B 24.00 17.50 ARGVLT (T&amp;I) <ref type="bibr" target="#b25">(Kim et al., 2023)</ref> VQ-VAE 0.45B 16.93 MAGVLT (T&amp;I) <ref type="bibr" target="#b25">(Kim et al., 2023)</ref> VQ-VAE 0.45B 12.08 Make-A-Scene <ref type="bibr">(Gafni et al.,</ref> 2022) VQ-VAE 4B 11.84 7.55 LDM-KL-8-G (Rombach et al., 2022) VAE 1.45B 12.63 GLIDE (Nichol et al., 2022) Super-res. 6B 12.24 DALL-E-2 (Ramesh et al., 2022) Super-res. 5.2B 10.39 JetFormer-L (T&amp;I) -2.75B 20.86 13.70 3.86 JetFormer-L -2.75B 18.63 13.07 3.85</p><p>the importance of prioritizing the important high-level information in images, if visual quality is the end goal. It also shows that manual preprocessing may reduce the necessity for various modeling tricks, yet it also shows that full end-to-end modeling prevails when done right.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4.2">EFFECT OF THE NOISE CURRICULUM</head><p>We have experimented with different levels of initial noise, and generally find that for 256×256 images the initial noise with standard deviation of 64 annealed to 0 during the training to be the best for the ImageNet setup. The initial noise levels of 128, 64, 32 and 0 result in FID 8.62, 7.84, 8.59 and 44.71 respectively. For the multimodal setup we observe that annealing the noise standard deviation to 3 (thus leaving a small level of noise) improves FID. More analysis of the interplay between NLL and FID is presented in Appendix C.</p><p>In Figure <ref type="figure" target="#fig_2">3</ref> we demonstrate the effect of noise curriculum with the initial standard deviation of 64. First, we observe that, in comparison to the noise-free baseline, the final NLL is not affected dramatically. However, as would be expected, initial stages of training have much worse NLLs due to strong noise. Second, we demonstrate that FID drastically improves with the noise curriculum being enabled. This is also evident by the final samples from the noise-free model and model with noise. The latter has much more pronounced emphasis on the high-level image structure.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4.3">MULTIMODAL GENERATION AND UNDERSTANDING</head><p>Figure <ref type="figure" target="#fig_3">4</ref> shows multimodal JetFormer models of different sizes, trained for text-to-image generation only (T2I) and both T2I and image-to-text generation (T&amp;I). Zero-shot samples are show in Appendix E. In both cases, increasing the model size improves quality. Training models for mixed T&amp;I generation leads to a reduction in T2I generation quality, but also equips the model with visionlanguage understanding capabilities.</p><p>Tables <ref type="table" target="#tab_4">3</ref> and<ref type="table" target="#tab_6">4</ref> compare T2I and T&amp;I JetFormer models with models from the literature. Similar prior work trained in generative fashion on image-text pairs relying on pretrained VQ-VAE (ARGVLT, MAGVLT <ref type="bibr" target="#b25">(Kim et al., 2023)</ref>) achieves better performance on T2I generation, but lags in understanding performance, which highlights the benefits of having access to unquantized end-toend learned features for understanding. JetFormer also approaches the understanding performance of image-text models pretrained for understanding such as CLIP and CapPa, although these models have a significantly smaller size.</p><p>Finally, we present a T&amp;I baseline using a pretrained, frozen VAE instead of an end-to-end trained normlizing flow in Appendix C and find that JetFormer clearly outperforms this baseline in T2I generation and all I2T tasks.  </p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="5">CONCLUSION</head><p>In this paper we introduce JetFormer, a novel class of generative models that combines normalizing flows and autoregressive models with soft tokens. To the best of our knowledge, it is the first image model, which is capable to synthesize high-resolutions images and provide an explicit (and competitive) NLL bounds for the raw images. JetFormer is a fully end-to-end trainable model (with no components pretrained ahead of time), which means that it can be fully tailored towards the task at hand, without being limited by the external and frozen components. Being able to compute NLL is also an important feature of our model. NLL is a tangible score closely related to compression capabilities, and can be used to compare various generative models across different modeling classes or for hill-climbing. Also, by measuring NLL score one can ensure the absence of the mode collapse, because mode collapse will lead to deterioration NLL on the hold-out data.</p><p>We note that JetFormer in its current form also has some limitations. The visual quality of its samples lags behind state-of-the-art diffusion models that leverage pretrained latent representations. Additionally, the full end-to-end nature of JetFormer also comes with increased computational requirements. However, given JetFormer's simple design, we believe that it can be scaled up well so that the benefits of end-to-end training can come to full fruition.</p><p>Reproducibility Statement We provide detailed information about the training recipe, the architecture, hyper-parameters and the training data in Section 4 and Appendix A.</p><p>Ethics Statement This paper describes a system for understanding and generation of image-text data, with focus on characterizing and exploring its performance on academic data sets. It fits into the broader class of large multimodal models trained on data from the web, and the same ethical implications as for those prior works apply here. In particular, when releasing or deploying such models publicly, extensive measures to de-biasing the data should be taken, and models should be safety-tuned and red-teamed prior to release. Content-filters can be added to the inference pipeline to further improve safety. We refer to the corresponding papers for a more in-depth discussion, for example <ref type="bibr" target="#b46">(Radford et al., 2021;</ref><ref type="bibr">Chen et al., 2023a;</ref><ref type="bibr" target="#b44">Po et al., 2024)</ref>. Intuitively, factoring out dimensions via W rather than at the flow output limits the complexity and hence potentially leads to worse results (see Table <ref type="table" target="#tab_3">2</ref>).</p><p>When compting W via PCA to obtain the bottom two rows in Table <ref type="table" target="#tab_3">2</ref>, we sample 4 000 images from the ImageNet training set, split them into patches, and compute PCA using the built-in implementation from scikit-learn without whitening.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>C ADDITIONAL ABLATIONS</head></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>VAE baseline</head><p>We train a VAE following the design of VQGAN <ref type="bibr" target="#b51">(Rombach et al., 2022)</ref> producing a sequence of 256 128-dimensional tokens like the normalizing flow in JetFormer. We remove the GAN and perceptual losses to ensure a fair comparison with JetFormer (which solely maximizes the data likelihood, without relying on GAN or perceptual losses). We then train the JetFormer-B decoder-only model on this VAE representation, following the JetFormer-B T&amp;I training recipe. The results in the Table <ref type="table" target="#tab_8">7</ref> below show that JetFormer outperforms the VAE baseline by a solid margin (in particular in T2I generation).  JetFormer is pretrained with a curriculum decaying the noise scale from 64 to 3 and the noise scale is then decayed during fine-tuning from 3 to one of {0, 1, 3}. We observe that decaying the noise scale to 0 leads to the best NLL but a worst FID. The two model sizes have similar NLL at noise scale 3 but different FIDs, possibly because NLL is bounded by the noise scale but larger model scale helps to generalize better.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>D IMAGE AND LATENT MANIPULATION</head><p>In Figure <ref type="figure" target="#fig_5">6</ref> we visualize the effect of different image or latent manipulations. Note that these images are not indicative of the final image generation quality and their purpose is to illustrate certain qualitative properties. We use four images: a full 256×256 view of a plane from ImageNet <ref type="bibr" target="#b52">(Russakovsky et al., 2015)</ref>, a 64×64 crop of an image of a bird from ImageNet, a 64×64 crop of a scene from MS-COCO <ref type="bibr" target="#b32">(Lin et al., 2014)</ref> to analyze out-of-distribution generalization (vs. ImageNet), and a 128×128 crop of an image with text from TextVQA <ref type="bibr" target="#b56">(Singh et al., 2019)</ref>, to visualize the effect of a significantly different domain (vs. natural images). On those images we show:   </p></div><figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_0"><head>Figure 1 :</head><label>1</label><figDesc>Figure 1: Visualization of JetFormer training with teacher-forcing. The ground truth consists of text tokens and images. The images are converted into soft tokens via a normalizing flow. The sequence of tokens is processed by an auto-regressive transformer and its outputs parameterize either a discrete distribution or a Gaussian mixture depending whether the target is a discrete or a soft token.</figDesc><graphic coords="2,401.47,222.76,60.49,60.49" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_1"><head>Figure 2 :</head><label>2</label><figDesc>Figure 2: Selected class-conditional 256×256 samples from the JetFormer-L trained on Imagenet. The samples are produced with the CFG sampler, where CFG strength is equal to 4.0.</figDesc><graphic coords="3,108.07,147.83,77.28,77.28" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_2"><head>Figure 3 :</head><label>3</label><figDesc>Figure 3: Training with noise curriculum on RGB input images. The left plot demonstrates negative log-likelihood progression (solid lines) and the noise strength schedule (dashed lines). Importantly, both NLL curves land in a very similar points, despite visual quality measured by FID (middle plot) and the typical samples (right plot) being very different: we observe that noise curriculum guides the JetFormer towards modeling high-level image structure.</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_3"><head>Figure 4 :</head><label>4</label><figDesc>Figure 4: Zero-shot image sample quality, zero-shot ImageNet classification accuracy (by scoring class labels, without prompts), and captioning and VQA performance as a function of model size for JetFormer variants. Increasing the model size improves all the metrics. T&amp;I models generally perform worse than unidirectional models which are trained either for T2I or I2T generation.</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_4"><head>Figure 5 :</head><label>5</label><figDesc>Figure5: FID and NLL results obtained when fine-tuning JetFormer for T2I generation on COCO with different values for the final noise scale. JetFormer is pretrained with a curriculum decaying the noise scale from 64 to 3 and the noise scale is then decayed during fine-tuning from 3 to one of {0, 1, 3}. We observe that decaying the noise scale to 0 leads to the best NLL but a worst FID. The two model sizes have similar NLL at noise scale 3 but different FIDs, possibly because NLL is bounded by the noise scale but larger model scale helps to generalize better.</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_5"><head>Figure 6 :</head><label>6</label><figDesc>Figure 6: Visualization of image and latent manipulations. Note these images are not indicative of the final image generation quality. Best viewed in digital format.</figDesc><graphic coords="19,109.69,425.28,63.36,253.44" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_6"><head>Figure 7 :</head><label>7</label><figDesc>Figure 7: Selected zero-shot samples from JetFormer-L (T2I) for captions from MS-COCO.</figDesc><graphic coords="20,140.11,459.27,94.93,94.93" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_7"><head>Figure 9 :</head><label>9</label><figDesc>Figure 9: Random, non-cherry picked samples from JetFormer-L for random ImageNet classes.</figDesc><graphic coords="22,108.00,118.78,396.01,553.24" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_2"><head>Table 1 :</head><label>1</label><figDesc>Comparison of JetFormer trained for 500 epochs on ImageNet256 with baselines from the literature. For large enough scale JetFormer approaches models without components pretrained in an extra step.</figDesc><table><row><cell></cell><cell cols="3">extra step FID Precision Recall NLL</cell></row><row><cell>BigGAN-deep (Brock et al., 2018)</cell><cell>-6.95</cell><cell>0.87</cell><cell>0.28</cell></row><row><cell>ADM-G (Dhariwal &amp; Nichol, 2021)</cell><cell>-4.59</cell><cell>0.82</cell><cell>0.52</cell></row><row><cell>LDM-4-G (Rombach et al., 2022)</cell><cell>VAE 3.60</cell><cell>0.87</cell><cell>0.48</cell></row><row><cell>VQGAN (Esser et al., 2020)</cell><cell>VQ-VAE 5.20</cell><cell></cell><cell></cell></row><row><cell>ViT-VQGAN (Yu et al., 2022a)</cell><cell>VQ-VAE 3.04</cell><cell></cell><cell></cell></row><row><cell>GIVT-Causal (Tschannen et al., 2024)</cell><cell>VAE 3.35</cell><cell>0.84</cell><cell>0.53</cell></row><row><cell>JetFormer-B</cell><cell>-7.25</cell><cell>0.72</cell><cell>0.44 3.06</cell></row><row><cell>JetFormer-L</cell><cell>-6.64</cell><cell>0.69</cell><cell>0.56 3.05</cell></row></table><note><p>For the latent autoregressive decoder-only backbone, we rely on the Gemma architecture<ref type="bibr" target="#b20">(Gemma Team et al., 2024)</ref></p><p>. We consider 3 different model shapes amounting to 350M, 750M and 1.3B parameters which are largely inspired by previous decoder-only models for image generation<ref type="bibr" target="#b17">(Esser et al., 2020)</ref> </p><p>(see Appendix A). For the GMM prediction head, unless explicitly noted, we set the number of mixtures k = 1024, use multivariate Gaussians of dimension d = 128 with diagonal covariance. For text we use a sentencepiece tokenizer with vocabulary size 32k trained on the English portion of the C4 corpus made available by<ref type="bibr" target="#b47">Raffel et al. (2020)</ref></p><p>. We set the maximum number of text tokens to 64, but do not explicitly model padding tokens (i.e. during training we mask out attention elements corresponding to padding tokens and adapt the RoPE positions to skip them). When training for class-conditional image generation, we use a prefix of 16 learned tokens per class (instead of a single one), as we observed that this improves sample quality.</p></note></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_3"><head>Table 2 :</head><label>2</label><figDesc>Summary of the main JetFormer (trained for 100 epochs) ablations performed on classconditional ImageNet256 generation. We demonstrate relative importance of various components and highlight the interesting interplay between PCA preprocessing and the noise curriculum.On ImageNet1k, we train for 100 epochs in ablations, and 500 epochs otherwise. On WebLI, we train for 1B examples seen per modality, so 1B examples for text-to-image only models, and 2B total for models that also support image-to-text (understanding) tasks.</figDesc><table><row><cell>FID Precision Recall NLL</cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_4"><head>Table 3 :</head><label>3</label><figDesc>Comparison with baselines from the literature for text-to-image generation (0-shot COCO FID-30k, 256×256). We included autoregressive (first group) and diffusion models (second group) which use raw image-text data (without e.g. re-captioning) and do not rely on pretrained text encoders. Models with image understanding capabilities are marked with T&amp;I. FID (ft.) is obtained when fine-tuning on the COCO training set, and NLL is measured on the COCO validation set after fine-tuning. JetFormer is the only method which does not rely on any extra step.</figDesc><table><row><cell></cell><cell cols="2">extra step #param.</cell><cell>FID FID (ft.) NLL (ft.)</cell></row><row><cell>DALL-E (Ramesh et al., 2021)</cell><cell>VQ-VAE</cell><cell cols="2">12B 27.50</cell></row><row><cell>CogView</cell><cell></cell><cell></cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_6"><head>Table 4 :</head><label>4</label><figDesc>Comparison with baselines pretrained on raw image-text data and fine-tuned for image captioning (COCO captions; CIDEr) and VQA (VQAv2; test-dev acc.). Models marked with T&amp;I were jointly pretrained for captioning and T2I generation. * The numbers are from(Tschannen et al.,  2023)  for models pretrained on 900M image-text pairs, which most closely matches our setup.</figDesc><table><row><cell>extra step COCO cap. VQAv2</cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_7"><head>Table 6 :</head><label>6</label><figDesc>Hyper-parameter details for fine-tuning tasks.) log | det W |,where p N is the Gaussian distribution. xW T is decomposed into two slices as [x, x] = xW T of shapes HW/p 2 × d and HW/p 2 × (3p 2 -d), respectively, where the original image has shape H × W × 3 and is split it into p × p patches which are then flattened.</figDesc><table><row><cell>Task</cell><cell cols="2">Model Size Epochs</cell><cell cols="5">Batch Learning Weight Dropout Sampler size rate decay</cell></row><row><cell>COCO (FID-30k)</cell><cell>B/M/L</cell><cell>10</cell><cell>256</cell><cell>1e-4</cell><cell>1e-5</cell><cell>0.1</cell><cell>CFG</cell></row><row><cell>VQAv2</cell><cell>B/M/L</cell><cell>10</cell><cell>128</cell><cell>3e-5</cell><cell>3e-6</cell><cell>0.0</cell><cell>Greedy</cell></row><row><cell>COCO caption</cell><cell>B/M</cell><cell>10</cell><cell>128</cell><cell>3e-5</cell><cell>3e-6</cell><cell>0.0</cell><cell>Greedy</cell></row><row><cell>COCO caption</cell><cell>L</cell><cell>5</cell><cell>256</cell><cell>3e-5</cell><cell>3e-6</cell><cell>0.0</cell><cell>Greedy</cell></row><row><cell cols="3">For this variant, the loss can be written as:</cell><cell></cell><cell></cell><cell></cell><cell></cell><cell></cell></row><row><cell cols="4">L(x) = log p(f (x)) + log p N (x) + log det</cell><cell>∂f (x) ∂ xT</cell><cell>+ (HW/p 2</cell><cell></cell><cell></cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_8"><head>Table 7 :</head><label>7</label><figDesc>Comparison of JetFormer-B trained for T&amp;I with a 2-stage VAE-based variant.Effect of noise curriculum on NLL Intuitively, the noise curriculum biases the training process towards those high-likelihood solutions with high perceptual quality, at the expense of a slight increase in NLL (see Sec. 3.2.1 for more discussion). Table8shows that longer training with noise curriculum eliminates the gap in NLL compared to training without curriculum.</figDesc><table><row><cell>COCO-FID30k INet 0-shot COCO Cap VQAv2</cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_9"><head>Table 8 :</head><label>8</label><figDesc>Sample quality and NLL as a function of noise curriculum and training duration.</figDesc><table><row><cell cols="4">noise curr. #epochs FID-50k NLL</cell></row><row><cell>No</cell><cell>100</cell><cell>44.71</cell><cell>3.05</cell></row><row><cell>Yes</cell><cell>100</cell><cell>7.84</cell><cell>3.14</cell></row><row><cell>Yes</cell><cell>500</cell><cell>7.25</cell><cell>3.06</cell></row><row><cell>Yes</cell><cell>1000</cell><cell>7.10</cell><cell>3.04</cell></row></table></figure>
+		</body>
+		<back>
+
+			<div type="acknowledgement">
+<div><head>ACKNOWLEDGEMENTS</head><p>We thank <rs type="person">Lucas Beyer</rs> for a detailed review and feedback on the final manuscript. We further thank <rs type="person">Joan Puigcerver</rs> for timely infrastructure contributions.</p></div>
+			</div>			<div type="annex">
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>APPENDIX -SUPPLEMENTARY MATERIAL A ARCHITECTURES AND HYPERPARAMETERS</head><p>Table <ref type="table">5</ref> shows the shapes of the autoregressive transformer and normalizing flow components for different JetFormer variants. One can see that the dense layer predicting the GMM parameters are relatively large. To save memory, we store this layer in the bfloat16 format (instead of float32 as the other parameters) which does not impact the quality. Also note that at inference time applying this layer can be greatly sped up by first sampling the mixture and then only inferring the mean and covariance of that mixture.</p><p>To implement the normalizing flow we use a stack affine coupling blocks <ref type="bibr">(Dinh et al., 2016, Eqn. 7, 8)</ref>. For each block i the relation between input sequence y i and output</p><p>Here, ȳi and ỹi are obtained by splitting y i into equally-shaped halves along the channel dimension according to a randomly initialized partition (and y i+1 results from merging ȳi+1 and ỹi+1 according to this partition). The scale a i and shift b i are inferred by two separate heads from a shared ViT g i .</p><p>The normalizing flow component has about 450M to 650M parameters, depending of the variant. This is more than typical CNN-based (VQ-)VAEs for image generation in the literature <ref type="bibr" target="#b17">(Esser et al., 2020;</ref><ref type="bibr" target="#b51">Rombach et al., 2022)</ref>, but comparable to common ViT-based VQ-VAEs <ref type="bibr">(Yu et al., 2022a;</ref><ref type="bibr">c)</ref>.</p><p>Table <ref type="table">6</ref> shows the hyper-parameters used to fine-tune JetFormer. Overall we observed dropout to have a significant impact on the image sample quality. When reporting fine-tuning-based metrics we report the median of 10 runs, except in VQAv2 where we report test-dev accuracy from the evaluation server. Recall that for this variant, before feeding x to the flow model, we reshape it into a sequence of flattened patches and apply a learnable, invertible linear map W along the channel dimension.</p></div>			</div>
+			<div type="references">
+
+				<listBibl>
+
+<biblStruct xml:id="b0">
+	<analytic>
+		<author>
+			<persName><forename type="first">Armen</forename><surname>Aghajanyan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Po-Yao</forename><surname>Huang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Candace</forename><surname>Ross</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Vladimir</forename><surname>Karpukhin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hu</forename><surname>Xu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Naman</forename><surname>Goyal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dmytro</forename><surname>Okhonko</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mandar</forename><surname>Joshi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Gargi</forename><surname>Ghosh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mike</forename><surname>Lewis</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Luke</forename><surname>Zettlemoyer</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2201.07520</idno>
+	</analytic>
+	<monogr>
+		<title level="m">A causal masked multimodal model of the internet</title>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+			<biblScope unit="volume">3</biblScope>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b1">
+	<analytic>
+		<title level="a" type="main">Scaling laws for generative mixed-modal language models</title>
+		<author>
+			<persName><forename type="first">Armen</forename><surname>Aghajanyan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Lili</forename><surname>Yu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alexis</forename><surname>Conneau</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wei-Ning</forename><surname>Hsu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Karen</forename><surname>Hambardzumyan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Susan</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Stephen</forename><surname>Roller</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Naman</forename><surname>Goyal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Omer</forename><surname>Levy</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Luke</forename><surname>Zettlemoyer</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">ICML</title>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b2">
+	<analytic>
+		<title level="a" type="main">Flamingo: A visual language model for few-shot learning</title>
+		<author>
+			<persName><forename type="first">Jean-Baptiste</forename><surname>Alayrac</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jeff</forename><surname>Donahue</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Pauline</forename><surname>Luc</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Antoine</forename><surname>Miech</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Iain</forename><surname>Barr</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yana</forename><surname>Hasson</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Karel</forename><surname>Lenc</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Arthur</forename><surname>Mensch</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Katie</forename><surname>Millican</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Malcolm</forename><surname>Reynolds</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Roman</forename><surname>Ring</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Eliza</forename><surname>Rutherford</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Serkan</forename><surname>Cabi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tengda</forename><surname>Han</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhitao</forename><surname>Gong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sina</forename><surname>Samangooei</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Marianne</forename><surname>Monteiro</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jacob</forename><surname>Menick</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sebastian</forename><surname>Borgeaud</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Andrew</forename><surname>Brock</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Aida</forename><surname>Nematzadeh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sahand</forename><surname>Sharifzadeh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mikolaj</forename><surname>Binkowski</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ricardo</forename><surname>Barreira</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Oriol</forename><surname>Vinyals</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Andrew</forename><surname>Zisserman</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Karen</forename><surname>Simonyan</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">NeurIPS</title>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b3">
+	<monogr>
+		<title level="m" type="main">Jet: A modern transformer-based normalizing flow</title>
+		<author>
+			<persName><surname>Anonymous</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+	<note>In preparation</note>
+</biblStruct>
+
+<biblStruct xml:id="b4">
+	<monogr>
+		<author>
+			<persName><forename type="first">Lucas</forename><surname>Beyer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Andreas</forename><surname>Steiner</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">André Susano</forename><surname>Pinto</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alexander</forename><surname>Kolesnikov</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xiao</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Daniel</forename><surname>Salz</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Maxim</forename><surname>Neumann</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ibrahim</forename><surname>Alabdulmohsin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Michael</forename><surname>Tschannen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Emanuele</forename><surname>Bugliarello</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2407.07726</idno>
+		<title level="m">A versatile 3B VLM for transfer</title>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b5">
+	<analytic>
+		<title level="a" type="main">Large scale GAN training for high fidelity natural image synthesis</title>
+		<author>
+			<persName><forename type="first">Andrew</forename><surname>Brock</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jeff</forename><surname>Donahue</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Karen</forename><surname>Simonyan</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">ICLR</title>
+		<imprint>
+			<date type="published" when="2018">2018</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b6">
+	<analytic>
+		<title level="a" type="main">Generative pretraining from pixels</title>
+		<author>
+			<persName><forename type="first">Mark</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alec</forename><surname>Radford</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Rewon</forename><surname>Child</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jeffrey</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Heewoo</forename><surname>Jun</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">David</forename><surname>Luan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ilya</forename><surname>Sutskever</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">ICML</title>
+		<imprint>
+			<date type="published" when="2020">2020</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b7">
+	<monogr>
+		<author>
+			<persName><forename type="first">Xi</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Josip</forename><surname>Djolonga</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Piotr</forename><surname>Padlewski</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Basil</forename><surname>Mustafa</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Soravit</forename><surname>Changpinyo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jialin</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Carlos</forename><forename type="middle">Riquelme</forename><surname>Ruiz</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sebastian</forename><surname>Goodman</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xiao</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yi</forename><surname>Tay</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Siamak</forename><surname>Shakeri</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mostafa</forename><surname>Dehghani</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Daniel</forename><surname>Salz</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mario</forename><surname>Lucic</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Michael</forename><surname>Tschannen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Arsha</forename><surname>Nagrani</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hexiang</forename><surname>Hu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mandar</forename><surname>Joshi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Bo</forename><surname>Pang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ceslee</forename><surname>Montgomery</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Paulina</forename><surname>Pietrzyk</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Marvin</forename><surname>Ritter</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Matthias</forename><surname>Piergiovanni</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Filip</forename><surname>Minderer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Austin</forename><surname>Pavetic</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Gang</forename><surname>Waters</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ibrahim</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Lucas</forename><surname>Alabdulmohsin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Julien</forename><surname>Beyer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kenton</forename><surname>Amelot</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Andreas</forename><forename type="middle">Peter</forename><surname>Lee</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yang</forename><surname>Steiner</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Li</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2305.18565</idno>
+		<title level="m">On scaling up a multilingual vision and language model</title>
+		<editor>
+			<persName><forename type="first">Daniel</forename><surname>Keysers</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Anurag</forename><surname>Arnab</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Yuanzhong</forename><surname>Xu</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Keran</forename><surname>Rong</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Alexander</forename><surname>Kolesnikov</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Mojtaba</forename><surname>Seyedhosseini</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Anelia</forename><surname>Angelova</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Xiaohua</forename><surname>Zhai</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Neil</forename><surname>Houlsby</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Radu</forename><surname>Soricut</surname></persName>
+		</editor>
+		<meeting><address><addrLine>PaLI-X</addrLine></address></meeting>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b8">
+	<analytic>
+		<title level="a" type="main">PaLI: A jointly-scaled multilingual language-image model</title>
+		<author>
+			<persName><forename type="first">Xi</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xiao</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Soravit</forename><surname>Changpinyo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Piotr</forename><surname>Piergiovanni</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Daniel</forename><surname>Padlewski</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sebastian</forename><surname>Salz</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Adam</forename><surname>Goodman</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Basil</forename><surname>Grycner</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Lucas</forename><surname>Mustafa</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Beyer</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">ICLR</title>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b9">
+	<analytic>
+		<title level="a" type="main">Diffusion models beat GANs on image synthesis</title>
+		<author>
+			<persName><forename type="first">Prafulla</forename><surname>Dhariwal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alexander</forename><surname>Nichol</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">NeurIPS</title>
+		<imprint>
+			<date type="published" when="2021">2021</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b10">
+	<analytic>
+		<title level="a" type="main">Diffusion is spectral autoregression</title>
+		<author>
+			<persName><forename type="first">Sander</forename><surname>Dieleman</surname></persName>
+		</author>
+		<ptr target="https://sander.ai/2024/09/02/spectral-autoregression.html" />
+	</analytic>
+	<monogr>
+		<title level="m">Blog post</title>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b11">
+	<monogr>
+		<title level="m" type="main">Cogview: Mastering text-to-image generation via transformers</title>
+		<author>
+			<persName><forename type="first">Ming</forename><surname>Ding</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhuoyi</forename><surname>Yang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wenyi</forename><surname>Hong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wendi</forename><surname>Zheng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chang</forename><surname>Zhou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Da</forename><surname>Yin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Junyang</forename><surname>Lin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xu</forename><surname>Zou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhou</forename><surname>Shao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hongxia</forename><surname>Yang</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2021">2021</date>
+			<publisher>NeurIPS</publisher>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b12">
+	<analytic>
+		<title level="a" type="main">Cogview2: Faster and better text-to-image generation via hierarchical transformers</title>
+		<author>
+			<persName><forename type="first">Ming</forename><surname>Ding</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wendi</forename><surname>Zheng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wenyi</forename><surname>Hong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jie</forename><surname>Tang</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">NeurIPS</title>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b13">
+	<monogr>
+		<title level="m" type="main">NICE: Non-linear independent components estimation</title>
+		<author>
+			<persName><forename type="first">Laurent</forename><surname>Dinh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">David</forename><surname>Krueger</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yoshua</forename><surname>Bengio</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:1410.8516</idno>
+		<imprint>
+			<date type="published" when="2014">2014</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b14">
+	<monogr>
+		<title level="m" type="main">Density estimation using real NVP</title>
+		<author>
+			<persName><forename type="first">Laurent</forename><surname>Dinh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jascha</forename><surname>Sohl-Dickstein</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Samy</forename><surname>Bengio</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:1605.08803</idno>
+		<imprint>
+			<date type="published" when="2016">2016</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b15">
+	<analytic>
+		<title level="a" type="main">Dreamllm: Synergistic multimodal comprehension and creation</title>
+		<author>
+			<persName><forename type="first">Runpei</forename><surname>Dong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chunrui</forename><surname>Han</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yuang</forename><surname>Peng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zekun</forename><surname>Qi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zheng</forename><surname>Ge</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jinrong</forename><surname>Yang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Liang</forename><surname>Zhao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jianjian</forename><surname>Sun</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hongyu</forename><surname>Zhou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Haoran</forename><surname>Wei</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xiangwen</forename><surname>Kong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xiangyu</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kaisheng</forename><surname>Ma</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Li</forename><surname>Yi</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">ICLR</title>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b16">
+	<monogr>
+		<title level="m" type="main">An image is worth 16x16 words: Transformers for image recognition at scale</title>
+		<author>
+			<persName><forename type="first">Alexey</forename><surname>Dosovitskiy</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Lucas</forename><surname>Beyer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alexander</forename><surname>Kolesnikov</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dirk</forename><surname>Weissenborn</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xiaohua</forename><surname>Zhai</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Thomas</forename><surname>Unterthiner</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mostafa</forename><surname>Dehghani</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Matthias</forename><surname>Minderer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Georg</forename><surname>Heigold</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sylvain</forename><surname>Gelly</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jakob</forename><surname>Uszkoreit</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Neil</forename><surname>Houlsby</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2021">2021</date>
+			<publisher>ICLR</publisher>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b17">
+	<analytic>
+		<title level="a" type="main">Taming transformers for high-resolution image synthesis</title>
+		<author>
+			<persName><forename type="first">Patrick</forename><surname>Esser</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Robin</forename><surname>Rombach</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Björn</forename><surname>Ommer</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">CVPR</title>
+		<imprint>
+			<date type="published" when="2020">2020</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b18">
+	<analytic>
+		<title level="a" type="main">Makea-scene: Scene-based text-to-image generation with human priors</title>
+		<author>
+			<persName><forename type="first">Oran</forename><surname>Gafni</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Adam</forename><surname>Polyak</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Oron</forename><surname>Ashual</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shelly</forename><surname>Sheynin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Devi</forename><surname>Parikh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yaniv</forename><surname>Taigman</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">ECCV</title>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b19">
+	<monogr>
+		<title level="m" type="main">Seed-x: Multimodal models with unified multi-granularity comprehension and generation</title>
+		<author>
+			<persName><forename type="first">Yuying</forename><surname>Ge</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sijie</forename><surname>Zhao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jinguo</forename><surname>Zhu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yixiao</forename><surname>Ge</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kun</forename><surname>Yi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Lin</forename><surname>Song</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chen</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xiaohan</forename><surname>Ding</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ying</forename><surname>Shan</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2404.14396</idno>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b20">
+	<monogr>
+		<author>
+			<persName><forename type="first">Gemma</forename><surname>Team</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Thomas</forename><surname>Mesnard</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Cassidy</forename><surname>Hardin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Robert</forename><surname>Dadashi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Surya</forename><surname>Bhupatiraju</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shreya</forename><surname>Pathak</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Laurent</forename><surname>Sifre</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Morgane</forename><surname>Rivière</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mihir</forename><surname>Sanjay Kale</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Juliette</forename><surname>Love</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2403.08295</idno>
+		<title level="m">Open models based on gemini research and technology</title>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b21">
+	<monogr>
+		<author>
+			<persName><forename type="first">Jonathan</forename><surname>Ho</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tim</forename><surname>Salimans</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2207.12598</idno>
+		<title level="m">Classifier-free diffusion guidance</title>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b22">
+	<analytic>
+		<title level="a" type="main">Flow++: Improving flowbased generative models with variational dequantization and architecture design</title>
+		<author>
+			<persName><forename type="first">Jonathan</forename><surname>Ho</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xi</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Aravind</forename><surname>Srinivas</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yan</forename><surname>Duan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Pieter</forename><surname>Abbeel</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">ICML</title>
+		<imprint>
+			<date type="published" when="2019">2019</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b23">
+	<monogr>
+		<title level="m" type="main">Language is not all you need: Aligning perception with language models</title>
+		<author>
+			<persName><forename type="first">Shaohan</forename><surname>Huang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Li</forename><surname>Dong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wenhui</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yaru</forename><surname>Hao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Saksham</forename><surname>Singhal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shuming</forename><surname>Ma</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tengchao</forename><surname>Lv</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Lei</forename><surname>Cui</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Owais</forename><surname>Khan Mohammed</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Qiang</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kriti</forename><surname>Aggarwal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zewen</forename><surname>Chi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Johan</forename><surname>Bjorck</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Vishrav</forename><surname>Chaudhary</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Subhojit</forename><surname>Som</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xia</forename><surname>Song</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Furu</forename><surname>Wei</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2302.14045</idno>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b24">
+	<analytic>
+		<title level="a" type="main">Scaling up visual and vision-language representation learning with noisy text supervision</title>
+		<author>
+			<persName><forename type="first">Chao</forename><surname>Jia</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yinfei</forename><surname>Yang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ye</forename><surname>Xia</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yi-Ting</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zarana</forename><surname>Parekh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hieu</forename><surname>Pham</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Quoc</forename><surname>Le</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yun-Hsuan</forename><surname>Sung</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhen</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tom</forename><surname>Duerig</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">ICML</title>
+		<imprint>
+			<date type="published" when="2021">2021</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b25">
+	<analytic>
+		<title level="a" type="main">MAGVLT: Masked generative vision-and-language transformer</title>
+		<author>
+			<persName><forename type="first">Sungwoong</forename><surname>Kim</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Daejin</forename><surname>Jo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Donghoon</forename><surname>Lee</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jongmin</forename><surname>Kim</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">CVPR</title>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b26">
+	<analytic>
+		<title level="a" type="main">Understanding diffusion objectives as the ELBO with simple data augmentation</title>
+		<author>
+			<persName><forename type="first">Diederik</forename><surname>Kingma</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ruiqi</forename><surname>Gao</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">NeurIPS</title>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b27">
+	<analytic>
+		<title level="a" type="main">Glow: Generative flow with invertible 1x1 convolutions</title>
+		<author>
+			<persName><forename type="first">P</forename><surname>Durk</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Prafulla</forename><surname>Kingma</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Dhariwal</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">NeurIPS</title>
+		<imprint>
+			<date type="published" when="2018">2018</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b28">
+	<analytic>
+		<title level="a" type="main">PixelCNN models with auxiliary variables for natural image modeling</title>
+		<author>
+			<persName><forename type="first">Alexander</forename><surname>Kolesnikov</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Christoph</forename><forename type="middle">H</forename><surname>Lampert</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">ICML</title>
+		<imprint>
+			<date type="published" when="2017">2017</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b29">
+	<monogr>
+		<title level="m" type="main">UViM: A unified modeling approach for vision with learned guiding codes</title>
+		<author>
+			<persName><forename type="first">Alexander</forename><surname>Kolesnikov</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">André Susano</forename><surname>Pinto</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Lucas</forename><surname>Beyer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xiaohua</forename><surname>Zhai</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jeremiah</forename><surname>Harmsen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Neil</forename><surname>Houlsby</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+			<publisher>NeurIPS</publisher>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b30">
+	<monogr>
+		<title level="m" type="main">BLIP-2: Bootstrapping language-image pre-training with frozen image encoders and large language models</title>
+		<author>
+			<persName><forename type="first">Junnan</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dongxu</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Silvio</forename><surname>Savarese</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Steven</forename><surname>Hoi</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2301.12597</idno>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b31">
+	<analytic>
+		<title level="a" type="main">Exploring plain vision transformer backbones for object detection</title>
+		<author>
+			<persName><forename type="first">Yanghao</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hanzi</forename><surname>Mao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ross</forename><surname>Girshick</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kaiming</forename><surname>He</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">ECCV</title>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b32">
+	<analytic>
+		<title level="a" type="main">Microsoft COCO: Common objects in context</title>
+		<author>
+			<persName><forename type="first">Tsung-Yi</forename><surname>Lin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Michael</forename><surname>Maire</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Serge</forename><surname>Belongie</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">James</forename><surname>Hays</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Pietro</forename><surname>Perona</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Deva</forename><surname>Ramanan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Piotr</forename><surname>Dollár</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><surname>Lawrence</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zitnick</forename></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">ECCV</title>
+		<imprint>
+			<date type="published" when="2014">2014</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b33">
+	<analytic>
+		<title/>
+		<author>
+			<persName><forename type="first">Haotian</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chunyuan</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Qingyang</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yong Jae</forename><surname>Lee</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Visual instruction tuning. NeurIPS</title>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b34">
+	<analytic>
+		<title level="a" type="main">Unified-IO: A unified model for vision, language, and multi-modal tasks</title>
+		<author>
+			<persName><forename type="first">Jiasen</forename><surname>Lu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Christopher</forename><surname>Clark</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Rowan</forename><surname>Zellers</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Roozbeh</forename><surname>Mottaghi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Aniruddha</forename><surname>Kembhavi</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">ICLR</title>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b35">
+	<monogr>
+		<title level="m" type="main">Autoregressive speech synthesis without vector quantization</title>
+		<author>
+			<persName><forename type="first">Lingwei</forename><surname>Meng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Long</forename><surname>Zhou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shujie</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sanyuan</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Bing</forename><surname>Han</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shujie</forename><surname>Hu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yanqing</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jinyu</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sheng</forename><surname>Zhao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xixin</forename><surname>Wu</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2407.08551</idno>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b36">
+	<analytic>
+		<title level="a" type="main">Generating high fidelity images with subscale pixel networks and multidimensional upscaling</title>
+		<author>
+			<persName><forename type="first">Jacob</forename><surname>Menick</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Nal</forename><surname>Kalchbrenner</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">ICLR</title>
+		<imprint>
+			<date type="published" when="2019">2019</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b37">
+	<analytic>
+		<title level="a" type="main">Finite scalar quantization: VQ-VAE made simple</title>
+		<author>
+			<persName><forename type="first">Fabian</forename><surname>Mentzer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">David</forename><surname>Minnen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Eirikur</forename><surname>Agustsson</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Michael</forename><surname>Tschannen</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">ICLR</title>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b38">
+	<analytic>
+		<author>
+			<persName><forename type="first">David</forename><surname>Mizrahi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Roman</forename><surname>Bachmann</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Oguzhan</forename><surname>Kar</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Teresa</forename><surname>Yeo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mingfei</forename><surname>Gao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Afshin</forename><surname>Dehghan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Amir</forename><surname>Zamir</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">M: Massively multimodal masked modeling</title>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b39">
+	<monogr>
+		<author>
+			<persName><forename type="first">Eliya</forename><surname>Nachmani</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alon</forename><surname>Levkovitch</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Roy</forename><surname>Hirsch</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Julian</forename><surname>Salazar</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chulayuth</forename><surname>Asawaroengchai</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Soroosh</forename><surname>Mariooryad</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ehud</forename><surname>Rivlin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><forename type="middle">J</forename><surname>Skerry-Ryan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Michelle</forename><forename type="middle">Tadmor</forename><surname>Ramanovich</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2305.15255</idno>
+		<title level="m">Spoken question answering and speech continuation using spectrogram-powered llm</title>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b40">
+	<analytic>
+		<title level="a" type="main">Generating images with sparse representations</title>
+		<author>
+			<persName><forename type="first">Charlie</forename><surname>Nash</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jacob</forename><surname>Menick</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sander</forename><surname>Dieleman</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Peter</forename><surname>Battaglia</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">ICML</title>
+		<imprint>
+			<date type="published" when="2021">2021</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b41">
+	<analytic>
+		<title level="a" type="main">GLIDE: Towards photorealistic image generation and editing with text-guided diffusion models</title>
+		<author>
+			<persName><forename type="first">Alexander</forename><surname>Quinn</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Nichol</forename></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Prafulla</forename><surname>Dhariwal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Aditya</forename><surname>Ramesh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Pranav</forename><surname>Shyam</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Pamela</forename><surname>Mishkin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Bob</forename><surname>Mcgrew</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ilya</forename><surname>Sutskever</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mark</forename><surname>Chen</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">ICML</title>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b42">
+	<monogr>
+		<author>
+			<persName><forename type="first">Kaihang</forename><surname>Pan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Siliang</forename><surname>Tang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Juncheng</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhaoyu</forename><surname>Fan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wei</forename><surname>Chow</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shuicheng</forename><surname>Yan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tat-Seng</forename><surname>Chua</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2405.01926</idno>
+		<title level="m">Yueting Zhuang, and Hanwang Zhang. Auto-encoding morph-tokens for multimodal llm</title>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b43">
+	<analytic>
+		<title level="a" type="main">Image transformer</title>
+		<author>
+			<persName><forename type="first">Niki</forename><surname>Parmar</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ashish</forename><surname>Vaswani</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jakob</forename><surname>Uszkoreit</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Lukasz</forename><surname>Kaiser</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Noam</forename><surname>Shazeer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alexander</forename><surname>Ku</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dustin</forename><surname>Tran</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">ICML</title>
+		<imprint>
+			<date type="published" when="2018">2018</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b44">
+	<analytic>
+		<title level="a" type="main">State of the art on diffusion models for visual computing</title>
+		<author>
+			<persName><forename type="first">Ryan</forename><surname>Po</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wang</forename><surname>Yifan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Vladislav</forename><surname>Golyanik</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kfir</forename><surname>Aberman</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jonathan</forename><forename type="middle">T</forename><surname>Barron</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Amit</forename><surname>Bermano</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Eric</forename><surname>Chan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tali</forename><surname>Dekel</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Aleksander</forename><surname>Holynski</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Angjoo</forename><surname>Kanazawa</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Computer Graphics Forum</title>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b45">
+	<monogr>
+		<title level="m" type="main">Improving language understanding by generative pre-training</title>
+		<author>
+			<persName><forename type="first">Alec</forename><surname>Radford</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Karthik</forename><surname>Narasimhan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tim</forename><surname>Salimans</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ilya</forename><surname>Sutskever</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2018">2018</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b46">
+	<analytic>
+		<title level="a" type="main">Learning transferable visual models from natural language supervision</title>
+		<author>
+			<persName><forename type="first">Alec</forename><surname>Radford</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jong</forename><forename type="middle">Wook</forename><surname>Kim</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chris</forename><surname>Hallacy</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Aditya</forename><surname>Ramesh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Gabriel</forename><surname>Goh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sandhini</forename><surname>Agarwal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Girish</forename><surname>Sastry</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Amanda</forename><surname>Askell</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Pamela</forename><surname>Mishkin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jack</forename><surname>Clark</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">ICML</title>
+		<imprint>
+			<date type="published" when="2021">2021</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b47">
+	<analytic>
+		<title level="a" type="main">Exploring the limits of transfer learning with a unified text-to-text transformer</title>
+		<author>
+			<persName><forename type="first">Colin</forename><surname>Raffel</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Noam</forename><surname>Shazeer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Adam</forename><surname>Roberts</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Katherine</forename><surname>Lee</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sharan</forename><surname>Narang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Michael</forename><surname>Matena</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yanqi</forename><surname>Zhou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wei</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Peter</forename><forename type="middle">J</forename><surname>Liu</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">JMLR</title>
+		<imprint>
+			<date type="published" when="2020">2020</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b48">
+	<analytic>
+		<title level="a" type="main">Zero-shot text-to-image generation</title>
+		<author>
+			<persName><forename type="first">Aditya</forename><surname>Ramesh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mikhail</forename><surname>Pavlov</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Gabriel</forename><surname>Goh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Scott</forename><surname>Gray</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chelsea</forename><surname>Voss</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alec</forename><surname>Radford</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mark</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ilya</forename><surname>Sutskever</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">ICML</title>
+		<imprint>
+			<date type="published" when="2021">2021</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b49">
+	<monogr>
+		<title level="m" type="main">Hierarchical textconditional image generation with clip latents</title>
+		<author>
+			<persName><forename type="first">Aditya</forename><surname>Ramesh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Prafulla</forename><surname>Dhariwal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alex</forename><surname>Nichol</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Casey</forename><surname>Chu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mark</forename><surname>Chen</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2204.06125</idno>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b50">
+	<analytic>
+		<title level="a" type="main">Generating diverse high-fidelity images with VQ-VAE-2</title>
+		<author>
+			<persName><forename type="first">Ali</forename><surname>Razavi</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">NeurIPS</title>
+		<imprint>
+			<date type="published" when="2019">2019</date>
+		</imprint>
+	</monogr>
+	<note>Aaron Van den Oord, and Oriol Vinyals</note>
+</biblStruct>
+
+<biblStruct xml:id="b51">
+	<analytic>
+		<title level="a" type="main">Highresolution image synthesis with latent diffusion models</title>
+		<author>
+			<persName><forename type="first">Robin</forename><surname>Rombach</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Andreas</forename><surname>Blattmann</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dominik</forename><surname>Lorenz</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Patrick</forename><surname>Esser</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Björn</forename><surname>Ommer</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">CVPR</title>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b52">
+	<analytic>
+		<title level="a" type="main">Imagenet large scale visual recognition challenge</title>
+		<author>
+			<persName><forename type="first">Olga</forename><surname>Russakovsky</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jia</forename><surname>Deng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hao</forename><surname>Su</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jonathan</forename><surname>Krause</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sanjeev</forename><surname>Satheesh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sean</forename><surname>Ma</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhiheng</forename><surname>Huang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Andrej</forename><surname>Karpathy</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Aditya</forename><surname>Khosla</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Michael</forename><surname>Bernstein</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">IJCV</title>
+		<imprint>
+			<date type="published" when="2015">2015</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b53">
+	<monogr>
+		<title level="m" type="main">Photorealistic text-to-image diffusion models with deep language understanding</title>
+		<author>
+			<persName><forename type="first">Chitwan</forename><surname>Saharia</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">William</forename><surname>Chan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Saurabh</forename><surname>Saxena</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Lala</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jay</forename><surname>Whang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Emily</forename><forename type="middle">L</forename><surname>Denton</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kamyar</forename><surname>Ghasemipour</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Raphael</forename><forename type="middle">Gontijo</forename><surname>Lopes</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Burcu</forename><surname>Karagol Ayan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tim</forename><surname>Salimans</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+			<publisher>NeurIPS</publisher>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b54">
+	<monogr>
+		<title level="m" type="main">Assessing generative models via precision and recall</title>
+		<author>
+			<persName><forename type="first">S</forename><forename type="middle">M</forename><surname>Mehdi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Olivier</forename><surname>Sajjadi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mario</forename><surname>Bachem</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Olivier</forename><surname>Lucic</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sylvain</forename><surname>Bousquet</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Gelly</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2018">2018</date>
+			<publisher>NeurIPS</publisher>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b55">
+	<analytic>
+		<title level="a" type="main">PixelCNN++: Improving the PixelCNN with discretized logistic mixture likelihood and other modifications</title>
+		<author>
+			<persName><forename type="first">Tim</forename><surname>Salimans</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Andrej</forename><surname>Karpathy</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xi</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Diederik</forename><forename type="middle">P</forename><surname>Kingma</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">ICLR</title>
+		<imprint>
+			<date type="published" when="2016">2016</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b56">
+	<analytic>
+		<title level="a" type="main">Towards VQA models that can read</title>
+		<author>
+			<persName><forename type="first">Amanpreet</forename><surname>Singh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Vivek</forename><surname>Natarjan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Meet</forename><surname>Shah</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yu</forename><surname>Jiang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xinlei</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Devi</forename><surname>Parikh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Marcus</forename><surname>Rohrbach</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">CVPR</title>
+		<imprint>
+			<date type="published" when="2019">2019</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b57">
+	<analytic>
+		<title level="a" type="main">Deep unsupervised learning using nonequilibrium thermodynamics</title>
+		<author>
+			<persName><forename type="first">Jascha</forename><surname>Sohl-Dickstein</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Eric</forename><surname>Weiss</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Niru</forename><surname>Maheswaranathan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Surya</forename><surname>Ganguli</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">ICML</title>
+		<imprint>
+			<date type="published" when="2015">2015</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b58">
+	<analytic>
+		<title level="a" type="main">Transformer for semantic segmentation</title>
+		<author>
+			<persName><forename type="first">Robin</forename><surname>Strudel</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ricardo</forename><surname>Garcia</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ivan</forename><surname>Laptev</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Cordelia</forename><surname>Schmid</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Segmenter</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">CVPR</title>
+		<imprint>
+			<date type="published" when="2021">2021</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b59">
+	<monogr>
+		<author>
+			<persName><forename type="first">Richard</forename><surname>Sutton</surname></persName>
+		</author>
+		<title level="m">The bitter lesson. Incomplete Ideas (blog)</title>
+		<imprint>
+			<date type="published" when="2019">2019</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b60">
+	<monogr>
+		<author>
+			<persName><forename type="first">Lucas</forename><surname>Theis</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:1511.01844</idno>
+		<title level="m">Aäron van den Oord, and Matthias Bethge. A note on the evaluation of generative models</title>
+		<imprint>
+			<date type="published" when="2015">2015</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b61">
+	<analytic>
+		<title level="a" type="main">Probabilistic principal component analysis</title>
+		<author>
+			<persName><forename type="first">E</forename><surname>Michael</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Christopher</forename><forename type="middle">M</forename><surname>Tipping</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Bishop</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Journal of the Royal Statistical Society Series B: Statistical Methodology</title>
+		<imprint>
+			<date type="published" when="1999">1999</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b62">
+	<monogr>
+		<title level="m" type="main">Image captioners are scalable vision learners too</title>
+		<author>
+			<persName><forename type="first">Manoj</forename><surname>Michael Tschannen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Andreas</forename><surname>Kumar</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xiaohua</forename><surname>Steiner</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Neil</forename><surname>Zhai</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Lucas</forename><surname>Houlsby</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Beyer</surname></persName>
+		</author>
+		<editor>NeurIPS</editor>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b63">
+	<analytic>
+		<title level="a" type="main">GIVT: Generative infinite-vocabulary transformers</title>
+		<author>
+			<persName><forename type="first">Cian</forename><surname>Michael Tschannen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Fabian</forename><surname>Eastwood</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Mentzer</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">ECCV</title>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b64">
+	<analytic>
+		<title level="a" type="main">Lasse Espeholt, Oriol Vinyals, Alex Graves, et al. Conditional image generation with pixelcnn decoders</title>
+		<author>
+			<persName><forename type="first">Aaron</forename><surname>Van Den Oord</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Nal</forename><surname>Kalchbrenner</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">NeurIPS</title>
+		<imprint>
+			<date type="published" when="2016">2016</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b65">
+	<analytic>
+		<title level="a" type="main">Pixel recurrent neural networks</title>
+		<author>
+			<persName><forename type="first">Aäron</forename><surname>Van Den Oord</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Nal</forename><surname>Kalchbrenner</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Koray</forename><surname>Kavukcuoglu</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">ICML</title>
+		<imprint>
+			<date type="published" when="2016">2016</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b66">
+	<analytic>
+		<title level="a" type="main">Neural discrete representation learning</title>
+		<author>
+			<persName><forename type="first">Aäron</forename><surname>Van Den Oord</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Oriol</forename><surname>Vinyals</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Koray</forename><surname>Kavukcuoglu</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">NeurIPS</title>
+		<imprint>
+			<date type="published" when="2017">2017</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b67">
+	<monogr>
+		<title level="m" type="main">Attention is all you need</title>
+		<author>
+			<persName><forename type="first">Ashish</forename><surname>Vaswani</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Noam</forename><surname>Shazeer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Niki</forename><surname>Parmar</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jakob</forename><surname>Uszkoreit</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Llion</forename><surname>Jones</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Aidan</forename><forename type="middle">N</forename><surname>Gomez</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Łukasz</forename><surname>Kaiser</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Illia</forename><surname>Polosukhin</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2017">2017</date>
+			<publisher>NeurIPS</publisher>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b68">
+	<analytic>
+		<title level="a" type="main">GIT: A generative image-to-text transformer for vision and language</title>
+		<author>
+			<persName><forename type="first">Jianfeng</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhengyuan</forename><surname>Yang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xiaowei</forename><surname>Hu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Linjie</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kevin</forename><surname>Lin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhe</forename><surname>Gan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zicheng</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ce</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Lijuan</forename><surname>Wang</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">TMLR</title>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b69">
+	<analytic>
+		<title level="a" type="main">SimVLM: Simple visual language model pretraining with weak supervision</title>
+		<author>
+			<persName><forename type="first">Zirui</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jiahui</forename><surname>Yu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Adams</forename><forename type="middle">Wei</forename><surname>Yu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zihang</forename><surname>Dai</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yulia</forename><surname>Tsvetkov</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yuan</forename><surname>Cao</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">ICLR</title>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b70">
+	<monogr>
+		<author>
+			<persName><forename type="first">Yifan</forename><surname>Xu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xiaoshan</forename><surname>Yang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yaguang</forename><surname>Song</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Changsheng</forename><surname>Xu</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2405.10140</idno>
+		<title level="m">Libra: Building decoupled vision system on large language models</title>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b71">
+	<monogr>
+		<author>
+			<persName><forename type="first">Haoxuan</forename><surname>You</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mandy</forename><surname>Guo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhecan</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kai-Wei</forename><surname>Chang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jason</forename><surname>Baldridge</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jiahui</forename><surname>Yu</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2303.13455</idno>
+		<title level="m">CoBIT: A contrastive bi-directional image-text generation model</title>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b72">
+	<monogr>
+		<title level="m" type="main">Vector-quantized image modeling with improved VQ-GAN</title>
+		<author>
+			<persName><forename type="first">Jiahui</forename><surname>Yu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xin</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jing</forename><surname>Yu Koh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Han</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ruoming</forename><surname>Pang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">James</forename><surname>Qin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alexander</forename><surname>Ku</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yuanzhong</forename><surname>Xu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jason</forename><surname>Baldridge</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yonghui</forename><surname>Wu</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+		</imprint>
+		<respStmt>
+			<orgName>ICLR</orgName>
+		</respStmt>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b73">
+	<analytic>
+		<title level="a" type="main">Coca: Contrastive captioners are image-text foundation models</title>
+		<author>
+			<persName><forename type="first">Jiahui</forename><surname>Yu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zirui</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Vijay</forename><surname>Vasudevan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Legg</forename><surname>Yeung</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mojtaba</forename><surname>Seyedhosseini</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yonghui</forename><surname>Wu</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">TMLR</title>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b74">
+	<analytic>
+		<title level="a" type="main">Scaling autoregressive models for content-rich text-to-image generation</title>
+		<author>
+			<persName><forename type="first">Jiahui</forename><surname>Yu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yuanzhong</forename><surname>Xu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jing</forename><surname>Yu Koh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Thang</forename><surname>Luong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Gunjan</forename><surname>Baid</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zirui</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Vijay</forename><surname>Vasudevan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alexander</forename><surname>Ku</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yinfei</forename><surname>Yang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Burcu</forename><surname>Karagol Ayan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Benton</forename><forename type="middle">C</forename><surname>Hutchinson</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wei</forename><surname>Han</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zarana</forename><surname>Parekh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xin</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Han</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jason</forename><surname>Baldridge</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yonghui</forename><surname>Wu</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">TMLR</title>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b75">
+	<monogr>
+		<title level="m" type="main">Transfusion: Predict the next token and diffuse images with one multi-modal model</title>
+		<author>
+			<persName><forename type="first">Chunting</forename><surname>Zhou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Lili</forename><surname>Yu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Arun</forename><surname>Babu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kushal</forename><surname>Tirumala</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Michihiro</forename><surname>Yasunaga</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Leonid</forename><surname>Shamis</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jacob</forename><surname>Kahn</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xuezhe</forename><surname>Ma</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Luke</forename><surname>Zettlemoyer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Omer</forename><surname>Levy</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2408.11039</idno>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+				</listBibl>
+			</div>
+		</back>
+	</text>
+</TEI>
