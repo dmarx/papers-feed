@@ -1,5 +1,6 @@
 # .github/scripts/process_pdf.py
 
+import os
 from pathlib import Path
 import time
 from typing import Literal
@@ -25,13 +26,15 @@ def process_pdf(pdf_path: str, format: OutputFormat = 'markdown') -> None:
 
     logger.info(f"Processing {pdf_path}")
     
-    # Process the PDF
-    base_url = "http://localhost:8070"
+    # Get base URL from environment or use default
+    grobid_host = os.environ.get('GROBID_HOST', 'localhost')
+    base_url = f"http://{grobid_host}:8070"
     
+    # Process the PDF
     with open(pdf_path, 'rb') as f:
         files = {'input': (pdf_path.name, f, 'application/pdf')}
         
-        # Get TEI XML first
+        # Get TEI XML
         resp = requests.post(
             f"{base_url}/api/processFulltextDocument",
             files=files,
