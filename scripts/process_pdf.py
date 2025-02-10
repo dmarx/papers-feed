@@ -32,8 +32,10 @@ def remove_gibberish(
         n_tok = len(_line)
         n_space = _line.count(" ")
         # I think this might remove some formulas if we use cutoff=0
-        token_sparsity = n_tok/n_space
+        token_sparsity = n_space/n_tok
         if abs(token_sparsity - .5) < .01:
+            logger.info(f"removing gibberish")
+            logger.info(line)
             continue
         good_lines.append(line)
     return '\n'.join(good_lines)
