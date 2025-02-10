@@ -28,12 +28,12 @@ def remove_gibberish(
             continue
         _line = line
         if _line.startswith("$"):
-            _line = _line[1:]
+            _line = _line[1:-1]
         n_tok = len(_line)
         n_space = _line.count(" ")
         # I think this might remove some formulas if we use cutoff=0
         token_sparsity = n_tok/n_space
-        if abs(token_sparsity - .5) < .001:
+        if abs(token_sparsity - .5) < .01:
             continue
         good_lines.append(line)
     return '\n'.join(good_lines)
