@@ -12,6 +12,37 @@ from llamero.utils import commit_and_push
 
 OutputFormat = Literal['markdown', 'tei']
 
+def remove_extra_whitespace(text: str)->str:
+    while '\n\n\n' in text:
+        text = text.replace('\n\n\n', '\n\n')
+    return text
+
+def remove_gibberish(
+    text: str,
+    cutoff=2000
+)->str:
+    good_lines = []
+    for line in text.split('\n'):
+        if len(line) < cutoff:
+            good_lines.attach(line)
+            continue
+        _line = line
+        if _line.startswith("$"):
+            _line = _line[1:]
+        n_tok = len(_line)
+        n_space = _line.count(" ")
+        # I think this might remove some formulas if we use cutoff=0
+        token_sparsity = n_tok/n_space
+        if abs(token_sparsity - .5) < .001:
+            continue
+        good_lines.append(line)
+    return '\n'.join(good_lines)
+
+def sanitize_markdown(text: str)->str:
+    text=remove_extra_whitespace(text)
+    text=remove_gibberish(text)
+    return text
+
 def process_pdf_grobid(
     pdf_path: str, 
     format: OutputFormat = 'markdown', 
@@ -91,6 +122,8 @@ def process_pdf_grobid(
         
         tei_doc = etree.parse(str(tei_path))
         markdown = str(transform(tei_doc))
+
+        markdown=sanitize_markdown(markdown)
         
         # Save Markdown output
         md_path.write_text(markdown)
