@@ -26,7 +26,7 @@ def remove_gibberish(
         # if len(line) < cutoff:
         #     good_lines.append(line)
         #     continue
-        _line = line
+        _line = line[:]
         if _line.startswith("$"):
             _line = _line[1:-1]
         n_tok = len(_line)
@@ -36,7 +36,7 @@ def remove_gibberish(
         if n_tok:
             token_sparsity = n_space/n_tok
         
-        _line = line
+        _line = line[:]
         _line = _line.replace(" ","")
 
         skip=False
