@@ -33,7 +33,9 @@ def remove_gibberish(
         n_space = _line.count(" ")
         _line = _line.replace(" ","")
         # I think this might remove some formulas if we use cutoff=0
-        token_sparsity = n_space/n_tok
+        token_sparsity=1
+        if n_tok:
+            token_sparsity = n_space/n_tok
         
         skip=False
         if (abs(token_sparsity - .5) < .01) and (len(line) < cutoff):
