@@ -23,17 +23,24 @@ def remove_gibberish(
 )->str:
     good_lines = []
     for line in text.split('\n'):
-        if len(line) < cutoff:
-            good_lines.append(line)
-            continue
+        # if len(line) < cutoff:
+        #     good_lines.append(line)
+        #     continue
         _line = line
         if _line.startswith("$"):
             _line = _line[1:-1]
         n_tok = len(_line)
         n_space = _line.count(" ")
+        _line = _line.replace(" ","")
         # I think this might remove some formulas if we use cutoff=0
         token_sparsity = n_space/n_tok
-        if abs(token_sparsity - .5) < .01:
+        
+        skip=False
+        if (abs(token_sparsity - .5) < .01) and (len(line) < cutoff):
+            skip=True
+        if "texitsha1_base64" in _line:
+            skip=True
+        if skip:
             logger.info(f"removing gibberish")
             logger.info(line)
             continue
