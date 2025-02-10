@@ -18,10 +18,13 @@ ddg = DDGS()
 
 def with_prompt(
   target: str|Path,
-  prompt: str="summarize the following:\n\n {content}"
+  prompt: str="summarize the following:\n\n {content}",
+  max_len: int=1024,
 ):
   with Path(target).open() as f:
     content = f.read()
+  if max_len > 0:
+    content=content[:(max_len-len(prompt))]
   msg = prompt.format(content=content) # should probably chunk somehow and iterate over chunks
   logger.info(msg)
   response = ddg.chat(msg)
