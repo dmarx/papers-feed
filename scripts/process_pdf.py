@@ -38,7 +38,7 @@ def remove_gibberish(
             token_sparsity = n_space/n_tok
         
         skip=False
-        if (abs(token_sparsity - .5) < .01) and (len(line) < cutoff):
+        if (abs(token_sparsity - .5) < .01) and (len(line) > cutoff):
             skip=True
         if "texitsha1_base64" in _line:
             skip=True
