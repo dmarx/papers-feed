@@ -24,7 +24,7 @@ def remove_gibberish(
     good_lines = []
     for line in text.split('\n'):
         if len(line) < cutoff:
-            good_lines.attach(line)
+            good_lines.append(line)
             continue
         _line = line
         if _line.startswith("$"):
