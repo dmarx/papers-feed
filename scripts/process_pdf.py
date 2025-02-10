@@ -42,6 +42,8 @@ def remove_gibberish(
             skip=True
         if "texitsha1_base64" in _line:
             skip=True
+        if "texit>" in _line:
+            skip=True
         if skip:
             logger.info(f"removing gibberish")
             logger.info(line)
@@ -58,7 +60,8 @@ def process_pdf_grobid(
     pdf_path: str, 
     format: OutputFormat = 'markdown', 
     tag: str = "grobid",
-    output_path: str | None = None
+    output_path: str | None = None,
+    regenerate_tei: bool = True,
 ) -> None:
     """
     Process a PDF file using Grobid and convert to the specified format.
@@ -82,25 +85,7 @@ def process_pdf_grobid(
     pdf_path = Path(pdf_path)
     if not pdf_path.exists():
         raise FileNotFoundError(f"PDF file not found: {pdf_path}")
-    
-    logger.info(f"Processing {pdf_path}")
-    
-    grobid_host = os.environ.get('GROBID_HOST', 'localhost')
-    base_url = f"http://{grobid_host}:8070"
-    
-    # Call Grobid to process the PDF into TEI XML
-    with open(pdf_path, 'rb') as f:
-        files = {'input': (pdf_path.name, f, 'application/pdf')}
-        resp = requests.post(
-            f"{base_url}/api/processFulltextDocument",
-            files=files,
-            headers={'Accept': 'application/xml'},
-            timeout=300  # 5 minute timeout
-        )
-    
-    if resp.status_code != 200:
-        raise RuntimeError(f"Grobid processing failed: {resp.status_code}")
-    
+
     # Determine output paths based on whether output_path is provided
     if output_path:
         output_path = Path(output_path)
@@ -118,13 +103,34 @@ def process_pdf_grobid(
         tei_path = pdf_path.parent / tei_filename
         md_path = pdf_path.parent / md_filename
     
-    # Save the TEI output
-    tei_path.write_text(resp.text)
-    logger.info(f"Saved TEI XML to {tei_path}")
+    logger.info(f"Processing {pdf_path}")
+    
+
+    if regenerate_tei or (not tei_path.exists()):
+        
+        grobid_host = os.environ.get('GROBID_HOST', 'localhost')
+        base_url = f"http://{grobid_host}:8070"
+        
+        # Call Grobid to process the PDF into TEI XML
+        with open(pdf_path, 'rb') as f:
+            files = {'input': (pdf_path.name, f, 'application/pdf')}
+            resp = requests.post(
+                f"{base_url}/api/processFulltextDocument",
+                files=files,
+                headers={'Accept': 'application/xml'},
+                timeout=300  # 5 minute timeout
+            )
+        
+        if resp.status_code != 200:
+            raise RuntimeError(f"Grobid processing failed: {resp.status_code}")
+        
+        # Save the TEI output
+        tei_path.write_text(resp.text)
+        logger.info(f"Saved TEI XML to {tei_path}")
     
     if format == 'markdown':
         # Convert TEI to Markdown using XSLT
-        xslt_path = Path(__file__).parent / 'tei2md.xslt'
+        xslt_path = Path(__file__).parent / 'tei2md.xslt' # todo: push this up to an argument
         if not xslt_path.exists():
             raise FileNotFoundError(f"XSLT stylesheet not found: {xslt_path}")
         
@@ -171,6 +177,7 @@ def generate_missing_conversions(
     tag: str = "grobid",
     suffix=".md",
     checkpoint_cadence=5,
+    regenerate_tei: bool = True,
 ):
     """
     We assume that every pdf under the data_path should have an accompanying markdown conversion.
@@ -193,8 +200,8 @@ def generate_missing_conversions(
         outname = f"{pdf_fpath.stem}{suffix}" if not tag else f"{pdf_fpath.stem}_{tag}{suffix}"
         md_fpath = pdf_fpath.parent / outname
         if not md_fpath.exists():
-            process_pdf_grobid(pdf_fpath, output_path=md_fpath)
-            modified_files.append(md_fpath)
+            process_pdf_grobid(pdf_fpath, output_path=md_fpath, regenerate_tei=regenerate_tei)
+            modified_files.append(md_fpath) #... + tei path
             logger.info(md_fpath)
         if (i % checkpoint_cadence) == 0:
             msg="persisting markdown conversions"
