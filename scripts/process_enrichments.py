@@ -12,7 +12,7 @@ from typing import Iterator
 from github import Github
 from loguru import logger
 from duckduckgo_search import DDGS
-
+from llamero.utils import commit_and_push
 
 @dataclass
 class Paper:
@@ -98,7 +98,8 @@ class FeatureRequest:
     name: str
     inputs: dict[str, str]
     prompt: str
-    max_len: int = 1024  # Default max length for content
+    max_len: int = 20000
+    commit_cadence: int = 5
     
     def __post_init__(self):
         if '/' in self.name:
@@ -130,7 +131,8 @@ class FeatureRequest:
                 name=data['name'],
                 inputs=data['inputs'],
                 prompt=data['prompt'],
-                max_len=data.get('max_len', 1024)
+                max_len=data.get('max_len', 20000),
+                commit_cadence=data.get('commit_cadence', 10),
             )
         except (json.JSONDecodeError, KeyError) as e:
             raise ValueError(f"Invalid feature request format: {e}")
@@ -257,12 +259,12 @@ def create_feature(
             
     if missing_features and reopen_dependencies:
         handle_missing_features(owner, repo, missing_features, token)
-        return False
+        return 
     elif missing_features:
         logger.warning(
             f"Paper {paper.arxiv_id} missing required features: {missing_features}"
         )
-        return False
+        return 
             
     # Create feature directory
     feature_dir = paper.features_dir / request.name
@@ -296,10 +298,10 @@ def create_feature(
         output_path = feature_dir / f"{paper.arxiv_id}.md"
         output_path.write_text(response)
         logger.info(f"Created {request.name} feature for {paper.arxiv_id}")
-        return True
+        return str(output_path.absolute())
     except Exception as e:
         logger.error(f"Chat API error for {paper.arxiv_id}: {e}")
-        return False
+        return 
 
 
 def process_feature_requests(
@@ -313,10 +315,15 @@ def process_feature_requests(
     for request, _ in get_feature_requests(owner, repo, token=token):
         requests.append(request)
     logger.info(f"Found {len(requests)} feature requests")
-    
-    for paper in Paper.iter_papers(data_dir):
+
+    to_commit=[]
+    for i, paper in enumerate(Paper.iter_papers(data_dir)):
         for request in requests:
-            create_feature(paper, request, owner, repo, token)
+            output_path = create_feature(paper, request, owner, repo, token)
+            to_commit.append(output_path)
+        if i % request.commit_cadence == 0: # per-request commit cadences though... hmmm
+            commit_and_push(to_commit)
+            to_commit=[]
 
 
 if __name__ == "__main__":
