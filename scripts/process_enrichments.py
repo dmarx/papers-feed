@@ -2,11 +2,12 @@
 """
 Creates new paper features based on GitHub issue specifications.
 """
+import ast
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Iterator
 import json
 import os
+from pathlib import Path
+from typing import Iterator
 
 from github import Github
 from loguru import logger
@@ -110,19 +111,20 @@ class FeatureRequest:
         """Creates a FeatureRequest from a GitHub issue body."""
         try:
             # First try standard JSON parsing
-            try:
-                data = json.loads(issue_body)
-            except json.JSONDecodeError:
-                # If that fails, try replacing single quotes with double quotes
-                # but only for the outermost quotes and dict keys
-                fixed_body = (
-                    issue_body
-                    .replace("{'", '{"')
-                    .replace("'}", '"}')
-                    .replace("':", '":')
-                    .replace("',", '",')
-                )
-                data = json.loads(fixed_body)
+            # try:
+            #     data = json.loads(issue_body)
+            # except json.JSONDecodeError:
+            #     # If that fails, try replacing single quotes with double quotes
+            #     # but only for the outermost quotes and dict keys
+            #     fixed_body = (
+            #         issue_body
+            #         .replace("{'", '{"')
+            #         .replace("'}", '"}')
+            #         .replace("':", '":')
+            #         .replace("',", '",')
+            #     )
+            #     data = json.loads(fixed_body)
+            data = ast.literal_eval(issue_body)
             
             return cls(
                 name=data['name'],
