@@ -319,6 +319,10 @@ def process_feature_requests(
     to_commit=[]
     for i, paper in enumerate(Paper.iter_papers(data_dir)):
         for request in requests:
+            if paper.has_feature(request.name):
+                logger.debug(f"{request.name} feature for paper {paper.arxiv_id} already previously generated. Skipping.")
+                continue        
+
             output_path = create_feature(paper, request, owner, repo, token)
             to_commit.append(output_path)
         #if i % request.commit_cadence == 0: # per-request commit cadences though... hmmm
