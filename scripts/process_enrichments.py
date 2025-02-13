@@ -109,7 +109,21 @@ class FeatureRequest:
     def from_issue(cls, issue_body: str) -> 'FeatureRequest':
         """Creates a FeatureRequest from a GitHub issue body."""
         try:
-            data = json.loads(issue_body)
+            # First try standard JSON parsing
+            try:
+                data = json.loads(issue_body)
+            except json.JSONDecodeError:
+                # If that fails, try replacing single quotes with double quotes
+                # but only for the outermost quotes and dict keys
+                fixed_body = (
+                    issue_body
+                    .replace("{'", '{"')
+                    .replace("'}", '"}')
+                    .replace("':", '":')
+                    .replace("',", '",')
+                )
+                data = json.loads(fixed_body)
+            
             return cls(
                 name=data['name'],
                 inputs=data['inputs'],
