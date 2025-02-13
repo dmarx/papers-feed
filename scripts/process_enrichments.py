@@ -324,7 +324,7 @@ def process_feature_requests(
                 continue        
 
             output_path = create_feature(paper, request, owner, repo, token)
-            if output_path
+            if output_path:
                 to_commit.append(output_path)
         #if i % request.commit_cadence == 0: # per-request commit cadences though... hmmm
         if to_commit and ((len(to_commit) % request.commit_cadence) == 0):
