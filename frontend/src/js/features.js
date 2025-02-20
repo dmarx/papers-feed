@@ -114,22 +114,31 @@ function getPaperFeatures(paper) {
 
 // Render features section for a paper
 function renderPaperFeatures(paper) {
+    console.log('Rendering features for paper:', paper);
     const features = getPaperFeatures(paper);
-    if (!features) return '';
+    if (!features) {
+        console.log('No features found for paper');
+        return '';
+    }
+    
+    console.log('Found features:', features);
     
     const featureSections = features
-        .map(feature => `
-            <div class="feature-entry" data-feature="${feature.id}">
-                <div class="feature-entry-header">
-                    <span class="feature-icon">📄</span>
-                    <span class="feature-name">${feature.label}</span>
-                    <button class="feature-expand">▼</button>
+        .map(feature => {
+            console.log('Rendering feature:', feature);
+            return `
+                <div class="feature-entry" data-feature="${feature.id}">
+                    <div class="feature-entry-header">
+                        <span class="feature-icon">📄</span>
+                        <span class="feature-name">${feature.label}</span>
+                        <button class="feature-expand">▼</button>
+                    </div>
+                    <div class="feature-content" data-path="${feature.path}">
+                        <div class="feature-content-inner">Loading...</div>
+                    </div>
                 </div>
-                <div class="feature-content" data-path="${feature.path}">
-                    <div class="feature-content-inner">Loading...</div>
-                </div>
-            </div>
-        `)
+            `;
+        })
         .join('');
     
     return `<div class="paper-features">${featureSections}</div>`;
@@ -137,15 +146,31 @@ function renderPaperFeatures(paper) {
 
 // Load feature content
 async function loadFeatureContent(contentDiv) {
-    if (!contentDiv?.dataset?.path) {
-        console.warn('Missing path for feature content');
+    console.log('Loading feature content for:', contentDiv);
+    console.log('Dataset:', contentDiv?.dataset);
+    console.log('Parent element:', contentDiv?.parentElement);
+    
+    if (!contentDiv) {
+        console.error('Content div is null');
+        return;
+    }
+    
+    if (!contentDiv.dataset) {
+        console.error('Dataset not found on element:', contentDiv);
+        return;
+    }
+    
+    if (!contentDiv.dataset.path) {
+        console.error('No path found in dataset:', contentDiv.dataset);
         return;
     }
 
     try {
+        console.log('Fetching from path:', contentDiv.dataset.path);
         const response = await fetch(contentDiv.dataset.path);
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
         const content = await response.text();
+        console.log('Loaded content:', content.substring(0, 100) + '...');
         
         const contentInner = contentDiv.querySelector('.feature-content-inner');
         if (contentInner) {
@@ -162,16 +187,32 @@ async function loadFeatureContent(contentDiv) {
 
 // Add feature click handlers for a paper card
 function addFeatureHandlers(paperCard) {
-    if (!paperCard) return;
+    console.log('Adding feature handlers to:', paperCard);
+    
+    if (!paperCard) {
+        console.error('Paper card is null');
+        return;
+    }
 
     // Feature entry expansion
     paperCard.querySelectorAll('.feature-entry').forEach(entry => {
         const header = entry.querySelector('.feature-entry-header');
         const content = entry.querySelector('.feature-content');
         
-        if (!header || !content) return;
+        console.log('Found feature entry:', {
+            header: header,
+            content: content,
+            dataset: content?.dataset,
+            path: content?.dataset?.path
+        });
+        
+        if (!header || !content) {
+            console.error('Missing header or content elements');
+            return;
+        }
         
         header.addEventListener('click', (e) => {
+            console.log('Feature header clicked');
             e.preventDefault();
             e.stopPropagation();
             
@@ -179,6 +220,7 @@ function addFeatureHandlers(paperCard) {
             
             // Load content if not already loaded
             if (!content.dataset.loaded) {
+                console.log('Loading content for first time');
                 loadFeatureContent(content);
                 content.dataset.loaded = 'true';
             }
