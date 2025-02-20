@@ -8,6 +8,11 @@ window.featureState = {
 
 // Initialize features based on what's available in the data
 function initializeFeatures() {
+    if (!window.yamlData) {
+        console.warn('yamlData not available yet');
+        return;
+    }
+
     // Discover all unique feature types across all papers
     const features = new Set();
     
@@ -38,7 +43,10 @@ function initializeFeatures() {
 // Render feature toggle controls
 function renderFeatureToggles(features) {
     const container = document.querySelector('.feature-toggles');
-    if (!container) return;
+    if (!container) {
+        console.warn('Feature toggles container not found');
+        return;
+    }
     
     if (features.length === 0) {
         container.innerHTML = '<div class="no-features">No paper features currently available</div>';
@@ -62,14 +70,18 @@ function renderFeatureToggles(features) {
         
     // Add event listeners
     container.querySelectorAll('.feature-toggle').forEach(toggle => {
-        const featureId = toggle.dataset.feature;
         const checkbox = toggle.querySelector('input[type="checkbox"]');
+        const featureId = toggle.dataset.feature;
+        
+        if (!checkbox || !featureId) return;
         
         checkbox.addEventListener('change', () => {
             window.featureState.enabledFeatures[featureId] = checkbox.checked;
             localStorage.setItem('enabledFeatures', 
                 JSON.stringify(window.featureState.enabledFeatures));
-            renderPapers(); // Re-render papers to update feature visibility
+            if (typeof renderPapers === 'function') {
+                renderPapers(); // Re-render papers to update feature visibility
+            }
         });
     });
 }
@@ -84,7 +96,7 @@ function formatFeatureName(featureType) {
 
 // Get feature content for a paper
 function getPaperFeatures(paper) {
-    if (!paper.features_path) return null;
+    if (!paper?.features_path) return null;
     
     const features = [];
     Object.entries(paper.features_path).forEach(([id, path]) => {
@@ -105,10 +117,6 @@ function renderPaperFeatures(paper) {
     const features = getPaperFeatures(paper);
     if (!features) return '';
     
-    const featureIcons = features
-        .map(f => `<span class="feature-icon" title="${f.label}">📄</span>`)
-        .join('');
-        
     const featureSections = features
         .map(feature => `
             <div class="feature-entry" data-feature="${feature.id}">
@@ -124,44 +132,53 @@ function renderPaperFeatures(paper) {
         `)
         .join('');
     
-    return `
-        <div class="feature-icons">
-            ${featureIcons}
-        </div>
-        <div class="paper-features">
-            ${featureSections}
-        </div>
-    `;
+    return `<div class="paper-features">${featureSections}</div>`;
 }
 
-// Fetch and render feature content
-async function loadFeatureContent(container) {
-    const path = container.dataset.path;
+// Load feature content
+async function loadFeatureContent(contentDiv) {
+    if (!contentDiv?.dataset?.path) {
+        console.warn('Missing path for feature content');
+        return;
+    }
+
     try {
-        const response = await fetch(path);
+        const response = await fetch(contentDiv.dataset.path);
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
         const content = await response.text();
-        container.querySelector('.feature-content-inner').innerHTML = content;
+        
+        const contentInner = contentDiv.querySelector('.feature-content-inner');
+        if (contentInner) {
+            contentInner.innerHTML = content;
+        }
     } catch (error) {
-        console.error(`Error loading feature content from ${path}:`, error);
-        container.querySelector('.feature-content-inner').innerHTML = 
-            'Error loading feature content';
+        console.error('Error loading feature content:', error);
+        const contentInner = contentDiv.querySelector('.feature-content-inner');
+        if (contentInner) {
+            contentInner.innerHTML = 'Error loading feature content';
+        }
     }
 }
 
 // Add feature click handlers for a paper card
 function addFeatureHandlers(paperCard) {
+    if (!paperCard) return;
+
     // Feature entry expansion
     paperCard.querySelectorAll('.feature-entry').forEach(entry => {
         const header = entry.querySelector('.feature-entry-header');
         const content = entry.querySelector('.feature-content');
         
-        header.addEventListener('click', () => {
-            const wasExpanded = entry.classList.contains('expanded');
+        if (!header || !content) return;
+        
+        header.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            
             entry.classList.toggle('expanded');
             
-            // Load content when first expanded
-            if (!wasExpanded && !content.dataset.loaded) {
+            // Load content if not already loaded
+            if (!content.dataset.loaded) {
                 loadFeatureContent(content);
                 content.dataset.loaded = 'true';
             }
