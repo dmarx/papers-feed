@@ -1,0 +1,2907 @@
+---
+File: extension/background.js
+---
+// background.js
+import { GitHubStoreClient } from 'gh-store-client';
+import { PaperManager } from './papers/manager';
+import { loadSessionConfig, getConfigurationInMs } from './config/session.js';
+import { ReadingSessionData } from './papers/types';
+
+let githubToken = '';
+let githubRepo = '';
+let currentPaperData = null;
+let currentSession = null;
+let activityInterval = null;
+let sessionConfig = null;
+let paperManager = null;
+
+class ReadingSession {
+    constructor(arxivId, config) {
+       this.arxivId = arxivId;
+       this.sessionId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+       this.startTime = new Date();
+       this.activeTime = 0;
+       this.idleTime = 0;
+       this.lastActiveTime = new Date();
+       this.isTracking = true;
+       this.config = config;
+       this.endTime = null;
+       this.finalizedData = null;
+    }
+    
+    update() {
+       if (this.isTracking && !this.finalizedData) {
+           const now = new Date();
+           const timeSinceLastActive = now.getTime() - this.lastActiveTime.getTime();
+           
+           if (timeSinceLastActive < this.config.idleThreshold) {
+               this.activeTime += timeSinceLastActive;
+           } else {
+               this.idleTime += timeSinceLastActive;
+           }
+           
+           this.lastActiveTime = now;
+       }
+    }
+    
+    finalize() {
+       if (this.finalizedData) {
+           return this.finalizedData;
+       }
+    
+       this.update();
+       this.isTracking = false;
+       this.endTime = new Date();
+       const totalElapsed = this.endTime.getTime() - this.startTime.getTime();
+    
+       if (this.activeTime >= this.config.minSessionDuration) {
+           this.finalizedData = {
+               session_id: this.sessionId,
+               duration_seconds: Math.round(this.activeTime / 1000),
+               idle_seconds: Math.round(this.idleTime / 1000),
+               start_time: this.startTime.toISOString(),
+               end_time: this.endTime.toISOString(),
+               total_elapsed_seconds: Math.round(totalElapsed / 1000)
+           };
+           return this.finalizedData;
+       }
+       return null;
+    }
+    
+    end() {
+       return this.finalize();
+    }
+    
+    getMetadata() {
+       return {
+           sessionId: this.sessionId,
+           startTime: this.startTime.toISOString(),
+           activeSeconds: Math.round(this.activeTime / 1000),
+           idleSeconds: Math.round(this.idleTime / 1000)
+       };
+    }
+    }
+
+// Load credentials and configuration when extension starts
+async function loadCredentials() {
+    const items = await chrome.storage.sync.get(['githubToken', 'githubRepo']);
+    githubToken = items.githubToken || '';
+    githubRepo = items.githubRepo || '';
+    console.log('Credentials loaded:', { hasToken: !!githubToken, hasRepo: !!githubRepo });
+    
+    // Initialize paper manager if we have credentials
+    if (githubToken && githubRepo) {
+        const githubClient = new GitHubStoreClient(githubToken, githubRepo);
+        paperManager = new PaperManager(githubClient);
+        console.log('Paper manager initialized');
+    }
+    
+    // Load session configuration
+    sessionConfig = getConfigurationInMs(await loadSessionConfig());
+    console.log('Session configuration loaded:', sessionConfig);
+
+    // Initialize debug objects after everything is loaded
+    initializeDebugObjects();
+}
+
+// Listen for credential changes
+chrome.storage.onChanged.addListener(async (changes) => {
+    console.log('Storage changes detected:', Object.keys(changes));
+    if (changes.githubToken) {
+        githubToken = changes.githubToken.newValue;
+    }
+    if (changes.githubRepo) {
+        githubRepo = changes.githubRepo.newValue;
+    }
+    if (changes.sessionConfig) {
+        sessionConfig = getConfigurationInMs(changes.sessionConfig.newValue);
+        console.log('Session configuration updated:', sessionConfig);
+    }
+    
+    // Reinitialize paper manager if credentials changed
+    if (changes.githubToken || changes.githubRepo) {
+        if (githubToken && githubRepo) {
+            const githubClient = new GitHubStoreClient(githubToken, githubRepo);
+            paperManager = new PaperManager(githubClient);
+            console.log('Paper manager reinitialized');
+        }
+    }
+});
+
+// Initialize credentials
+loadCredentials();
+
+// Message passing between background and popup
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    console.log('Message received:', request);
+    
+    if (request.type === 'getCurrentPaper') {
+        console.log('Popup requested current paper:', currentPaperData);
+        sendResponse(currentPaperData);
+    }
+    else if (request.type === 'updateRating') {
+        console.log('Rating update requested:', request.rating);
+        handleUpdateRating(request.rating, sendResponse);
+        return true; // Will respond asynchronously
+    }
+    else if (request.type === 'updateAnnotation') {
+        console.log('Annotation update requested:', request.annotationType, request.data);
+        handleAnnotationUpdate(request.annotationType, request.data)
+            .then(response => sendResponse(response))
+            .catch(error => sendResponse({ success: false, error: error.message }));
+        return true; // Will respond asynchronously
+    }
+    return true;
+});
+
+async function handleUpdateRating(rating, sendResponse) {
+    if (!paperManager) {
+        sendResponse({ success: false, error: 'Paper manager not initialized' });
+        return;
+    }
+
+    if (!currentPaperData) {
+        sendResponse({ success: false, error: 'No current paper' });
+        return;
+    }
+
+    try {
+        await paperManager.updateRating(currentPaperData.arxivId, rating, currentPaperData);
+        currentPaperData.rating = rating;
+        sendResponse({ success: true });
+    } catch (error) {
+        console.error('Error updating rating:', error);
+        sendResponse({ success: false, error: error.message });
+    }
+}
+
+// Tab and window management
+chrome.tabs.onActivated.addListener(async (activeInfo) => {
+    const tab = await chrome.tabs.get(activeInfo.tabId);
+    handleTabChange(tab);
+});
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+    if (changeInfo.status === 'complete') {
+        handleTabChange(tab);
+    }
+});
+
+chrome.windows.onFocusChanged.addListener((windowId) => {
+    if (windowId === chrome.windows.WINDOW_ID_NONE) {
+        endCurrentSession();
+    }
+});
+
+// Listen for URL changes
+chrome.webNavigation.onCompleted.addListener(async (details) => {
+    console.log('Navigation detected:', details.url);
+    if (details.url.includes('arxiv.org')) {
+        console.log('arXiv URL detected, processing...');
+        const paperData = await processArxivUrl(details.url);
+        if (paperData) {
+            console.log('Paper data extracted:', paperData);
+            await createGithubIssue(paperData);
+        } else {
+            console.log('Failed to extract paper data');
+        }
+    }
+}, {
+    url: [{
+        hostSuffix: 'arxiv.org'
+    }]
+});
+
+async function handleTabChange(tab) {
+    const isArxiv = tab.url?.includes('arxiv.org/');
+    console.log('Tab change detected:', { isArxiv, url: tab.url });
+    
+    if (!isArxiv) {
+        console.log('Not an arXiv page, ending current session');
+        await endCurrentSession();
+        return;
+    }
+
+    if (currentSession) {
+        console.log('Ending existing session before starting new one');
+        await endCurrentSession();
+    }
+
+    console.log('Processing arXiv URL for new session');
+    currentPaperData = await processArxivUrl(tab.url);
+    if (currentPaperData) {
+        console.log('Starting new session for:', currentPaperData.arxivId);
+        currentSession = new ReadingSession(currentPaperData.arxivId, sessionConfig);
+        const metadata = currentSession.getMetadata();
+        console.log('New session created:', metadata);
+        startActivityTracking();
+    }
+}
+
+async function endCurrentSession() {
+    if (currentSession && currentPaperData) {
+        console.log('Ending session for:', currentPaperData.arxivId);
+        const sessionData = currentSession.finalize();
+        if (sessionData) {
+            console.log('Creating reading event:', sessionData);
+            await createReadingEvent(currentPaperData, sessionData);
+        }
+        currentSession = null;
+        currentPaperData = null;
+        stopActivityTracking();
+    }
+}
+
+function startActivityTracking() {
+    if (!activityInterval) {
+        console.log('Starting activity tracking');
+        activityInterval = setInterval(() => {
+            if (currentSession) {
+                currentSession.update();
+            }
+        }, sessionConfig.activityUpdateInterval);
+    }
+}
+
+function stopActivityTracking() {
+    if (activityInterval) {
+        clearInterval(activityInterval);
+        activityInterval = null;
+    }
+}
+
+async function createReadingEvent(paperData, sessionData) {
+    if (!paperManager || !paperData) {
+        console.error('Missing required data for creating reading event:', {
+            hasPaperManager: !!paperManager,
+            hasPaperData: !!paperData
+        });
+        return;
+    }
+
+    try {
+        await paperManager.logReadingSession(
+            paperData.arxivId,
+            sessionData,
+            paperData
+        );
+        console.log('Reading session logged:', {
+            arxivId: paperData.arxivId,
+            sessionId: sessionData.session_id,
+            activeTime: sessionData.duration_seconds,
+            idleTime: sessionData.idle_seconds,
+            totalTime: sessionData.total_elapsed_seconds
+        });
+        
+    } catch (error) {
+        console.error('Error logging reading session:', error);
+    }
+}
+
+async function createGithubIssue(paperData) {
+    if (!paperManager) {
+        console.error('Paper manager not initialized');
+        return;
+    }
+
+    try {
+        const existingPaper = await paperManager.getOrCreatePaper(paperData);
+        console.log('Paper metadata stored/retrieved:', existingPaper.arxivId);
+        return existingPaper;
+    } catch (error) {
+        console.error('Error handling paper metadata:', error);
+    }
+}
+
+async function handleAnnotationUpdate(type, data) {
+    if (!paperManager) {
+        throw new Error('Paper manager not initialized');
+    }
+
+    try {
+        const paperData = data.title ? {
+            title: data.title,
+        } : undefined;
+
+        if (type === 'vote') {
+            await paperManager.updateRating(
+                data.paperId,
+                data.vote,
+                paperData
+            );
+        } else {
+            await paperManager.logAnnotation(
+                data.paperId,
+                'notes',
+                data.notes,
+                paperData
+            );
+        }
+
+        return { success: true };
+    } catch (error) {
+        console.error('Error logging interaction:', error);
+        throw error;
+    }
+}
+
+async function parseXMLText(xmlText) {
+    console.log('Parsing XML response...');
+    try {
+        const getTagContent = (tag, text) => {
+            const entryRegex = /<entry>([\s\S]*?)<\/entry>/;
+            const entryMatch = text.match(entryRegex);
+            
+            if (entryMatch) {
+                const entryContent = entryMatch[1];
+                const regex = new RegExp(`<${tag}[^>]*>(.*?)</${tag}>`, 's');
+                const match = entryContent.match(regex);
+                return match ? match[1].trim() : '';
+            }
+            return '';
+        };
+        
+        const getAuthors = (text) => {
+            const authors = [];
+            const regex = /<author>[^]*?<name>([^]*?)<\/name>[^]*?<\/author>/g;
+            let match;
+            while (match = regex.exec(text)) {
+                authors.push(match[1].trim());
+            }
+            return authors;
+        };
+
+        const getCategories = (text) => {
+            const categories = new Set();
+            
+            const primaryMatch = text.match(/<arxiv:primary_category[^>]*term="([^"]+)"/);
+            if (primaryMatch) {
+                categories.add(primaryMatch[1]);
+            }
+            
+            const categoryRegex = /<category[^>]*term="([^"]+)"/g;
+            let match;
+            while (match = categoryRegex.exec(text)) {
+                categories.add(match[1]);
+            }
+            
+            return Array.from(categories);
+        };
+
+        const getPublishedDate = (text) => {
+            const match = text.match(/<published>([^<]+)<\/published>/);
+            return match ? match[1].trim() : null;
+        };
+
+        const parsed = {
+            title: getTagContent('title', xmlText),
+            summary: getTagContent('summary', xmlText),
+            authors: getAuthors(xmlText),
+            published_date: getPublishedDate(xmlText),
+            arxiv_tags: getCategories(xmlText)
+        };
+        
+        console.log('Parsed XML:', parsed);
+        return parsed;
+    } catch (error) {
+        console.error('Error parsing XML:', error);
+        return null;
+    }
+}
+
+async function processArxivUrl(url) {
+    console.log('Processing URL:', url);
+    
+    let arxivId = null;
+    const match = url.match(/arxiv\.org\/(abs|pdf|html)\/([0-9.]+)/);
+    if (match) {
+        arxivId = match[2];
+    }
+    
+    if (!arxivId) {
+        console.log('No arXiv ID found in URL');
+        return null;
+    }
+    
+    console.log('Found arXiv ID:', arxivId);
+    
+    try {
+        const apiUrl = `https://export.arxiv.org/api/query?id_list=${arxivId}`;
+        console.log('Fetching from arXiv API:', apiUrl);
+        
+        const response = await fetch(apiUrl);
+        console.log('API response status:', response.status);
+        
+        if (!response.ok) {
+            throw new Error(`ArXiv API error: ${response.status}`);
+        }
+        
+        const text = await response.text();
+        const parsed = await parseXMLText(text);
+        
+        if (!parsed) {
+            console.log('Failed to parse API response');
+            return null;
+        }
+        
+        const paperData = {
+            arxivId,
+            url,
+            title: parsed.title,
+            authors: parsed.authors.join(", "),
+            abstract: parsed.summary,
+            timestamp: new Date().toISOString(),
+            rating: 'novote',
+            published_date: parsed.published_date,
+            arxiv_tags: parsed.arxiv_tags
+        };
+        
+        console.log('Paper data processed:', paperData);
+        return paperData;
+    } catch (error) {
+        console.error('Error processing arXiv URL:', error);
+        return null;
+    }
+}
+
+// Initialize debug objects in service worker scope
+function initializeDebugObjects() {
+    // @ts-ignore
+    globalThis.__DEBUG__ = {
+        get paperManager() { return paperManager; },
+        getGithubClient: () => paperManager?.client,
+        getCurrentPaper: () => currentPaperData,
+        getCurrentSession: () => currentSession,
+        getConfig: () => sessionConfig
+    };
+
+    console.log('Debug objects registered, access via __DEBUG__ in service worker console');
+}
+
+
+
+---
+File: extension/config/session.js
+---
+// extension/config/session.js
+
+// Default configuration values
+const DEFAULT_CONFIG = {
+    idleThresholdMinutes: 5,
+    minSessionDurationSeconds: 30,
+    // Adding more granular control
+    requireContinuousActivity: true,  // If true, resets timer on idle
+    logPartialSessions: false,        // If true, logs sessions even if under minimum duration
+    activityUpdateIntervalSeconds: 1  // How often to update active time
+};
+
+// Load session configuration from storage
+async function loadSessionConfig() {
+    const items = await chrome.storage.sync.get('sessionConfig');
+    return { ...DEFAULT_CONFIG, ...items.sessionConfig };
+}
+
+// Save session configuration to storage
+async function saveSessionConfig(config) {
+    await chrome.storage.sync.set({
+        sessionConfig: {
+            idleThresholdMinutes: Number(config.idleThresholdMinutes),
+            minSessionDurationSeconds: Number(config.minSessionDurationSeconds),
+            requireContinuousActivity: Boolean(config.requireContinuousActivity),
+            logPartialSessions: Boolean(config.logPartialSessions),
+            activityUpdateIntervalSeconds: Number(config.activityUpdateIntervalSeconds)
+        }
+    });
+}
+
+// Convert configuration to milliseconds for internal use
+function getConfigurationInMs(config) {
+    return {
+        idleThreshold: config.idleThresholdMinutes * 60 * 1000,
+        minSessionDuration: config.minSessionDurationSeconds * 1000,
+        activityUpdateInterval: config.activityUpdateIntervalSeconds * 1000,
+        requireContinuousActivity: config.requireContinuousActivity,
+        logPartialSessions: config.logPartialSessions
+    };
+}
+
+export { loadSessionConfig, saveSessionConfig, getConfigurationInMs, DEFAULT_CONFIG };
+
+
+---
+File: extension/content.js
+---
+// extension/content.js
+console.log('ArXiv extension content script loaded');
+
+// CSS for the annotation UI
+// Updated styles section
+const STYLES = `
+.arxiv-annotator {
+    display: inline-block;
+    margin-left: 4px;
+    cursor: pointer;
+    font-size: 0.9em;
+    opacity: 0.7;
+    transition: opacity 0.2s;
+    vertical-align: baseline;
+}
+
+.arxiv-annotator:hover {
+    opacity: 1;
+}
+
+.arxiv-popup {
+    position: absolute;  /* Changed from fixed to absolute */
+    background: white;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    padding: 12px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    width: 300px;
+    z-index: 10000;
+    box-sizing: border-box;  /* Added to ensure padding is included in width */
+}
+
+.arxiv-popup-header {
+    font-weight: bold;
+    margin-bottom: 8px;
+    line-height: 1.4;
+    font-size: 1em;
+}
+
+.arxiv-popup-meta {
+    color: #666;
+    font-size: 0.85em;
+    margin-bottom: 12px;
+    line-height: 1.4;
+}
+
+.arxiv-popup-buttons {
+    display: flex;
+    gap: 8px;
+    margin: 8px 0;
+}
+
+.arxiv-popup button {
+    padding: 6px 12px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    background: #f5f5f5;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-size: 0.9em;
+}
+
+.arxiv-popup button:hover {
+    background: #e8e8e8;
+    border-color: #ccc;
+}
+
+.arxiv-popup button.active {
+    background: #e0e0e0;
+    border-color: #aaa;
+}
+
+.arxiv-popup textarea {
+    width: calc(100% - 16px);  /* Account for padding */
+    min-height: 80px;
+    margin: 8px 0;
+    padding: 8px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    resize: vertical;
+    font-family: inherit;
+    font-size: 0.9em;
+    line-height: 1.4;
+    box-sizing: border-box;  /* Added to ensure padding is included in width */
+}
+
+.arxiv-popup textarea:focus {
+    outline: none;
+    border-color: #aaa;
+}
+
+.arxiv-popup-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.arxiv-popup .save-button {
+    background: #2563eb;
+    color: white;
+    border-color: #2563eb;
+}
+
+.arxiv-popup .save-button:hover {
+    background: #1d4ed8;
+    border-color: #1d4ed8;
+}
+
+/* Loading state */
+.arxiv-popup-header:empty::after,
+.arxiv-popup-header:contains('Loading...') {
+    content: '';
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border: 2px solid #ddd;
+    border-top-color: #666;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+`;
+
+// Add styles to page
+const styleSheet = document.createElement('style');
+styleSheet.textContent = STYLES;
+document.head.appendChild(styleSheet);
+
+// Track active popup
+let activePopup = null;
+
+// Update the click-outside handler to account for wrapper
+document.addEventListener('click', (e) => {
+    if (activePopup && 
+        !activePopup.contains(e.target) && 
+        !e.target.classList.contains('arxiv-annotator')) {
+        activePopup.parentElement?.remove(); // Remove the wrapper
+        activePopup = null;
+    }
+});
+
+// Cache for paper metadata
+const metadataCache = new Map();
+
+// Parse arXiv API response
+async function parseXMLResponse(xmlText) {
+    const parser = new DOMParser();
+    const xmlDoc = parser.parseFromString(xmlText, "text/xml");
+    
+    // Get entry element
+    const entry = xmlDoc.querySelector('entry');
+    if (!entry) return null;
+    
+    return {
+        title: entry.querySelector('title')?.textContent?.trim(),
+        authors: Array.from(entry.querySelectorAll('author name'))
+            .map(name => name.textContent.trim())
+            .join(', '),
+        abstract: entry.querySelector('summary')?.textContent?.trim(),
+        published: entry.querySelector('published')?.textContent?.trim(),
+    };
+}
+
+// Fetch paper metadata
+async function fetchPaperMetadata(arxivId) {
+    console.log('Starting metadata fetch for:', arxivId);
+    
+    // Check cache first
+    if (metadataCache.has(arxivId)) {
+        console.log('Found in cache:', arxivId);
+        return metadataCache.get(arxivId);
+    }
+
+    console.log('Fetching from arXiv API:', arxivId);
+    try {
+        const apiUrl = `https://export.arxiv.org/api/query?id_list=${arxivId}`;
+        console.log('API URL:', apiUrl);
+        
+        const response = await fetch(apiUrl);
+        console.log('API response status:', response.status);
+        
+        const text = await response.text();
+        console.log('API response length:', text.length);
+        
+        const metadata = await parseXMLResponse(text);
+        console.log('Parsed metadata:', metadata);
+
+        if (metadata) {
+            metadataCache.set(arxivId, metadata);
+            return metadata;
+        } else {
+            console.log('Failed to parse metadata');
+        }
+    } catch (error) {
+        console.error('Error fetching metadata:', error);
+    }
+
+    return null;
+}
+
+// Create popup element
+async function createPopup(arxivId, initialTitle = '') {
+    console.log('Creating popup for:', arxivId);
+    
+    // Fetch metadata first
+    const metadata = await fetchPaperMetadata(arxivId);
+    console.log('Fetched metadata:', metadata);
+
+    const popup = document.createElement('div');
+    popup.className = 'arxiv-popup';
+    popup.innerHTML = `
+        <div class="arxiv-popup-header">${metadata?.title || initialTitle || arxivId}</div>
+        <div class="arxiv-popup-meta">${metadata?.authors || ''}</div>
+        <div class="arxiv-popup-buttons">
+            <button class="vote-button" data-vote="thumbsup">👍 Interesting</button>
+            <button class="vote-button" data-vote="thumbsdown">👎 Not Relevant</button>
+        </div>
+        <textarea placeholder="Add notes..."></textarea>
+        <div class="arxiv-popup-actions">
+            <button class="save-button">Save</button>
+        </div>
+    `;
+
+    // Handle voting
+    popup.querySelectorAll('.vote-button').forEach(button => {
+        button.addEventListener('click', () => {
+            popup.querySelectorAll('.vote-button').forEach(b => b.classList.remove('active'));
+            button.classList.add('active');
+        });
+    });
+
+    // Handle save
+    popup.querySelector('.save-button').addEventListener('click', () => {
+        const vote = popup.querySelector('.vote-button.active')?.dataset.vote;
+        const notes = popup.querySelector('textarea').value;
+        
+        // Send to background script
+        if (vote || notes) {
+            chrome.runtime.sendMessage({
+                type: 'updateAnnotation',
+                annotationType: notes ? 'notes' : 'vote',
+                data: {
+                    paperId: arxivId,
+                    vote,
+                    notes,
+                    title: metadata?.title,
+                    authors: metadata?.authors,
+                    abstract: metadata?.abstract,
+                    timestamp: new Date().toISOString()
+                }
+            }, (response) => {
+                console.log('Annotation saved:', response);
+                popup.remove();
+                activePopup = null;
+            });
+        }
+    });
+
+    return popup;
+}
+
+// Process a link element
+async function processArxivLink(link) {
+    // Skip if already processed
+    if (link.classList.contains('arxiv-processed')) return;
+    link.classList.add('arxiv-processed');
+
+    // Extract arXiv ID
+    const patterns = [
+        /arxiv\.org\/abs\/([0-9.]+)/,
+        /arxiv\.org\/pdf\/([0-9.]+)\.pdf/,
+        /arxiv\.org\/\w+\/([0-9.]+)/
+    ];
+    
+    let arxivId = null;
+    for (const pattern of patterns) {
+        const match = link.href.match(pattern);
+        if (match) {
+            arxivId = match[1];
+            break;
+        }
+    }
+
+    if (!arxivId) return;
+
+    // Create annotator button
+    const annotator = document.createElement('span');
+    annotator.className = 'arxiv-annotator';
+    annotator.textContent = '📝';
+    annotator.title = 'Add annotation';
+    
+    // Create a wrapper for the popup that will help with positioning
+    function createPopupWrapper(annotator) {
+        const wrapper = document.createElement('div');
+        wrapper.style.position = 'relative';
+        wrapper.style.zIndex = '10000';
+        return wrapper;
+    }
+    
+    // Update the click handler
+    annotator.addEventListener('click', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+    
+        // Remove existing popup if any
+        if (activePopup) {
+            activePopup.parentElement?.remove(); // Remove the wrapper
+            if (activePopup.arxivId === arxivId) {
+                activePopup = null;
+                return;
+            }
+        }
+    
+        // Create popup first
+        const popup = await createPopup(arxivId);
+        
+        // Create wrapper and add popup to it
+        const wrapper = createPopupWrapper(annotator);
+        wrapper.appendChild(popup);
+        
+        // Position popup relative to annotator
+        const annotatorRect = annotator.getBoundingClientRect();
+        const available_width = window.innerWidth - annotatorRect.left;
+        
+        if (available_width < 320) { // if not enough space on right
+            popup.style.right = '0';  // align to right edge
+            popup.style.left = 'auto';
+        } else {
+            popup.style.left = '0';
+        }
+        popup.style.top = `${annotatorRect.height + 5}px`;
+        
+        // Keep reference and show
+        popup.arxivId = arxivId;
+        annotator.parentNode.insertBefore(wrapper, annotator.nextSibling);
+        activePopup = popup;
+    });
+    // Add to page
+    link.parentNode.insertBefore(annotator, link.nextSibling);
+}
+
+// Process initial links
+document.querySelectorAll('a[href*="arxiv.org"]').forEach(processArxivLink);
+
+// Watch for new links
+const observer = new MutationObserver((mutations) => {
+    mutations.forEach(mutation => {
+        mutation.addedNodes.forEach(node => {
+            if (node.nodeType === Node.ELEMENT_NODE) {
+                node.querySelectorAll('a[href*="arxiv.org"]').forEach(processArxivLink);
+            }
+        });
+    });
+});
+
+observer.observe(document.body, {
+    childList: true,
+    subtree: true
+});
+
+
+
+---
+File: extension/dist/background.bundle.js
+---
+var d=class{constructor(e={}){this.cache=new Map,this.maxSize=e.maxSize??1e3,this.ttl=e.ttl??1e3*60*60,this.accessOrder=[];}get(e){let s=this.cache.get(e);if(s){if(Date.now()-s.lastAccessed>this.ttl){this.cache.delete(e),this.removeFromAccessOrder(e);return}return s.lastAccessed=Date.now(),this.updateAccessOrder(e),s.issueNumber}}set(e,s,t){if(this.cache.size>=this.maxSize&&!this.cache.has(e)){let r=this.accessOrder[this.accessOrder.length-1];r&&(this.cache.delete(r),this.removeFromAccessOrder(r));}this.cache.set(e,{issueNumber:s,lastAccessed:Date.now(),createdAt:t.createdAt,updatedAt:t.updatedAt}),this.updateAccessOrder(e);}remove(e){this.cache.delete(e),this.removeFromAccessOrder(e);}clear(){this.cache.clear(),this.accessOrder=[];}getStats(){return {size:this.cache.size,maxSize:this.maxSize,ttl:this.ttl}}shouldRefresh(e,s){let t=this.cache.get(e);return t?s>t.updatedAt:true}updateAccessOrder(e){this.removeFromAccessOrder(e),this.accessOrder.unshift(e);}removeFromAccessOrder(e){let s=this.accessOrder.indexOf(e);s>-1&&this.accessOrder.splice(s,1);}};var l="0.3.2";var f=class{constructor(e,s,t={}){this.token=e,this.repo=s,this.config={baseLabel:t.baseLabel??"stored-object",uidPrefix:t.uidPrefix??"UID:",reactions:{processed:t.reactions?.processed??"+1",initialState:t.reactions?.initialState??"rocket"}},this.cache=new d(t.cache);}async fetchFromGitHub(e,s={}){let t=new URL(`https://api.github.com/repos/${this.repo}${e}`);s.params&&(Object.entries(s.params).forEach(([i,a])=>{t.searchParams.append(i,a);}),delete s.params);let r=await fetch(t.toString(),{...s,headers:{Authorization:`token ${this.token}`,Accept:"application/vnd.github.v3+json",...s.headers}});if(!r.ok)throw new Error(`GitHub API error: ${r.status}`);return r.json()}createCommentPayload(e,s){let t={_data:e,_meta:{client_version:l,timestamp:new Date().toISOString(),update_mode:"append"}};return s&&(t.type=s),t}async getObject(e){let s=this.cache.get(e),t;if(s)try{t=await this.fetchFromGitHub(`/issues/${s}`),this._verifyIssueLabels(t,e)||(this.cache.remove(e),t=void 0);}catch{this.cache.remove(e);}if(!t){let c=await this.fetchFromGitHub("/issues",{method:"GET",params:{labels:[this.config.baseLabel,`${this.config.uidPrefix}${e}`].join(","),state:"closed"}});if(!c||c.length===0)throw new Error(`No object found with ID: ${e}`);t=c[0];}if(!t?.body)throw new Error(`Invalid issue data received for ID: ${e}`);let r=JSON.parse(t.body),i=new Date(t.created_at),a=new Date(t.updated_at);return this.cache.set(e,t.number,{createdAt:i,updatedAt:a}),{meta:{objectId:e,label:`${this.config.uidPrefix}${e}`,createdAt:i,updatedAt:a,version:await this._getVersion(t.number)},data:r}}async createObject(e,s){let t=`${this.config.uidPrefix}${e}`,r=await this.fetchFromGitHub("/issues",{method:"POST",body:JSON.stringify({title:`Stored Object: ${e}`,body:JSON.stringify(s,null,2),labels:[this.config.baseLabel,t]})});this.cache.set(e,r.number,{createdAt:new Date(r.created_at),updatedAt:new Date(r.updated_at)});let i=this.createCommentPayload(s,"initial_state"),a=await this.fetchFromGitHub(`/issues/${r.number}/comments`,{method:"POST",body:JSON.stringify({body:JSON.stringify(i,null,2)})});return await this.fetchFromGitHub(`/issues/comments/${a.id}/reactions`,{method:"POST",body:JSON.stringify({content:this.config.reactions.processed})}),await this.fetchFromGitHub(`/issues/comments/${a.id}/reactions`,{method:"POST",body:JSON.stringify({content:this.config.reactions.initialState})}),await this.fetchFromGitHub(`/issues/${r.number}`,{method:"PATCH",body:JSON.stringify({state:"closed"})}),{meta:{objectId:e,label:t,createdAt:new Date(r.created_at),updatedAt:new Date(r.updated_at),version:1},data:s}}_verifyIssueLabels(e,s){let t=new Set([this.config.baseLabel,`${this.config.uidPrefix}${s}`]);return e.labels.some(r=>t.has(r.name))}async updateObject(e,s){let t=await this.fetchFromGitHub("/issues",{method:"GET",params:{labels:[this.config.baseLabel,`${this.config.uidPrefix}${e}`].join(","),state:"all"}});if(!t||t.length===0)throw new Error(`No object found with ID: ${e}`);let r=t[0],i=this.createCommentPayload(s);return await this.fetchFromGitHub(`/issues/${r.number}/comments`,{method:"POST",body:JSON.stringify({body:JSON.stringify(i,null,2)})}),await this.fetchFromGitHub(`/issues/${r.number}`,{method:"PATCH",body:JSON.stringify({state:"open"})}),this.getObject(e)}async listAll(){let e=await this.fetchFromGitHub("/issues",{method:"GET",params:{labels:this.config.baseLabel,state:"closed"}}),s={};for(let t of e)if(!t.labels.some(r=>r.name==="archived"))try{let r=this._getObjectIdFromLabels(t),i=JSON.parse(t.body),a={objectId:r,label:r,createdAt:new Date(t.created_at),updatedAt:new Date(t.updated_at),version:await this._getVersion(t.number)};s[r]={meta:a,data:i};}catch{continue}return s}async listUpdatedSince(e){let s=await this.fetchFromGitHub("/issues",{method:"GET",params:{labels:this.config.baseLabel,state:"closed",since:e.toISOString()}}),t={};for(let r of s)if(!r.labels.some(i=>i.name==="archived"))try{let i=this._getObjectIdFromLabels(r),a=JSON.parse(r.body),n=new Date(r.updated_at);if(n>e){let c={objectId:i,label:i,createdAt:new Date(r.created_at),updatedAt:n,version:await this._getVersion(r.number)};t[i]={meta:c,data:a};}}catch{continue}return t}async getObjectHistory(e){let s=await this.fetchFromGitHub("/issues",{method:"GET",params:{labels:[this.config.baseLabel,`${this.config.uidPrefix}${e}`].join(","),state:"all"}});if(!s||s.length===0)throw new Error(`No object found with ID: ${e}`);let t=s[0],r=await this.fetchFromGitHub(`/issues/${t.number}/comments`),i=[];for(let a of r)try{let n=JSON.parse(a.body),c="update",m,b={client_version:"legacy",timestamp:a.created_at,update_mode:"append"};typeof n=="object"?"_data"in n?(c=n.type||"update",m=n._data,b=n._meta||b):"type"in n&&n.type==="initial_state"?(c="initial_state",m=n.data):m=n:m=n,i.push({timestamp:a.created_at,type:c,data:m,commentId:a.id});}catch{continue}return i}async _getVersion(e){return (await this.fetchFromGitHub(`/issues/${e}/comments`)).length+1}_getObjectIdFromLabels(e){for(let s of e.labels)if(s.name!==this.config.baseLabel&&s.name.startsWith(this.config.uidPrefix))return s.name.slice(this.config.uidPrefix.length);throw new Error(`No UID label found with prefix ${this.config.uidPrefix}`)}};
+
+const isInteractionLog = (data) => {
+  const log = data;
+  return typeof log === "object" && log !== null && typeof log.paper_id === "string" && Array.isArray(log.interactions);
+};
+
+class PaperManager {
+  constructor(client) {
+    this.client = client;
+  }
+  async getOrCreatePaper(paperData) {
+    const objectId = `paper:${paperData.arxivId}`;
+    try {
+      const obj = await this.client.getObject(objectId);
+      const data = obj.data;
+      return data;
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("No object found")) {
+        const defaultPaperData = {
+          arxivId: paperData.arxivId,
+          url: paperData.url || `https://arxiv.org/abs/${paperData.arxivId}`,
+          title: paperData.title || paperData.arxivId,
+          authors: paperData.authors || "",
+          abstract: paperData.abstract || "",
+          timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+          rating: "novote",
+          published_date: paperData.published_date || "",
+          arxiv_tags: paperData.arxiv_tags || []
+        };
+        await this.client.createObject(objectId, defaultPaperData);
+        return defaultPaperData;
+      }
+      throw error;
+    }
+  }
+  async getOrCreateInteractionLog(arxivId) {
+    const objectId = `interactions:${arxivId}`;
+    try {
+      const obj = await this.client.getObject(objectId);
+      const data = obj.data;
+      if (isInteractionLog(data)) {
+        return data;
+      }
+      throw new Error("Invalid interaction log format");
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("No object found")) {
+        const newLog = {
+          paper_id: arxivId,
+          interactions: []
+        };
+        await this.client.createObject(objectId, newLog);
+        return newLog;
+      }
+      throw error;
+    }
+  }
+  async logReadingSession(arxivId, session, paperData) {
+    if (paperData) {
+      await this.getOrCreatePaper({
+        arxivId,
+        ...paperData
+      });
+    }
+    await this.addInteraction(arxivId, {
+      type: "reading_session",
+      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+      data: session
+    });
+  }
+  async logAnnotation(arxivId, key, value, paperData) {
+    if (paperData) {
+      await this.getOrCreatePaper({
+        arxivId,
+        ...paperData
+      });
+    }
+    await this.addInteraction(arxivId, {
+      type: "annotation",
+      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+      data: { key, value }
+    });
+  }
+  async updateRating(arxivId, rating, paperData) {
+    const paper = await this.getOrCreatePaper({
+      arxivId,
+      ...paperData
+    });
+    await this.client.updateObject(`paper:${arxivId}`, {
+      ...paper,
+      rating
+    });
+    await this.addInteraction(arxivId, {
+      type: "rating",
+      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+      data: { rating }
+    });
+  }
+  async addInteraction(arxivId, interaction) {
+    const log = await this.getOrCreateInteractionLog(arxivId);
+    log.interactions.push(interaction);
+    await this.client.updateObject(`interactions:${arxivId}`, log);
+  }
+  async getInteractions(arxivId, options = {}) {
+    try {
+      const log = await this.getOrCreateInteractionLog(arxivId);
+      let interactions = log.interactions;
+      if (options.type) {
+        interactions = interactions.filter((i) => i.type === options.type);
+      }
+      if (options.startTime || options.endTime) {
+        interactions = interactions.filter((i) => {
+          const time = new Date(i.timestamp);
+          if (options.startTime && time < options.startTime) return false;
+          if (options.endTime && time > options.endTime) return false;
+          return true;
+        });
+      }
+      return interactions;
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("No object found")) {
+        return [];
+      }
+      throw error;
+    }
+  }
+  async getPaperReadingTime(arxivId) {
+    const interactions = await this.getInteractions(arxivId, { type: "reading_session" });
+    return interactions.reduce((total, i) => {
+      console.log("Calculating from interaction:", i);
+      const data = i.data;
+      if (typeof data === "object" && data !== null && "duration_seconds" in data) {
+        return total + data.duration_seconds;
+      }
+      return total;
+    }, 0);
+  }
+  async getPaperHistory(arxivId) {
+    const objectId = `paper:${arxivId}`;
+    return this.client.getObjectHistory(objectId);
+  }
+}
+
+// extension/config/session.js
+
+// Default configuration values
+const DEFAULT_CONFIG = {
+    idleThresholdMinutes: 5,
+    minSessionDurationSeconds: 30,
+    // Adding more granular control
+    requireContinuousActivity: true,  // If true, resets timer on idle
+    logPartialSessions: false,        // If true, logs sessions even if under minimum duration
+    activityUpdateIntervalSeconds: 1  // How often to update active time
+};
+
+// Load session configuration from storage
+async function loadSessionConfig() {
+    const items = await chrome.storage.sync.get('sessionConfig');
+    return { ...DEFAULT_CONFIG, ...items.sessionConfig };
+}
+
+// Convert configuration to milliseconds for internal use
+function getConfigurationInMs(config) {
+    return {
+        idleThreshold: config.idleThresholdMinutes * 60 * 1000,
+        minSessionDuration: config.minSessionDurationSeconds * 1000,
+        activityUpdateInterval: config.activityUpdateIntervalSeconds * 1000,
+        requireContinuousActivity: config.requireContinuousActivity,
+        logPartialSessions: config.logPartialSessions
+    };
+}
+
+// background.js
+
+let githubToken = '';
+let githubRepo = '';
+let currentPaperData = null;
+let currentSession = null;
+let activityInterval = null;
+let sessionConfig = null;
+let paperManager = null;
+
+class ReadingSession {
+    constructor(arxivId, config) {
+       this.arxivId = arxivId;
+       this.sessionId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+       this.startTime = new Date();
+       this.activeTime = 0;
+       this.idleTime = 0;
+       this.lastActiveTime = new Date();
+       this.isTracking = true;
+       this.config = config;
+       this.endTime = null;
+       this.finalizedData = null;
+    }
+    
+    update() {
+       if (this.isTracking && !this.finalizedData) {
+           const now = new Date();
+           const timeSinceLastActive = now.getTime() - this.lastActiveTime.getTime();
+           
+           if (timeSinceLastActive < this.config.idleThreshold) {
+               this.activeTime += timeSinceLastActive;
+           } else {
+               this.idleTime += timeSinceLastActive;
+           }
+           
+           this.lastActiveTime = now;
+       }
+    }
+    
+    finalize() {
+       if (this.finalizedData) {
+           return this.finalizedData;
+       }
+    
+       this.update();
+       this.isTracking = false;
+       this.endTime = new Date();
+       const totalElapsed = this.endTime.getTime() - this.startTime.getTime();
+    
+       if (this.activeTime >= this.config.minSessionDuration) {
+           this.finalizedData = {
+               session_id: this.sessionId,
+               duration_seconds: Math.round(this.activeTime / 1000),
+               idle_seconds: Math.round(this.idleTime / 1000),
+               start_time: this.startTime.toISOString(),
+               end_time: this.endTime.toISOString(),
+               total_elapsed_seconds: Math.round(totalElapsed / 1000)
+           };
+           return this.finalizedData;
+       }
+       return null;
+    }
+    
+    end() {
+       return this.finalize();
+    }
+    
+    getMetadata() {
+       return {
+           sessionId: this.sessionId,
+           startTime: this.startTime.toISOString(),
+           activeSeconds: Math.round(this.activeTime / 1000),
+           idleSeconds: Math.round(this.idleTime / 1000)
+       };
+    }
+    }
+
+// Load credentials and configuration when extension starts
+async function loadCredentials() {
+    const items = await chrome.storage.sync.get(['githubToken', 'githubRepo']);
+    githubToken = items.githubToken || '';
+    githubRepo = items.githubRepo || '';
+    console.log('Credentials loaded:', { hasToken: !!githubToken, hasRepo: !!githubRepo });
+    
+    // Initialize paper manager if we have credentials
+    if (githubToken && githubRepo) {
+        const githubClient = new f(githubToken, githubRepo);
+        paperManager = new PaperManager(githubClient);
+        console.log('Paper manager initialized');
+    }
+    
+    // Load session configuration
+    sessionConfig = getConfigurationInMs(await loadSessionConfig());
+    console.log('Session configuration loaded:', sessionConfig);
+
+    // Initialize debug objects after everything is loaded
+    initializeDebugObjects();
+}
+
+// Listen for credential changes
+chrome.storage.onChanged.addListener(async (changes) => {
+    console.log('Storage changes detected:', Object.keys(changes));
+    if (changes.githubToken) {
+        githubToken = changes.githubToken.newValue;
+    }
+    if (changes.githubRepo) {
+        githubRepo = changes.githubRepo.newValue;
+    }
+    if (changes.sessionConfig) {
+        sessionConfig = getConfigurationInMs(changes.sessionConfig.newValue);
+        console.log('Session configuration updated:', sessionConfig);
+    }
+    
+    // Reinitialize paper manager if credentials changed
+    if (changes.githubToken || changes.githubRepo) {
+        if (githubToken && githubRepo) {
+            const githubClient = new f(githubToken, githubRepo);
+            paperManager = new PaperManager(githubClient);
+            console.log('Paper manager reinitialized');
+        }
+    }
+});
+
+// Initialize credentials
+loadCredentials();
+
+// Message passing between background and popup
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    console.log('Message received:', request);
+    
+    if (request.type === 'getCurrentPaper') {
+        console.log('Popup requested current paper:', currentPaperData);
+        sendResponse(currentPaperData);
+    }
+    else if (request.type === 'updateRating') {
+        console.log('Rating update requested:', request.rating);
+        handleUpdateRating(request.rating, sendResponse);
+        return true; // Will respond asynchronously
+    }
+    else if (request.type === 'updateAnnotation') {
+        console.log('Annotation update requested:', request.annotationType, request.data);
+        handleAnnotationUpdate(request.annotationType, request.data)
+            .then(response => sendResponse(response))
+            .catch(error => sendResponse({ success: false, error: error.message }));
+        return true; // Will respond asynchronously
+    }
+    return true;
+});
+
+async function handleUpdateRating(rating, sendResponse) {
+    if (!paperManager) {
+        sendResponse({ success: false, error: 'Paper manager not initialized' });
+        return;
+    }
+
+    if (!currentPaperData) {
+        sendResponse({ success: false, error: 'No current paper' });
+        return;
+    }
+
+    try {
+        await paperManager.updateRating(currentPaperData.arxivId, rating, currentPaperData);
+        currentPaperData.rating = rating;
+        sendResponse({ success: true });
+    } catch (error) {
+        console.error('Error updating rating:', error);
+        sendResponse({ success: false, error: error.message });
+    }
+}
+
+// Tab and window management
+chrome.tabs.onActivated.addListener(async (activeInfo) => {
+    const tab = await chrome.tabs.get(activeInfo.tabId);
+    handleTabChange(tab);
+});
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+    if (changeInfo.status === 'complete') {
+        handleTabChange(tab);
+    }
+});
+
+chrome.windows.onFocusChanged.addListener((windowId) => {
+    if (windowId === chrome.windows.WINDOW_ID_NONE) {
+        endCurrentSession();
+    }
+});
+
+// Listen for URL changes
+chrome.webNavigation.onCompleted.addListener(async (details) => {
+    console.log('Navigation detected:', details.url);
+    if (details.url.includes('arxiv.org')) {
+        console.log('arXiv URL detected, processing...');
+        const paperData = await processArxivUrl(details.url);
+        if (paperData) {
+            console.log('Paper data extracted:', paperData);
+            await createGithubIssue(paperData);
+        } else {
+            console.log('Failed to extract paper data');
+        }
+    }
+}, {
+    url: [{
+        hostSuffix: 'arxiv.org'
+    }]
+});
+
+async function handleTabChange(tab) {
+    const isArxiv = tab.url?.includes('arxiv.org/');
+    console.log('Tab change detected:', { isArxiv, url: tab.url });
+    
+    if (!isArxiv) {
+        console.log('Not an arXiv page, ending current session');
+        await endCurrentSession();
+        return;
+    }
+
+    if (currentSession) {
+        console.log('Ending existing session before starting new one');
+        await endCurrentSession();
+    }
+
+    console.log('Processing arXiv URL for new session');
+    currentPaperData = await processArxivUrl(tab.url);
+    if (currentPaperData) {
+        console.log('Starting new session for:', currentPaperData.arxivId);
+        currentSession = new ReadingSession(currentPaperData.arxivId, sessionConfig);
+        const metadata = currentSession.getMetadata();
+        console.log('New session created:', metadata);
+        startActivityTracking();
+    }
+}
+
+async function endCurrentSession() {
+    if (currentSession && currentPaperData) {
+        console.log('Ending session for:', currentPaperData.arxivId);
+        const sessionData = currentSession.finalize();
+        if (sessionData) {
+            console.log('Creating reading event:', sessionData);
+            await createReadingEvent(currentPaperData, sessionData);
+        }
+        currentSession = null;
+        currentPaperData = null;
+        stopActivityTracking();
+    }
+}
+
+function startActivityTracking() {
+    if (!activityInterval) {
+        console.log('Starting activity tracking');
+        activityInterval = setInterval(() => {
+            if (currentSession) {
+                currentSession.update();
+            }
+        }, sessionConfig.activityUpdateInterval);
+    }
+}
+
+function stopActivityTracking() {
+    if (activityInterval) {
+        clearInterval(activityInterval);
+        activityInterval = null;
+    }
+}
+
+async function createReadingEvent(paperData, sessionData) {
+    if (!paperManager || !paperData) {
+        console.error('Missing required data for creating reading event:', {
+            hasPaperManager: !!paperManager,
+            hasPaperData: !!paperData
+        });
+        return;
+    }
+
+    try {
+        await paperManager.logReadingSession(
+            paperData.arxivId,
+            sessionData,
+            paperData
+        );
+        console.log('Reading session logged:', {
+            arxivId: paperData.arxivId,
+            sessionId: sessionData.session_id,
+            activeTime: sessionData.duration_seconds,
+            idleTime: sessionData.idle_seconds,
+            totalTime: sessionData.total_elapsed_seconds
+        });
+        
+    } catch (error) {
+        console.error('Error logging reading session:', error);
+    }
+}
+
+async function createGithubIssue(paperData) {
+    if (!paperManager) {
+        console.error('Paper manager not initialized');
+        return;
+    }
+
+    try {
+        const existingPaper = await paperManager.getOrCreatePaper(paperData);
+        console.log('Paper metadata stored/retrieved:', existingPaper.arxivId);
+        return existingPaper;
+    } catch (error) {
+        console.error('Error handling paper metadata:', error);
+    }
+}
+
+async function handleAnnotationUpdate(type, data) {
+    if (!paperManager) {
+        throw new Error('Paper manager not initialized');
+    }
+
+    try {
+        const paperData = data.title ? {
+            title: data.title,
+        } : undefined;
+
+        if (type === 'vote') {
+            await paperManager.updateRating(
+                data.paperId,
+                data.vote,
+                paperData
+            );
+        } else {
+            await paperManager.logAnnotation(
+                data.paperId,
+                'notes',
+                data.notes,
+                paperData
+            );
+        }
+
+        return { success: true };
+    } catch (error) {
+        console.error('Error logging interaction:', error);
+        throw error;
+    }
+}
+
+async function parseXMLText(xmlText) {
+    console.log('Parsing XML response...');
+    try {
+        const getTagContent = (tag, text) => {
+            const entryRegex = /<entry>([\s\S]*?)<\/entry>/;
+            const entryMatch = text.match(entryRegex);
+            
+            if (entryMatch) {
+                const entryContent = entryMatch[1];
+                const regex = new RegExp(`<${tag}[^>]*>(.*?)</${tag}>`, 's');
+                const match = entryContent.match(regex);
+                return match ? match[1].trim() : '';
+            }
+            return '';
+        };
+        
+        const getAuthors = (text) => {
+            const authors = [];
+            const regex = /<author>[^]*?<name>([^]*?)<\/name>[^]*?<\/author>/g;
+            let match;
+            while (match = regex.exec(text)) {
+                authors.push(match[1].trim());
+            }
+            return authors;
+        };
+
+        const getCategories = (text) => {
+            const categories = new Set();
+            
+            const primaryMatch = text.match(/<arxiv:primary_category[^>]*term="([^"]+)"/);
+            if (primaryMatch) {
+                categories.add(primaryMatch[1]);
+            }
+            
+            const categoryRegex = /<category[^>]*term="([^"]+)"/g;
+            let match;
+            while (match = categoryRegex.exec(text)) {
+                categories.add(match[1]);
+            }
+            
+            return Array.from(categories);
+        };
+
+        const getPublishedDate = (text) => {
+            const match = text.match(/<published>([^<]+)<\/published>/);
+            return match ? match[1].trim() : null;
+        };
+
+        const parsed = {
+            title: getTagContent('title', xmlText),
+            summary: getTagContent('summary', xmlText),
+            authors: getAuthors(xmlText),
+            published_date: getPublishedDate(xmlText),
+            arxiv_tags: getCategories(xmlText)
+        };
+        
+        console.log('Parsed XML:', parsed);
+        return parsed;
+    } catch (error) {
+        console.error('Error parsing XML:', error);
+        return null;
+    }
+}
+
+async function processArxivUrl(url) {
+    console.log('Processing URL:', url);
+    
+    let arxivId = null;
+    const match = url.match(/arxiv\.org\/(abs|pdf|html)\/([0-9.]+)/);
+    if (match) {
+        arxivId = match[2];
+    }
+    
+    if (!arxivId) {
+        console.log('No arXiv ID found in URL');
+        return null;
+    }
+    
+    console.log('Found arXiv ID:', arxivId);
+    
+    try {
+        const apiUrl = `https://export.arxiv.org/api/query?id_list=${arxivId}`;
+        console.log('Fetching from arXiv API:', apiUrl);
+        
+        const response = await fetch(apiUrl);
+        console.log('API response status:', response.status);
+        
+        if (!response.ok) {
+            throw new Error(`ArXiv API error: ${response.status}`);
+        }
+        
+        const text = await response.text();
+        const parsed = await parseXMLText(text);
+        
+        if (!parsed) {
+            console.log('Failed to parse API response');
+            return null;
+        }
+        
+        const paperData = {
+            arxivId,
+            url,
+            title: parsed.title,
+            authors: parsed.authors.join(", "),
+            abstract: parsed.summary,
+            timestamp: new Date().toISOString(),
+            rating: 'novote',
+            published_date: parsed.published_date,
+            arxiv_tags: parsed.arxiv_tags
+        };
+        
+        console.log('Paper data processed:', paperData);
+        return paperData;
+    } catch (error) {
+        console.error('Error processing arXiv URL:', error);
+        return null;
+    }
+}
+
+// Initialize debug objects in service worker scope
+function initializeDebugObjects() {
+    // @ts-ignore
+    globalThis.__DEBUG__ = {
+        get paperManager() { return paperManager; },
+        getGithubClient: () => paperManager?.client,
+        getCurrentPaper: () => currentPaperData,
+        getCurrentSession: () => currentSession,
+        getConfig: () => sessionConfig
+    };
+
+    console.log('Debug objects registered, access via __DEBUG__ in service worker console');
+}
+//# sourceMappingURL=background.bundle.js.map
+
+
+
+---
+File: extension/dist/content.bundle.js
+---
+// extension/content.js
+console.log('ArXiv extension content script loaded');
+
+// CSS for the annotation UI
+// Updated styles section
+const STYLES = `
+.arxiv-annotator {
+    display: inline-block;
+    margin-left: 4px;
+    cursor: pointer;
+    font-size: 0.9em;
+    opacity: 0.7;
+    transition: opacity 0.2s;
+    vertical-align: baseline;
+}
+
+.arxiv-annotator:hover {
+    opacity: 1;
+}
+
+.arxiv-popup {
+    position: absolute;  /* Changed from fixed to absolute */
+    background: white;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    padding: 12px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    width: 300px;
+    z-index: 10000;
+    box-sizing: border-box;  /* Added to ensure padding is included in width */
+}
+
+.arxiv-popup-header {
+    font-weight: bold;
+    margin-bottom: 8px;
+    line-height: 1.4;
+    font-size: 1em;
+}
+
+.arxiv-popup-meta {
+    color: #666;
+    font-size: 0.85em;
+    margin-bottom: 12px;
+    line-height: 1.4;
+}
+
+.arxiv-popup-buttons {
+    display: flex;
+    gap: 8px;
+    margin: 8px 0;
+}
+
+.arxiv-popup button {
+    padding: 6px 12px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    background: #f5f5f5;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-size: 0.9em;
+}
+
+.arxiv-popup button:hover {
+    background: #e8e8e8;
+    border-color: #ccc;
+}
+
+.arxiv-popup button.active {
+    background: #e0e0e0;
+    border-color: #aaa;
+}
+
+.arxiv-popup textarea {
+    width: calc(100% - 16px);  /* Account for padding */
+    min-height: 80px;
+    margin: 8px 0;
+    padding: 8px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    resize: vertical;
+    font-family: inherit;
+    font-size: 0.9em;
+    line-height: 1.4;
+    box-sizing: border-box;  /* Added to ensure padding is included in width */
+}
+
+.arxiv-popup textarea:focus {
+    outline: none;
+    border-color: #aaa;
+}
+
+.arxiv-popup-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.arxiv-popup .save-button {
+    background: #2563eb;
+    color: white;
+    border-color: #2563eb;
+}
+
+.arxiv-popup .save-button:hover {
+    background: #1d4ed8;
+    border-color: #1d4ed8;
+}
+
+/* Loading state */
+.arxiv-popup-header:empty::after,
+.arxiv-popup-header:contains('Loading...') {
+    content: '';
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border: 2px solid #ddd;
+    border-top-color: #666;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+`;
+
+// Add styles to page
+const styleSheet = document.createElement('style');
+styleSheet.textContent = STYLES;
+document.head.appendChild(styleSheet);
+
+// Track active popup
+let activePopup = null;
+
+// Update the click-outside handler to account for wrapper
+document.addEventListener('click', (e) => {
+    if (activePopup && 
+        !activePopup.contains(e.target) && 
+        !e.target.classList.contains('arxiv-annotator')) {
+        activePopup.parentElement?.remove(); // Remove the wrapper
+        activePopup = null;
+    }
+});
+
+// Cache for paper metadata
+const metadataCache = new Map();
+
+// Parse arXiv API response
+async function parseXMLResponse(xmlText) {
+    const parser = new DOMParser();
+    const xmlDoc = parser.parseFromString(xmlText, "text/xml");
+    
+    // Get entry element
+    const entry = xmlDoc.querySelector('entry');
+    if (!entry) return null;
+    
+    return {
+        title: entry.querySelector('title')?.textContent?.trim(),
+        authors: Array.from(entry.querySelectorAll('author name'))
+            .map(name => name.textContent.trim())
+            .join(', '),
+        abstract: entry.querySelector('summary')?.textContent?.trim(),
+        published: entry.querySelector('published')?.textContent?.trim(),
+    };
+}
+
+// Fetch paper metadata
+async function fetchPaperMetadata(arxivId) {
+    console.log('Starting metadata fetch for:', arxivId);
+    
+    // Check cache first
+    if (metadataCache.has(arxivId)) {
+        console.log('Found in cache:', arxivId);
+        return metadataCache.get(arxivId);
+    }
+
+    console.log('Fetching from arXiv API:', arxivId);
+    try {
+        const apiUrl = `https://export.arxiv.org/api/query?id_list=${arxivId}`;
+        console.log('API URL:', apiUrl);
+        
+        const response = await fetch(apiUrl);
+        console.log('API response status:', response.status);
+        
+        const text = await response.text();
+        console.log('API response length:', text.length);
+        
+        const metadata = await parseXMLResponse(text);
+        console.log('Parsed metadata:', metadata);
+
+        if (metadata) {
+            metadataCache.set(arxivId, metadata);
+            return metadata;
+        } else {
+            console.log('Failed to parse metadata');
+        }
+    } catch (error) {
+        console.error('Error fetching metadata:', error);
+    }
+
+    return null;
+}
+
+// Create popup element
+async function createPopup(arxivId, initialTitle = '') {
+    console.log('Creating popup for:', arxivId);
+    
+    // Fetch metadata first
+    const metadata = await fetchPaperMetadata(arxivId);
+    console.log('Fetched metadata:', metadata);
+
+    const popup = document.createElement('div');
+    popup.className = 'arxiv-popup';
+    popup.innerHTML = `
+        <div class="arxiv-popup-header">${metadata?.title || initialTitle || arxivId}</div>
+        <div class="arxiv-popup-meta">${metadata?.authors || ''}</div>
+        <div class="arxiv-popup-buttons">
+            <button class="vote-button" data-vote="thumbsup">👍 Interesting</button>
+            <button class="vote-button" data-vote="thumbsdown">👎 Not Relevant</button>
+        </div>
+        <textarea placeholder="Add notes..."></textarea>
+        <div class="arxiv-popup-actions">
+            <button class="save-button">Save</button>
+        </div>
+    `;
+
+    // Handle voting
+    popup.querySelectorAll('.vote-button').forEach(button => {
+        button.addEventListener('click', () => {
+            popup.querySelectorAll('.vote-button').forEach(b => b.classList.remove('active'));
+            button.classList.add('active');
+        });
+    });
+
+    // Handle save
+    popup.querySelector('.save-button').addEventListener('click', () => {
+        const vote = popup.querySelector('.vote-button.active')?.dataset.vote;
+        const notes = popup.querySelector('textarea').value;
+        
+        // Send to background script
+        if (vote || notes) {
+            chrome.runtime.sendMessage({
+                type: 'updateAnnotation',
+                annotationType: notes ? 'notes' : 'vote',
+                data: {
+                    paperId: arxivId,
+                    vote,
+                    notes,
+                    title: metadata?.title,
+                    authors: metadata?.authors,
+                    abstract: metadata?.abstract,
+                    timestamp: new Date().toISOString()
+                }
+            }, (response) => {
+                console.log('Annotation saved:', response);
+                popup.remove();
+                activePopup = null;
+            });
+        }
+    });
+
+    return popup;
+}
+
+// Process a link element
+async function processArxivLink(link) {
+    // Skip if already processed
+    if (link.classList.contains('arxiv-processed')) return;
+    link.classList.add('arxiv-processed');
+
+    // Extract arXiv ID
+    const patterns = [
+        /arxiv\.org\/abs\/([0-9.]+)/,
+        /arxiv\.org\/pdf\/([0-9.]+)\.pdf/,
+        /arxiv\.org\/\w+\/([0-9.]+)/
+    ];
+    
+    let arxivId = null;
+    for (const pattern of patterns) {
+        const match = link.href.match(pattern);
+        if (match) {
+            arxivId = match[1];
+            break;
+        }
+    }
+
+    if (!arxivId) return;
+
+    // Create annotator button
+    const annotator = document.createElement('span');
+    annotator.className = 'arxiv-annotator';
+    annotator.textContent = '📝';
+    annotator.title = 'Add annotation';
+    
+    // Create a wrapper for the popup that will help with positioning
+    function createPopupWrapper(annotator) {
+        const wrapper = document.createElement('div');
+        wrapper.style.position = 'relative';
+        wrapper.style.zIndex = '10000';
+        return wrapper;
+    }
+    
+    // Update the click handler
+    annotator.addEventListener('click', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+    
+        // Remove existing popup if any
+        if (activePopup) {
+            activePopup.parentElement?.remove(); // Remove the wrapper
+            if (activePopup.arxivId === arxivId) {
+                activePopup = null;
+                return;
+            }
+        }
+    
+        // Create popup first
+        const popup = await createPopup(arxivId);
+        
+        // Create wrapper and add popup to it
+        const wrapper = createPopupWrapper();
+        wrapper.appendChild(popup);
+        
+        // Position popup relative to annotator
+        const annotatorRect = annotator.getBoundingClientRect();
+        const available_width = window.innerWidth - annotatorRect.left;
+        
+        if (available_width < 320) { // if not enough space on right
+            popup.style.right = '0';  // align to right edge
+            popup.style.left = 'auto';
+        } else {
+            popup.style.left = '0';
+        }
+        popup.style.top = `${annotatorRect.height + 5}px`;
+        
+        // Keep reference and show
+        popup.arxivId = arxivId;
+        annotator.parentNode.insertBefore(wrapper, annotator.nextSibling);
+        activePopup = popup;
+    });
+    // Add to page
+    link.parentNode.insertBefore(annotator, link.nextSibling);
+}
+
+// Process initial links
+document.querySelectorAll('a[href*="arxiv.org"]').forEach(processArxivLink);
+
+// Watch for new links
+const observer = new MutationObserver((mutations) => {
+    mutations.forEach(mutation => {
+        mutation.addedNodes.forEach(node => {
+            if (node.nodeType === Node.ELEMENT_NODE) {
+                node.querySelectorAll('a[href*="arxiv.org"]').forEach(processArxivLink);
+            }
+        });
+    });
+});
+
+observer.observe(document.body, {
+    childList: true,
+    subtree: true
+});
+//# sourceMappingURL=content.bundle.js.map
+
+
+
+---
+File: extension/dist/popup.bundle.js
+---
+// popup.js
+
+// Function to get paper data from background script
+async function getCurrentPaper() {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage({type: 'getCurrentPaper'}, response => {
+      console.log('Got paper data from background:', response);
+      resolve(response);
+    });
+  });
+}
+
+// Function to update UI with paper data
+function updateUI(paperData) {
+  const titleElement = document.getElementById('paperTitle');
+  const authorsElement = document.getElementById('paperAuthors');
+  const statusElement = document.getElementById('status');
+
+  if (paperData) {
+    titleElement.textContent = paperData.title || paperData.arxivId;
+    authorsElement.textContent = paperData.authors;
+    statusElement.textContent = 'Paper tracked! Issue created on GitHub.';
+    
+    // Enable rating buttons
+    document.getElementById('thumbsUp').disabled = false;
+    document.getElementById('thumbsDown').disabled = false;
+  } else {
+    titleElement.textContent = 'No arXiv paper detected';
+    authorsElement.textContent = '';
+    statusElement.textContent = 'Visit an arXiv paper to track it';
+    
+    // Disable rating buttons
+    document.getElementById('thumbsUp').disabled = true;
+    document.getElementById('thumbsDown').disabled = true;
+  }
+}
+
+// Initialize popup
+document.addEventListener('DOMContentLoaded', async () => {
+  console.log('Popup opened');
+  
+  // Get current tab
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  console.log('Current tab:', tab.url);
+  
+  if (tab.url.includes('arxiv.org')) {
+    console.log('On arXiv page, getting paper data...');
+    // Try multiple times to get paper data, as it might not be ready immediately
+    let retries = 3;
+    let paperData = null;
+    
+    while (retries > 0 && !paperData) {
+      paperData = await getCurrentPaper();
+      if (!paperData) {
+        await new Promise(resolve => setTimeout(resolve, 500)); // Wait 500ms before retry
+        retries--;
+      }
+    }
+    
+    updateUI(paperData);
+    
+    // Set up rating handlers
+    document.getElementById('thumbsUp').addEventListener('click', () => {
+      chrome.runtime.sendMessage({
+        type: 'updateRating',
+        rating: 'thumbsup'
+      }, response => {
+        if (response && response.success) {
+          document.getElementById('status').textContent = 'Rating updated to: thumbs up';
+          setTimeout(() => window.close(), 1500);
+        }
+      });
+    });
+    
+    document.getElementById('thumbsDown').addEventListener('click', () => {
+      chrome.runtime.sendMessage({
+        type: 'updateRating',
+        rating: 'thumbsdown'
+      }, response => {
+        if (response && response.success) {
+          document.getElementById('status').textContent = 'Rating updated to: thumbs down';
+          setTimeout(() => window.close(), 1500);
+        }
+      });
+    });
+  } else {
+    updateUI(null);
+  }
+});
+//# sourceMappingURL=popup.bundle.js.map
+
+
+
+---
+File: extension/manifest.json
+---
+{
+  "manifest_version": 3,
+  "name": "ArXiv Paper Tracker",
+  "version": "1.0",
+  "description": "Track and rate arXiv papers you read",
+  "permissions": [
+    "tabs",
+    "storage",
+    "webNavigation"
+  ],
+  "host_permissions": [
+    "*://arxiv.org/*",
+    "*://api.github.com/*"
+  ],
+  "background": {
+    "service_worker": "dist/background.bundle.js",
+    "type": "module"
+  },
+  "content_scripts": [{
+    "matches": ["<all_urls>"],
+    "js": ["dist/content.bundle.js"],
+    "run_at": "document_end"
+  }],
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": false
+  }
+}
+
+
+
+---
+File: extension/options.html
+---
+<!DOCTYPE html>
+<html>
+<head>
+  <title>ArXiv Tracker Settings</title>
+  <style>
+    body {
+      padding: 20px;
+      font-family: system-ui, -apple-system, sans-serif;
+    }
+    .container {
+      max-width: 500px;
+      margin: 0 auto;
+    }
+    .field {
+      margin-bottom: 20px;
+    }
+    label {
+      display: block;
+      margin-bottom: 5px;
+      font-weight: 500;
+    }
+    input[type="text"],
+    input[type="password"],
+    input[type="number"] {
+      width: 100%;
+      padding: 8px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-family: monospace;
+    }
+    input[type="number"] {
+      width: 100px;
+    }
+    .help-text {
+      font-size: 0.9em;
+      color: #666;
+      margin-top: 4px;
+    }
+    .status {
+      margin-top: 16px;
+      padding: 8px;
+      border-radius: 4px;
+    }
+    .success {
+      background: #e6ffe6;
+      color: #006600;
+    }
+    .error {
+      background: #ffe6e6;
+      color: #660000;
+    }
+    button {
+      background: #0366d6;
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 4px;
+      cursor: pointer;
+      margin-top: 16px;
+    }
+    button:hover {
+      background: #0255b3;
+    }
+    .section {
+      margin-bottom: 32px;
+    }
+    .section-title {
+      font-size: 1.2em;
+      font-weight: 600;
+      margin-bottom: 16px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid #eee;
+    }
+    .checkbox-field {
+      margin-top: 12px;
+    }
+    .checkbox-field label {
+      display: flex;
+      align-items: center;
+      font-weight: normal;
+    }
+    .checkbox-field input[type="checkbox"] {
+      margin-right: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>ArXiv Tracker Settings</h2>
+    
+    <div class="section">
+      <div class="section-title">GitHub Integration</div>
+      <div class="field">
+        <label for="repo">GitHub Repository</label>
+        <input type="text" id="repo" placeholder="username/repository">
+        <div class="help-text">Format: username/repository (e.g., johndoe/arxiv-tracker)</div>
+      </div>
+
+      <div class="field">
+        <label for="token">GitHub Personal Access Token</label>
+        <input type="password" id="token" placeholder="ghp_xxxxxxxxxxxxxxxxxxxx">
+        <div class="help-text">
+          Token needs 'repo' scope for private repositories.<br>
+          Never share this token with anyone.
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Reading Session Settings</div>
+      
+      <div class="field">
+        <label for="idleThreshold">Idle Threshold (minutes)</label>
+        <input type="number" id="idleThreshold" min="1" max="60" value="5">
+        <div class="help-text">
+          Time of inactivity before session is paused (1-60 minutes).<br>
+          Default: 5 minutes
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="minDuration">Minimum Session Duration (seconds)</label>
+        <input type="number" id="minDuration" min="10" max="300" value="30">
+        <div class="help-text">
+          Minimum time required to log a reading session (10-300 seconds).<br>
+          Default: 30 seconds
+        </div>
+      </div>
+
+      <div class="checkbox-field">
+        <label>
+          <input type="checkbox" id="requireContinuous">
+          Require Continuous Activity
+        </label>
+        <div class="help-text">
+          When enabled, resets the session timer if you're idle for too long.<br>
+          Default: Enabled
+        </div>
+      </div>
+
+      <div class="checkbox-field">
+        <label>
+          <input type="checkbox" id="logPartial">
+          Log Partial Sessions
+        </label>
+        <div class="help-text">
+          When enabled, logs sessions even if they're shorter than the minimum duration.<br>
+          Default: Disabled
+        </div>
+      </div>
+    </div>
+
+    <button id="save">Save Settings</button>
+    <div id="status" class="status"></div>
+  </div>
+  <script type="module" src="dist/options.bundle.js"></script>
+</body>
+</html>
+
+
+
+---
+File: extension/options.js
+---
+// options.js
+import { loadSessionConfig, DEFAULT_CONFIG, saveSessionConfig } from './config/session.js';
+
+// Helper to set form field values
+function setFormValues(settings) {
+  // GitHub settings
+  if (settings.githubRepo) {
+    document.getElementById('repo').value = settings.githubRepo;
+  }
+  if (settings.githubToken) {
+    // Don't show the actual token, just indicate it's set
+    document.getElementById('token').placeholder = '••••••••••••••••••••••';
+  }
+
+  // Session settings
+  document.getElementById('idleThreshold').value = settings.sessionConfig?.idleThresholdMinutes ?? DEFAULT_CONFIG.idleThresholdMinutes;
+  document.getElementById('minDuration').value = settings.sessionConfig?.minSessionDurationSeconds ?? DEFAULT_CONFIG.minSessionDurationSeconds;
+  document.getElementById('requireContinuous').checked = settings.sessionConfig?.requireContinuousActivity ?? DEFAULT_CONFIG.requireContinuousActivity;
+  document.getElementById('logPartial').checked = settings.sessionConfig?.logPartialSessions ?? DEFAULT_CONFIG.logPartialSessions;
+}
+
+// Helper to get form values
+function getFormValues() {
+  return {
+    githubRepo: document.getElementById('repo').value.trim(),
+    githubToken: document.getElementById('token').value.trim(),
+    sessionConfig: {
+      idleThresholdMinutes: Number(document.getElementById('idleThreshold').value),
+      minSessionDurationSeconds: Number(document.getElementById('minDuration').value),
+      requireContinuousActivity: document.getElementById('requireContinuous').checked,
+      logPartialSessions: document.getElementById('logPartial').checked
+    }
+  };
+}
+
+// Display status message
+function showStatus(message, isError = false) {
+  const status = document.getElementById('status');
+  status.textContent = message;
+  status.className = `status ${isError ? 'error' : 'success'}`;
+
+  // Clear status after 3 seconds if it's a success message
+  if (!isError) {
+    setTimeout(() => {
+      status.textContent = '';
+      status.className = 'status';
+    }, 3000);
+  }
+}
+
+// Validate settings before saving
+async function validateSettings(settings) {
+  // Validate repository format
+  if (!/^[\w-]+\/[\w-]+$/.test(settings.githubRepo)) {
+    throw new Error('Invalid repository format. Use username/repository');
+  }
+
+  // Validate the token by making a test API call
+  const response = await fetch(`https://api.github.com/repos/${settings.githubRepo}`, {
+    headers: {
+      'Authorization': `token ${settings.githubToken}`,
+      'Accept': 'application/vnd.github.v3+json'
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error('Invalid token or repository. Please check your credentials.');
+  }
+
+  // Validate session settings
+  const { sessionConfig } = settings;
+  if (sessionConfig.idleThresholdMinutes < 1 || sessionConfig.idleThresholdMinutes > 60) {
+    throw new Error('Idle threshold must be between 1 and 60 minutes');
+  }
+  if (sessionConfig.minSessionDurationSeconds < 1 || sessionConfig.minSessionDurationSeconds > 300) {
+    throw new Error('Minimum session duration must be between 10 and 300 seconds');
+  }
+}
+
+// Save settings
+async function saveSettings(settings) {
+  await chrome.storage.sync.set({
+    githubRepo: settings.githubRepo,
+    githubToken: settings.githubToken
+  });
+
+  await saveSessionConfig(settings.sessionConfig);
+}
+
+// Initialize options page
+document.addEventListener('DOMContentLoaded', async () => {
+  try {
+    // Load current settings
+    const [storageItems, sessionConfig] = await Promise.all([
+      chrome.storage.sync.get(['githubRepo', 'githubToken']),
+      loadSessionConfig()
+    ]);
+
+    // Combine settings and display them
+    setFormValues({
+      ...storageItems,
+      sessionConfig
+    });
+
+    // Add save button handler
+    document.getElementById('save').addEventListener('click', async () => {
+      try {
+        const settings = getFormValues();
+        await validateSettings(settings);
+        await saveSettings(settings);
+        showStatus('Settings saved successfully!');
+      } catch (error) {
+        showStatus(`Error: ${error.message}`, true);
+      }
+    });
+
+  } catch (error) {
+    showStatus(`Error loading settings: ${error.message}`, true);
+  }
+});
+
+
+---
+File: extension/package.json
+---
+{
+  "name": "arxiv-tracker-extension",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc && vite build",
+    "watch": "vite build --watch",
+    "type-check": "tsc --noEmit",
+    "lint": "eslint . --ext .ts",
+    "format": "prettier --write \"**/*.{ts,js}\"",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "gh-store-client": "^0.3.2"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.246",
+    "@types/node": "^20.10.6",
+    "@typescript-eslint/eslint-plugin": "^6.17.0",
+    "@typescript-eslint/parser": "^6.17.0",
+    "eslint": "^8.56.0",
+    "prettier": "^3.1.1",
+    "typescript": "^5.3.3",
+    "vite": "^5.0.10"
+  }
+}
+
+
+
+---
+File: extension/papers/debug.d.ts
+---
+// extension/papers/debug.d.ts
+import { GitHubStoreClient } from 'gh-store-client';
+import { PaperManager } from './manager';
+
+declare global {
+    const __DEBUG__: {
+        paperManager: PaperManager | null;
+        getGithubClient: () => GitHubStoreClient | undefined;
+        getCurrentPaper: () => any;
+        getCurrentSession: () => any;
+        getConfig: () => any;
+    }
+}
+
+
+
+---
+File: extension/papers/manager.ts
+---
+// extension/papers/manager.ts
+import { GitHubStoreClient } from 'gh-store-client';
+import type { Json } from 'gh-store-client';
+import { 
+  type PaperMetadata, 
+  type InteractionLog, 
+  type Interaction,
+  type ReadingSessionData,
+  isReadingSession,
+  isInteractionLog
+} from './types';
+
+export class PaperManager {
+  constructor(private client: GitHubStoreClient) {}
+
+  async getOrCreatePaper(paperData: Partial<PaperMetadata> & { arxivId: string }): Promise<PaperMetadata> {
+    const objectId = `paper:${paperData.arxivId}`;
+    try {
+      const obj = await this.client.getObject(objectId);
+      const data = obj.data as PaperMetadata;
+      return data;
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('No object found')) {
+        // Create new paper with default fields if it doesn't exist
+        const defaultPaperData: PaperMetadata = {
+          arxivId: paperData.arxivId,
+          url: paperData.url || `https://arxiv.org/abs/${paperData.arxivId}`,
+          title: paperData.title || paperData.arxivId,
+          authors: paperData.authors || '',
+          abstract: paperData.abstract || '',
+          timestamp: new Date().toISOString(),
+          rating: 'novote',
+          published_date: paperData.published_date || '',
+          arxiv_tags: paperData.arxiv_tags || []
+        };
+
+        await this.client.createObject(objectId, defaultPaperData);
+        return defaultPaperData;
+      }
+      throw error;
+    }
+  }
+
+  private async getOrCreateInteractionLog(arxivId: string): Promise<InteractionLog> {
+    const objectId = `interactions:${arxivId}`;
+    try {
+      const obj = await this.client.getObject(objectId);
+      const data = obj.data as unknown;
+      if (isInteractionLog(data)) {
+        return data;
+      }
+      throw new Error('Invalid interaction log format');
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('No object found')) {
+        const newLog: InteractionLog = {
+          paper_id: arxivId,
+          interactions: []
+        };
+        await this.client.createObject(objectId, newLog);
+        return newLog;
+      }
+      throw error;
+    }
+  }
+
+  async logReadingSession(
+    arxivId: string,
+    session: ReadingSessionData,
+    paperData?: Partial<PaperMetadata>
+  ): Promise<void> {
+    // Ensure paper exists
+    if (paperData) {
+      await this.getOrCreatePaper({
+        arxivId,
+        ...paperData
+      });
+    }
+
+    // Log the session as an interaction
+    await this.addInteraction(arxivId, {
+      type: 'reading_session',
+      timestamp: new Date().toISOString(),
+      data: session
+    });
+  }
+
+  async logAnnotation(
+    arxivId: string,
+    key: string,
+    value: Json,
+    paperData?: Partial<PaperMetadata>
+  ): Promise<void> {
+    // Ensure paper exists
+    if (paperData) {
+      await this.getOrCreatePaper({
+        arxivId,
+        ...paperData
+      });
+    }
+
+    // Log the annotation as an interaction
+    await this.addInteraction(arxivId, {
+      type: 'annotation',
+      timestamp: new Date().toISOString(),
+      data: { key, value }
+    });
+  }
+
+  async updateRating(
+    arxivId: string,
+    rating: string,
+    paperData?: Partial<PaperMetadata>
+  ): Promise<void> {
+    // Ensure paper exists and get current data
+    const paper = await this.getOrCreatePaper({
+      arxivId,
+      ...paperData
+    });
+
+    // Update paper metadata with new rating
+    await this.client.updateObject(`paper:${arxivId}`, { 
+      ...paper,
+      rating 
+    });
+
+    // Log rating change as an interaction
+    await this.addInteraction(arxivId, {
+      type: 'rating',
+      timestamp: new Date().toISOString(),
+      data: { rating }
+    });
+  }
+
+  private async addInteraction(arxivId: string, interaction: Interaction): Promise<void> {
+    const log = await this.getOrCreateInteractionLog(arxivId);
+    log.interactions.push(interaction);
+    await this.client.updateObject(`interactions:${arxivId}`, log);
+  }
+
+  async getInteractions(
+    arxivId: string,
+    options: {
+      type?: string;
+      startTime?: Date;
+      endTime?: Date;
+    } = {}
+  ): Promise<Interaction[]> {
+    try {
+      const log = await this.getOrCreateInteractionLog(arxivId);
+      let interactions = log.interactions;
+
+      if (options.type) {
+        interactions = interactions.filter((i: Interaction) => i.type === options.type);
+      }
+
+      if (options.startTime || options.endTime) {
+        interactions = interactions.filter((i: Interaction) => {
+          const time = new Date(i.timestamp);
+          if (options.startTime && time < options.startTime) return false;
+          if (options.endTime && time > options.endTime) return false;
+          return true;
+        });
+      }
+
+      return interactions;
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('No object found')) {
+        return [];
+      }
+      throw error;
+    }
+  }
+    
+  async getPaperReadingTime(arxivId: string): Promise<number> {
+      const interactions = await this.getInteractions(arxivId, { type: 'reading_session' });
+      return interactions.reduce((total, i) => {
+          // Log the interaction data for debugging
+          console.log('Calculating from interaction:', i);
+          
+          const data = i.data;
+          if (typeof data === 'object' && data !== null && 'duration_seconds' in data) {
+              return total + (data.duration_seconds as number);
+          }
+          return total;
+      }, 0);
+  }
+
+  async getPaperHistory(arxivId: string): Promise<Json[]> {
+    const objectId = `paper:${arxivId}`;
+    return this.client.getObjectHistory(objectId);
+  }
+}
+
+
+
+---
+File: extension/papers/types.ts
+---
+// extension/papers/types.ts
+import type { Json } from 'gh-store-client';
+
+export type PaperMetadata = {
+  arxivId: string;
+  url: string;
+  title: string;
+  authors: string;
+  abstract: string;
+  timestamp: string;
+  published_date: string;
+  arxiv_tags: string[];
+  rating: string;
+}
+
+export type ReadingSessionData = {
+  session_id: string;
+  duration_seconds: number;
+  idle_seconds: number;
+  start_time: string;
+  end_time: string;
+  total_elapsed_seconds: number;
+}
+
+export type Interaction = {
+  type: string;
+  timestamp: string;
+  data: Json;
+}
+
+export type InteractionLog = {
+  paper_id: string;
+  interactions: Interaction[];
+}
+
+export const isReadingSession = (data: unknown): data is ReadingSessionData => {
+  const session = data as ReadingSessionData;
+  return (
+    typeof session === 'object' &&
+    session !== null &&
+    typeof session.session_id === 'string' &&
+    typeof session.duration_seconds === 'number' &&
+    typeof session.idle_seconds === 'number' &&
+    typeof session.start_time === 'string' &&
+    typeof session.end_time === 'string' &&
+    typeof session.total_elapsed_seconds === 'number'
+  );
+};
+
+export const isInteractionLog = (data: unknown): data is InteractionLog => {
+  const log = data as InteractionLog;
+  return (
+    typeof log === 'object' &&
+    log !== null &&
+    typeof log.paper_id === 'string' &&
+    Array.isArray(log.interactions)
+  );
+};
+
+
+
+---
+File: extension/popup.html
+---
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body {
+      width: 400px;
+      padding: 15px;
+      font-family: system-ui, -apple-system, sans-serif;
+    }
+    .paper-info {
+      margin-bottom: 15px;
+    }
+    .paper-title {
+      font-weight: bold;
+      margin-bottom: 8px;
+      font-size: 14px;
+      line-height: 1.4;
+    }
+    .paper-authors {
+      font-size: 12px;
+      color: #666;
+      margin-bottom: 12px;
+      line-height: 1.4;
+    }
+    .rating-buttons {
+      display: flex;
+      gap: 10px;
+      margin-top: 15px;
+    }
+    button {
+      flex: 1;
+      padding: 8px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      background: #f5f5f5;
+      cursor: pointer;
+    }
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    button:not(:disabled):hover {
+      background: #e5e5e5;
+    }
+    .status {
+      margin-top: 10px;
+      font-size: 12px;
+      color: #666;
+      padding: 8px;
+      background: #f5f5f5;
+      border-radius: 4px;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div id="currentPaper" class="paper-info">
+    <div id="paperTitle" class="paper-title">Loading...</div>
+    <div id="paperAuthors" class="paper-authors"></div>
+    <div class="rating-buttons">
+      <button id="thumbsUp" disabled>👍 Interesting</button>
+      <button id="thumbsDown" disabled>👎 Not Relevant</button>
+    </div>
+    <div id="status" class="status">Loading paper details...</div>
+  </div>
+  <script src="dist/popup.bundle.js"></script>
+</body>
+</html>
+
+
+
+---
+File: extension/popup.js
+---
+// popup.js
+let currentIssueNumber = null;
+
+// Function to get paper data from background script
+async function getCurrentPaper() {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage({type: 'getCurrentPaper'}, response => {
+      console.log('Got paper data from background:', response);
+      resolve(response);
+    });
+  });
+}
+
+// Function to update UI with paper data
+function updateUI(paperData) {
+  const titleElement = document.getElementById('paperTitle');
+  const authorsElement = document.getElementById('paperAuthors');
+  const statusElement = document.getElementById('status');
+
+  if (paperData) {
+    titleElement.textContent = paperData.title || paperData.arxivId;
+    authorsElement.textContent = paperData.authors;
+    statusElement.textContent = 'Paper tracked! Issue created on GitHub.';
+    
+    // Enable rating buttons
+    document.getElementById('thumbsUp').disabled = false;
+    document.getElementById('thumbsDown').disabled = false;
+  } else {
+    titleElement.textContent = 'No arXiv paper detected';
+    authorsElement.textContent = '';
+    statusElement.textContent = 'Visit an arXiv paper to track it';
+    
+    // Disable rating buttons
+    document.getElementById('thumbsUp').disabled = true;
+    document.getElementById('thumbsDown').disabled = true;
+  }
+}
+
+// Initialize popup
+document.addEventListener('DOMContentLoaded', async () => {
+  console.log('Popup opened');
+  
+  // Get current tab
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  console.log('Current tab:', tab.url);
+  
+  if (tab.url.includes('arxiv.org')) {
+    console.log('On arXiv page, getting paper data...');
+    // Try multiple times to get paper data, as it might not be ready immediately
+    let retries = 3;
+    let paperData = null;
+    
+    while (retries > 0 && !paperData) {
+      paperData = await getCurrentPaper();
+      if (!paperData) {
+        await new Promise(resolve => setTimeout(resolve, 500)); // Wait 500ms before retry
+        retries--;
+      }
+    }
+    
+    updateUI(paperData);
+    
+    // Set up rating handlers
+    document.getElementById('thumbsUp').addEventListener('click', () => {
+      chrome.runtime.sendMessage({
+        type: 'updateRating',
+        rating: 'thumbsup'
+      }, response => {
+        if (response && response.success) {
+          document.getElementById('status').textContent = 'Rating updated to: thumbs up';
+          setTimeout(() => window.close(), 1500);
+        }
+      });
+    });
+    
+    document.getElementById('thumbsDown').addEventListener('click', () => {
+      chrome.runtime.sendMessage({
+        type: 'updateRating',
+        rating: 'thumbsdown'
+      }, response => {
+        if (response && response.success) {
+          document.getElementById('status').textContent = 'Rating updated to: thumbs down';
+          setTimeout(() => window.close(), 1500);
+        }
+      });
+    });
+  } else {
+    updateUI(null);
+  }
+});
+
+
+
+---
+File: extension/tsconfig.json
+---
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2020", "DOM"],
+    "esModuleInterop": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "types": ["chrome", "@types/node"],
+    "outDir": "dist",
+    "baseUrl": "."
+  },
+  "include": [
+    "**/*.ts",
+    "background.js",
+    "content.js",
+    "popup.js",
+    "options.js"
+  ],
+  "exclude": ["node_modules", "dist"]
+}
+
+
+
+---
+File: extension/vite.config.ts
+---
+import { defineConfig } from 'vite';
+import { resolve } from 'path';
+
+export default defineConfig({
+  build: {
+    // Generate source maps for better debugging
+    sourcemap: true,
+    
+    // Configure output for extension
+    rollupOptions: {
+      input: {
+        background: resolve(__dirname, 'background.js'),
+        content: resolve(__dirname, 'content.js'),
+        popup: resolve(__dirname, 'popup.js')
+      },
+      output: {
+        dir: resolve(__dirname, 'dist'),
+        entryFileNames: '[name].bundle.js',
+        format: 'es',
+        // Ensure all files go in dist directory
+        assetFileNames: 'assets/[name].[ext]'
+      }
+    },
+    
+    // Don't minify for better debugging
+    minify: false,
+    
+    // Put built files in dist directory
+    outDir: resolve(__dirname, 'dist'),
+    emptyOutDir: true,
+
+    // Ensure we're building for browser environment
+    target: 'esnext',
+    modulePreload: false
+  },
+  
+  resolve: {
+    // Help Vite find gh-store-client
+    mainFields: ['module', 'main'],
+    extensions: ['.mjs', '.js', '.ts', '.jsx', '.tsx', '.json']
+  },
+
+  // Handle Node.js built-in modules
+  optimizeDeps: {
+    include: ['gh-store-client']
+  }
+});
+
+

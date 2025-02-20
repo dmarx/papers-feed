@@ -1,0 +1,280 @@
+---
+File: extension/papers/debug.d.ts
+---
+// extension/papers/debug.d.ts
+import { GitHubStoreClient } from 'gh-store-client';
+import { PaperManager } from './manager';
+
+declare global {
+    const __DEBUG__: {
+        paperManager: PaperManager | null;
+        getGithubClient: () => GitHubStoreClient | undefined;
+        getCurrentPaper: () => any;
+        getCurrentSession: () => any;
+        getConfig: () => any;
+    }
+}
+
+
+
+---
+File: extension/papers/manager.ts
+---
+// extension/papers/manager.ts
+import { GitHubStoreClient } from 'gh-store-client';
+import type { Json } from 'gh-store-client';
+import { 
+  type PaperMetadata, 
+  type InteractionLog, 
+  type Interaction,
+  type ReadingSessionData,
+  isReadingSession,
+  isInteractionLog
+} from './types';
+
+export class PaperManager {
+  constructor(private client: GitHubStoreClient) {}
+
+  async getOrCreatePaper(paperData: Partial<PaperMetadata> & { arxivId: string }): Promise<PaperMetadata> {
+    const objectId = `paper:${paperData.arxivId}`;
+    try {
+      const obj = await this.client.getObject(objectId);
+      const data = obj.data as PaperMetadata;
+      return data;
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('No object found')) {
+        // Create new paper with default fields if it doesn't exist
+        const defaultPaperData: PaperMetadata = {
+          arxivId: paperData.arxivId,
+          url: paperData.url || `https://arxiv.org/abs/${paperData.arxivId}`,
+          title: paperData.title || paperData.arxivId,
+          authors: paperData.authors || '',
+          abstract: paperData.abstract || '',
+          timestamp: new Date().toISOString(),
+          rating: 'novote',
+          published_date: paperData.published_date || '',
+          arxiv_tags: paperData.arxiv_tags || []
+        };
+
+        await this.client.createObject(objectId, defaultPaperData);
+        return defaultPaperData;
+      }
+      throw error;
+    }
+  }
+
+  private async getOrCreateInteractionLog(arxivId: string): Promise<InteractionLog> {
+    const objectId = `interactions:${arxivId}`;
+    try {
+      const obj = await this.client.getObject(objectId);
+      const data = obj.data as unknown;
+      if (isInteractionLog(data)) {
+        return data;
+      }
+      throw new Error('Invalid interaction log format');
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('No object found')) {
+        const newLog: InteractionLog = {
+          paper_id: arxivId,
+          interactions: []
+        };
+        await this.client.createObject(objectId, newLog);
+        return newLog;
+      }
+      throw error;
+    }
+  }
+
+  async logReadingSession(
+    arxivId: string,
+    session: ReadingSessionData,
+    paperData?: Partial<PaperMetadata>
+  ): Promise<void> {
+    // Ensure paper exists
+    if (paperData) {
+      await this.getOrCreatePaper({
+        arxivId,
+        ...paperData
+      });
+    }
+
+    // Log the session as an interaction
+    await this.addInteraction(arxivId, {
+      type: 'reading_session',
+      timestamp: new Date().toISOString(),
+      data: session
+    });
+  }
+
+  async logAnnotation(
+    arxivId: string,
+    key: string,
+    value: Json,
+    paperData?: Partial<PaperMetadata>
+  ): Promise<void> {
+    // Ensure paper exists
+    if (paperData) {
+      await this.getOrCreatePaper({
+        arxivId,
+        ...paperData
+      });
+    }
+
+    // Log the annotation as an interaction
+    await this.addInteraction(arxivId, {
+      type: 'annotation',
+      timestamp: new Date().toISOString(),
+      data: { key, value }
+    });
+  }
+
+  async updateRating(
+    arxivId: string,
+    rating: string,
+    paperData?: Partial<PaperMetadata>
+  ): Promise<void> {
+    // Ensure paper exists and get current data
+    const paper = await this.getOrCreatePaper({
+      arxivId,
+      ...paperData
+    });
+
+    // Update paper metadata with new rating
+    await this.client.updateObject(`paper:${arxivId}`, { 
+      ...paper,
+      rating 
+    });
+
+    // Log rating change as an interaction
+    await this.addInteraction(arxivId, {
+      type: 'rating',
+      timestamp: new Date().toISOString(),
+      data: { rating }
+    });
+  }
+
+  private async addInteraction(arxivId: string, interaction: Interaction): Promise<void> {
+    const log = await this.getOrCreateInteractionLog(arxivId);
+    log.interactions.push(interaction);
+    await this.client.updateObject(`interactions:${arxivId}`, log);
+  }
+
+  async getInteractions(
+    arxivId: string,
+    options: {
+      type?: string;
+      startTime?: Date;
+      endTime?: Date;
+    } = {}
+  ): Promise<Interaction[]> {
+    try {
+      const log = await this.getOrCreateInteractionLog(arxivId);
+      let interactions = log.interactions;
+
+      if (options.type) {
+        interactions = interactions.filter((i: Interaction) => i.type === options.type);
+      }
+
+      if (options.startTime || options.endTime) {
+        interactions = interactions.filter((i: Interaction) => {
+          const time = new Date(i.timestamp);
+          if (options.startTime && time < options.startTime) return false;
+          if (options.endTime && time > options.endTime) return false;
+          return true;
+        });
+      }
+
+      return interactions;
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('No object found')) {
+        return [];
+      }
+      throw error;
+    }
+  }
+    
+  async getPaperReadingTime(arxivId: string): Promise<number> {
+      const interactions = await this.getInteractions(arxivId, { type: 'reading_session' });
+      return interactions.reduce((total, i) => {
+          // Log the interaction data for debugging
+          console.log('Calculating from interaction:', i);
+          
+          const data = i.data;
+          if (typeof data === 'object' && data !== null && 'duration_seconds' in data) {
+              return total + (data.duration_seconds as number);
+          }
+          return total;
+      }, 0);
+  }
+
+  async getPaperHistory(arxivId: string): Promise<Json[]> {
+    const objectId = `paper:${arxivId}`;
+    return this.client.getObjectHistory(objectId);
+  }
+}
+
+
+
+---
+File: extension/papers/types.ts
+---
+// extension/papers/types.ts
+import type { Json } from 'gh-store-client';
+
+export type PaperMetadata = {
+  arxivId: string;
+  url: string;
+  title: string;
+  authors: string;
+  abstract: string;
+  timestamp: string;
+  published_date: string;
+  arxiv_tags: string[];
+  rating: string;
+}
+
+export type ReadingSessionData = {
+  session_id: string;
+  duration_seconds: number;
+  idle_seconds: number;
+  start_time: string;
+  end_time: string;
+  total_elapsed_seconds: number;
+}
+
+export type Interaction = {
+  type: string;
+  timestamp: string;
+  data: Json;
+}
+
+export type InteractionLog = {
+  paper_id: string;
+  interactions: Interaction[];
+}
+
+export const isReadingSession = (data: unknown): data is ReadingSessionData => {
+  const session = data as ReadingSessionData;
+  return (
+    typeof session === 'object' &&
+    session !== null &&
+    typeof session.session_id === 'string' &&
+    typeof session.duration_seconds === 'number' &&
+    typeof session.idle_seconds === 'number' &&
+    typeof session.start_time === 'string' &&
+    typeof session.end_time === 'string' &&
+    typeof session.total_elapsed_seconds === 'number'
+  );
+};
+
+export const isInteractionLog = (data: unknown): data is InteractionLog => {
+  const log = data as InteractionLog;
+  return (
+    typeof log === 'object' &&
+    log !== null &&
+    typeof log.paper_id === 'string' &&
+    Array.isArray(log.interactions)
+  );
+};
+
+
