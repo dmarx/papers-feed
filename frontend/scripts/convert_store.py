@@ -49,9 +49,10 @@ def scan_features(paper_id: str, features_base: Path) -> dict[str, str]:
         # Look for markdown file matching paper ID
         feature_files = list(feature_dir.glob(f"{paper_id}*.md"))
         if feature_files:
-            # Use relative path from web root
-            rel_path = feature_files[0].relative_to(features_base.parent)
-            features[feature_dir.name] = str(rel_path)
+            # Generate path relative to web root - should be like:
+            # data/papers/<paper_id>/features/<feature_type>/<paper_id>.md
+            rel_path = f"data/papers/{paper_id}/features/{feature_dir.name}/{feature_files[0].name}"
+            features[feature_dir.name] = rel_path
             
     return features
 
