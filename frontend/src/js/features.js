@@ -146,6 +146,8 @@ function renderPaperFeatures(paper) {
 
 // Load feature content
 async function loadFeatureContent(contentDiv) {
+    console.log('loadFeatureContent called with:', contentDiv); // Add this
+    console.log('loadFeatureContent caller:', new Error().stack); // And this to see who's calling
     console.log('Loading feature content for:', contentDiv);
     console.log('Dataset:', contentDiv?.dataset);
     console.log('Parent element:', contentDiv?.parentElement);
