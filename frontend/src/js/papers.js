@@ -126,34 +126,49 @@ const togglePaperCard = (element, event) => {
 function addPaperHandlers(container) {
     // Add click handlers for paper cards
     container.querySelectorAll('.paper-card').forEach(card => {
-        // Paper expansion handler
-        card.onclick = (e) => togglePaperCard(card, e);
+        // Remove any existing listeners
+        const newCard = card.cloneNode(true);
+        card.parentNode.replaceChild(newCard, card);
+        card = newCard;
+
+        // Add click handler to specific areas only
+        const expandCollapseAreas = card.querySelector('.paper-header');
+        if (expandCollapseAreas) {
+            expandCollapseAreas.addEventListener('click', (e) => {
+                // Don't trigger on feature headers or links
+                if (!e.target.closest('.feature-entry-header') && 
+                    !e.target.closest('a')) {
+                    togglePaperCard(card, e);
+                }
+            });
+        }
         
         // Feature handlers
         if (card.classList.contains('expanded')) {
             card.querySelectorAll('.feature-entry-header').forEach(header => {
-                header.onclick = (e) => {
-                    e.stopPropagation();  // Prevent paper card collapse
+                header.addEventListener('click', async (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    
                     const entry = header.closest('.feature-entry');
+                    if (!entry) return;
+                    
                     entry.classList.toggle('expanded');
                     
                     const contentDiv = entry.querySelector('.feature-content-inner');
                     if (contentDiv && contentDiv.innerHTML === 'Loading...') {
                         const path = contentDiv.dataset.path;
-                        fetch(path)
-                            .then(r => {
-                                if (!r.ok) throw new Error(`HTTP error! status: ${r.status}`);
-                                return r.text();
-                            })
-                            .then(text => {
-                                contentDiv.innerHTML = text;
-                            })
-                            .catch(err => {
-                                console.error('Error loading feature:', err);
-                                contentDiv.innerHTML = 'Error loading content';
-                            });
+                        try {
+                            const response = await fetch(path);
+                            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                            const text = await response.text();
+                            contentDiv.innerHTML = text;
+                        } catch (err) {
+                            console.error('Error loading feature:', err);
+                            contentDiv.innerHTML = 'Error loading content';
+                        }
                     }
-                };
+                });
             });
         }
     });
