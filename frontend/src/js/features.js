@@ -3,36 +3,20 @@
 // Global state for feature preferences
 window.featureState = {
     // Map of feature IDs to their enabled state
-    enabledFeatures: JSON.parse(localStorage.getItem('enabledFeatures') || '{}'),
-    
-    // Known feature types and their metadata
-    knownFeatures: {
-        'summary': {
-            icon: '📝',
-            label: 'Summary',
-            description: 'AI-generated summary of the paper'
-        },
-        'keyPoints': {
-            icon: '💡',
-            label: 'Key Points',
-            description: 'Main takeaways and contributions'
-        },
-        'analysis': {
-            icon: '📊',
-            label: 'Analysis',
-            description: 'Technical analysis and insights'
-        }
-    }
+    enabledFeatures: JSON.parse(localStorage.getItem('enabledFeatures') || '{}')
 };
 
 // Initialize features based on what's available in the data
 function initializeFeatures() {
+    // Discover all unique feature types across all papers
     const features = new Set();
     
     // Scan papers for available features
     Object.values(window.yamlData).forEach(paper => {
-        if (paper.features) {
-            Object.keys(paper.features).forEach(feature => features.add(feature));
+        if (paper.features_path) {
+            Object.keys(paper.features_path).forEach(feature => {
+                features.add(feature);
+            });
         }
     });
     
@@ -48,33 +32,33 @@ function initializeFeatures() {
         JSON.stringify(window.featureState.enabledFeatures));
         
     // Render feature toggles
-    renderFeatureToggles();
+    renderFeatureToggles(Array.from(features));
 }
 
 // Render feature toggle controls
-function renderFeatureToggles() {
+function renderFeatureToggles(features) {
     const container = document.querySelector('.feature-toggles');
     if (!container) return;
     
-    container.innerHTML = Object.entries(window.featureState.knownFeatures)
-        .map(([id, feature]) => {
-            const isEnabled = window.featureState.enabledFeatures[id] ?? true;
-            return `
-                <div class="feature-toggle" data-feature="${id}">
-                    <label class="toggle-switch">
-                        <input type="checkbox" 
-                               ${isEnabled ? 'checked' : ''}>
-                        <span class="slider"></span>
-                    </label>
-                    <div class="feature-info">
-                        <span class="feature-icon">${feature.icon}</span>
-                        <span class="feature-label">${feature.label}</span>
-                    </div>
-                    <div class="feature-description">${feature.description}</div>
+    if (features.length === 0) {
+        container.innerHTML = '<div class="no-features">No paper features currently available</div>';
+        return;
+    }
+    
+    container.innerHTML = features.map(featureType => {
+        const isEnabled = window.featureState.enabledFeatures[featureType] ?? true;
+        return `
+            <div class="feature-toggle" data-feature="${featureType}">
+                <label class="toggle-switch">
+                    <input type="checkbox" ${isEnabled ? 'checked' : ''}>
+                    <span class="slider"></span>
+                </label>
+                <div class="feature-info">
+                    <span class="feature-label">${formatFeatureName(featureType)}</span>
                 </div>
-            `;
-        })
-        .join('');
+            </div>
+        `;
+    }).join('');
         
     // Add event listeners
     container.querySelectorAll('.feature-toggle').forEach(toggle => {
@@ -90,21 +74,25 @@ function renderFeatureToggles() {
     });
 }
 
+// Format feature type into display name
+function formatFeatureName(featureType) {
+    return featureType
+        .split('-')
+        .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(' ');
+}
+
 // Get feature content for a paper
 function getPaperFeatures(paper) {
-    if (!paper.features) return null;
+    if (!paper.features_path) return null;
     
     const features = [];
-    Object.entries(paper.features).forEach(([id, content]) => {
+    Object.entries(paper.features_path).forEach(([id, path]) => {
         if (window.featureState.enabledFeatures[id]) {
-            const metadata = window.featureState.knownFeatures[id] || {
-                icon: '📄',
-                label: id.charAt(0).toUpperCase() + id.slice(1)
-            };
             features.push({
                 id,
-                content,
-                ...metadata
+                path,
+                label: formatFeatureName(id)
             });
         }
     });
@@ -118,19 +106,19 @@ function renderPaperFeatures(paper) {
     if (!features) return '';
     
     const featureIcons = features
-        .map(f => `<span class="feature-icon" title="${f.label}">${f.icon}</span>`)
+        .map(f => `<span class="feature-icon" title="${f.label}">📄</span>`)
         .join('');
         
     const featureSections = features
         .map(feature => `
             <div class="feature-entry" data-feature="${feature.id}">
                 <div class="feature-entry-header">
-                    <span class="feature-icon">${feature.icon}</span>
+                    <span class="feature-icon">📄</span>
                     <span class="feature-name">${feature.label}</span>
                     <button class="feature-expand">▼</button>
                 </div>
-                <div class="feature-content">
-                    <div class="feature-content-inner">${feature.content}</div>
+                <div class="feature-content" data-path="${feature.path}">
+                    <div class="feature-content-inner">Loading...</div>
                 </div>
             </div>
         `)
@@ -146,13 +134,37 @@ function renderPaperFeatures(paper) {
     `;
 }
 
+// Fetch and render feature content
+async function loadFeatureContent(container) {
+    const path = container.dataset.path;
+    try {
+        const response = await fetch(path);
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+        const content = await response.text();
+        container.querySelector('.feature-content-inner').innerHTML = content;
+    } catch (error) {
+        console.error(`Error loading feature content from ${path}:`, error);
+        container.querySelector('.feature-content-inner').innerHTML = 
+            'Error loading feature content';
+    }
+}
+
 // Add feature click handlers for a paper card
 function addFeatureHandlers(paperCard) {
     // Feature entry expansion
     paperCard.querySelectorAll('.feature-entry').forEach(entry => {
         const header = entry.querySelector('.feature-entry-header');
+        const content = entry.querySelector('.feature-content');
+        
         header.addEventListener('click', () => {
+            const wasExpanded = entry.classList.contains('expanded');
             entry.classList.toggle('expanded');
+            
+            // Load content when first expanded
+            if (!wasExpanded && !content.dataset.loaded) {
+                loadFeatureContent(content);
+                content.dataset.loaded = 'true';
+            }
         });
     });
 }
