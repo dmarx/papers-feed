@@ -1,5 +1,8 @@
 /* frontend/src/js/papers.js */
 
+// Track active paper
+let activePaperId = null;
+
 const calculateColor = (paper, coloringEnabled = true) => {
     if (!coloringEnabled) return 'rgb(255, 255, 255)';
     
@@ -26,7 +29,93 @@ const calculateColor = (paper, coloringEnabled = true) => {
     }
 };
 
-const renderPaperCard = (paper, expanded) => {
+const setActivePaper = (paperId) => {
+    // Remove active class from previous paper
+    const previousActive = document.querySelector('.paper-card.active');
+    if (previousActive) {
+        previousActive.classList.remove('active');
+    }
+
+    // Set new active paper
+    activePaperId = paperId;
+    const paperCard = document.querySelector(`.paper-card[data-paper-id="${paperId}"]`);
+    if (paperCard) {
+        paperCard.classList.add('active');
+    }
+
+    // Show paper details
+    updatePaperDetails(paperId);
+};
+
+const updatePaperDetails = async (paperId) => {
+    const detailsPanel = document.getElementById('paperDetails');
+    const paper = window.yamlData[paperId];
+
+    if (!paper) {
+        detailsPanel.classList.remove('visible');
+        return;
+    }
+
+    // Update details panel content
+    const titleEl = detailsPanel.querySelector('.paper-details-title');
+    const metadataEl = detailsPanel.querySelector('.metadata-content');
+    const featuresEl = detailsPanel.querySelector('.features-content');
+
+    // Update title
+    titleEl.textContent = paper.title;
+
+    // Update metadata
+    metadataEl.innerHTML = `
+        <dl class="metadata-list">
+            <dt>Authors</dt>
+            <dd>${paper.authors}</dd>
+            <dt>Published</dt>
+            <dd>${new Date(paper.published_date).toLocaleDateString()}</dd>
+            <dt>arXiv ID</dt>
+            <dd><a href="${paper.url}" target="_blank">${paper.arxivId}</a></dd>
+            <dt>Categories</dt>
+            <dd>${paper.arxiv_tags.join(', ')}</dd>
+            <dt>Abstract</dt>
+            <dd>${paper.abstract}</dd>
+        </dl>
+    `;
+
+    // Update features
+    if (paper.features_path) {
+        const featuresList = await Promise.all(
+            Object.entries(paper.features_path).map(async ([type, path]) => {
+                try {
+                    const response = await fetch(path);
+                    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                    const content = await response.text();
+                    return `
+                        <div class="feature-section">
+                            <h4>${formatFeatureName(type)}</h4>
+                            <div class="feature-content">${content}</div>
+                        </div>
+                    `;
+                } catch (error) {
+                    console.error(`Error loading feature ${type}:`, error);
+                    return `
+                        <div class="feature-section">
+                            <h4>${formatFeatureName(type)}</h4>
+                            <div class="feature-content error">Error loading feature content</div>
+                        </div>
+                    `;
+                }
+            })
+        );
+        
+        featuresEl.innerHTML = featuresList.join('');
+    } else {
+        featuresEl.innerHTML = '<p class="no-features">No features available for this paper</p>';
+    }
+
+    // Show panel
+    detailsPanel.classList.add('visible');
+};
+
+const renderPaperCard = (paper) => {
     const readingTime = paper.total_reading_time_seconds 
         ? `${Math.round(paper.total_reading_time_seconds / 60)} min read`
         : '';
@@ -51,28 +140,12 @@ const renderPaperCard = (paper, expanded) => {
         metaParts.push(`<span class="meta-divider">•</span><span>${tags}</span>`);
     }
 
-    // Generate feature content if paper is expanded and has features
-    const featureContent = expanded && paper.features_path ? `
-        <div class="paper-features">
-            ${Object.entries(paper.features_path).map(([featureType, path]) => `
-                <div class="feature-entry" data-feature="${featureType}">
-                    <div class="feature-entry-header">
-                        <span class="feature-icon">📄</span>
-                        <span class="feature-name">${formatFeatureName(featureType)}</span>
-                        <button class="feature-expand">▼</button>
-                    </div>
-                    <div class="feature-content">
-                        <div class="feature-content-inner" data-path="${path}">Loading...</div>
-                    </div>
-                </div>
-            `).join('')}
-        </div>
-    ` : '';
+    // Check if this is the active paper
+    const isActive = paper.id === activePaperId;
     
     return `
-        <article class="paper-card ${expanded ? 'expanded' : ''}" data-paper-id="${paper.id}">
+        <article class="paper-card ${isActive ? 'active' : ''}" data-paper-id="${paper.id}">
             <div class="paper-header">
-                <span class="expand-icon">▶</span>
                 <a href="${paper.url}" class="arxiv-id" onclick="event.stopPropagation()" 
                    style="background-color: ${bgColor}; padding: 4px 8px; border-radius: 4px;">
                     ${paper.arxivId}
@@ -80,113 +153,15 @@ const renderPaperCard = (paper, expanded) => {
                 <span class="paper-title">${paper.title}</span>
             </div>
             <div class="paper-content">
-                <div class="paper-content-inner">
-                    <div class="paper-meta">${metaParts.join('')}</div>
-                    <div class="paper-abstract">${paper.abstract}</div>
-                    ${featureContent}
-                </div>
+                <div class="paper-meta">${metaParts.join('')}</div>
             </div>
         </article>
     `;
 };
 
-// Format feature name for display
-function formatFeatureName(featureType) {
-    return featureType
-        .split('-')
-        .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-        .join(' ');
-}
-
-const togglePaperCard = (element, event) => {
-    event.stopPropagation();
-    const card = element.closest('.paper-card');
-    card.classList.toggle('expanded');
-    
-    const paperId = card.dataset.paperId;
-    const expandedCards = JSON.parse(localStorage.getItem('expandedCards') || '{}');
-    expandedCards[paperId] = card.classList.contains('expanded');
-    localStorage.setItem('expandedCards', JSON.stringify(expandedCards));
-
-    // Re-render if needed to show features
-    if (card.classList.contains('expanded')) {
-        const paper = window.yamlData[paperId];
-        if (paper.features_path) {
-            const papersContainer = card.closest('.papers-container-inner');
-            if (papersContainer) {
-                papersContainer.innerHTML = papers
-                    .map(p => renderPaperCard(p, expandedCards[p.id]))
-                    .join('');
-                addPaperHandlers(papersContainer);
-            }
-        }
-    }
-};
-
-function addPaperHandlers(container) {
-    // Add click handlers for paper cards
-    container.querySelectorAll('.paper-card').forEach(card => {
-        // Remove any existing listeners
-        const newCard = card.cloneNode(true);
-        card.parentNode.replaceChild(newCard, card);
-        card = newCard;
-
-        // Add click handler to specific areas only
-        const expandCollapseAreas = card.querySelector('.paper-header');
-        if (expandCollapseAreas) {
-            expandCollapseAreas.addEventListener('click', (e) => {
-                // Don't trigger on feature headers or links
-                if (!e.target.closest('.feature-entry-header') && 
-                    !e.target.closest('a')) {
-                    togglePaperCard(card, e);
-                }
-            });
-        }
-        
-        // Feature handlers
-        if (card.classList.contains('expanded')) {
-            card.querySelectorAll('.feature-entry-header').forEach(header => {
-                header.addEventListener('click', async (e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    
-                    const entry = header.closest('.feature-entry');
-                    if (!entry) return;
-                    
-                    entry.classList.toggle('expanded');
-                    
-                    const contentDiv = entry.querySelector('.feature-content-inner');
-                    if (contentDiv && contentDiv.innerHTML === 'Loading...') {
-                        const path = contentDiv.dataset.path;
-                        try {
-                            const response = await fetch(path);
-                            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-                            const text = await response.text();
-                            contentDiv.innerHTML = text;
-                        } catch (err) {
-                            console.error('Error loading feature:', err);
-                            contentDiv.innerHTML = 'Error loading content';
-                        }
-                    }
-                });
-            });
-        }
-    });
-}
-
-const toggleDayGroup = (element) => {
-    const group = element.closest('.day-group');
-    group.classList.toggle('collapsed');
-    const date = group.dataset.date;
-    const collapsedDays = JSON.parse(localStorage.getItem('collapsedDays') || '{}');
-    collapsedDays[date] = group.classList.contains('collapsed');
-    localStorage.setItem('collapsedDays', JSON.stringify(collapsedDays));
-};
-
 const renderPapers = () => {
     const container = document.getElementById('papers-container');
     container.innerHTML = '';
-    const expandedCards = JSON.parse(localStorage.getItem('expandedCards') || '{}');
     const collapsedDays = JSON.parse(localStorage.getItem('collapsedDays') || '{}');
     
     const papersByDay = {};
@@ -217,7 +192,7 @@ const renderPapers = () => {
         const papersContainerInner = document.createElement('div');
         papersContainerInner.className = 'papers-container-inner';
         papersContainerInner.innerHTML = papers
-            .map(paper => renderPaperCard(paper, expandedCards[paper.id]))
+            .map(paper => renderPaperCard(paper))
             .join('');
 
         papersContainer.appendChild(papersContainerInner);
@@ -229,3 +204,50 @@ const renderPapers = () => {
         addPaperHandlers(papersContainerInner);
     });
 };
+
+// Format feature names
+function formatFeatureName(featureType) {
+    return featureType
+        .split('-')
+        .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(' ');
+}
+
+function addPaperHandlers(container) {
+    // Add click handlers for paper cards
+    container.querySelectorAll('.paper-card').forEach(card => {
+        card.addEventListener('click', (e) => {
+            // Don't trigger on links
+            if (e.target.closest('a')) return;
+            
+            const paperId = card.dataset.paperId;
+            setActivePaper(paperId);
+        });
+    });
+}
+
+const toggleDayGroup = (element) => {
+    const group = element.closest('.day-group');
+    group.classList.toggle('collapsed');
+    const date = group.dataset.date;
+    const collapsedDays = JSON.parse(localStorage.getItem('collapsedDays') || '{}');
+    collapsedDays[date] = group.classList.contains('collapsed');
+    localStorage.setItem('collapsedDays', JSON.stringify(collapsedDays));
+};
+
+// Initialize close button handler
+document.addEventListener('DOMContentLoaded', () => {
+    const closeButton = document.getElementById('closeDetails');
+    if (closeButton) {
+        closeButton.addEventListener('click', () => {
+            const detailsPanel = document.getElementById('paperDetails');
+            detailsPanel.classList.remove('visible');
+            // Clear active paper
+            const activeCard = document.querySelector('.paper-card.active');
+            if (activeCard) {
+                activeCard.classList.remove('active');
+            }
+            activePaperId = null;
+        });
+    }
+});
