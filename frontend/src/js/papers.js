@@ -51,7 +51,7 @@ const renderPaperCard = (paper, expanded) => {
         metaParts.push(`<span class="meta-divider">•</span><span>${tags}</span>`);
     }
 
-    // Get feature content if paper is expanded
+    // Generate feature content if paper is expanded and has features
     const featureContent = expanded && paper.features_path ? `
         <div class="paper-features">
             ${Object.entries(paper.features_path).map(([featureType, path]) => `
@@ -90,11 +90,17 @@ const renderPaperCard = (paper, expanded) => {
     `;
 };
 
+// Format feature name for display
+function formatFeatureName(featureType) {
+    return featureType
+        .split('-')
+        .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(' ');
+}
+
 const togglePaperCard = (element, event) => {
     event.stopPropagation();
     const card = element.closest('.paper-card');
-    const wasExpanded = card.classList.contains('expanded');
-    
     card.classList.toggle('expanded');
     
     const paperId = card.dataset.paperId;
@@ -102,23 +108,56 @@ const togglePaperCard = (element, event) => {
     expandedCards[paperId] = card.classList.contains('expanded');
     localStorage.setItem('expandedCards', JSON.stringify(expandedCards));
 
-    // If expanding, load features
-    if (!wasExpanded && card.classList.contains('expanded')) {
-        card.querySelectorAll('.feature-content-inner[data-path]').forEach(content => {
-            if (content.innerHTML === 'Loading...') {
-                fetch(content.dataset.path)
-                    .then(response => response.text())
-                    .then(text => {
-                        content.innerHTML = text;
-                    })
-                    .catch(error => {
-                        console.error('Error loading feature:', error);
-                        content.innerHTML = 'Error loading content';
-                    });
+    // Re-render if needed to show features
+    if (card.classList.contains('expanded')) {
+        const paper = window.yamlData[paperId];
+        if (paper.features_path) {
+            const papersContainer = card.closest('.papers-container-inner');
+            if (papersContainer) {
+                papersContainer.innerHTML = papers
+                    .map(p => renderPaperCard(p, expandedCards[p.id]))
+                    .join('');
+                addPaperHandlers(papersContainer);
             }
-        });
+        }
     }
 };
+
+function addPaperHandlers(container) {
+    // Add click handlers for paper cards
+    container.querySelectorAll('.paper-card').forEach(card => {
+        // Paper expansion handler
+        card.onclick = (e) => togglePaperCard(card, e);
+        
+        // Feature handlers
+        if (card.classList.contains('expanded')) {
+            card.querySelectorAll('.feature-entry-header').forEach(header => {
+                header.onclick = (e) => {
+                    e.stopPropagation();  // Prevent paper card collapse
+                    const entry = header.closest('.feature-entry');
+                    entry.classList.toggle('expanded');
+                    
+                    const contentDiv = entry.querySelector('.feature-content-inner');
+                    if (contentDiv && contentDiv.innerHTML === 'Loading...') {
+                        const path = contentDiv.dataset.path;
+                        fetch(path)
+                            .then(r => {
+                                if (!r.ok) throw new Error(`HTTP error! status: ${r.status}`);
+                                return r.text();
+                            })
+                            .then(text => {
+                                contentDiv.innerHTML = text;
+                            })
+                            .catch(err => {
+                                console.error('Error loading feature:', err);
+                                contentDiv.innerHTML = 'Error loading content';
+                            });
+                    }
+                };
+            });
+        }
+    });
+}
 
 const toggleDayGroup = (element) => {
     const group = element.closest('.day-group');
@@ -170,14 +209,8 @@ const renderPapers = () => {
         dayGroup.appendChild(dayHeader);
         dayGroup.appendChild(papersContainer);
         container.appendChild(dayGroup);
-    });
 
-    // Add click handlers for paper cards
-    document.querySelectorAll('.paper-card').forEach(card => {
-        card.onclick = (e) => togglePaperCard(card, e);
-        // Initialize features if card is expanded
-        if (card.classList.contains('expanded')) {
-            addFeatureHandlers(card);
-        }
+        // Add handlers to this day's papers
+        addPaperHandlers(papersContainerInner);
     });
 };
