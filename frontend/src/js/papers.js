@@ -91,7 +91,7 @@ const updatePaperDetails = async (paperId) => {
                     return `
                         <div class="feature-section">
                             <h4>${formatFeatureName(type)}</h4>
-                            <div class="feature-content">${content}</div>
+                            <div class="feature-content markdown-body">${marked.parse(content)}</div>
                         </div>
                     `;
                 } catch (error) {
