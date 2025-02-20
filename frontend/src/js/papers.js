@@ -50,6 +50,9 @@ const renderPaperCard = (paper, expanded) => {
         const tags = paper.arxiv_tags.join(', ');
         metaParts.push(`<span class="meta-divider">•</span><span>${tags}</span>`);
     }
+
+    // Get feature content if paper is expanded
+    const featureContent = expanded ? renderPaperFeatures(paper) : '';
     
     return `
         <article class="paper-card ${expanded ? 'expanded' : ''}" data-paper-id="${paper.id}">
@@ -60,11 +63,13 @@ const renderPaperCard = (paper, expanded) => {
                     ${paper.arxivId}
                 </a>
                 <span class="paper-title">${paper.title}</span>
+                ${featureContent ? `<div class="feature-icons">${featureContent.split('</div>')[0]}</div>` : ''}
             </div>
             <div class="paper-content">
                 <div class="paper-content-inner">
                     <div class="paper-meta">${metaParts.join('')}</div>
                     <div class="paper-abstract">${paper.abstract}</div>
+                    ${featureContent ? featureContent.split('</div>')[1] : ''}
                 </div>
             </div>
         </article>
@@ -79,6 +84,11 @@ const togglePaperCard = (element, event) => {
     const expandedCards = JSON.parse(localStorage.getItem('expandedCards') || '{}');
     expandedCards[paperId] = card.classList.contains('expanded');
     localStorage.setItem('expandedCards', JSON.stringify(expandedCards));
+
+    // If expanding, ensure features are properly initialized
+    if (card.classList.contains('expanded')) {
+        addFeatureHandlers(card);
+    }
 };
 
 const toggleDayGroup = (element) => {
@@ -136,5 +146,9 @@ const renderPapers = () => {
     // Add click handlers for paper cards
     document.querySelectorAll('.paper-card').forEach(card => {
         card.onclick = (e) => togglePaperCard(card, e);
+        // Initialize features if card is expanded
+        if (card.classList.contains('expanded')) {
+            addFeatureHandlers(card);
+        }
     });
 };

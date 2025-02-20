@@ -18,32 +18,106 @@ async function loadGitInfo() {
     }
 }
 
+async function loadPaperData() {
+    const response = await fetch('data/papers.json');
+    if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    
+    // Process feature data
+    Object.values(data).forEach(paper => {
+        // Look for features directory in paper data
+        if (paper.features_path) {
+            try {
+                // Attempt to load features for this paper
+                paper.features = {};
+                Object.entries(paper.features_path).forEach(([featureType, path]) => {
+                    fetch(path)
+                        .then(response => response.text())
+                        .then(content => {
+                            paper.features[featureType] = content;
+                            // Re-render if this paper is currently expanded
+                            const paperCard = document.querySelector(`.paper-card[data-paper-id="${paper.id}"]`);
+                            if (paperCard?.classList.contains('expanded')) {
+                                renderPapers();
+                            }
+                        })
+                        .catch(error => {
+                            console.error(`Failed to load feature ${featureType} for paper ${paper.id}:`, error);
+                        });
+                });
+            } catch (error) {
+                console.error(`Failed to process features for paper ${paper.id}:`, error);
+            }
+        }
+    });
+    
+    return data;
+}
+
 async function initializeApp() {
     try {
-        // Load both data sources in parallel
-        const [papersResponse] = await Promise.all([
-            fetch('data/papers.json'),
-            loadGitInfo() // We don't need to await its result directly
+        // Load paper data and git info in parallel
+        const [data] = await Promise.all([
+            loadPaperData(),
+            loadGitInfo()
         ]);
-
-        if (!papersResponse.ok) {
-            throw new Error(`HTTP error! status: ${papersResponse.status}`);
-        }
-        window.yamlData = await papersResponse.json();
+        
+        // Store data globally
+        window.yamlData = data;
         
         // Initialize all components
         initializeControls();
         initializeFilters();
+        initializeFeatures(); // New initialization for features
         renderPapers();
         applyFilters();
+        
     } catch (error) {
-        console.error('Failed to load papers data:', error);
+        console.error('Failed to initialize app:', error);
         document.getElementById('papers-container').innerHTML = `
             <div class="error-message">
                 Failed to load papers data. Please try refreshing the page.
+                <br>
+                Error: ${error.message}
             </div>
         `;
     }
+}
+
+// Function to check if features are loaded for a paper
+function areFeaturesLoaded(paper) {
+    if (!paper.features_path) return true;
+    return Object.keys(paper.features_path).every(
+        featureType => paper.features?.[featureType]
+    );
+}
+
+// Function to retry loading papers periodically until features are loaded
+function waitForFeatures(timeout = 30000, interval = 1000) {
+    const startTime = Date.now();
+    
+    function checkFeatures() {
+        if (!window.yamlData) return false;
+        
+        // Check if all papers have their features loaded
+        return Object.values(window.yamlData).every(areFeaturesLoaded);
+    }
+    
+    return new Promise((resolve, reject) => {
+        const check = () => {
+            if (checkFeatures()) {
+                resolve();
+            } else if (Date.now() - startTime > timeout) {
+                reject(new Error('Timeout waiting for features to load'));
+            } else {
+                setTimeout(check, interval);
+            }
+        };
+        check();
+    });
 }
 
 // Start the app when the document is ready
@@ -52,3 +126,10 @@ if (document.readyState === 'loading') {
 } else {
     initializeApp();
 }
+
+// Export for use in other modules
+window.papersApp = {
+    renderPapers,
+    applyFilters,
+    waitForFeatures
+};
