@@ -52,7 +52,22 @@ const renderPaperCard = (paper, expanded) => {
     }
 
     // Get feature content if paper is expanded
-    const featureContent = expanded ? renderPaperFeatures(paper) : '';
+    const featureContent = expanded && paper.features_path ? `
+        <div class="paper-features">
+            ${Object.entries(paper.features_path).map(([featureType, path]) => `
+                <div class="feature-entry" data-feature="${featureType}">
+                    <div class="feature-entry-header">
+                        <span class="feature-icon">📄</span>
+                        <span class="feature-name">${formatFeatureName(featureType)}</span>
+                        <button class="feature-expand">▼</button>
+                    </div>
+                    <div class="feature-content">
+                        <div class="feature-content-inner" data-path="${path}">Loading...</div>
+                    </div>
+                </div>
+            `).join('')}
+        </div>
+    ` : '';
     
     return `
         <article class="paper-card ${expanded ? 'expanded' : ''}" data-paper-id="${paper.id}">
@@ -63,13 +78,12 @@ const renderPaperCard = (paper, expanded) => {
                     ${paper.arxivId}
                 </a>
                 <span class="paper-title">${paper.title}</span>
-                ${featureContent ? `<div class="feature-icons">${featureContent.split('</div>')[0]}</div>` : ''}
             </div>
             <div class="paper-content">
                 <div class="paper-content-inner">
                     <div class="paper-meta">${metaParts.join('')}</div>
                     <div class="paper-abstract">${paper.abstract}</div>
-                    ${featureContent ? featureContent.split('</div>')[1] : ''}
+                    ${featureContent}
                 </div>
             </div>
         </article>
@@ -79,15 +93,30 @@ const renderPaperCard = (paper, expanded) => {
 const togglePaperCard = (element, event) => {
     event.stopPropagation();
     const card = element.closest('.paper-card');
+    const wasExpanded = card.classList.contains('expanded');
+    
     card.classList.toggle('expanded');
+    
     const paperId = card.dataset.paperId;
     const expandedCards = JSON.parse(localStorage.getItem('expandedCards') || '{}');
     expandedCards[paperId] = card.classList.contains('expanded');
     localStorage.setItem('expandedCards', JSON.stringify(expandedCards));
 
-    // If expanding, ensure features are properly initialized
-    if (card.classList.contains('expanded')) {
-        addFeatureHandlers(card);
+    // If expanding, load features
+    if (!wasExpanded && card.classList.contains('expanded')) {
+        card.querySelectorAll('.feature-content-inner[data-path]').forEach(content => {
+            if (content.innerHTML === 'Loading...') {
+                fetch(content.dataset.path)
+                    .then(response => response.text())
+                    .then(text => {
+                        content.innerHTML = text;
+                    })
+                    .catch(error => {
+                        console.error('Error loading feature:', error);
+                        content.innerHTML = 'Error loading content';
+                    });
+            }
+        });
     }
 };
 
