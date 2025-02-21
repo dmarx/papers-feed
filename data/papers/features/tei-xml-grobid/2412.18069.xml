@@ -1,0 +1,1332 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<TEI xml:space="preserve" xmlns="http://www.tei-c.org/ns/1.0" 
+xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" 
+xsi:schemaLocation="http://www.tei-c.org/ns/1.0 https://raw.githubusercontent.com/kermitt2/grobid/master/grobid-home/schemas/xsd/Grobid.xsd"
+ xmlns:xlink="http://www.w3.org/1999/xlink">
+	<teiHeader xml:lang="en">
+		<fileDesc>
+			<titleStmt>
+				<title level="a" type="main">Improving Factuality with Explicit Working Memory</title>
+			</titleStmt>
+			<publicationStmt>
+				<publisher/>
+				<availability  status="unknown">
+					<licence/>
+				</availability>
+				<date type="published" when="2024-12-25">December 25, 2024</date>
+			</publicationStmt>
+			<sourceDesc>
+				<biblStruct>
+					<analytic>
+						<author role="corresp">
+							<persName><forename type="first">Mingda</forename><surname>Chen</surname></persName>
+							<email>mingdachen@meta.com</email>
+						</author>
+						<author>
+							<persName><forename type="first">Yang</forename><surname>Li</surname></persName>
+						</author>
+						<author>
+							<persName><forename type="first">Karthik</forename><surname>Padthe</surname></persName>
+						</author>
+						<author>
+							<persName><forename type="first">Rulin</forename><surname>Shao</surname></persName>
+						</author>
+						<author>
+							<persName><forename type="first">Alicia</forename><surname>Sun</surname></persName>
+						</author>
+						<author>
+							<persName><forename type="first">Luke</forename><surname>Zettlemoyer</surname></persName>
+						</author>
+						<author>
+							<persName><forename type="first">Gargi</forename><surname>Gosh</surname></persName>
+						</author>
+						<author>
+							<persName><forename type="first">Wen-Tau</forename><surname>Yih</surname></persName>
+						</author>
+						<title level="a" type="main">Improving Factuality with Explicit Working Memory</title>
+					</analytic>
+					<monogr>
+						<imprint>
+							<date type="published" when="2024-12-25">December 25, 2024</date>
+						</imprint>
+					</monogr>
+					<idno type="MD5">F684EF10A8A73572844C47A805962D59</idno>
+					<idno type="arXiv">arXiv:2412.18069v1[cs.CL]</idno>
+				</biblStruct>
+			</sourceDesc>
+		</fileDesc>
+		<encodingDesc>
+			<appInfo>
+				<application version="0.8.2-SNAPSHOT" ident="GROBID" when="2025-02-21T07:04+0000">
+					<desc>GROBID - A machine learning software for extracting information from scholarly documents</desc>
+					<ref target="https://github.com/kermitt2/grobid"/>
+				</application>
+			</appInfo>
+		</encodingDesc>
+		<profileDesc>
+			<abstract>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>Meta FAIR</head><p>Large language models can generate factually inaccurate content, a problem known as hallucination. Recent works have built upon retrieved-augmented generation to improve factuality through iterative prompting but these methods are limited by the traditional RAG design. To address these challenges, we introduce Ewe (Explicit Working Memory), a novel approach that enhances factuality in long-form text generation by integrating a working memory that receives real-time feedback from external resources. The memory is refreshed based on online fact-checking and retrieval feedback, allowing Ewe to rectify false claims during the generation process and ensure more accurate and reliable outputs. Our experiments demonstrate that Ewe outperforms strong baselines on four fact-seeking long-form generation datasets, increasing the factuality metric, VeriScore, by 2 to 10 points absolute without sacrificing the helpfulness of the responses. Further analysis reveals that the design of rules for memory updates, configurations of memory units, and the quality of the retrieval datastore are crucial factors for influencing model performance.</p></div>
+			</abstract>
+		</profileDesc>
+	</teiHeader>
+	<text xml:lang="en">
+		<body>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="1">Introduction</head><p>In the realm of long-form text generation, a notable vulnerability of large language models (LLMs) is their propensity for hallucination, wherein the generated text contains factually inaccurate information. By prepending the input prompt with relevant documents from trustworthy sources, retrieved-augmented generation (RAG) <ref type="bibr" target="#b11">(Lewis et al., 2020;</ref><ref type="bibr" target="#b21">Shi et al., 2024)</ref> has been shown to be a simple yet effective approach that substantially mitigates the hallucination issue. To further enhance the factual accuracy of model output, various iterative prompting methods have been proposed that build upon RAG. For instance, FLARE <ref type="bibr" target="#b8">(Jiang et al., 2023)</ref> generates responses sentence by sentence, and if a newly generated sentence contains low-probability tokens, it retrieves a new set of documents and re-runs RAG to regenerate the sentence. Alternatively, Self-RAG <ref type="bibr" target="#b0">(Asai et al., 2024)</ref> employs a self-critic component to verify the correctness of each partial generation and repeatedly queries a retrieval system to update the background knowledge, thereby producing more accurate and faithful responses. While these systems demonstrate significant empirical improvement, they are restricted in the traditional RAG design. Context-relevant knowledge through retrieval is the only online feedback to the model, incorporated as part of the input string.</p><p>In this work, we propose Ewe (Explicit Working mEmory), an iterative framework that aims to provide more factual responses for knowledge-intensive long-form generation, with the help of an auxiliary fact-checking module. Ewe augments an existing language model with an explicit working memory, which keeps track of the knowledge that is most relevant and useful at the current generation timestep. The memory is initially filled with the latent representation of some retrieved passages relevant to the input prompt. During the generation process, Ewe actively monitors the newly generated partial response and pauses occasionally to refresh the memory with knowledge from retrieval and to check the output statement. If the statement is factually incorrect, it then refreshes the memory with the fact-checking feedback. With the updated memory, Ewe first removes the incorrect statement and backtracks to the previous timestep, and then continues the generation process from there.</p><p>We assume that the main text generation model used here is a Transformer-based large language model, such as Llama <ref type="bibr" target="#b2">(Dubey et al., 2024)</ref>. Similar to the standard RAG setting, given an input prompt, we first retrieve Figure <ref type="figure">1</ref> Example pipeline illustrating how Ewe pauses, receives feedback from retrievers and fact-checkers, and then re-generate to correct factual errors in its outputs. Ewe handles knowledge from fact-checkers and retrievers separately as they tend to provide information with distinct properties. Retrieval offers more general background information, while fact-checkers focus more on specific details, targeting particular aspects of the output text.</p><p>k relevant text chunks of the same number of tokens, as the background knowledge. Unlike RAG, which directly prepends the input prompt with these k chunks, we apply the language model to them separately and store the KV cache of each chunk in a memory of k units. When predicting the next token, the language model effectively attends the current token to all k chunks in parallel, using their KV caches stored in the memory, and have the average as the attention value. When Ewe pauses the generation and checks the newly generated, partial response, it has the opportunity to update the memory in multiple ways to guide the language model. For instance, if some claims in the new sentence are not supported, this feedback along with additional supporting documents can be used as a new unit appended to the existing memory. In addition, if the knowledge from an initial retrieved passage is no longer relevant, its corresponding memory unit can be removed or updated with embeddings of a new passage retrieved using the generated partial response as query.</p><p>Ewe can be seen as a more general framework that subsumes many existing approaches. For example, if there is no stopping in generation and if the memory contains only one unit (i.e., k=1), then Ewe degenerates to the simple vanilla RAG. If Ewe pauses at the end of generation of every sentence and checks whether the new sentence contains any token with low probability as a proxy of factuality measure, then this particular instantiation, with one memory unit, is effectively FLARE. Notice that in a typical, more general configuration of Ewe, the memory module consists of multiple units. When the memory is refreshed, not all the units need to be updated. If some knowledge is still required, their original raw data (e.g., passages) will not be reprocessed to create the embeddings, saving some redundant computational cost at inference time. While conceptually simple, the working memory design in Ewe provides a more flexible and yet efficient way to incorporate various of types of external online information, as different forms of feedback are encoded in parallel and stored in memory units (e.g., see Figure <ref type="figure">1</ref>). We notice that the design of leveraging working memory is also very related to some recently proposed methods for long-content models (e.g., Memory 3 <ref type="bibr" target="#b27">(Yang et al., 2024)</ref>). If our memory is used only for encoding the knowledge from the passages in our corpus, then this can be viewed as the whole corpus is used as the context, along with the prompt, as the input to the model. The key differences are that Ewe does not pre-encode every passage (although the KV caches of some frequently retrieved passages can certainly be precomputed in advance) and its memory can be dynamically updated as the generation progresses.</p><p>We demonstrate empirically that Ewe generates more factual responses without sacrificing the relevance to the input questions, using four fact-seeking long-form generation datasets. In general, with the feedback from online fact-checking and targeted retrieval, Ewe increases VeriScore <ref type="bibr" target="#b22">(Song et al., 2024)</ref>, the factuality metric we use, by 2 to 10 points absolute and has a similar helpfulness in terms of instruction following compared to the base model Llama-3.1 70B .</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="2">Related work</head><p>Aiming to reduce hallucination and make the LLMs generate more factual responses, our proposed framework, Ewe, detects knowledge gaps and acquires relevant information as needed, incorporating feedback from auxiliary models when available. Unlike chain-of-verification approaches <ref type="bibr">(Dhuliawala et al., 2024, CoVe)</ref>, which rely solely on the LLM for reasoning, Ewe combines adaptive retrieval augmentation and explicit memories with a focus on factuality. This section discusses related work on these two aspects.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="2.1">Iterative and Adaptive Retrieval Augmentation</head><p>Retrieval-augmented generation (RAG) typically involves a single retrieval step, followed by the language model generating a complete response. However, iterative retrieval methods <ref type="bibr">(Gao et al., 2024, §5)</ref> have been proposed to generate responses in multiple segments, with each segment generated using different additional information retrieved through iterative retrieval. One such approach is ITER-RETGEN <ref type="bibr" target="#b20">(Shao et al., 2023)</ref>, which uses the model output of the previous iteration to formulate the query and retrieve more relevant knowledge for the current generation. Extending iterative retrieval, the process of adaptive retrieval <ref type="bibr">(Gao et al., 2024, §5)</ref> examines partially generated responses in previous iterations to decide whether retrieving new information or regenerating a segment response is needed. For instance, FLARE <ref type="bibr" target="#b8">(Jiang et al., 2023)</ref> follows a simple sentence-by-sentence generation process to answer fact-seeking questions. In each step, it generates a temporary next sentence and examines its acceptability based on model confidence. If the sentence is deemed questionable, it retrieves new text chunks using a query based on the temporary sentence and re-generates the next sentence using standard RAG. DRAGIN <ref type="bibr" target="#b23">(Su et al., 2024)</ref> improves upon FLARE by introducing a new model confidence measure that combines attention scores and entropy values. This allows the model to pause the generation immediately after the confidence score of a token falls below a threshold. Additionally, DRAGIN uses preceding tokens with high attention scores on the stopping token to form a keyword-based query, which helps the model make a more confident next-token prediction.</p><p>Our work shares similarities with Self-RAG <ref type="bibr" target="#b0">(Asai et al., 2024)</ref>, particularly in the use of an auxiliary model to provide feedback. Unlike confidence measures based on token probability or attention score, Self-RAG fine-tunes the model to introspectively decide when to pause generation by outputting a special retrieve token. This triggers the retrieval of multiple passages, which are then used separately to generate candidate segments via standard RAG. Each segment is evaluated by a "critique" model for relevance, usefulness to the original prompt, and support from the retrieved passage. The critique model's output determines whether a candidate segment is included in the final output.</p><p>Our approach, Ewe, differs from existing iterative and adaptive retrieval augmentation methods in two key aspects. Firstly, traditional retrieval augmentation is replaced with memory augmentation, where the representation is the KV cache (similar to TurboRAG <ref type="bibr" target="#b14">(Lu et al., 2024)</ref>) instead of the raw text, and different memory chunks that encode different passages are processed in parallel. This design allows for greater flexibility in incorporating diverse information types and improves efficiency when only part of the memory is updated, as the remaining portion can be reused. Secondly, feedback from the auxiliary model is passed to the language model through memory, enabling the core language model to naturally incorporate multiple streams of information and produce better responses. This design difference sets our approach apart from existing methods and allows for more effective integration of factuality feedback from the auxiliary model.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="2.2">Memories in Long-context LLMs</head><p>Incorporating a large-scale corpus as additional knowledge can be achieved by prepending the given prompt with all documents in the corpus as an extremely long context input <ref type="bibr" target="#b10">(Lee et al., 2024)</ref> to language models. It is thus natural to see that long-context LLMs share some technical components that apply to retrieval augmentation. The memory module in Ewe is analogous to the explicit memory design in Memory 3 <ref type="bibr" target="#b27">(Yang et al., 2024)</ref>. Instead of encoding the knowledge in the training corpus completely in model parameters, or incorporating the knowledge primarily through retrieval augmentation, Memory 3 encodes 128-token chunks of the training corpus using their KV caches as memories. During inference, the model generates segments of 64 tokens. At the generation of each segment, it first uses the previous segment as query to retrieve 5 most relevant memories, and attends to them when generating the next segment. Retrieving memories of KV caches has been proposed in earlier work. For instance, Memorizing Transformers <ref type="bibr" target="#b26">(Wu et al., 2022)</ref> effectively extends the context of the language model by k nearest neighbor lookup of the past key-value pairs (i.e., long-range memory) and attends them in the last layer of the models. LongMem <ref type="bibr" target="#b24">(Wang et al., 2023)</ref> proposed a decoupled network architecture, using the backbone language model as memory encoder and a trained residual side-network as memory retriever and reader. The top-k attention key-value pairs stored in the memory are retrieved and incorporated at inference. While we also use explicit memories to store KV caches in Ewe, our goal is to pass new information at each step in the iterative decoding process, such as new information relevant to the current context via online retrieval and feedback from auxiliary models. We allow different operations on existing memories, including update, append, or delete, providing more flexibility for various downstream tasks.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3">Method</head><p>The overall generation process of Ewe is similar to the decoding process of typical Transformer-based models, with two differences: ( §3.1) Ewe pauses generation periodically. When a new complete sentence has been generated, Ewe uses the current context to retrieve a new set of passages as knowledge feedback. In addition, it runs a fact-checking model to judge whether the sentence contains any factually incorrect statements. If the sentence does contain factual errors, the correct facts will be used as the fact-checking feedback. Both types of feedback will be added to memories, and the sentence will be regenerated if the original one has factual errors. ( §3.2) The generation is memory-augmented. In addition to the typical context like the input sentence and tokens generated in previous timesteps, embeddings of various forms of feedback stored in the memories will influence the generated tokens through self-attention.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.1">Real-time Feedback</head><p>Following the design of recently proposed evaluation metrics on factuality <ref type="bibr" target="#b15">(Min et al., 2023;</ref><ref type="bibr" target="#b25">Wei et al., 2024;</ref><ref type="bibr" target="#b22">Song et al., 2024)</ref>, we determine whether a sentence is factually correct by checking if all of the claims extracted from this sentence are supported. While in general, Ewe can use any textual knowledge as feedback, we focus on providing two types of feedback when the newly generated sentence contains factual errors: fact-checking outcomes and relevant knowledge.</p><p>Fact-checking outcomes This feedback consists of the correct information that refutes the inaccurate claims, such as "Strelitzia thrives in a tropical-like 60%-70% humidity." that proves "Bird of Paradise prefers a dry atmosphere." wrong in the example in Figure <ref type="figure">1</ref>. In this work, we adapt the claim extraction model and verification model in VeriScore <ref type="bibr" target="#b22">(Song et al., 2024)</ref> as the fact-checking model, where the factual knowledge is derived from the Google snippets when using the extracted claim as query.</p><p>Relevant knowledge Using the original input question and the sentence being fact-checked as query, we use Contriever <ref type="bibr" target="#b7">(Izacard et al., 2022)</ref> to retrieve passages from C4 <ref type="bibr" target="#b17">(Raffel et al., 2020)</ref> and Wikipedia, following the setting in MassiveDS <ref type="bibr" target="#b19">(Shao et al., 2024)</ref>. Passages with retrieval scores exceeding a certain threshold will be viewed as knowledge relevant to the current context and used to update the working memories.</p><p>We pause at every T r timesteps to gather feedback from retrievers, and T v timesteps from fact-checkers. However, if no new sentence is generated, the feedback collection process will be skipped.</p><p>Figure <ref type="figure">2</ref> Diagram illustrating self-attention computations performed at each layer in Ewe. We concatenate each memory with the context (except for the last hidden vector where we only use context), apply standard self-attention and then aggregate the resulting hidden vectors to produce the final hidden vectors.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.2">Refreshing Working Memories</head><p>The working memory in Ewe consists of k memory units, where each unit is designed to store the representations of each feedback message of M tokens. When updating working memories, we follow the first in, first out (FIFO) rule. Given refreshed text chunks of the same length from fact-checkers and retrievers, our model encodes them into the KV cache in parallel using the same positional IDs. Working memories in Ewe are stored as part of the language models' context preceding the model's own output text and prompts, allowing for flexible updates without reprocessing generated content. As shown in Figure <ref type="figure">2</ref>, a separate embedding store is used for preserving these memories, which are then processed at each layer by concatenating them with the context. We then apply regular self-attention and aggregate the resulting hidden vectors using normalization terms from self-attention for each memory unit. Empirically, we find that adding hidden vectors produced by context only improves the fluency of long outputs, so we keep it in our model architectures. More formally,</p><formula xml:id="formula_0">⃗ h n = k+1 i=1 α i ⃗ h ni k+1 j=1 α j ,<label>(1)</label></formula><p>where ⃗ h n is the output vectors for self-attention at n-th layer in LMs, ⃗ h ni is the hidden vectors produced by memories concatenated with the context and by only the context vectors, and α i is the normalization term from self-attention that leads to ⃗ h ni .</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4">Experiments</head><p>We present the main experimental results of Ewe in this section, along with details of the datasets and evaluation metrics we used, and the baseline we compared with. In this set of experiments, we set the retrieval and verification timesteps, T r and T v , to be 1 and 8, respectively.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4.1">Evaluation Datasets</head><p>We evaluated Ewe and baseline models using four fact-seeking long-form generation datasets: LongFact <ref type="bibr" target="#b25">(Wei et al., 2024)</ref>, Fava <ref type="bibr" target="#b16">(Mishra et al., 2024)</ref>, AlpacaFact <ref type="bibr" target="#b3">(Dubois et al., 2023;</ref><ref type="bibr" target="#b13">Lin et al., 2024)</ref> and Biography <ref type="bibr" target="#b15">(Min et al., 2023)</ref>.</p><p>LongFact Designed to probe the factuality of a model of which response consists of at least several paragraphs, LongFact was created by prompting GPT-4 to generate questions regarding a specific concept or object within a given topic. In our experiments, we use the 250 prompts from the LongFact-Objects dataset, selected by <ref type="bibr" target="#b25">Wei et al. (2024)</ref>.</p><p>Fava As a new fine-grained hallucination benchmark, Fava constructed 200 information-seeking queries that require factual knowledge to give accurate long-form answers from multiple sources, including Open Assistant <ref type="bibr" target="#b9">(Köpf et al., 2023)</ref>, No Robots <ref type="bibr" target="#b18">(Rajani et al., 2023)</ref>, WebNLG <ref type="bibr" target="#b6">(Gardent et al., 2017)</ref> and instructions written by the authors <ref type="bibr" target="#b16">(Mishra et al., 2024)</ref>. Following <ref type="bibr" target="#b13">Lin et al. (2024)</ref>, we selected 141 prompts from this collection for our experiments.</p><p>AlpacaFact Originally collected from real-world interactions with various users, the 805 instructions in AlpacaFarm <ref type="bibr" target="#b3">(Dubois et al., 2023)</ref> was used for evaluating the instruction-following ability of different LLMs.</p><p>To focus our evaluation on factuality, we used a subset of 241 fact-seeking instructions selected by <ref type="bibr" target="#b13">Lin et al. (2024)</ref> in this work.</p><p>Biography To demonstrate the effectiveness of the factuality metric FActScore, <ref type="bibr" target="#b15">Min et al. (2023)</ref> selected 183 names of famous people found in Wikipedia, and applied the "Tell me a bio of [Person Name]" template to create a collection of prompts called Biography. As this set of prompts have been used extensively in several recent papers, we include it in our study as well.</p><p>When using these prompts, we appended the instruction "Provide as many specific details and examples as possible (such as names of people, numbers, events, locations, dates, times, etc.)" to encourage models to generate more detailed responses that cover multiple factoids, following <ref type="bibr" target="#b25">Wei et al. (2024)</ref>.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4.2">Evaluation Metrics</head><p>We assess the quality of model responses to fact-seeking questions based on two key axes: factuality and helpfulness. For evaluating factuality, we considered multiple automatic metrics, such as FActScore <ref type="bibr" target="#b15">(Min et al., 2023)</ref> and SAFE <ref type="bibr" target="#b25">(Wei et al., 2024)</ref>, but ultimately chose VeriScore <ref type="bibr" target="#b22">(Song et al., 2024)</ref> as our primary evaluation metric. Although these metrics share a similar design that decomposes sentences into "atomic claims" and checks their support against an external knowledge source, VeriScore focuses on extracting more sensible verifiable claims and uses Google search snippets instead of Wikipedia as the knowledge source. As a result, VeriScore can be applied to responses on more diverse topics and is also more efficient, requiring fewer but more meaningful claims to be checked. We report the F 1 score from VeriScore, which is the harmonic mean of the precision and recall of the claims. Following <ref type="bibr" target="#b22">Song et al. (2024)</ref>, we set the minimum number of facts required for a model's response to achieve perfect recall as the median number of extracted claims per dataset<ref type="foot" target="#foot_0">foot_0</ref> . We also used their fine-tuned models for claim extraction and verification, provided in their package<ref type="foot" target="#foot_1">foot_1</ref> .</p><p>To make sure that a model with a high factuality score does not simply give irrelevant but correct factual statements, we also need to check whether the response is helpful to the user. Following <ref type="bibr" target="#b13">Lin et al. (2024)</ref>, we use AlpacaEval <ref type="bibr" target="#b4">(Dubois et al., 2024)</ref> to compare the target model and baseline model in terms of their instruction-following ability. For the responses to the same input prompt, a large language model is used as judge to determine which of the two is better<ref type="foot" target="#foot_2">foot_2</ref> , and the win rate is thus used as a measure of helpfulness<ref type="foot" target="#foot_3">foot_3</ref> .</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4.3">Baselines</head><p>We used instruction-tuned Llama-3.1 70B and 8B as the base models and compared Ewe with five baselines: base model only, retrieval augmentation (RA), Chain of verification (CoVe)<ref type="foot" target="#foot_4">foot_4</ref> , an iterative retrieval approach DRAGIN <ref type="bibr" target="#b23">(Su et al., 2024)</ref> <ref type="foot" target="#foot_5">foot_5</ref> , and a recently proposed semi-parametric decoding method Nest <ref type="bibr" target="#b12">(Li et al., 2024)</ref>. For base model only, Llama-3.1 70B or Llama-3.1 8B , we simply gave the language model the prompt in the dataset and the instruction of requesting detailed information, without other additional information.</p><p>With retrieval augmentation, we retrieved 20 passages using the input prompts as queries and then prepended the passages to the input<ref type="foot" target="#foot_6">foot_6</ref> . Nest is a strong retrieval-based decoding algorithm. Following the original setup, we retrieved 100 passages to use as candidates. For CoVe, we employ the "factor+revise" method, which For each dataset, we report F1 scores from VeriScore and win rates (WR) from AlpacaEval. We use Llama-3.170B as the baseline method in AlpacaEval win rate experiments. <ref type="bibr" target="#b1">Dhuliawala et al. (2024)</ref> demonstrated to be the most effective. Additionally, we improve CoVe by integrating retrieved passages from our retrieval datastore during the verification step. This augmentation helps us establish a stronger and more comparable baseline method, considering that most other baseline methods also utilize retrieval. For all our experiments, the maximum generation step was set to 1024. Llama-3.1 70B is used as the baseline method for all AlpacaEval comparisons.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4.4">Results</head><p>Our main results are shown in Table <ref type="table" target="#tab_0">1</ref>. For the Llama-3.1 70B base model, we find that in terms of factuality, retrieval augmentation generally improves the results consistently across different datasets. This is expected as for fact-seeking prompts, specifically conditioning generation on relevant factual knowledge has been demonstrated to be an effective way to mitigate hallucinations. Nest performs better than the base model on the Biography dataset, but not on others, and it appears that the VeriScore F 1 is lower than the standard retrieval augmentation. It might suggest that the configuration or hyperparameter settings of Nest need to be further optimized, as Nest was originally evaluated by Biography with Llama-2. DRAGIN performs similarly to RA, likely because their query formulation method is not optimized for long-form generation, resulting in less useful retrieved passages. Similarly, with CoVe, we notice that it often produces shorter model responses, leading to significantly lower recall performance despite high precision, which results in a less favorable VeriScore F 1 . While augmenting CoVe with retrieval slightly alleviates this issue, it still lags behind. Perhaps more interestingly, with online fact-checking feedback and refreshed knowledge from retrieval, Ewe achieves the highest VeriScore F 1 on all datasets. On the helpfulness of the responses, it appears that AlpacaEval generally prefers the output from the base model, except for Ewe, where the win rates are roughly 50%.</p><p>When using Llama-3.1 8B as the base model, we have observed a similar trend. Retrieval augmentation improves factuality in terms of VeriScore F 1 and Ewe still gives the best factuality results. However, compared to the models based on Llama-3.1 70B , we notice that the improvement is generally smaller. We hypothesize that the smaller base language model is less capable in leveraging feedback, and may not always regenerate a sentence that is factually correct. In terms of helpfulness, we can see that Ewe generally performs comparably to its base model Llama-3.1 8B , as they have similar win rates when judged against the output of the same Llama-3.1 70B base model. Table <ref type="table">2</ref> VeriScore F1 over 50 prompts from LongFact with different shapes of working memory. We allocate an equal number of memory units for both retrieval and fact-checking feedback.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="5">Analysis</head><p>We provide some insights based on different ablations in this section. Llama-3.1 70B were used as the base model for all the experiments in this section.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="5.1">Memory Configurations</head><p>In this analysis, we explore the influence of memory configurations on factuality, based on experiments on 50 randomly sampled prompts from LongFact. We examine this impact through two dimensions: the number of memory units and the of memory units.</p><p>In Figure <ref type="figure" target="#fig_0">3</ref>, we investigate how varying the numbers of memory units used for storing fact-checking feedback and retrieved passages may impact factuality. When adjusting the configuration for one, we keep the other constant to facilitate easier interpretation of the results. Overall, we observe that having a large amount of memory units for either fact-checking feedback or retrieved passages negatively impacts factuality. This is likely because a significant amount of stale information remains in working memory for an extended period without being updated, as we adhere to the FIFO rule for updating working memory. Consequently, this information becomes outdated as the generation process continues.</p><p>In Table <ref type="table">2</ref>, we examine the impact of varying memory unit shapes on factuality. To ensure a fair comparison, we maintained a consistent total number of tokens in working memory across different experimental setups. Notably, our findings suggest that models favor shorter, more memory units over longer, fewer ones. We hypothesize that this preference arises because 128 tokens approximately match the length of a retrieved passage, allowing the attention mechanism to effectively cover one individual passage at a time. In contrast, longer memory units combine multiple passages into a single unit, which may compel the attention to focus on less relevant passages when they are grouped with more relevant ones.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="5.2">Feedback Forms</head><p>In this analysis, we explore various feedback formats utilized by fact-checkers. The models in VeriScore offers 2 types of information: a list of both factual and nonfactual claims, along with relevant passages that support these factual and nonfactual judgments. To examine the impact of these feedback formats, we conduct experiments using different combinations of these information types in the working memory. For the</p><p>Passages determining a claim is incorrect Passages determining a claim is correct Instructions for nonfactual claims Precision Recall F 1 ✓ ✓ ✓ 77.3 64.0 66.8 ✓ 76.4 67.4 67.9 ✓ 77.5 67.2 69.4 ✓ 67.1 66.2 66.7 ✓ ✓ 80.8 66.1 69.3 72.5 65.9 66.2 Llama-3.1 70B 65.8 67.1 65.5 Llama-3.1 70B + RA 70.1 66.1 65.9</p><p>Table 3 Comparing different feedback forms for fact-checkers. We report VeriScore over 50 prompts from LongFact.</p><p>supporting passages, we combine them using new line symbols. For the list of claims, we apply an instruction template as follows to encode nonfactual claims:</p><p>Please refrain from including the following imprecise statements: (1) nonfactual claim 1 (2) nonfactual claim 2 ...</p><p>Our results are shown in Table <ref type="table">3</ref>. Overall, fact-checking feedback is beneficial compared to the base model with and without retrieval augmentation. The specific types of feedback also play a crucial role. Incorporating all feedback forms does not enhance model performance, with supporting passages proving more effective than instructions. We notice that instructing models not to generate specific details often results in misunderstanding. Models might rephrase the instruction, include the nonfactual statement in their response, and then add a clarification indicating the previous statement is nonfactual, such as "(Note: This is a nonfactual claim and may not be accurate.)". We leave a better design of feedback forms to future work. Interestingly, when we exclude all the textual feedback from fact-checkers and only pause and regenerate in the presence of nonfactual sentences, performance still slightly improves.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="5.3">Model Confidence</head><p>One important question remains is when to refresh the working memory. To study it, we conducted a comparative analysis of different criteria for refreshing working memory and regeneration. Since the working memory consists of the retrieval memory and fact-checking memory, which can have interacting effects, we first investigate when to trigger the retriever alone (without fact-checking memory) and then investigate when to trigger the fact-checker (when retrieval interval T r is set to 1).</p><p>Fixed intervals for refreshing working memory As shown in Figure <ref type="figure">4a</ref>, when using a fixed retrieval interval, an intermediate interval seems to perform well. This may be due to the fact that overly frequent retrieval can add irrelevant and conflicting information to the memory. With fact-checking feedback in memory, it seems frequent verification and regeneration is not always beneficial due to the fact that we only regenerate once and the regenerated sentence is not always better.</p><p>Model confidence for refreshing working memory In practice, fixed retrieval and verification intervals may be unnecessary and lead to sub-optimal performance. We explore whether model-confidence can serve as a signal for refreshing working memory. Specifically, we compare two different metrics for model confidence: (1) Entropy: average entropy of generated tokens in a sentence, and (2) Min-prob: minimum probability of tokens in a sentence. A higher threshold for entropy results in less frequent memory update, and a higher threshold for min-prob results in more frequent memory update. Since external fact-checkers can be computationally expensive, we first examine if we can use model confidence as a signal for retrieval and regeneration, without using an auxiliary fact-checking model to provide feedback. As shown in Figure <ref type="figure">4b</ref> and 4c (blue line), we observe empirically intermediate thresholds for retrieval perform well, leading to to better F 1 when compared to the settings in Figure <ref type="figure">4a</ref>, where we use different fixed intervals for retrieval. With external fact-checkers, we investigate if we can use model confidence as a signal to trigger verification and regeneration to improve generation efficiency. In Figure <ref type="figure">4b</ref> and 4c (red line), when chosen at an appropriate threshold, both entropy and min-prob can outperform the baseline (using fixed verification interval T v = 8) despite with less frequent verification.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="5.4">Knowledge from Retrieval</head><p>We present the results of using different retrieval corpora in Table <ref type="table">4</ref>, including Wikipedia, C4, or both of them together. Likely due to its broader coverage, C4 is more effective than Wikipedia in helping the model produce more factual responses. Combining C4 with Wikipedia further enhances the factual accuracy (except for Biography), probably because they offer complementary sets of knowledge.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="6">Conclusion</head><p>We present Ewe, a novel system that incorporates a working memory mechanism during the generation process. Ewe pauses at given intervals and refreshes its working memory based on feedback from retrieval and fact-checking models, ensuring that the generated content remains accurate and relevant. By integrating this working memory into each attention layer of the Transformer architectures, Ewe can be easily adapted to various large language models. Our experiments demonstrate the effectiveness of Ewe by benchmarking it on 8B and 70B Llama-3.1 models, resulting in significant improvements in both factuality and helpfulness across four fact-seeking long-form generation datasets. Furthermore, our analysis reveals that updating the working memory with more relevant information at each timestep, allowing attention to focus on each passage, and utilizing high-quality retrieval datastores with extensive knowledge coverage are crucial factors for improving factuality of models.</p></div><figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_0"><head>Figure 3 F1</head><label>3</label><figDesc>Figure 3 VeriScore F1 over 50 prompts from LongFact when varying number of memory units used for storing retrieved passages and fact-checking feedback. Each memory unit stores 128 tokens.</figDesc><graphic coords="8,116.24,63.78,188.12,146.61" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0"><graphic coords="2,70.87,63.77,470.28,258.98" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_0"><head>Table 1</head><label>1</label><figDesc>Evaluation on factuality and helpfulness of the model responses to prompts provided in four long-form question answering datasets.</figDesc><table><row><cell>Model</cell><cell cols="2">LongFact</cell><cell cols="2">Fava</cell><cell cols="2">AlpacaFact</cell><cell cols="2">Biography</cell></row><row><cell></cell><cell>F 1</cell><cell>WR</cell><cell>F 1</cell><cell>WR</cell><cell>F 1</cell><cell>WR</cell><cell>F 1</cell><cell>WR</cell></row><row><cell>Llama-3.1 70B</cell><cell>64.3</cell><cell>-</cell><cell>52.0</cell><cell>-</cell><cell>63.8</cell><cell>-</cell><cell>37.1</cell><cell>-</cell></row><row><cell>+RA</cell><cell cols="8">64.6 41.0 56.7 37.3 64.9 43.3 41.7 49.8</cell></row><row><cell>+Nest</cell><cell>62.1</cell><cell>8.5</cell><cell cols="6">49.0 23.3 57.6 30.4 39.5 21.7</cell></row><row><cell>+DRAGIN</cell><cell cols="8">64.8 37.6 57.2 33.8 63.8 31.2 39.8 33.3</cell></row><row><cell>+CoVe</cell><cell cols="8">63.8 39.3 49.5 33.4 61.5 33.3 37.7 31.3</cell></row><row><cell cols="9">+CoVe w/ Retrieval 64.6 31.5 52.8 22.9 63.9 28.5 38.9 29.6</cell></row><row><cell>+Ewe</cell><cell cols="8">70.7 50.2 61.1 50.2 65.8 49.7 47.6 50.6</cell></row><row><cell>Llama-3.1 8B</cell><cell cols="8">63.1 40.6 51.0 36.5 65.3 26.7 28.9 24.2</cell></row><row><cell>+RA</cell><cell cols="8">66.5 27.4 51.7 16.4 64.3 18.8 37.1 20.6</cell></row><row><cell>+Nest</cell><cell>61.9</cell><cell>3.4</cell><cell cols="3">50.1 13.7 57.4</cell><cell>8.4</cell><cell cols="2">39.0 21.4</cell></row><row><cell>+DRAGIN</cell><cell cols="8">63.9 15.9 51.1 10.0 61.4 11.0 34.3 11.5</cell></row><row><cell>+CoVe</cell><cell>44.1</cell><cell>8.8</cell><cell cols="6">38.7 11.0 51.3 15.1 25.1 13.3</cell></row><row><cell cols="4">+CoVe w/ Retrieval 53.2 12.4 39.7</cell><cell>5.2</cell><cell cols="3">54.5 12.8 25.7</cell><cell>9.3</cell></row><row><cell>+Ewe</cell><cell cols="8">67.2 40.7 53.2 36.1 65.4 28.2 39.1 21.0</cell></row></table></figure>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="1" xml:id="foot_0"><p>The median numbers of extracted facts for LongFact, Fava, AlpacaFact, Biography are 55,49, 31, 43, respectively.   </p></note>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="2" xml:id="foot_1"><p>https://github.com/Yixiao-Song/VeriScore</p></note>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="3" xml:id="foot_2"><p>We used GPT-4o as the judge.</p></note>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="4" xml:id="foot_3"><p>We found that the length-controlled win rates in AlpacaEval could conflate hallucinations and length effects, and thus report the version without length normalization.</p></note>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="5" xml:id="foot_4"><p>We adapted an implementation from https://github.com/ritun16/chain-of-verification</p></note>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="6" xml:id="foot_5"><p>We used the authors' implementation https://github.com/oneal2000/DRAGIN</p></note>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="7" xml:id="foot_6"><p>Using more than 20 passages does not provide significant benefits in our preliminary experiments, so we limit our retrieval to the top 20 passages.</p></note>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" xml:id="foot_7"><p>Table 4 VeriScore F1 over 50 prompts from LongFact, AlpacaFact, Fava and Biography with different retrieval datastores.</p></note>
+		</body>
+		<back>
+
+			<div type="acknowledgement">
+<div><head>Acknowledgments</head><p>We thank <rs type="person">Victoria Lin</rs> and <rs type="person">Barlas Oğuz</rs> for their insightful feedback, and we are grateful to <rs type="person">Maria Lomeli</rs> for her support in building the retrieval system.</p></div>
+			</div>			<div type="annex">
+<div xmlns="http://www.tei-c.org/ns/1.0" />			</div>
+			<div type="references">
+
+				<listBibl>
+
+<biblStruct xml:id="b0">
+	<analytic>
+		<title level="a" type="main">Self-RAG: Learning to retrieve, generate, and critique through self-reflection</title>
+		<author>
+			<persName><forename type="first">Akari</forename><surname>Asai</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zeqiu</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yizhong</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Avirup</forename><surname>Sil</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hannaneh</forename><surname>Hajishirzi</surname></persName>
+		</author>
+		<ptr target="https://openreview.net/forum?id=hSyW" />
+	</analytic>
+	<monogr>
+		<title level="m">The Twelfth International Conference on Learning Representations</title>
+		<imprint>
+			<date type="published" when="2024">2024. 5go0v8</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b1">
+	<analytic>
+		<title level="a" type="main">Chainof-verification reduces hallucination in large language models</title>
+		<author>
+			<persName><forename type="first">Shehzaad</forename><surname>Dhuliawala</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mojtaba</forename><surname>Komeili</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jing</forename><surname>Xu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Roberta</forename><surname>Raileanu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xian</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Asli</forename><surname>Celikyilmaz</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jason</forename><surname>Weston</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/2024.findings-acl.212</idno>
+		<ptr target="https://aclanthology.org/2024.findings-acl.212" />
+	</analytic>
+	<monogr>
+		<title level="m">Findings of the Association for Computational Linguistics ACL 2024</title>
+		<editor>
+			<persName><forename type="first">Lun-Wei</forename><surname>Ku</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Andre</forename><surname>Martins</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Vivek</forename><surname>Srikumar</surname></persName>
+		</editor>
+		<meeting><address><addrLine>Bangkok, Thailand</addrLine></address></meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<date type="published" when="2024-08">August 2024</date>
+			<biblScope unit="page" from="3563" to="3578" />
+		</imprint>
+	</monogr>
+	<note>and virtual meeting</note>
+</biblStruct>
+
+<biblStruct xml:id="b2">
+	<monogr>
+		<title level="m" type="main">The llama 3 herd of models</title>
+		<author>
+			<persName><forename type="first">Abhimanyu</forename><surname>Dubey</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Abhinav</forename><surname>Jauhri</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Abhinav</forename><surname>Pandey</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Abhishek</forename><surname>Kadian</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ahmad</forename><surname>Al-Dahle</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Aiesha</forename><surname>Letman</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Akhil</forename><surname>Mathur</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alan</forename><surname>Schelten</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Amy</forename><surname>Yang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Angela</forename><surname>Fan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Anirudh</forename><surname>Goyal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Anthony</forename><surname>Hartshorn</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Aobo</forename><surname>Yang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Archi</forename><surname>Mitra</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Archie</forename><surname>Sravankumar</surname></persName>
+		</author>
+		<ptr target="https://arxiv.org/abs/2407.21783" />
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b3">
+	<analytic>
+		<title level="a" type="main">AlpacaFarm: A simulation framework for methods that learn from human feedback</title>
+		<author>
+			<persName><forename type="first">Yann</forename><surname>Dubois</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xuechen</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Rohan</forename><surname>Taori</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tianyi</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ishaan</forename><surname>Gulrajani</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jimmy</forename><surname>Ba</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Carlos</forename><surname>Guestrin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Percy</forename><surname>Liang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tatsunori</forename><surname>Hashimoto</surname></persName>
+		</author>
+		<ptr target="https://openreview.net/forum?id=4hturzLcKX" />
+	</analytic>
+	<monogr>
+		<title level="m">Thirty-seventh Conference on Neural Information Processing Systems</title>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b4">
+	<analytic>
+		<title level="a" type="main">Length-controlled alpacaeval: A simple debiasing of automatic evaluators</title>
+		<author>
+			<persName><forename type="first">Yann</forename><surname>Dubois</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Percy</forename><surname>Liang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tatsunori</forename><surname>Hashimoto</surname></persName>
+		</author>
+		<ptr target="https://openreview.net/forum?id=CybBmzWBX0" />
+	</analytic>
+	<monogr>
+		<title level="m">First Conference on Language Modeling</title>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b5">
+	<monogr>
+		<title level="m" type="main">Retrieval-augmented generation for large language models: A survey</title>
+		<author>
+			<persName><forename type="first">Yunfan</forename><surname>Gao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yun</forename><surname>Xiong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xinyu</forename><surname>Gao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kangxiang</forename><surname>Jia</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jinliu</forename><surname>Pan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yuxi</forename><surname>Bi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yi</forename><surname>Dai</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jiawei</forename><surname>Sun</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Meng</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Haofen</forename><surname>Wang</surname></persName>
+		</author>
+		<ptr target="https://arxiv.org/abs/2312.10997" />
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b6">
+	<analytic>
+		<title level="a" type="main">The WebNLG challenge: Generating text from RDF data</title>
+		<author>
+			<persName><forename type="first">Claire</forename><surname>Gardent</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Anastasia</forename><surname>Shimorina</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shashi</forename><surname>Narayan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Laura</forename><surname>Perez-Beltrachini</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proc. INLG</title>
+		<meeting>INLG</meeting>
+		<imprint>
+			<date type="published" when="2017">2017</date>
+			<biblScope unit="page" from="124" to="133" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b7">
+	<analytic>
+		<title level="a" type="main">Unsupervised dense information retrieval with contrastive learning</title>
+		<author>
+			<persName><forename type="first">Gautier</forename><surname>Izacard</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mathilde</forename><surname>Caron</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Lucas</forename><surname>Hosseini</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sebastian</forename><surname>Riedel</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Piotr</forename><surname>Bojanowski</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Armand</forename><surname>Joulin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Edouard</forename><surname>Grave</surname></persName>
+		</author>
+		<ptr target="https://openreview.net/forum?id=jKN" />
+	</analytic>
+	<monogr>
+		<title level="j">Transactions on Machine Learning Research</title>
+		<idno type="ISSN">2835-8856</idno>
+		<imprint>
+			<date type="published" when="2022">2022. 1pXi7b0</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b8">
+	<analytic>
+		<title level="a" type="main">Active retrieval augmented generation</title>
+		<author>
+			<persName><forename type="first">Zhengbao</forename><surname>Jiang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Frank</forename><surname>Xu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Luyu</forename><surname>Gao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhiqing</forename><surname>Sun</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Qian</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jane</forename><surname>Dwivedi-Yu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yiming</forename><surname>Yang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jamie</forename><surname>Callan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Graham</forename><surname>Neubig</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/2023.emnlp-main.495</idno>
+		<ptr target="https://aclanthology.org/2023.emnlp-main.495" />
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing</title>
+		<editor>
+			<persName><forename type="first">Houda</forename><surname>Bouamor</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Juan</forename><surname>Pino</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Kalika</forename><surname>Bali</surname></persName>
+		</editor>
+		<meeting>the 2023 Conference on Empirical Methods in Natural Language Processing<address><addrLine>Singapore</addrLine></address></meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<date type="published" when="2023-12">December 2023</date>
+			<biblScope unit="page" from="7969" to="7992" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b9">
+	<analytic>
+		<title level="a" type="main">Openassistant conversations -democratizing large language model alignment</title>
+		<author>
+			<persName><forename type="first">Andreas</forename><surname>Köpf</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yannic</forename><surname>Kilcher</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sotiris</forename><surname>Dimitri Von Rütte</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Anagnostidis</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Rui</forename><surname>Zhi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Keith</forename><surname>Tam</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Abdullah</forename><surname>Stevens</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Duc</forename><surname>Barhoum</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Oliver</forename><surname>Nguyen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Richárd</forename><surname>Stanley</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Nagyfi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">E</forename><forename type="middle">S</forename><surname>Shahul</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sameer</forename><surname>Suri</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">David</forename><surname>Glushkov</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Arnav</forename><surname>Dantuluri</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Andrew</forename><surname>Maguire</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Christoph</forename><surname>Schuhmann</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Huu</forename><surname>Nguyen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alexander</forename><surname>Mattick</surname></persName>
+		</author>
+		<ptr target="https://proceedings.neurips.cc/paper_files/paper/2023/file/949" />
+	</analytic>
+	<monogr>
+		<title level="m">Advances in Neural Information Processing Systems</title>
+		<editor>
+			<persName><forename type="first">A</forename><surname>Oh</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">T</forename><surname>Naumann</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">A</forename><surname>Globerson</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">K</forename><surname>Saenko</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">M</forename><surname>Hardt</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">S</forename><surname>Levine</surname></persName>
+		</editor>
+		<imprint>
+			<publisher>Curran Associates, Inc</publisher>
+			<date type="published" when="2023">2023</date>
+			<biblScope unit="volume">36</biblScope>
+			<biblScope unit="page" from="47669" to="47681" />
+		</imprint>
+	</monogr>
+	<note>f0f8f32267d297c2d4e3ee10a2e7e-Paper-Datasets_and_Benchmarks.pdf</note>
+</biblStruct>
+
+<biblStruct xml:id="b10">
+	<monogr>
+		<title level="m" type="main">Can long-context language models subsume retrieval, rag, sql, and more?</title>
+		<author>
+			<persName><forename type="first">Jinhyuk</forename><surname>Lee</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Anthony</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhuyun</forename><surname>Dai</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dheeru</forename><surname>Dua</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Devendra</forename><surname>Singh Sachan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Michael</forename><surname>Boratko</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yi</forename><surname>Luan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><forename type="middle">R</forename><surname>Sébastien</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Vincent</forename><surname>Arnold</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Siddharth</forename><surname>Perot</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hexiang</forename><surname>Dalmia</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xudong</forename><surname>Hu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Panupong</forename><surname>Lin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Aida</forename><surname>Pasupat</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jeremy</forename><forename type="middle">R</forename><surname>Amini</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sebastian</forename><surname>Cole</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Iftekhar</forename><surname>Riedel</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ming-Wei</forename><surname>Naim</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kelvin</forename><surname>Chang</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Guu</surname></persName>
+		</author>
+		<ptr target="https://arxiv.org/abs/2406.13121" />
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b11">
+	<analytic>
+		<title level="a" type="main">Retrieval-augmented generation for knowledge-intensive NLP tasks</title>
+		<author>
+			<persName><forename type="first">S</forename><forename type="middle">H</forename><surname>Patrick</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ethan</forename><surname>Lewis</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Aleksandra</forename><surname>Perez</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Fabio</forename><surname>Piktus</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Vladimir</forename><surname>Petroni</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Naman</forename><surname>Karpukhin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Heinrich</forename><surname>Goyal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mike</forename><surname>Küttler</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wen-Tau</forename><surname>Lewis</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tim</forename><surname>Yih</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sebastian</forename><surname>Rocktäschel</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Douwe</forename><surname>Riedel</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Kiela</surname></persName>
+		</author>
+		<ptr target="https://proceedings.neurips.cc/paper/2020/hash/6" />
+	</analytic>
+	<monogr>
+		<title level="m">Advances in Neural Information Processing Systems 33: Annual Conference on Neural Information Processing Systems</title>
+		<editor>
+			<persName><forename type="first">Hugo</forename><surname>Larochelle</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Marc'aurelio</forename><surname>Ranzato</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Raia</forename><surname>Hadsell</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Maria-Florina</forename><surname>Balcan</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Hsuan-Tien</forename><surname>Lin</surname></persName>
+		</editor>
+		<meeting><address><addrLine>NeurIPS</addrLine></address></meeting>
+		<imprint>
+			<date type="published" when="2020-12-06">2020. 2020. December 6-12, 2020. 2020</date>
+		</imprint>
+	</monogr>
+	<note>b493230205f780e1bc26945df7481e5-Abstract.html</note>
+</biblStruct>
+
+<biblStruct xml:id="b12">
+	<monogr>
+		<title level="m" type="main">Nearest neighbor speculative decoding for llm generation and attribution</title>
+		<author>
+			<persName><forename type="first">Minghan</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xilun</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ari</forename><surname>Holtzman</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Beidi</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jimmy</forename><surname>Lin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wen-Tau</forename><surname>Yih</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xi</forename><surname>Victoria</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Lin</forename></persName>
+		</author>
+		<idno type="arXiv">arXiv:2405.19325</idno>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b13">
+	<monogr>
+		<author>
+			<persName><forename type="first">Sheng-Chieh</forename><surname>Lin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Luyu</forename><surname>Gao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Barlas</forename><surname>Oguz</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wenhan</forename><surname>Xiong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jimmy</forename><surname>Lin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wen-Tau</forename><surname>Yih</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xilun</forename><surname>Chen</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2405.01525</idno>
+		<title level="m">Flame: Factuality-aware alignment for large language models</title>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b14">
+	<monogr>
+		<title level="m" type="main">TurboRAG: Accelerating retrieval-augmented generation with precomputed kv caches for chunked text</title>
+		<author>
+			<persName><forename type="first">Songshuo</forename><surname>Lu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hua</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yutian</forename><surname>Rong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhi</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yaohua</forename><surname>Tang</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2410.07590</idno>
+		<ptr target="https://arxiv.org/abs/2410.07590" />
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b15">
+	<analytic>
+		<title level="a" type="main">FActScore: Fine-grained atomic evaluation of factual precision in long form text generation</title>
+		<author>
+			<persName><forename type="first">Sewon</forename><surname>Min</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kalpesh</forename><surname>Krishna</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xinxi</forename><surname>Lyu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mike</forename><surname>Lewis</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wen-Tau</forename><surname>Yih</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Pang</forename><surname>Koh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mohit</forename><surname>Iyyer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Luke</forename><surname>Zettlemoyer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hannaneh</forename><surname>Hajishirzi</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/2023.emnlp-main.741</idno>
+		<ptr target="https://aclanthology.org/2023.emnlp-main.741" />
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing</title>
+		<editor>
+			<persName><forename type="first">Houda</forename><surname>Bouamor</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Juan</forename><surname>Pino</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Kalika</forename><surname>Bali</surname></persName>
+		</editor>
+		<meeting>the 2023 Conference on Empirical Methods in Natural Language Processing<address><addrLine>Singapore</addrLine></address></meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<date type="published" when="2023-12">December 2023</date>
+			<biblScope unit="page" from="12076" to="12100" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b16">
+	<analytic>
+		<title level="a" type="main">Fine-grained hallucination detection and editing for language models</title>
+		<author>
+			<persName><forename type="first">Abhika</forename><surname>Mishra</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Akari</forename><surname>Asai</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Vidhisha</forename><surname>Balachandran</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yizhong</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Graham</forename><surname>Neubig</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yulia</forename><surname>Tsvetkov</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hannaneh</forename><surname>Hajishirzi</surname></persName>
+		</author>
+		<ptr target="https://openreview.net/forum?id=dJMTn3QOWO" />
+	</analytic>
+	<monogr>
+		<title level="m">First Conference on Language Modeling</title>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b17">
+	<analytic>
+		<title level="a" type="main">Exploring the limits of transfer learning with a unified text-to-text transformer</title>
+		<author>
+			<persName><forename type="first">Colin</forename><surname>Raffel</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Noam</forename><surname>Shazeer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Adam</forename><surname>Roberts</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Katherine</forename><surname>Lee</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sharan</forename><surname>Narang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Michael</forename><surname>Matena</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yanqi</forename><surname>Zhou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wei</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Peter</forename><forename type="middle">J</forename><surname>Liu</surname></persName>
+		</author>
+		<ptr target="http://jmlr.org/papers/v21/20-074.html" />
+	</analytic>
+	<monogr>
+		<title level="j">Journal of Machine Learning Research</title>
+		<imprint>
+			<biblScope unit="volume">21</biblScope>
+			<biblScope unit="issue">140</biblScope>
+			<biblScope unit="page" from="1" to="67" />
+			<date type="published" when="2020">2020</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b18">
+	<monogr>
+		<author>
+			<persName><forename type="first">Nazneen</forename><surname>Rajani</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Lewis</forename><surname>Tunstall</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Edward</forename><surname>Beeching</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Nathan</forename><surname>Lambert</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alexander</forename><forename type="middle">M</forename><surname>Rush</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Thomas</forename><surname>Wolf</surname></persName>
+		</author>
+		<title level="m">No robots. Hugging Face repository</title>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b19">
+	<monogr>
+		<title level="m" type="main">Scaling retrieval-based language models with a trillion-token datastore</title>
+		<author>
+			<persName><forename type="first">Rulin</forename><surname>Shao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jacqueline</forename><surname>He</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Akari</forename><surname>Asai</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Weijia</forename><surname>Shi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tim</forename><surname>Dettmers</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sewon</forename><surname>Min</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Luke</forename><surname>Zettlemoyer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Pang</forename><forename type="middle">Wei</forename><surname>Koh</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2407.12854</idno>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b20">
+	<analytic>
+		<title level="a" type="main">Enhancing retrievalaugmented large language models with iterative retrieval-generation synergy</title>
+		<author>
+			<persName><forename type="first">Zhihong</forename><surname>Shao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yeyun</forename><surname>Gong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yelong</forename><surname>Shen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Minlie</forename><surname>Huang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Nan</forename><surname>Duan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Weizhu</forename><surname>Chen</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/2023.findings-emnlp.620</idno>
+		<ptr target="https://aclanthology.org/2023.findings-emnlp.620" />
+	</analytic>
+	<monogr>
+		<title level="m">Findings of the Association for Computational Linguistics: EMNLP 2023</title>
+		<editor>
+			<persName><forename type="first">Houda</forename><surname>Bouamor</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Juan</forename><surname>Pino</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Kalika</forename><surname>Bali</surname></persName>
+		</editor>
+		<meeting><address><addrLine>Singapore</addrLine></address></meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<date type="published" when="2023-12">December 2023</date>
+			<biblScope unit="page" from="9248" to="9274" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b21">
+	<analytic>
+		<title level="a" type="main">REPLUG: Retrieval-augmented black-box language models</title>
+		<author>
+			<persName><forename type="first">Weijia</forename><surname>Shi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sewon</forename><surname>Min</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Michihiro</forename><surname>Yasunaga</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Minjoon</forename><surname>Seo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Richard</forename><surname>James</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mike</forename><surname>Lewis</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Luke</forename><surname>Zettlemoyer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wen-Tau</forename><surname>Yih</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/2024.naacl-long.463</idno>
+		<ptr target="https://aclanthology.org/2024.naacl-long.463" />
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 2024 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies</title>
+		<editor>
+			<persName><forename type="first">Kevin</forename><surname>Duh</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Helena</forename><surname>Gomez</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Steven</forename><surname>Bethard</surname></persName>
+		</editor>
+		<meeting>the 2024 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies<address><addrLine>Mexico City, Mexico</addrLine></address></meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<date type="published" when="2024-06">June 2024</date>
+			<biblScope unit="volume">1</biblScope>
+			<biblScope unit="page" from="8371" to="8384" />
+		</imprint>
+	</monogr>
+	<note>Long Papers)</note>
+</biblStruct>
+
+<biblStruct xml:id="b22">
+	<analytic>
+		<title level="a" type="main">Evaluating the factuality of verifiable claims in long-form text generation</title>
+		<author>
+			<persName><forename type="first">Yixiao</forename><surname>Song</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yekyung</forename><surname>Kim</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mohit</forename><surname>Iyyer</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Veriscore</surname></persName>
+		</author>
+		<ptr target="https://aclanthology.org/2024.findings-emnlp.552" />
+	</analytic>
+	<monogr>
+		<title level="m">Findings of the Association for Computational Linguistics: EMNLP 2024</title>
+		<editor>
+			<persName><forename type="first">Yaser</forename><surname>Al-Onaizan</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Mohit</forename><surname>Bansal</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Yun-Nung</forename><surname>Chen</surname></persName>
+		</editor>
+		<meeting><address><addrLine>Miami, Florida, USA</addrLine></address></meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<date type="published" when="2024-11">November 2024</date>
+			<biblScope unit="page" from="9447" to="9474" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b23">
+	<analytic>
+		<title level="a" type="main">DRAGIN: Dynamic retrieval augmented generation based on the real-time information needs of large language models</title>
+		<author>
+			<persName><forename type="first">Weihang</forename><surname>Su</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yichen</forename><surname>Tang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Qingyao</forename><surname>Ai</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhijing</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yiqun</forename><surname>Liu</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/2024.acl-long.702</idno>
+		<ptr target="https://aclanthology.org/2024.acl-long.702" />
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics</title>
+		<editor>
+			<persName><forename type="first">Lun-Wei</forename><surname>Ku</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Andre</forename><surname>Martins</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Vivek</forename><surname>Srikumar</surname></persName>
+		</editor>
+		<meeting>the 62nd Annual Meeting of the Association for Computational Linguistics<address><addrLine>Bangkok, Thailand</addrLine></address></meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<date type="published" when="2024-08">August 2024</date>
+			<biblScope unit="volume">1</biblScope>
+			<biblScope unit="page" from="12991" to="13013" />
+		</imprint>
+	</monogr>
+	<note>Long Papers)</note>
+</biblStruct>
+
+<biblStruct xml:id="b24">
+	<analytic>
+		<title level="a" type="main">Augmenting language models with long-term memory</title>
+		<author>
+			<persName><forename type="first">Weizhi</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Li</forename><surname>Dong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hao</forename><surname>Cheng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xiaodong</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xifeng</forename><surname>Yan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jianfeng</forename><surname>Gao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Furu</forename><surname>Wei</surname></persName>
+		</author>
+		<ptr target="https://proceedings.neurips.cc/paper_files/paper/2023/file/ebd82705" />
+	</analytic>
+	<monogr>
+		<title level="m">Advances in Neural Information Processing Systems</title>
+		<editor>
+			<persName><forename type="first">A</forename><surname>Oh</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">T</forename><surname>Naumann</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">A</forename><surname>Globerson</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">K</forename><surname>Saenko</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">M</forename><surname>Hardt</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">S</forename><surname>Levine</surname></persName>
+		</editor>
+		<imprint>
+			<publisher>Curran Associates, Inc</publisher>
+			<date type="published" when="2023">2023</date>
+			<biblScope unit="volume">36</biblScope>
+			<biblScope unit="page" from="74530" to="74543" />
+		</imprint>
+	</monogr>
+	<note>f9ade5a669d0f0bf-Paper-Conference.pdf</note>
+</biblStruct>
+
+<biblStruct xml:id="b25">
+	<analytic>
+		<title level="a" type="main">Long-form factuality in large language models</title>
+		<author>
+			<persName><forename type="first">Jerry</forename><surname>Wei</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chengrun</forename><surname>Yang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xinying</forename><surname>Song</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yifeng</forename><surname>Lu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Nathan</forename><forename type="middle">Zixia</forename><surname>Hu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jie</forename><surname>Huang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dustin</forename><surname>Tran</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Daiyi</forename><surname>Peng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ruibo</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Da</forename><surname>Huang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Cosmo</forename><surname>Du</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Quoc V</forename><surname>Le</surname></persName>
+		</author>
+		<ptr target="https://openreview.net/forum?id=4M9f8VMt2C" />
+	</analytic>
+	<monogr>
+		<title level="m">The Thirty-eighth Annual Conference on Neural Information Processing Systems</title>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b26">
+	<analytic>
+		<title level="a" type="main">Memorizing transformers</title>
+		<author>
+			<persName><forename type="first">Yuhuai</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Markus</forename><surname>Norman Rabe</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Delesley</forename><surname>Hutchins</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Christian</forename><surname>Szegedy</surname></persName>
+		</author>
+		<ptr target="https://openreview.net/forum?id=TrjbxzRcnf-" />
+	</analytic>
+	<monogr>
+		<title level="m">International Conference on Learning Representations</title>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b27">
+	<analytic>
+		<author>
+			<persName><forename type="first">Hongkang</forename><surname>Yang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zehao</forename><surname>Lin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wenjin</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hao</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhiyu</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Bo</forename><surname>Tang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wenqiang</forename><surname>Wei</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jinbo</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zeyun</forename><surname>Tang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shichao</forename><surname>Song</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2407.01178</idno>
+		<ptr target="https://arxiv.org/abs/2407.01178" />
+	</analytic>
+	<monogr>
+		<title level="m">Language modeling with explicit memory</title>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+			<biblScope unit="volume">3</biblScope>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+				</listBibl>
+			</div>
+		</back>
+	</text>
+</TEI>
