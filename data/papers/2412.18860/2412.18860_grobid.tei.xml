@@ -1,0 +1,1910 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<TEI xml:space="preserve" xmlns="http://www.tei-c.org/ns/1.0" 
+xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" 
+xsi:schemaLocation="http://www.tei-c.org/ns/1.0 https://raw.githubusercontent.com/kermitt2/grobid/master/grobid-home/schemas/xsd/Grobid.xsd"
+ xmlns:xlink="http://www.w3.org/1999/xlink">
+	<teiHeader xml:lang="en">
+		<fileDesc>
+			<titleStmt>
+				<title level="a" type="main">Bootstrap Your Own Context Length</title>
+			</titleStmt>
+			<publicationStmt>
+				<publisher/>
+				<availability  status="unknown">
+					<licence/>
+				</availability>
+				<date type="published" when="2024-12-25">25 Dec 2024</date>
+			</publicationStmt>
+			<sourceDesc>
+				<biblStruct>
+					<analytic>
+						<author>
+							<persName><forename type="first">Liang</forename><surname>Wang</surname></persName>
+							<email>wangliang@microsoft.com</email>
+							<affiliation key="aff0">
+								<orgName type="department">//aka.ms/GeneralAI</orgName>
+								<orgName type="institution">Microsoft Corporation https</orgName>
+							</affiliation>
+						</author>
+						<author>
+							<persName><forename type="first">Nan</forename><surname>Yang</surname></persName>
+							<affiliation key="aff0">
+								<orgName type="department">//aka.ms/GeneralAI</orgName>
+								<orgName type="institution">Microsoft Corporation https</orgName>
+							</affiliation>
+						</author>
+						<author>
+							<persName><forename type="first">Xingxing</forename><surname>Zhang</surname></persName>
+							<affiliation key="aff0">
+								<orgName type="department">//aka.ms/GeneralAI</orgName>
+								<orgName type="institution">Microsoft Corporation https</orgName>
+							</affiliation>
+						</author>
+						<author>
+							<persName><forename type="first">Xiaolong</forename><surname>Huang</surname></persName>
+							<affiliation key="aff0">
+								<orgName type="department">//aka.ms/GeneralAI</orgName>
+								<orgName type="institution">Microsoft Corporation https</orgName>
+							</affiliation>
+						</author>
+						<author>
+							<persName><forename type="first">Furu</forename><surname>Wei</surname></persName>
+							<email>fuwei@microsoft.com</email>
+							<affiliation key="aff0">
+								<orgName type="department">//aka.ms/GeneralAI</orgName>
+								<orgName type="institution">Microsoft Corporation https</orgName>
+							</affiliation>
+						</author>
+						<title level="a" type="main">Bootstrap Your Own Context Length</title>
+					</analytic>
+					<monogr>
+						<imprint>
+							<date type="published" when="2024-12-25">25 Dec 2024</date>
+						</imprint>
+					</monogr>
+					<idno type="MD5">93AB01279D42F5835F793C5E4B2C1E75</idno>
+					<idno type="arXiv">arXiv:2412.18860v1[cs.CL]</idno>
+				</biblStruct>
+			</sourceDesc>
+		</fileDesc>
+		<encodingDesc>
+			<appInfo>
+				<application version="0.8.2-SNAPSHOT" ident="GROBID" when="2025-02-21T05:06+0000">
+					<desc>GROBID - A machine learning software for extracting information from scholarly documents</desc>
+					<ref target="https://github.com/kermitt2/grobid"/>
+				</application>
+			</appInfo>
+		</encodingDesc>
+		<profileDesc>
+			<abstract>
+<div xmlns="http://www.tei-c.org/ns/1.0"><p>We introduce a bootstrapping approach to train long-context language models by exploiting their short-context capabilities only. Our method utilizes a simple agent workflow to synthesize diverse long-context instruction tuning data, thereby eliminating the necessity for manual data collection and annotation. The proposed data synthesis workflow requires only a short-context language model, a text retriever, and a document collection, all of which are readily accessible within the open-source ecosystem. Subsequently, language models are fine-tuned using the synthesized data to extend their context lengths. In this manner, we effectively transfer the short-context capabilities of language models to long-context scenarios through a bootstrapping process. We conduct experiments with the open-source Llama-3 family of models and demonstrate that our method can successfully extend the context length to up to 1M tokens, achieving superior performance across various benchmarks.</p></div>
+			</abstract>
+		</profileDesc>
+	</teiHeader>
+	<text xml:lang="en">
+		<body>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="1">Introduction</head><p>Long-context large language models (LLM) are essential for understanding long-form texts across various applications, including retrieval-augmented generation (RAG) with many documents <ref type="bibr">[Lewis et al., 2020</ref><ref type="bibr">, Jiang et al., 2024b]</ref>, repository-level software engineering tasks <ref type="bibr" target="#b19">[Jimenez et al., 2024]</ref>, and prolonged virtual assistants interactions <ref type="bibr" target="#b30">[Park et al., 2023]</ref>, among others. Significant advancements has been achieved in training LLMs with increasingly longer context lengths, ranging from 2k tokens in LLaMA-1 <ref type="bibr" target="#b40">[Touvron et al., 2023]</ref> to 128k tokens in LLaMA-3 <ref type="bibr" target="#b8">[Dubey et al., 2024]</ref>, and even reaching 1M tokens <ref type="bibr">[Liu et al., 2024b</ref><ref type="bibr" target="#b31">, Pekelis et al., 2024]</ref>. Nevertheless, comprehensive benchmarking <ref type="bibr" target="#b14">[Hsieh et al., 2024]</ref> reveals that the performance of current long-context LLMs often drops considerably as the context length increases, rendering their effective lengths substantially shorter than the claimed lengths.</p><p>A critical element in training long-context LLMs is acquiring diverse and high-quality long-context data. Existing methodologies <ref type="bibr" target="#b9">[Fu et al., 2024</ref><ref type="bibr" target="#b8">, Dubey et al., 2024</ref><ref type="bibr">, Peng et al., 2024]</ref> predominantly concentrate on the pre-training phase and rely on filtering long documents from large-scale pretraining corpora in domains such as books, code repositories, and scientific papers. As the context length of LLMs surpasses 128k tokens, the availability of natural data that can fill the whole context becomes limited, and the domain diversity of such data is often constrained.</p><p>In this paper, we propose a bootstrapping approach aimed at extending the context length of existing large language models (LLMs) by leveraging their short-context capabilities. Our method utilizes a straightforward agent workflow to generate diverse long-context instruction tuning data, thus obviating the need to rely on the scarce availability of natural long-context data. It first prompts LLMs to generate diverse instructions, followed by employing a text retriever to retrieve relevant documents from a large corpus. For response generation, a group of query-focused summarization (QFS) agents are recursively applied to document chunks to filter out irrelevant information and a Long-context Data Curations are pivotal for the training of long-context language models. Current methodologies <ref type="bibr" target="#b9">[Fu et al., 2024</ref><ref type="bibr">, Gao et al., 2024c</ref><ref type="bibr">, Peng et al., 2024]</ref> predominantly rely on the up-sampling of long documents from large-scale pre-training corpora such as Redpajama <ref type="bibr">[Computer, 2023]</ref> and Fineweb <ref type="bibr" target="#b32">[Penedo et al., 2024]</ref>. Typical sources of long-context data encompass books, scientific papers, and code repositories. <ref type="bibr">Fu et al., Gao et al.</ref> find that both the quality and diversity of the data are crucial for training effective long-context LLMs. Nevertheless, naturally occurring long-context data is often scarce and exhibits limited domain diversity. Another research avenue focuses on generating synthetic long-context data through methods such as question generation <ref type="bibr">[An et al., 2024</ref><ref type="bibr" target="#b8">, Dubey et al., 2024]</ref>, recursive text summarization <ref type="bibr" target="#b8">[Dubey et al., 2024]</ref>, or document clustering <ref type="bibr">[Gao et al., 2024a]</ref>. Regarding evaluation data, most benchmarks <ref type="bibr" target="#b3">[Bai et al., 2023</ref><ref type="bibr" target="#b35">, Shaham et al., 2023]</ref> are inadequate for evaluation beyond 128k tokens. For evaluation with 1M context length, synthetic tasks <ref type="bibr" target="#b14">[Hsieh et al., 2024]</ref> are almost exclusively employed.</p><p>Retrieval-Augmented Generation (RAG) synergizes the retrieval of relevant documents with LLMs to enhance the factual accuracy of the generated content, and ensure the incorporation of up-to-date information <ref type="bibr">[Lewis et al., 2020</ref><ref type="bibr">, Karpukhin et al., 2020]</ref>. RAG often necessitates concatenation of multiple retrieved documents to create a long-context input, even though each individual document is typically short. This characteristic positions RAG as a crucial application of long-context LLMs. <ref type="bibr">Jiang et al., Lee et al.</ref> demonstrate that long-context LLMs can ease the demands of retrieval and, in some instances, eliminate the need for retrieval entirely. In this study, we employ RAG as an approach for synthesizing data to train long-context LLMs. </p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.1">Data Synthesis</head><p>Long-input Instruction Data via Agent Workflow As depicted in Figure <ref type="figure" target="#fig_0">1</ref>, our data synthesis workflow has four steps. Initially, an LLM is prompted to generate a diverse array of instructions that require integrating information from multiple documents. To enhance the diversity of these instructions, a random text chunk is prepended to each prompt during every LLM call. This often guides the LLM to generate instructions that are topically relevant to the provided text chunk, akin to the persona-driven strategy <ref type="bibr" target="#b13">[Ge et al., 2024]</ref> but simpler. Next, an off-the-shelf text retriever, E5 mistral-7b <ref type="bibr">[Wang et al., 2024a]</ref>, is employed to retrieve relevant documents from a large corpus. The retrieved documents are then split into chunks of at most 4k tokens and are fed into a group of query-focused summarization (QFS) agents. Each QFS agent is tasked with summarizing a document chunk focused on the synthetic instruction, filtering out information that is irrelevant to the instruction. This recursive procedure is repeated until the concatenation of all summaries is short enough to be processed by the LLM. Finally, the LLM is prompted once more to generate a response based on the summaries and the instruction.</p><p>During model training, the synthetic instruction and retrieved documents are concatenated to form the input, while the generated response constitutes the target output. The intermediate summaries are not utilized during training. The core idea is to decompose the synthesis process into a series of steps, where each step only requires digesting a short input. While this particular workflow is selected for its simplicity and effectiveness, alternative instantiations are also conceivable.</p><p>Long-output Data via Instruction Back-translation We first select documents containing between 2k to 32k tokens from a high-quality corpus, and then prompt an LLM to generate a writing instruction that would result in the given document receiving a high evaluation score. This method of instruction back-translation is inspired by <ref type="bibr" target="#b25">Li et al. [2024]</ref>, although the original work does not focus on longoutput generation.</p><p>All prompts are provided in the Appendix Section B.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.2">Training with Long Sequences</head><p>Training with long sequences can be notoriously challenging, primarily due to the quadratic computational complexity of self-attention, coupled with the memory constraints of modern accelerators. To address these challenges, we employ a progressive training strategy to gradually increase the context length across multiple stages. At each stage, we double the maximum context length and quadruple the RoPE base frequency <ref type="bibr" target="#b37">[Su et al., 2024]</ref> to ensure a reasonable initialization. Given that a single H100 with 80GB of memory can only handle sequences of up to 64k tokens for models such as Llama-3-8B, even with a batch size of 1, we utilize RingAttention <ref type="bibr">[Liu et al., 2024c]</ref> to distribute a long input sequence across multiple GPUs. We perform full-length fine-tuning whenever hardware capabilities allow; otherwise, we resort to PoSE-style <ref type="bibr" target="#b46">[Zhu et al., 2024]</ref> training, which facilitates the decoupling of training length from maximum model length.</p><p>When computing the next-token prediction loss, we average the loss over all input and output tokens for long data samples to prevent the supervision signal from becoming excessively sparse. Conversely, for short-context samples mixed into the training data, we compute the loss solely over the target output tokens, disregarding the input tokens.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4">Experiments</head></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4.1">Setup</head><p>Training Data Mixture We combine multiple data sources for training, including our generated synthetic data and several open-source datasets.</p><p>• Synthetic Long Instruction Tuning Data It comprises 69k long-input samples with 4.6B tokens, generated based on our proposed agent workflow, and 10k long-output samples with 77M tokens, produced via the instruction back-translation method.</p><p>• Open-source Instruction Tuning Data We utilize Tulu-v2 <ref type="bibr" target="#b16">[Ivison et al., 2023]</ref> and Infinity-Instruct [BAAI] datasets. For Infinity-Instruct, we find that a significant portion of its samples are near-duplicates, so we conduct further de-duplication using the E5 mistral-7b embedding model.</p><p>• Prolong Data <ref type="bibr">[Gao et al., 2024c]</ref> is a non-instruction tuning dataset originally employed for the continual pre-training of LLMs. We retain its "arxiv", "book", "openwebmath", "textbooks" and "thestackv1" portions.</p><p>The full data mixture encompasses approximately 8.3B tokens, with detailed statistics presented in Table <ref type="table">6</ref>. Most samples from the Infinity-Instruct and Tulu-v2 datasets are shorter than 4k tokens; thus, we include them to ensure the model can handle short-context tasks as well. For synthetic data generation, we employ GPT-4o <ref type="bibr" target="#b15">[Hurst et al., 2024]</ref> as the backbone LLM and use the E5 mistral-7b retriever <ref type="bibr">[Wang et al., 2024a]</ref> for document retrieval. The retrieval corpus contains approximately 10M documents sampled from the Fineweb-Edu dataset <ref type="bibr" target="#b32">[Penedo et al., 2024]</ref>. We also examine the impact of using Llama-3.1-8B-Instruct as backbone LLM in the ablation study.</p><p>Training Procedure Our training schedule follows a progressive training strategy. We start with Llama-3 models that support 128k tokens and conduct three sequential stages of training with maximum context lengths of 256k, 512k, and 1M. At each stage, we quadruple the RoPE base frequency and switch to PoSE-style efficient training when a full sequence cannot fit on the hardware. We apply standard techniques including activation checkpointing, DeepSpeed ZeRO-3, bf16 mixed precision, FlashAttention <ref type="bibr" target="#b6">[Dao, 2024]</ref>, and RingAttention to minimize the memory footprint. All training is conducted on a single node with 8 H100 GPUs, while all inference is performed using 8 A100 GPUs.</p><p>Evaluation Despite the availability of numerous long-context benchmarks <ref type="bibr" target="#b3">[Bai et al., 2023</ref><ref type="bibr" target="#b35">, Shaham et al., 2023</ref><ref type="bibr">, Zhang et al., 2024]</ref>, the majority are inadequate for evaluation at a context length of 1M or beyond. In this study, we select the RULER benchmark <ref type="bibr" target="#b14">[Hsieh et al., 2024]</ref>, which comprises 13 tasks and allows evaluation at any context length thanks to its automatic data generation process.</p><p>To visualize model characteristics at varying depths, we adopt the needle-in-haystack test, which requires the model to retrieve a sentence "The best thing to do in San Francisco is eat a sandwich and sit in Dolores Park on a sunny day." from a haystack of random essays. For evaluating long outputs, we hold out a validation set of 105 samples ranging from 2k to 32k tokens and compare the model's output length with the groundtruth length.</p><p>We utilize vLLM for efficient inference <ref type="bibr" target="#b21">[Kwon et al., 2023]</ref> across all evaluation tasks. For SelfLong-8B-1M, the prefilling takes about 5 minutes for a 1M token sequence, and the full evaluation on the RULER benchmark takes about 4 days using 8 A100 GPUs.</p><p>For additional implementation details, please refer to Appendix Section A.  <ref type="bibr">et al., 2024]</ref>, the instruct version of Llama-3 models <ref type="bibr" target="#b8">[Dubey et al., 2024]</ref>, LWM-Text-Chat-1M <ref type="bibr">[Liu et al., 2024b]</ref>, and Llama-3-8B-1M <ref type="bibr" target="#b31">[Pekelis et al., 2024]</ref>. Additionally, two proprietary models are included for reference. Full results of our models can be found in Table <ref type="table">8</ref>.</p><p>The results in Table <ref type="table" target="#tab_0">1</ref> reveal several noteworthy observations. First, for the official Llama-3 models, performance markedly declines with reduced model size, with the 1B and 3B models nearly failing entirely at 128k context length. Second, our models, initialized from the Llama-3 series, demonstrate a clear improvement over the official ones, particularly at 128k context length. However, we do not see consistent performance gain at shorter context lengths, and a slight decline is occasionally noted. We hypothesize that a trade-off may exist between varying context lengths given a fixed model capacity, which warrants further investigation.</p><formula xml:id="formula_0">1k 256k 512k 768k 1M 0% 50% 100% 1k 256k 512k 768k 1M 1k 256k 512k 768k 1M Llama-3.1-8B-Instruct Llama-3-8B-1M SelfLong-8B-1M</formula><p>Figure <ref type="figure">2</ref>: Needle-in-haystack test results. The x-axis represents the context lengths, while the y-axis indicates the depth of the inserted needle. The color coding corresponds to the recall score following previous work <ref type="bibr" target="#b9">[Fu et al., 2024]</ref>, where green signifies a score close to 1, and red denotes a score close to 0. A single trial was conducted for each unique combination of context length and needle depth.</p><p>The grey shaded regions denote context lengths beyond the model's capability.</p><p>Needle-in-haystack Test is a synthetic task designed to assess the capability of LLMs to retrieve a pre-specified needle of varying depth from a long context. Nonetheless, the existing literature adopts vastly different evaluation protocols under the same task name. For instance, LWM <ref type="bibr">[Liu et al., 2024b]</ref> utilizes PG19 as the haystack, with the objective of retrieving a random magic number. In contrast, GradientAI <ref type="bibr" target="#b31">[Pekelis et al., 2024]</ref> investigates three different haystacks, revealing that the performance varies significantly. In this paper, we adopt the same evaluation protocol as Fu et al., which is based on the original one from <ref type="url" target="https://github.com/gkamradt/LLMTest_NeedleInAHaystack">https://github.com/gkamradt/LLMTest_NeedleInAHaystack</ref>. The needle is a natural language sentence embedded within a haystack of Paul Graham's essays. For each test, we calculate the recall score of the needle sentence within the generated text.</p><p>Figure <ref type="figure">2</ref> illustrates that our model achieves near-perfect performance on this task at 1M context length, whereas Llama-3.1-8B-Instruct is limited to 128k, and Llama-3-8B-1M <ref type="bibr" target="#b31">[Pekelis et al., 2024]</ref> suffers severe "lost-in-the-middle" issues <ref type="bibr">[Liu et al., 2024d]</ref>. A common failure pattern observed is that the model responds based on its own parametric knowledge rather than the provided context.  Long Output Generation The Llama-3.1-8B-Instruct rarely generates outputs exceeding 4k tokens, even when the instruction explicitly asks so. This is substantiated by the data presented in Table <ref type="table" target="#tab_1">2</ref> and Figure <ref type="figure" target="#fig_1">3</ref> based on our held-out validation set. Our model is able to generate longer outputs, but its instruction following ability is still imperfect. As the output length increases, it frequently deteriorates into repetitive or irrelevant content. Further research on enhancing and evaluating long output generation represents a promising research avenue.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="5">Analysis</head></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="5.1">Ablation of Training Recipes</head><p>Effects of Progressive Training One research question is how the model's original capability evolves as it is progressively trained on longer contexts and how the long-context ability emerges.</p><p>Figure <ref type="figure">4</ref> shows the evolving scores for each test length. It is evident that the model's performance on the supported lengths initially improves at 256k training length, followed by a gradual decline at 512k and 1M. For lengths exceeding 128k, the best performance is achieved when the training length surpasses the test length, a phenomenon corroborated by previous studies <ref type="bibr">[Gao et al., 2024c]</ref>. For instance, the 256k score reaches its peak when the training length is 512k, rather than 256k. In terms of loss computation, masking out the user prompt tokens yields a slight performance improvement for context lengths of 128k and 256k; however, the effects are not consistent across all lengths. Consequently, we opt to only mask out the user prompt tokens for short instruction samples to incorporate more supervision signals.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>Choice of LLMs for Data Synthesis</head><p>In this paper, we employ GPT-4o as the backbone LLM for data synthesis. To fully explore the idea of bootstrapping on its own, we also investigate the impact of using Llama-3.1-8B-Instruct itself as the backbone. As illustrated in Table <ref type="table" target="#tab_2">3</ref>, the configuration "w/ Llama-3.1-8B-Instruct" demonstrates a decent performance at longer context lengths; however, a performance gap remains when compared to using GPT-4o.</p><p>Is Training on Short-Context Data Sufficient? Due to the scarcity of long-context instruction tuning datasets, numerous existing studies <ref type="bibr">[Gao et al., 2024c</ref><ref type="bibr" target="#b31">, Pekelis et al., 2024]</ref> exclusively finetune on short instruction data. When fine-tuned with a maximum length of 4k, the model is able to surpass its initialization "w/ adjusted RoPE θ only" within 128k context length as presented in Table <ref type="table" target="#tab_2">3</ref>. Nevertheless, the model's generalization to longer contexts falls short, exhibiting even poorer performance compared to "w/ adjusted RoPE θ only", where no training is performed. This preliminary finding underscores the necessity for curating high-quality long-context instruction data for LLM post-training. To test the limits of long-context modeling within academic compute budgets (8 H100 GPUs), we further extend the context length to 4M tokens through two additional progressive training stages. The needle-in-haystack test results, as depicted in Figure <ref type="figure" target="#fig_2">5</ref>, indicate that this simple test becomes increasingly challenging as the context length increases. A further complication arises from the exceedingly high inference cost; for instance, prefilling a single 3M token sequence requires approximately 30 minutes for an 8B model, while the key-value cache demands about 400GB of GPU memory. This necessitates advancements in model architecture <ref type="bibr" target="#b38">[Sun et al., 2024</ref><ref type="bibr" target="#b7">, Ding et al., 2023]</ref> and system optimization to make long-context LLMs more affordable.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="5.2">Extending to 4M Context Length</head></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="5.3">Performance on Short-Context Tasks</head><p>Table <ref type="table">4</ref>: Performance on short-context tasks from the Open LLM Leaderboard 2 before and after our fine-tuning. We use the official metrics from lm-evaluation-harness <ref type="bibr">[Gao et al., 2024b]</ref> for all tasks.</p><p>BBH GPQA IFEval MMLU Pro MUSR Llama-3.2-3B-Instruct 45.9 27.9 73.9 31.9 35.2 SelfLong-3B-1M 42.4 27.6 57.0 28.6 39.5 Llama-3.1-8B-Instruct 50.1 26.8 77.4 37.5 36.9 SelfLong-8B-1M 48.7 30.4 65.9 35.3 41.5</p><p>In addition to long-context tasks, we also evaluate our models on tasks from the Open LLM Leaderboard 2, which includes BBH <ref type="bibr" target="#b39">[Suzgun et al., 2023]</ref>, GPQA <ref type="bibr" target="#b34">[Rein et al., 2023]</ref>, IFEval <ref type="bibr" target="#b45">[Zhou et al., 2023]</ref>, MMLU Pro <ref type="bibr">[Wang et al., 2024b]</ref>, and MUSR <ref type="bibr" target="#b36">[Sprague et al., 2024]</ref>. After context extension, our models maintain competitive scores on these short-context tasks, as illustrated in Table <ref type="table">4</ref>, with one exception of the IFEval task. We hypothesize that using a better post-training data mixture, such as Tulu-3 <ref type="bibr" target="#b22">[Lambert et al., 2024]</ref>, could help mitigate the performance loss on IFEval. Our agent workflow for data synthesis offers an alternative approach for solving long-context tasks.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="5.4">Solving Long-Context Tasks with Agent Workflow</head><p>Rather than feeding the entire context into the model, we can break down the long context into multiple chunks, employing the workflow in Figure <ref type="figure" target="#fig_0">1</ref> to generate the answer. A 128k-length context is split into 32 chunks of 4k tokens each, which are then treated as the retrieved documents within the agent workflow.</p><p>Table <ref type="table" target="#tab_4">5</ref> presents the results for several representative tasks from the RULER benchmark. Our analysis reveals that long-context LLM and agent workflow exhibit complementary strengths. The agent workflow excels at QA tasks that require collecting small pieces of relevant information from a long context. However, it encounters difficulties with tasks requiring sequential reasoning throughout the entire context, such as the Variable Tracking (vt) task. To solve one task instance, agent workflow requires significantly more LLM calls, though each call is much cheaper due to the shorter context processed. Future research could explore the potential of integrating these two methods from the perspective of inference efficiency and task performance.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="6">Conclusion</head><p>This paper presents an effective recipe to extend the context length of existing LLMs by leveraging their short-context capabilities to synthesize long instruction tuning data. Our proposed data synthesis framework involves the collaboration of multiple agents and a document retriever to generate diverse long-context data through multiple inference steps. Experiments with the open-source Llama-3 models demonstrate that our approach successfully extends the context length to 1M tokens, achieving competitive performance across a range of long-context tasks. Future work includes developing more effective data synthesis workflows, improving the inference efficiency of long-context LLMs, and exploring the potential of long-context LLMs in real-world applications.</p><p>Table <ref type="table">8</ref>: Detailed results for each task in the RULER benchmark. Please refer to the original paper <ref type="bibr" target="#b14">[Hsieh et al., 2024]</ref> for the descriptions and evaluation metrics for each task. .6 95.6 89.8 90.4 87.4 90.0 66.0 64.0 60.0 niah_multikey_1 98.6 96.4 88.2 90.6 85.4 89.0 76.0 68.0 64.0 niah_multikey_2 90.6 70.0 40.2 21.8 8.4 2.0 1.0 1.0 0.0 niah_multikey_3 59.0 35.6 16.2 11.6 10.2 9.0 0.0 0.0 0.0 niah_multivalue 92.8 94.0 88.8 86.0 75.2 46.2 41.8 27.8 20.0 niah_multiquery 92.8 88.8 86.0 82.5 80.0 69.0 46.5 30.0 24.5 vt 69.3 81.0 75.9 76.8 64.6 74.4 69.0 52.8 0.0 cwe 5.3 4.0 0.6 0.7 0.1 1.1 0.9 1.0 fwe 56.9 57.6 61.0 70.8 61.8 77.0 51.3 46.0 27.3 qa_1 52.8 42.8 45.2 41.6 38.8 36.0 39.0 27.0 28.0 qa_2 31.4 31.4 30.4 24.4 22.8 18.0 16.0 20.0 13.0 SelfLong-3B-1M niah_single_1 100.0 100.0 100.0 100.0 100.0 100.0 100.0 100.0 60.0 niah_single_2 100.0 100.0 100.0 100.0 100.0 100.0 100.0 99.0 98.0 niah_single_3 99.8 99.8 99.2 98.0 99.2 100.0 100.0 99.0 100.0 niah_multikey_1 98.6 95.2 95.4 94.6 94.0 95.0 95.0 89.0 86.0 niah_multikey_2 99.6 99.6 99.8 98.6 98.2 93.0 78.0 42.0 0.0 niah_multikey_3 96.2 88.8 86.2 71.8 58.6 55.0 17.0 8.0 0.0 niah_multivalue 100.0 99.8 99.4 98.2 97.8 96.5 85.0 70.8 68.8 niah_multiquery 99.8 99.9 98.5 96.8 97.0 97.5 91.2 79.8 70.0 vt 94.2 93.3 91.1 82.2 87.2 85.2 64.8 25.2 0.0 cwe 82.2 73.4 51.6 15.4 5.8 0.3 0.3 0.3 0.3 fwe 82.9 79.3 94.1 89.2 80.1 63.7 73.0 61.3 5.3 qa_1 70.4 63.6 60.2 59.6 56.6 59.0 57.0 52.0 5.0 qa_2 49.0 47.0 45.6 42.4 40.0 36.0 33.0 34.0 11.0 SelfLong-8B-1M 2 99.0 98.0 98.0 98.0 97.0 niah_multikey_2 100.0 99.8 99.8 99.0 97.8 98.0 98.0 96.0 77.0 niah_multikey_3 100.0 99.6 99.4 95.4 92.6 90.0 73.0 62.0 23.0 niah_multivalue 89.0 87.8 93.2 96.5 96.5 91.8 87.0 84.2 81.2 niah_multiquery 99.2 98.3 99.0 99.0 97.6 98.5 87.5 89.8 88.0 vt 99.5 98.0 97.4 94.2 94.4 91.2 91.4 80.2 65.0 cwe 99.1 94.3 83.5 62.2 15.4 1.9 2.8 2.7 2.7 fwe 96.8 87.7 95.3 96.5 88.4 86.7 90.3 87.0 66.7 qa_1 83.0 73.4 70.2 73.0 67.4 71.0 70.0 75.0 75.0 qa_2 54.2 51.2 51.2 48.4 43.4 39.0 38.0 42.0 29.0</p><p>For the RULER benchmark, we use 500 samples for context length below 256k, aligning with the original evaluation protocol. For context length exceeding or equal to 256k, we use 100 samples per task to reduce the evaluation costs. Evaluations are conducted on eight A100 GPUs, each equipped with 40GB of memory. Running the full RULER evaluation takes about 4 days for the SelfLong-8B-1M model, underscoring the necessity for efficient inference in long-context scenarios.</p><p>In the Needle-in-haystack test, evaluation context lengths are sampled at intervals of 16k tokens, and we test 10 different needle depths for each context length. Specifically, we evaluate 8 different context lengths for Llama-3.1-8B-Instruct and 64 for SelfLong-8B-1M. For the 2M and 4M models, a larger interval of 64k tokens is utilized.</p><p>Regarding tasks on the Open LLM Leaderboard 2, we employ the official evaluation script from lm-evaluation-harness<ref type="foot" target="#foot_1">foot_1</ref> . When reporting the results, different from the leaderboard, we do not normalize the scores for each task.</p><p>For the long-output generation task, we apply scipy to fit a curve in the form of log(y) = a × log(x + b) + c as depicted in Figure <ref type="figure" target="#fig_1">3</ref>, where x represents the groundtruth length and y the actual output length. We also conducted some preliminary experiments with gpt-4o to evaluate the quality of the generated outputs. Nevertheless, we found that predictions with significantly shorter lengths frequently receive high scores. Future research is required to improve the evaluation protocol for long-output generation tasks.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>B Prompts</head><p>We list all the prompts employed in our data synthesis workflow. Texts in blue denotes placeholders that will be replaced by actual content during the data synthesis process. For the instruction generation prompt, we randomly sample a 128-token text chunk from the Fineweb-Edu corpus and prepend it to the prompt to boost diversity.</p><p>Prompt: Instruction Generation {random text chunk} # Brainstorm a potentially useful {task / question} that may require comprehending multiple pieces of information. To complete the {task / question}, users need to search the web for relevant information with multiple search queries.</p><p>## Your response must be in JSON format. The JSON object must contain the following keys:</p><p>-"task_instruction": a string, a {task / question} to complete.</p><p>-"search_queries": a list of strings, each string is a search query that the user might use to complete the {task / question}. ## Please adhere to the following guidelines:</p><p>-The {task / question}s should cover a diverse range of domains and require {high school / college / PhD} level education to solve.</p><p>-The {task / question} requires {mathematical / logical / common sense} reasoning to complete.</p><p>-The {task / question} must be feasible to complete for a text-based AI model. Avoid {task / question}s that require visual or interactive elements.</p><p>-The search queries should be diverse and cover distinct aspects of the {task / question}.</p><p>## Here is one output example for your reference: { "task_instruction": "Plan a 10-day cultural and adventure trip to Japan, focusing on Tokyo, Kyoto, and Okinawa. The trip should include historical sites, cultural experiences, adventure activities, and local dining options, suitable for a family of four with teenagers.", "search_queries": [ "Top historical sites Tokyo", "Cultural experiences in Kyoto for families", "Adventure activities in Okinawa", "Best time to visit Japan for cultural festivals", "Local Japanese foods must try", "Family-friendly accommodations in Tokyo, Kyoto, Okinawa", "Public transportation guide Japan", ] } Do not explain yourself or output anything else. Be creative! If you solve the task correctly, you will receive a reward of $1,000,000. Table <ref type="table">9</ref>: An example of the synthetic long-input data. ". . ." denotes the omitted parts due to space limitations.</p><p>Instruction What themes can be identified in Tennessee Williams's major plays and how do they reflect societal issues of his time?</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>Context Documents</head><p>Themes are the fundamental and often universal ideas explored in a literary work. Among the most prominent and urgent themes of The Glass Menagerie is the difficulty the characters have in accepting and relating to reality. Each member of the Wingfield family is unable to overcome this difficulty, and each, as a result, withdraws into a private world of illusion where he or she finds the comfort and meaning that the real world does not seem to offer. Of the three Wingfields, reality has by far the weakest grasp on Laura. The private world in which she lives is populated by glass animals-objects that, like Laura's inner life, are incredibly fanciful and dangerously delicate. . . . Like the glass unicorn, "Blue Roses," Jim's high school nickname for Laura, symbolizes Laura's unusualness yet allure. The name is also associated with Laura's attraction to Jim and the joy that his kind treatment brings her. Furthermore, it recalls Tennessee Williams's sister, Rose, on whom the character of Laura is based. Leading out of the Wingfields' apartment is a fire escape with a landing. The fire escape represents exactly what its name implies: an escape from the fires of frustration and dysfunction that rage in the Wingfield household. Laura slips on the fire escape in Scene Four, highlighting her inability to escape from her situation. Tom, on the other hand, frequently steps out onto the landing to smoke, anticipating his eventual getaway. . . . (more documents) Synthesized Answer Tennessee Williams's major plays, including "The Glass Menagerie" and "A Streetcar Named Desire," explore several recurring themes that reflect the societal issues of his time.</p><p>1. Illusion vs. Reality: In "The Glass Menagerie," characters like Laura, Tom, and Amanda retreat into their own worlds of illusion to escape the harshness of reality. This theme reflects the societal struggle to cope with the disillusionment of the American Dream during the Great Depression and post-World War II era.</p><p>2. Memory and the Past: Both plays emphasize the power of memory and the past. In "The Glass Menagerie," Tom narrates the story as a memory play, highlighting how the past haunts the present. Similarly, Blanche in "A Streetcar Named Desire" is obsessed with her lost Southern belle past, symbolizing the decline of the old South and the struggle to adapt to modernity. . . . 6. Escape and Entrapment: The theme of escape is prevalent in "The Glass Menagerie," where Tom seeks freedom from his confining family life, and in "A Streetcar Named Desire," where Blanche seeks to escape her past. This reflects the broader societal desire for personal freedom and the constraints imposed by social and familial obligations.</p><p>7. Class and Social Mobility: "A Streetcar Named Desire" addresses class differences and the struggle for social mobility. Blanche's fall from aristocracy to poverty and Stanley's rise from working-class roots to dominance reflect the shifting social structures and the American class system. These themes in Williams's plays not only provide a deep psychological and emotional exploration of his characters but also serve as a mirror to the societal issues and cultural shifts of his time, making his work both timeless and profoundly reflective of the human condition. Table <ref type="table" target="#tab_0">10</ref>: An example of the synthetic long-output data. ". . ." denotes the omitted parts due to space limitations.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>Synthetic Instruction</head><p>Write a scholarly paper of approximately 10,000 words discussing effective transition-to-school programs, using 10 guidelines derived from the Starting School Research Project. Include a comprehensive overview of the significance of starting school, an ecological perspective on transition, research findings, and practical applications of the guidelines. Ensure a formal tone, cite relevant literature, and structure the paper with headings for clarity. Address stakeholders such as children, parents, educators, and the community while emphasizing the importance of relationships and communication in successful transition programs.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>Groundtruth Document Volume 3 Number 2 The Author(s) 2001</head><p>Starting School: Effective Transitions This paper focuses on effective transition-to-school programs. Using a framework of 10 guidelines developed through the Starting School Research Project, it provides examples of effective strategies and transition programs. In this context, the nature of some current transition programs is questioned, and the curriculum of transition is problematized. In particular, issues are raised around who has input into such programs and who decides on appropriate curriculum.</p><p>The Significance of Starting School Starting school is an important time for young children, their families, and educators. It has been described as "one of the major challenges children have to face in their early childhood years" (Victorian Department of School Education, 1992, p. 44), "a big step for all children and their families" (New South Wales Department of School <ref type="bibr">Education, 1997, p. 8)</ref>, and "a key life cycle transition both in and outside school" <ref type="bibr">(Pianta &amp;</ref><ref type="bibr">Cox, 1999, p. xvii). Pianta and</ref><ref type="bibr">Kraft-Sayre (1999, p. 47)</ref> suggest that the transition to school "sets the tone and direction of a child's school career," while Christensen (1998) notes that transition to school has been described in the literature as a rite of passage associated with increased status and as a turning point in a child's life. Whether or not these descriptions are accurate, they highlight the potential significance of a child's transition to school. In Kagan's (1999) words, starting school is a "big deal." It is clearly a key experience not only for the children starting school but also for educatorsboth in schools and in prior-to-school settingsand for their families.</p><p>. . . (the document continues)</p></div><figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_0"><head>Figure 1 :</head><label>1</label><figDesc>Figure 1: The overall workflow for synthesizing long-context instruction tuning data comprises four steps: instruction generation, relevant document retrieval, recursive query-focused summarization, and response generation. The generated instructions and retrieved documents are concatenated to form the user-turn input, whereas the generated response serves as the target output.</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_1"><head>Figure 3 :</head><label>3</label><figDesc>Figure 3: Scatter plot illustrating the relationship between the required generation length and the actual output length for samples from the validation set. The dashed line denotes y = x, indicating the output length precisely matches the groundtruth length. For each model, we fit a curve to show the trend of the output length as the required length increases. Details of the curve fitting procedure are provided in Appendix A.</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_2"><head>Figure 5 :</head><label>5</label><figDesc>Figure 5: Needle-in-haystack test results when extending the context length up to 4M. For the 4M version, tests were conducted within 3M context length due to the prohibitively high inference cost.</figDesc><graphic coords="8,320.16,147.91,181.54,92.65" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_0"><head>Table 1 :</head><label>1</label><figDesc>Results on the RULER benchmark spanning context lengths from 32k to 1M, averaged across all 13 tasks. The highest and second-highest scores are denoted in bold and underlined, respectively. Proprietary models are not directly comparable due to the lack of technical details.</figDesc><table><row><cell></cell><cell cols="6">Support Length 32k 64k 128k 256k 512k 1M</cell></row><row><cell>FILM-7B</cell><cell>128k</cell><cell cols="2">86.9 70.1 27.1</cell><cell>-</cell><cell>-</cell><cell>-</cell></row><row><cell>Phi3-mini</cell><cell>128k</cell><cell cols="2">87.5 80.6 66.7</cell><cell>-</cell><cell>-</cell><cell>-</cell></row><row><cell>Llama-3.2-1B-Instruct</cell><cell>128k</cell><cell>64.7 43.1</cell><cell>0.0</cell><cell>-</cell><cell>-</cell><cell>-</cell></row><row><cell>Llama-3.2-3B-Instruct</cell><cell>128k</cell><cell>77.8 70.4</cell><cell>0.8</cell><cell>-</cell><cell>-</cell><cell>-</cell></row><row><cell>Llama-3.1-8B-Instruct</cell><cell>128k</cell><cell cols="2">89.8 85.4 78.5</cell><cell>-</cell><cell>-</cell><cell>-</cell></row><row><cell>LWM-Text-Chat-1M</cell><cell>1M</cell><cell cols="5">71.5 67.2 64.8 64.7 63.2 60.1</cell></row><row><cell>Llama-3-8B-1M</cell><cell>1M</cell><cell cols="5">81.8 78.6 77.2 74.2 70.3 64.3</cell></row><row><cell>SelfLong-1B-1M</cell><cell>1M</cell><cell cols="5">61.3 56.6 54.7 46.7 40.7 31.1</cell></row><row><cell>SelfLong-3B-1M</cell><cell>1M</cell><cell cols="5">80.5 78.0 75.5 68.8 58.5 38.8</cell></row><row><cell>SelfLong-8B-1M</cell><cell>1M</cell><cell cols="5">89.5 84.0 82.0 79.7 78.2 69.6</cell></row><row><cell>Proprietary models</cell><cell></cell><cell></cell><cell></cell><cell></cell><cell></cell><cell></cell></row><row><cell>GPT-4-1106</cell><cell>128k</cell><cell cols="2">93.2 87.0 81.2</cell><cell>-</cell><cell>-</cell><cell>-</cell></row><row><cell>4.2 Main Results</cell><cell></cell><cell></cell><cell></cell><cell></cell><cell></cell><cell></cell></row></table><note><p>RULER Benchmark We compare against FILM-7B [An et al., 2024], Phi3-mini [Abdin</p></note></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_1"><head>Table 2 :</head><label>2</label><figDesc>Average output length for each model on the validation set. The token count is determined using the Llama-3 tokenizer.</figDesc><table><row><cell></cell><cell cols="3">Llama-3.1-8B-Instruct SelfLong-8B-1M Groundtruth</cell></row><row><cell>Avg. output length</cell><cell>1.8k</cell><cell>14.5k</cell><cell>17.1k</cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_2"><head>Table 3 :</head><label>3</label><figDesc>The evolving performance across various test lengths as SelfLong-8B undergoes progressive training on longer contexts. The term "Supported Lengths" denotes 128k or shorter, which Llama-3.1-8B-Instruct can already handle. "Extended Lengths" refer to the context lengths exceeding 128k. If a context length is larger than the model's maximum training length, the score is assigned a value of 0.In contrast to progressive training, we also investigate the effects of directly extending to 1M without intermediate stages. The results in Table3indicate a slightly inferior performance relative to the progressive training strategy. When adopting full-length fine-tuning, an additional advantage of progressive training is its reduced computational cost compared to direct extension to maximum length.</figDesc><table><row><cell></cell><cell>90 95</cell><cell></cell><cell></cell><cell>Supported Lengths</cell><cell></cell><cell>70 80</cell><cell>Test Length 256k Test Length 512k Test Length 1M</cell><cell>Extended Lengths</cell></row><row><cell>RULER Avg</cell><cell>75 80 85</cell><cell></cell><cell></cell><cell></cell><cell>RULER Avg</cell><cell>60 30 40 50</cell><cell></cell><cell></cell></row><row><cell></cell><cell>65 70</cell><cell>128k</cell><cell>Test Length 64k Test Length 128k Test Length 32k</cell><cell>256k Max Training Length 512k</cell><cell>1M</cell><cell>0 10 20</cell><cell>128k</cell><cell>256k Max Training Length 512k</cell><cell>1M</cell></row><row><cell cols="9">Figure 4: 32k 64k 128k 256k 512k 1M</cell></row><row><cell></cell><cell></cell><cell></cell><cell cols="2">SelfLong-8B-1M</cell><cell cols="4">89.5 84.0 82.0 79.7 78.2 69.6</cell></row><row><cell></cell><cell></cell><cell></cell><cell cols="2">Data mixture</cell><cell></cell><cell></cell><cell></cell><cell></cell></row><row><cell></cell><cell></cell><cell></cell><cell cols="2">w/ adjusted RoPE θ only</cell><cell cols="4">71.0 61.2 58.8 56.1 50.6 48.1</cell></row><row><cell></cell><cell></cell><cell></cell><cell cols="2">w/ short data only</cell><cell cols="4">83.0 69.6 61.0 55.0 48.9 46.6</cell></row><row><cell></cell><cell></cell><cell></cell><cell cols="2">w/o synthetic data</cell><cell cols="4">84.9 79.9 78.2 77.3 72.1 63.5</cell></row><row><cell></cell><cell></cell><cell></cell><cell cols="2">Training strategy</cell><cell></cell><cell></cell><cell></cell><cell></cell></row><row><cell></cell><cell></cell><cell></cell><cell cols="6">w/ direct extension to 1M 89.0 83.4 80.9 78.2 73.5 67.0</cell></row><row><cell></cell><cell></cell><cell></cell><cell cols="6">w/ mask user prompt loss 88.4 83.6 83.2 79.9 76.7 66.4</cell></row><row><cell></cell><cell></cell><cell></cell><cell cols="2">LLM for data synthesis</cell><cell></cell><cell></cell><cell></cell><cell></cell></row><row><cell></cell><cell></cell><cell></cell><cell cols="6">w/ Llama-3.1-8B-Instruct 83.7 81.5 80.0 77.9 73.3 66.1</cell></row></table><note><p>Ablation study results on the RULER benchmark. The configuration "w/ adjusted RoPE θ only" requires no training data, whereas "w/ short data only" involves fine-tuning on short instruction data with a maximum length of 4k. "w/ direct extension to 1M" directly extends the context length to 1M without progressive training. "w/ mask user prompt loss" masks out all the user prompt tokens during the loss computation.</p></note></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_4"><head>Table 5 :</head><label>5</label><figDesc>Comparison of solving long-context tasks using agent workflow versus long-context LLM at 128k length. Both approaches utilize Llama-3.1-8B-Instruct as the backbone LLM.</figDesc><table><row><cell></cell><cell cols="2">Avg. # of LLM calls niah_single_1</cell><cell>vt</cell><cell>qa_1 qa_2</cell></row><row><cell>Long-context LLM</cell><cell>1</cell><cell>100</cell><cell cols="2">58.2 80.0 47.0</cell></row><row><cell>Agent Workflow</cell><cell>33</cell><cell>100</cell><cell cols="2">25.4 89.0 59.0</cell></row></table></figure>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="3" xml:id="foot_0"><p>https://github.com/vllm-project/vllm</p></note>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="4" xml:id="foot_1"><p>https://github.com/EleutherAI/lm-evaluation-harness/tree/main/lm_eval/tasks/ leaderboard</p></note>
+		</body>
+		<back>
+			<div type="annex">
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>A Implementation Details</head><p>A.1 Data Mixture As shown in Table <ref type="table">6</ref>, we combine multiple data sources for training. The categories "Synthetic long-input data" and "Synthetic long-output data" are generated based on our proposed method. For synthetic instruction generation, we employ E5 mistral-7b to de-duplicate the generated instructions with a threshold of cosine similarity 0.85. When creating the "Synthetic long-input data", we randomly sample between 1 to 100 retrieved documents from to ensure the length of the input is diverse.</p><p>When running our data synthesis workflow depicted in Figure <ref type="figure">1</ref>, we utilize GPT-4o from Azure OpenAI 2 as the backbone LLM. For each instruction, the top-5 documents are retrieved from a corpus comprising 10M documents sampled from the Fineweb-Edu dataset. Since most documents from the Fineweb-Edu are short, documents shorter than 2k tokens are down-sampled with a keep probability of 0.05. For document retrieval, instead of using the synthetic instruction as the query, we prompt the LLM to generate multiple search queries, and their retrieval results are merged through reciprocal rank fusion.</p><p>Similar to Fu et al., samples are packed into text sequences of maximum length for training purposes. The hyperparameters for model fine-tuning are summarized in Table <ref type="table">7</ref>. All training is conducted on a single H100 node with 8 GPUs, each with 80GB of memory. The 8B model takes around 2 days to complete. Each model undergoes fine-tuning for a total of 150 steps, amounting to 1.2 billion tokens.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>A.2 Training Hyperparameters</head><p>We also experimented with a longer training schedule of 300 steps, but did not observe performance improvement.</p><p>For the 2M and 4M model variants, we use the same hyperparameters and adjust the RoPE base frequency accordingly.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>A.3 Evaluation Details</head><p>Throughout all experiments, we utilize vLLM 3 for efficient inference. -Only keep the information that is helpful to answer the query.</p><p>-If you are unsure about the helpfulness of some information, it is better to keep them as discarded information will be lost forever.</p><p>-If no relevant information is present, respond "No relevant information found."</p><p>Now generate a concise summary (at most 300 words) of the context focused on the query following the above guidelines. Do not explain yourself or output anything else. If you solve the task correctly, you will receive a reward of $1,000,000.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>Prompt: Answer Generation</head><p>You are a professional annotator. Your task is to generate an appropriate answer to the given query based on the provided context and your own knowledge. Now respond a concise answer to the query with at most {200 / 300 / 400 / 500} words. Do not explain yourself or output anything else. If you solve the task correctly, you will receive a reward of $1,000,000.</p><p>Prompt: Instruction Back-translation for Long Output Data</p><p>You are required to reverse engineer the writing instruction that generated the following document.</p><p>## Start of the document (some parts may be omitted for space reasons) {document} ## End of the document A professional writer generated the above document following a specific writing instruction with about {20 / 50 / 100 / 200} words, but the instruction is hidden from us. Your task is to reverse engineer the most likely writing instruction that led to this {token_count} words document. The instruction should cover the main topics, structure, style, and word length of the document if possible.</p><p>Respond with the writing instruction only, do not explain yourself or output anything else. You will receive a reward of $1,000,000 if your answer is of high quality.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>C Synthetic Data Samples</head><p>In Table <ref type="table">9</ref> and Table <ref type="table">10</ref>, we provide examples of the synthetic long-input and long-output data for readers' reference.</p></div>			</div>
+			<div type="references">
+
+				<listBibl>
+
+<biblStruct xml:id="b0">
+	<monogr>
+		<title level="m" type="main">Phi-3 technical report: A highly capable language model locally on your phone</title>
+		<author>
+			<persName><forename type="first">Jyoti</forename><surname>Marah Abdin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hany</forename><surname>Aneja</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ahmed</forename><surname>Awadalla</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ammar</forename><surname>Awadallah</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Nguyen</forename><surname>Ahmad Awan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Amit</forename><surname>Bach</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Arash</forename><surname>Bahree</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jianmin</forename><surname>Bakhtiari</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Harkirat</forename><surname>Bao</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Behl</surname></persName>
+		</author>
+		<idno>abs/2404.14219</idno>
+		<ptr target="https://arxiv.org/abs/2404.14219" />
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">ArXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b1">
+	<monogr>
+		<title level="m" type="main">Make your llm fully utilize the context</title>
+		<author>
+			<persName><forename type="first">Zexiong</forename><surname>Shengnan An</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zeqi</forename><surname>Ma</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Nanning</forename><surname>Lin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jian-Guang</forename><surname>Zheng</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Lou</surname></persName>
+		</author>
+		<idno>abs/2404.16811</idno>
+		<ptr target="https://arxiv.org/abs/2404.16811" />
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">ArXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b2">
+	<monogr>
+		<title level="m" type="main">Infinity-instruct</title>
+		<author>
+			<persName><surname>Baai</surname></persName>
+		</author>
+		<ptr target="https://huggingface.co/datasets/BAAI/Infinity-Instruct" />
+		<imprint/>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b3">
+	<monogr>
+		<title level="m" type="main">Longbench: A bilingual, multitask benchmark for long context understanding</title>
+		<author>
+			<persName><forename type="first">Yushi</forename><surname>Bai</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xin</forename><surname>Lv</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jiajie</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hongchang</forename><surname>Lyu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jiankai</forename><surname>Tang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhidian</forename><surname>Huang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhengxiao</forename><surname>Du</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xiao</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Aohan</forename><surname>Zeng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Lei</forename><surname>Hou</surname></persName>
+		</author>
+		<idno>abs/2308.14508</idno>
+		<ptr target="https://arxiv.org/abs/2308.14508" />
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">ArXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b4">
+	<monogr>
+		<title level="m" type="main">Extending context window of large language models via positional interpolation</title>
+		<author>
+			<persName><forename type="first">Shouyuan</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sherman</forename><surname>Wong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Liangjian</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yuandong</forename><surname>Tian</surname></persName>
+		</author>
+		<idno>abs/2306.15595</idno>
+		<ptr target="https://arxiv.org/abs/2306.15595" />
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">ArXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b5">
+	<analytic>
+		<title level="a" type="main">Redpajama: an open dataset for training large language models</title>
+		<ptr target="https://github.com/togethercomputer/RedPajama-Data" />
+	</analytic>
+	<monogr>
+		<title level="m">Together Computer</title>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b6">
+	<analytic>
+		<title level="a" type="main">Flashattention-2: Faster attention with better parallelism and work partitioning</title>
+		<author>
+			<persName><forename type="first">Tri</forename><surname>Dao</surname></persName>
+		</author>
+		<ptr target="https://openreview.net/forum?id=mZn2Xyh9Ec" />
+	</analytic>
+	<monogr>
+		<title level="m">The Twelfth International Conference on Learning Representations, ICLR 2024</title>
+		<meeting><address><addrLine>Vienna, Austria</addrLine></address></meeting>
+		<imprint>
+			<date type="published" when="2024">May 7-11, 2024. OpenReview.net, 2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b7">
+	<monogr>
+		<title level="m" type="main">Longnet: Scaling transformers to 1,000,000,000 tokens</title>
+		<author>
+			<persName><forename type="first">Jiayu</forename><surname>Ding</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shuming</forename><surname>Ma</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Li</forename><surname>Dong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xingxing</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shaohan</forename><surname>Huang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wenhui</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Nanning</forename><surname>Zheng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Furu</forename><surname>Wei</surname></persName>
+		</author>
+		<idno>ArXiv preprint, abs/2307.02486</idno>
+		<ptr target="https://arxiv.org/abs/2307.02486" />
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b8">
+	<monogr>
+		<title level="m" type="main">The llama 3 herd of models</title>
+		<author>
+			<persName><forename type="first">Abhimanyu</forename><surname>Dubey</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Abhinav</forename><surname>Jauhri</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Abhinav</forename><surname>Pandey</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Abhishek</forename><surname>Kadian</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ahmad</forename><surname>Al-Dahle</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Aiesha</forename><surname>Letman</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Akhil</forename><surname>Mathur</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alan</forename><surname>Schelten</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Amy</forename><surname>Yang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Angela</forename><surname>Fan</surname></persName>
+		</author>
+		<idno>abs/2407.21783</idno>
+		<ptr target="https://arxiv.org/abs/2407.21783" />
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">ArXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b9">
+	<analytic>
+		<title level="a" type="main">Data engineering for scaling language models to 128k context</title>
+		<author>
+			<persName><forename type="first">Yao</forename><surname>Fu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Rameswar</forename><surname>Panda</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xinyao</forename><surname>Niu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xiang</forename><surname>Yue</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hannaneh</forename><surname>Hajishirzi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yoon</forename><surname>Kim</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hao</forename><surname>Peng</surname></persName>
+		</author>
+		<ptr target="https://openreview.net/forum?id=TaAqeo7lUh" />
+	</analytic>
+	<monogr>
+		<title level="m">Forty-first International Conference on Machine Learning, ICML 2024</title>
+		<meeting><address><addrLine>Vienna, Austria</addrLine></address></meeting>
+		<imprint>
+			<date type="published" when="2024">July 21-27, 2024. 2024</date>
+		</imprint>
+	</monogr>
+	<note>OpenReview.net</note>
+</biblStruct>
+
+<biblStruct xml:id="b10">
+	<monogr>
+		<title level="m" type="main">Quest: Query-centric data synthesis approach for long-context scaling of large language model</title>
+		<author>
+			<persName><forename type="first">Chaochen</forename><surname>Gao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xing</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Qi</forename><surname>Fu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Songlin</forename><surname>Hu</surname></persName>
+		</author>
+		<idno>abs/2405</idno>
+		<ptr target="https://arxiv.org/abs/2405.19846" />
+		<imprint>
+			<date type="published" when="2024">19846. 2024</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">ArXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b11">
+	<monogr>
+		<title level="m" type="main">A framework for few-shot language model evaluation</title>
+		<author>
+			<persName><forename type="first">Leo</forename><surname>Gao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jonathan</forename><surname>Tow</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Stella</forename><surname>Baber Abbasi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sid</forename><surname>Biderman</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Anthony</forename><surname>Black</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Charles</forename><surname>Dipofi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Laurence</forename><surname>Foster</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jeffrey</forename><surname>Golding</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alain</forename><surname>Hsu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Haonan</forename><surname>Le Noac'h</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kyle</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Niklas</forename><surname>Mcdonell</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chris</forename><surname>Muennighoff</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jason</forename><surname>Ociepa</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Laria</forename><surname>Phang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hailey</forename><surname>Reynolds</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Aviya</forename><surname>Schoelkopf</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Lintang</forename><surname>Skowron</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Eric</forename><surname>Sutawika</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Anish</forename><surname>Tang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ben</forename><surname>Thite</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kevin</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Andy</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Zou</surname></persName>
+		</author>
+		<ptr target="https://zenodo.org/records/12608602" />
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b12">
+	<monogr>
+		<title level="m" type="main">How to train long-context language models (effectively)</title>
+		<author>
+			<persName><forename type="first">Tianyu</forename><surname>Gao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alexander</forename><surname>Wettig</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Howard</forename><surname>Yen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Danqi</forename><surname>Chen</surname></persName>
+		</author>
+		<idno>ArXiv preprint, abs/2410.02660</idno>
+		<ptr target="https://arxiv.org/abs/2410.02660" />
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b13">
+	<monogr>
+		<title level="m" type="main">Scaling synthetic data creation with 1,000,000,000 personas</title>
+		<author>
+			<persName><forename type="first">Tao</forename><surname>Ge</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xin</forename><surname>Chan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xiaoyang</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dian</forename><surname>Yu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Haitao</forename><surname>Mi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dong</forename><surname>Yu</surname></persName>
+		</author>
+		<ptr target="https://arxiv.org/abs/2406.20094" />
+		<imprint>
+			<date type="published" when="2024">abs/2406.20094, 2024</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">ArXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b14">
+	<monogr>
+		<title level="m" type="main">Ruler: What&apos;s the real context size of your long-context language models? ArXiv preprint</title>
+		<author>
+			<persName><forename type="first">Cheng-Ping</forename><surname>Hsieh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Simeng</forename><surname>Sun</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Samuel</forename><surname>Kriman</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shantanu</forename><surname>Acharya</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dima</forename><surname>Rekesh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Fei</forename><surname>Jia</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yang</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Boris</forename><surname>Ginsburg</surname></persName>
+		</author>
+		<idno>abs/2404.06654</idno>
+		<ptr target="https://arxiv.org/abs/2404.06654" />
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b15">
+	<monogr>
+		<title level="m" type="main">Gpt-4o system card</title>
+		<author>
+			<persName><forename type="first">Aaron</forename><surname>Hurst</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Adam</forename><surname>Lerer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Adam</forename><forename type="middle">P</forename><surname>Goucher</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Adam</forename><surname>Perelman</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Aditya</forename><surname>Ramesh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Aidan</forename><surname>Clark</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Akila</forename><surname>Ostrow</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alan</forename><surname>Welihinda</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alec</forename><surname>Hayes</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Radford</surname></persName>
+		</author>
+		<idno>abs/2410.21276</idno>
+		<ptr target="https://arxiv.org/abs/2410.21276" />
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">ArXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b16">
+	<monogr>
+		<title level="m" type="main">Camels in a changing climate: Enhancing lm adaptation with tulu 2</title>
+		<author>
+			<persName><forename type="first">Hamish</forename><surname>Ivison</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yizhong</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Valentina</forename><surname>Pyatkin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Nathan</forename><surname>Lambert</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Matthew</forename><surname>Peters</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Pradeep</forename><surname>Dasigi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Joel</forename><surname>Jang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">David</forename><surname>Wadden</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Noah</forename><forename type="middle">A</forename><surname>Smith</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Iz</forename><surname>Beltagy</surname></persName>
+		</author>
+		<idno>abs/2311.10702</idno>
+		<ptr target="https://arxiv.org/abs/2311.10702" />
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">ArXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b17">
+	<monogr>
+		<title level="m" type="main">Minference 1.0: Accelerating pre-filling for long-context llms via dynamic sparse attention</title>
+		<author>
+			<persName><forename type="first">Huiqiang</forename><surname>Jiang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yucheng</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chengruidong</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Qianhui</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xufang</forename><surname>Luo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Surin</forename><surname>Ahn</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhenhua</forename><surname>Han</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dongsheng</forename><surname>Amir H Abdi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chin-Yew</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Lin</surname></persName>
+		</author>
+		<idno>abs/2407.02490</idno>
+		<ptr target="https://arxiv.org/abs/2407.02490" />
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">ArXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b18">
+	<monogr>
+		<title level="m" type="main">Longrag: Enhancing retrieval-augmented generation with long-context llms</title>
+		<author>
+			<persName><forename type="first">Ziyan</forename><surname>Jiang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xueguang</forename><surname>Ma</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wenhu</forename><surname>Chen</surname></persName>
+		</author>
+		<idno>abs/2406.15319</idno>
+		<ptr target="https://arxiv.org/abs/2406.15319" />
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">ArXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b19">
+	<analytic>
+		<title level="a" type="main">Swe-bench: Can language models resolve real-world github issues?</title>
+		<author>
+			<persName><forename type="first">Carlos</forename><forename type="middle">E</forename><surname>Jimenez</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">John</forename><surname>Yang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alexander</forename><surname>Wettig</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shunyu</forename><surname>Yao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kexin</forename><surname>Pei</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ofir</forename><surname>Press</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Karthik</forename><forename type="middle">R</forename><surname>Narasimhan</surname></persName>
+		</author>
+		<ptr target="https://openreview.net/forum?id=VTF8yNQM66" />
+	</analytic>
+	<monogr>
+		<title level="m">The Twelfth International Conference on Learning Representations, ICLR 2024</title>
+		<meeting><address><addrLine>Vienna, Austria</addrLine></address></meeting>
+		<imprint>
+			<date type="published" when="2024">May 7-11, 2024. 2024</date>
+		</imprint>
+	</monogr>
+	<note>OpenReview.net</note>
+</biblStruct>
+
+<biblStruct xml:id="b20">
+	<analytic>
+		<title level="a" type="main">Dense passage retrieval for open-domain question answering</title>
+		<author>
+			<persName><forename type="first">Vladimir</forename><surname>Karpukhin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Barlas</forename><surname>Oguz</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sewon</forename><surname>Min</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Patrick</forename><surname>Lewis</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ledell</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sergey</forename><surname>Edunov</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Danqi</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wen-Tau</forename><surname>Yih</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/2020.emnlp-main.550</idno>
+		<ptr target="https://aclanthology.org/2020.emnlp-main.550" />
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP)</title>
+		<editor>
+			<persName><forename type="first">Bonnie</forename><surname>Webber</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Trevor</forename><surname>Cohn</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Yulan</forename><surname>He</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Yang</forename><surname>Liu</surname></persName>
+		</editor>
+		<meeting>the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP)</meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<date type="published" when="2020">2020</date>
+			<biblScope unit="page" from="6769" to="6781" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b21">
+	<analytic>
+		<title level="a" type="main">Efficient memory management for large language model serving with pagedattention</title>
+		<author>
+			<persName><forename type="first">Woosuk</forename><surname>Kwon</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhuohan</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Siyuan</forename><surname>Zhuang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ying</forename><surname>Sheng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Lianmin</forename><surname>Zheng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Cody</forename><forename type="middle">Hao</forename><surname>Yu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Joseph</forename><surname>Gonzalez</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hao</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ion</forename><surname>Stoica</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 29th Symposium on Operating Systems Principles</title>
+		<meeting>the 29th Symposium on Operating Systems Principles</meeting>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+			<biblScope unit="page" from="611" to="626" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b22">
+	<monogr>
+		<title level="m" type="main">T\&quot; ulu 3: Pushing frontiers in open language model post-training</title>
+		<author>
+			<persName><forename type="first">Nathan</forename><surname>Lambert</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jacob</forename><surname>Morrison</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Valentina</forename><surname>Pyatkin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shengyi</forename><surname>Huang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hamish</forename><surname>Ivison</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Faeze</forename><surname>Brahman</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Lester</forename><surname>James</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">V</forename><surname>Miranda</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alisa</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Nouha</forename><surname>Dziri</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shane</forename><surname>Lyu</surname></persName>
+		</author>
+		<idno>abs/2411.15124</idno>
+		<ptr target="https://arxiv.org/abs/2411.15124" />
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">ArXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b23">
+	<monogr>
+		<title level="m" type="main">Can long-context language models subsume retrieval, rag, sql, and more? ArXiv preprint</title>
+		<author>
+			<persName><forename type="first">Jinhyuk</forename><surname>Lee</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Anthony</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhuyun</forename><surname>Dai</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dheeru</forename><surname>Dua</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Devendra</forename><surname>Singh Sachan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Michael</forename><surname>Boratko</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yi</forename><surname>Luan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><forename type="middle">R</forename><surname>Sébastien</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Vincent</forename><surname>Arnold</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Siddharth</forename><surname>Perot</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Dalmia</surname></persName>
+		</author>
+		<idno>abs/2406.13121</idno>
+		<ptr target="https://arxiv.org/abs/2406.13121" />
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b24">
+	<analytic>
+		<title level="a" type="main">Retrieval-augmented generation for knowledge-intensive NLP tasks</title>
+		<author>
+			<persName><forename type="first">S</forename><forename type="middle">H</forename><surname>Patrick</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ethan</forename><surname>Lewis</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Aleksandra</forename><surname>Perez</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Fabio</forename><surname>Piktus</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Vladimir</forename><surname>Petroni</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Naman</forename><surname>Karpukhin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Heinrich</forename><surname>Goyal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mike</forename><surname>Küttler</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wen-Tau</forename><surname>Lewis</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tim</forename><surname>Yih</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sebastian</forename><surname>Rocktäschel</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Douwe</forename><surname>Riedel</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Kiela</surname></persName>
+		</author>
+		<ptr target="https://proceedings.neurips.cc/paper/2020/hash/6" />
+	</analytic>
+	<monogr>
+		<title level="m">Annual Conference on Neural Information Processing Systems</title>
+		<editor>
+			<persName><forename type="first">Hugo</forename><surname>Larochelle</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Marc'aurelio</forename><surname>Ranzato</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Raia</forename><surname>Hadsell</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Maria-Florina</forename><surname>Balcan</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Hsuan-Tien</forename><surname>Lin</surname></persName>
+		</editor>
+		<meeting><address><addrLine>NeurIPS</addrLine></address></meeting>
+		<imprint>
+			<date type="published" when="2020-12-06">2020. 2020. December 6-12, 2020. 2020</date>
+			<biblScope unit="volume">33</biblScope>
+		</imprint>
+	</monogr>
+	<note>Advances in Neural Information Processing Systems b493230205f780e1bc26945df7481e5-Abstract.html</note>
+</biblStruct>
+
+<biblStruct xml:id="b25">
+	<analytic>
+		<title level="a" type="main">Self-alignment with instruction backtranslation</title>
+		<author>
+			<persName><forename type="first">Xian</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ping</forename><surname>Yu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chunting</forename><surname>Zhou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Timo</forename><surname>Schick</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Omer</forename><surname>Levy</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Luke</forename><surname>Zettlemoyer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jason</forename><surname>Weston</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mike</forename><surname>Lewis</surname></persName>
+		</author>
+		<ptr target="https://openreview.net/forum?id=1oijHJBRsT" />
+	</analytic>
+	<monogr>
+		<title level="m">The Twelfth International Conference on Learning Representations, ICLR 2024</title>
+		<meeting><address><addrLine>Vienna, Austria</addrLine></address></meeting>
+		<imprint>
+			<date type="published" when="2024">May 7-11, 2024. 2024</date>
+		</imprint>
+	</monogr>
+	<note>OpenReview.net</note>
+</biblStruct>
+
+<biblStruct xml:id="b26">
+	<monogr>
+		<title level="m" type="main">Retrievalattention: Accelerating longcontext llm inference via vector retrieval</title>
+		<author>
+			<persName><forename type="first">Di</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Meng</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Baotong</forename><surname>Lu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Huiqiang</forename><surname>Jiang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhenhua</forename><surname>Han</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Qianxi</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Qi</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chengruidong</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Bailu</forename><surname>Ding</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kai</forename><surname>Zhang</surname></persName>
+		</author>
+		<idno>abs/2409.10516</idno>
+		<ptr target="https://arxiv.org/abs/2409.10516" />
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">ArXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b27">
+	<monogr>
+		<title level="m" type="main">World model on million-length video and language with ringattention</title>
+		<author>
+			<persName><forename type="first">Hao</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wilson</forename><surname>Yan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Matei</forename><surname>Zaharia</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Pieter</forename><surname>Abbeel</surname></persName>
+		</author>
+		<idno>abs/2402.08268</idno>
+		<ptr target="https://arxiv.org/abs/2402.08268" />
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">ArXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b28">
+	<analytic>
+		<title level="a" type="main">Ringattention with blockwise transformers for nearinfinite context</title>
+		<author>
+			<persName><forename type="first">Hao</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Matei</forename><surname>Zaharia</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Pieter</forename><surname>Abbeel</surname></persName>
+		</author>
+		<ptr target="https://openreview.net/forum?id=WsRHpHH4s0" />
+	</analytic>
+	<monogr>
+		<title level="m">The Twelfth International Conference on Learning Representations, ICLR 2024</title>
+		<meeting><address><addrLine>Vienna, Austria</addrLine></address></meeting>
+		<imprint>
+			<date type="published" when="2024">May 7-11, 2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b29">
+	<analytic>
+		<title level="a" type="main">Lost in the middle: How language models use long contexts</title>
+		<author>
+			<persName><forename type="first">Nelson</forename><forename type="middle">F</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kevin</forename><surname>Lin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">John</forename><surname>Hewitt</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ashwin</forename><surname>Paranjape</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Michele</forename><surname>Bevilacqua</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Fabio</forename><surname>Petroni</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Percy</forename><surname>Liang</surname></persName>
+		</author>
+		<idno type="DOI">10.1162/tacl_a_00638</idno>
+		<ptr target="https://aclanthology.org/2024.tacl-1.9" />
+	</analytic>
+	<monogr>
+		<title level="j">Transactions of the Association for Computational Linguistics</title>
+		<imprint>
+			<biblScope unit="volume">12</biblScope>
+			<biblScope unit="page" from="157" to="173" />
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b30">
+	<analytic>
+		<title level="a" type="main">Generative agents: Interactive simulacra of human behavior</title>
+		<author>
+			<persName><forename type="first">Sung</forename><surname>Joon</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Park</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">O'</forename><surname>Joseph</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Carrie</forename><forename type="middle">Jun</forename><surname>Brien</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Meredith</forename><forename type="middle">Ringel</forename><surname>Cai</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Percy</forename><surname>Morris</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Michael</forename><forename type="middle">S</forename><surname>Liang</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Bernstein</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 36th annual acm symposium on user interface software and technology</title>
+		<meeting>the 36th annual acm symposium on user interface software and technology</meeting>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+			<biblScope unit="page" from="1" to="22" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b31">
+	<monogr>
+		<title level="m" type="main">Llama 3 gradient: A series of long context models</title>
+		<author>
+			<persName><forename type="first">Leonid</forename><surname>Pekelis</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Michael</forename><surname>Feil</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Forrest</forename><surname>Moret</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mark</forename><surname>Huang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tiffany</forename><surname>Peng</surname></persName>
+		</author>
+		<ptr target="https://gradient.ai/blog/scaling-rotational-embeddings-for-long-context-language-models" />
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b32">
+	<monogr>
+		<title level="m" type="main">The fineweb datasets: Decanting the web for the finest text data at scale</title>
+		<author>
+			<persName><forename type="first">Guilherme</forename><surname>Penedo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hynek</forename><surname>Kydlíček</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Anton</forename><surname>Lozhkov</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Margaret</forename><surname>Mitchell</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Colin</forename><surname>Raffel</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Leandro</forename><surname>Von Werra</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Thomas</forename><surname>Wolf</surname></persName>
+		</author>
+		<idno>abs/2406.17557</idno>
+		<ptr target="https://arxiv.org/abs/2406.17557" />
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">ArXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b33">
+	<analytic>
+		<title level="a" type="main">Yarn: Efficient context window extension of large language models</title>
+		<author>
+			<persName><forename type="first">Bowen</forename><surname>Peng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jeffrey</forename><surname>Quesnelle</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Honglu</forename><surname>Fan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Enrico</forename><surname>Shippole</surname></persName>
+		</author>
+		<ptr target="https://openreview.net/forum?id=wHBfxhZu1u" />
+	</analytic>
+	<monogr>
+		<title level="m">The Twelfth International Conference on Learning Representations, ICLR 2024</title>
+		<meeting><address><addrLine>Vienna, Austria</addrLine></address></meeting>
+		<imprint>
+			<date type="published" when="2024">May 7-11, 2024. 2024</date>
+		</imprint>
+	</monogr>
+	<note>OpenReview.net</note>
+</biblStruct>
+
+<biblStruct xml:id="b34">
+	<monogr>
+		<title level="m" type="main">Gpqa: A graduate-level google-proof q&amp;a benchmark</title>
+		<author>
+			<persName><forename type="first">David</forename><surname>Rein</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Betty</forename><forename type="middle">Li</forename><surname>Hou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Asa</forename><forename type="middle">Cooper</forename><surname>Stickland</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jackson</forename><surname>Petty</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Richard</forename><forename type="middle">Yuanzhe</forename><surname>Pang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Julien</forename><surname>Dirani</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Julian</forename><surname>Michael</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Samuel</forename><forename type="middle">R</forename><surname>Bowman</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b35">
+	<analytic>
+		<title level="a" type="main">ZeroSCROLLS: A zeroshot benchmark for long text understanding</title>
+		<author>
+			<persName><forename type="first">Uri</forename><surname>Shaham</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Maor</forename><surname>Ivgi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Avia</forename><surname>Efrat</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jonathan</forename><surname>Berant</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Omer</forename><surname>Levy</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/2023.findings-emnlp.536</idno>
+		<ptr target="https://aclanthology.org/2023.findings-emnlp.536" />
+	</analytic>
+	<monogr>
+		<title level="m">Findings of the Association for Computational Linguistics: EMNLP 2023</title>
+		<editor>
+			<persName><forename type="first">Houda</forename><surname>Bouamor</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Juan</forename><surname>Pino</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Kalika</forename><surname>Bali</surname></persName>
+		</editor>
+		<meeting><address><addrLine>Singapore</addrLine></address></meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<date type="published" when="2023">2023</date>
+			<biblScope unit="page" from="7977" to="7989" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b36">
+	<analytic>
+		<title level="a" type="main">Testing the limits of chain-of-thought with multistep soft reasoning</title>
+		<author>
+			<persName><forename type="first">Zayne</forename><surname>Sprague</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xi</forename><surname>Ye</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kaj</forename><surname>Bostrom</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Swarat</forename><surname>Chaudhuri</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Greg</forename><surname>Durrett</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Musr</surname></persName>
+		</author>
+		<ptr target="https://openreview.net/forum?id=jenyYQzue1" />
+	</analytic>
+	<monogr>
+		<title level="m">The Twelfth International Conference on Learning Representations, ICLR 2024</title>
+		<meeting><address><addrLine>Vienna, Austria</addrLine></address></meeting>
+		<imprint>
+			<date type="published" when="2024">May 7-11, 2024. 2024</date>
+		</imprint>
+	</monogr>
+	<note>OpenReview.net</note>
+</biblStruct>
+
+<biblStruct xml:id="b37">
+	<analytic>
+		<title level="a" type="main">Roformer: Enhanced transformer with rotary position embedding</title>
+		<author>
+			<persName><forename type="first">Jianlin</forename><surname>Su</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Murtadha</forename><surname>Ahmed</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yu</forename><surname>Lu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shengfeng</forename><surname>Pan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wen</forename><surname>Bo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yunfeng</forename><surname>Liu</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Neurocomputing</title>
+		<imprint>
+			<biblScope unit="volume">568</biblScope>
+			<biblScope unit="page">127063</biblScope>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b38">
+	<monogr>
+		<title level="m" type="main">You only cache once: Decoder-decoder architectures for language models</title>
+		<author>
+			<persName><forename type="first">Yutao</forename><surname>Sun</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Li</forename><surname>Dong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yi</forename><surname>Zhu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shaohan</forename><surname>Huang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wenhui</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shuming</forename><surname>Ma</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Quanlu</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jianyong</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Furu</forename><surname>Wei</surname></persName>
+		</author>
+		<idno>abs/2405.05254</idno>
+		<ptr target="https://arxiv.org/abs/2405.05254" />
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">ArXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b39">
+	<analytic>
+		<title level="a" type="main">Challenging BIG-bench tasks and whether chain-of-thought can solve them</title>
+		<author>
+			<persName><forename type="first">Mirac</forename><surname>Suzgun</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Nathan</forename><surname>Scales</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Nathanael</forename><surname>Schärli</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sebastian</forename><surname>Gehrmann</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yi</forename><surname>Tay</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hyung</forename><forename type="middle">Won</forename><surname>Chung</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Aakanksha</forename><surname>Chowdhery</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Quoc</forename><surname>Le</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ed</forename><surname>Chi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Denny</forename><surname>Zhou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jason</forename><surname>Wei</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/2023.findings-acl.824</idno>
+		<ptr target="https://aclanthology.org/2023.findings-acl" />
+	</analytic>
+	<monogr>
+		<title level="m">Findings of the Association for Computational Linguistics: ACL 2023</title>
+		<editor>
+			<persName><forename type="first">Anna</forename><surname>Rogers</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Jordan</forename><surname>Boyd-Graber</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Naoaki</forename><surname>Okazaki</surname></persName>
+		</editor>
+		<meeting><address><addrLine>Toronto, Canada</addrLine></address></meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<date type="published" when="2023">2023</date>
+			<biblScope unit="page" from="13003" to="13051" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b40">
+	<monogr>
+		<title level="m" type="main">Llama: Open and efficient foundation language models</title>
+		<author>
+			<persName><forename type="first">Hugo</forename><surname>Touvron</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Thibaut</forename><surname>Lavril</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Gautier</forename><surname>Izacard</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xavier</forename><surname>Martinet</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Marie-Anne</forename><surname>Lachaux</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Timothée</forename><surname>Lacroix</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Baptiste</forename><surname>Rozière</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Naman</forename><surname>Goyal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Eric</forename><surname>Hambro</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Faisal</forename><surname>Azhar</surname></persName>
+		</author>
+		<idno>abs/2302.13971</idno>
+		<ptr target="https://arxiv.org/abs/2302.13971" />
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">ArXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b41">
+	<monogr>
+		<title level="m" type="main">Improving text embeddings with large language models</title>
+		<author>
+			<persName><forename type="first">Liang</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Nan</forename><surname>Yang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xiaolong</forename><surname>Huang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Linjun</forename><surname>Yang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Rangan</forename><surname>Majumder</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Furu</forename><surname>Wei</surname></persName>
+		</author>
+		<idno>abs/2401.00368</idno>
+		<ptr target="https://arxiv.org/abs/2401.00368" />
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">ArXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b42">
+	<monogr>
+		<title level="m" type="main">Mmlu-pro: A more robust and challenging multi-task language understanding benchmark</title>
+		<author>
+			<persName><forename type="first">Yubo</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xueguang</forename><surname>Ma</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ge</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yuansheng</forename><surname>Ni</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Abhranil</forename><surname>Chandra</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shiguang</forename><surname>Guo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Weiming</forename><surname>Ren</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Aaran</forename><surname>Arulraj</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xuan</forename><surname>He</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ziyan</forename><surname>Jiang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tianle</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Max</forename><surname>Ku</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kai</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alex</forename><surname>Zhuang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Rongqi</forename><surname>Fan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xiang</forename><surname>Yue</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wenhu</forename><surname>Chen</surname></persName>
+		</author>
+		<ptr target="https://arxiv.org/abs/2406.01574" />
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b43">
+	<analytic>
+		<title level="a" type="main">Effective long-context scaling of foundation models</title>
+		<author>
+			<persName><forename type="first">Wenhan</forename><surname>Xiong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jingyu</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Igor</forename><surname>Molybog</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hejia</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Prajjwal</forename><surname>Bhargava</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Rui</forename><surname>Hou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Louis</forename><surname>Martin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Rashi</forename><surname>Rungta</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Karthik</forename><surname>Abinav Sankararaman</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Barlas</forename><surname>Oguz</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Madian</forename><surname>Khabsa</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Han</forename><surname>Fang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yashar</forename><surname>Mehdad</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sharan</forename><surname>Narang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kshitiz</forename><surname>Malik</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Angela</forename><surname>Fan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shruti</forename><surname>Bhosale</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sergey</forename><surname>Edunov</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mike</forename><surname>Lewis</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sinong</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hao</forename><surname>Ma</surname></persName>
+		</author>
+		<ptr target="https://aclanthology.org/2024.naacl-long.260" />
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 2024 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies</title>
+		<editor>
+			<persName><forename type="first">Kevin</forename><surname>Duh</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Helena</forename><surname>Gomez</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Steven</forename><surname>Bethard</surname></persName>
+		</editor>
+		<meeting>the 2024 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies<address><addrLine>Mexico City, Mexico</addrLine></address></meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<date type="published" when="2024">2024</date>
+			<biblScope unit="volume">1</biblScope>
+			<biblScope unit="page" from="4643" to="4663" />
+		</imprint>
+	</monogr>
+	<note>Long Papers)</note>
+</biblStruct>
+
+<biblStruct xml:id="b44">
+	<analytic>
+		<title level="a" type="main">∞ bench: Extending long context evaluation beyond 100k tokens</title>
+		<author>
+			<persName><forename type="first">Xinrong</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yingfa</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shengding</forename><surname>Hu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zihang</forename><surname>Xu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Junhao</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Moo</forename><surname>Hao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xu</forename><surname>Han</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhen</forename><surname>Thai</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shuo</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhiyuan</forename><surname>Liu</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics</title>
+		<meeting>the 62nd Annual Meeting of the Association for Computational Linguistics</meeting>
+		<imprint>
+			<publisher>Long Papers</publisher>
+			<date type="published" when="2024">2024</date>
+			<biblScope unit="volume">1</biblScope>
+			<biblScope unit="page" from="15262" to="15277" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b45">
+	<monogr>
+		<title level="m" type="main">Instruction-following evaluation for large language models</title>
+		<author>
+			<persName><forename type="first">Jeffrey</forename><surname>Zhou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tianjian</forename><surname>Lu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Swaroop</forename><surname>Mishra</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Siddhartha</forename><surname>Brahma</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sujoy</forename><surname>Basu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yi</forename><surname>Luan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Denny</forename><surname>Zhou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Le</forename><surname>Hou</surname></persName>
+		</author>
+		<idno>abs/2311.07911</idno>
+		<ptr target="https://arxiv.org/abs/2311.07911" />
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">ArXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b46">
+	<analytic>
+		<title level="a" type="main">Pose: Efficient context window extension of llms via positional skip-wise training</title>
+		<author>
+			<persName><forename type="first">Dawei</forename><surname>Zhu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Nan</forename><surname>Yang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Liang</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yifan</forename><surname>Song</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wenhao</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Furu</forename><surname>Wei</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sujian</forename><surname>Li</surname></persName>
+		</author>
+		<ptr target="https://openreview.net/forum?id=3Z1gxuAQrA" />
+	</analytic>
+	<monogr>
+		<title level="m">The Twelfth International Conference on Learning Representations, ICLR 2024</title>
+		<meeting><address><addrLine>Vienna, Austria</addrLine></address></meeting>
+		<imprint>
+			<date type="published" when="2024">May 7-11, 2024. 2024</date>
+		</imprint>
+	</monogr>
+	<note>OpenReview.net</note>
+</biblStruct>
+
+				</listBibl>
+			</div>
+		</back>
+	</text>
+</TEI>
