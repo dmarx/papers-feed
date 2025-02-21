@@ -26,7 +26,7 @@ def get_reading_time(interactions: list[dict[str, Any]]) -> int:
 
 def scan_features(paper_id: str, features_base: Path) -> dict[str, str]:
     """
-    Scan for available features for a paper.
+    Scan for available features for a paper and ensure paper directory exists.
     
     Args:
         paper_id: Paper ID to scan features for
@@ -36,6 +36,9 @@ def scan_features(paper_id: str, features_base: Path) -> dict[str, str]:
         Dictionary mapping feature types to their content paths
     """
     paper_dir = features_base / paper_id
+    # Ensure paper directory exists
+    paper_dir.mkdir(parents=True, exist_ok=True)
+    
     features_dir = paper_dir / "features"
     
     if not features_dir.exists():
