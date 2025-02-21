@@ -23,9 +23,6 @@ def remove_gibberish(
 )->str:
     good_lines = []
     for line in text.split('\n'):
-        # if len(line) < cutoff:
-        #     good_lines.append(line)
-        #     continue
         _line = line[:]
         if _line.startswith("$"):
             _line = _line[1:-1]
@@ -58,6 +55,12 @@ def sanitize_markdown(text: str)->str:
     text=remove_gibberish(text)
     return text
 
+def get_feature_path(base_path: Path, feature_type: str, paper_id: str, ext: str) -> Path:
+    """Create feature directory if it doesn't exist and return the full path."""
+    feature_dir = base_path / 'features' / feature_type
+    feature_dir.mkdir(parents=True, exist_ok=True)
+    return feature_dir / f"{paper_id}{ext}"
+
 def process_pdf_grobid(
     pdf_path: str, 
     format: OutputFormat = 'markdown', 
@@ -68,48 +71,43 @@ def process_pdf_grobid(
     """
     Process a PDF file using Grobid and convert to the specified format.
     
-    If output_path is not provided, the output file will be saved in the same 
-    directory as the input PDF, using the same base name with a new extension. 
-    If a tag is provided, it will be appended to the base name after an underscore.
-    
-    For example, if pdf_path is "papers/document.pdf", then:
-      - with format "markdown" and tag "v1" the output will be "papers/document_v1.md"
-      - with format "markdown" and no tag, the output will be "papers/document.md"
-      - with format "tei" and tag "v1" the output will be "papers/document_v1.tei.xml"
+    Output files will be saved in feature-specific directories:
+    - TEI XML files go to features/tei-xml-grobid/
+    - Markdown files go to features/markdown-grobid/
     
     Args:
         pdf_path: Path to the PDF file relative to the repository root.
         format: Output format, either 'markdown' or 'tei'.
         tag: Optional tag to append to the output filename (default: "grobid").
         output_path: Optional path where the output file should be saved. If provided,
-            this overrides the default filename generation and tag behavior.
+            this overrides the default feature directory behavior.
+        regenerate_tei: Whether to regenerate TEI XML even if it exists.
     """
     pdf_path = Path(pdf_path)
     if not pdf_path.exists():
         raise FileNotFoundError(f"PDF file not found: {pdf_path}")
 
-    # Determine output paths based on whether output_path is provided
+    # Get base directory (repository root)
+    base_dir = pdf_path.parent.parent
+
+    # Generate paper ID from PDF filename
+    paper_id = pdf_path.stem
+
+    # Determine output paths
     if output_path:
         output_path = Path(output_path)
         tei_path = output_path.with_suffix('.tei.xml')
         md_path = output_path.with_suffix('.md')
     else:
-        # Use original filename generation logic
-        base_name = pdf_path.stem
-        if tag:
-            tei_filename = f"{base_name}_{tag}.tei.xml"
-            md_filename = f"{base_name}_{tag}.md"
-        else:
-            tei_filename = f"{base_name}.tei.xml"
-            md_filename = f"{base_name}.md"
-        tei_path = pdf_path.parent / tei_filename
-        md_path = pdf_path.parent / md_filename
+        # Use feature directory structure
+        tei_path = get_feature_path(base_dir, f'tei-xml-{tag}', paper_id, '.xml')
+        md_path = get_feature_path(base_dir, f'markdown-{tag}', paper_id, '.md')
     
     logger.info(f"Processing {pdf_path}")
-    
+    logger.info(f"TEI output will go to {tei_path}")
+    logger.info(f"Markdown output will go to {md_path}")
 
     if regenerate_tei or (not tei_path.exists()):
-        
         grobid_host = os.environ.get('GROBID_HOST', 'localhost')
         base_url = f"http://{grobid_host}:8070"
         
@@ -126,13 +124,14 @@ def process_pdf_grobid(
         if resp.status_code != 200:
             raise RuntimeError(f"Grobid processing failed: {resp.status_code}")
         
-        # Save the TEI output
+        # Ensure the feature directory exists and save the TEI output
+        tei_path.parent.mkdir(parents=True, exist_ok=True)
         tei_path.write_text(resp.text)
         logger.info(f"Saved TEI XML to {tei_path}")
     
     if format == 'markdown':
         # Convert TEI to Markdown using XSLT
-        xslt_path = Path(__file__).parent / 'tei2md.xslt' # todo: push this up to an argument
+        xslt_path = Path(__file__).parent / 'tei2md.xslt'
         if not xslt_path.exists():
             raise FileNotFoundError(f"XSLT stylesheet not found: {xslt_path}")
         
@@ -141,18 +140,18 @@ def process_pdf_grobid(
         
         tei_doc = etree.parse(str(tei_path))
         markdown = str(transform(tei_doc))
-
-        markdown=sanitize_markdown(markdown)
+        markdown = sanitize_markdown(markdown)
         
-        # Save Markdown output
+        # Ensure the feature directory exists and save Markdown output
+        md_path.parent.mkdir(parents=True, exist_ok=True)
         md_path.write_text(markdown)
         logger.info(f"Saved Markdown to {md_path}")
     else:
         logger.info(f"Output TEI XML saved at {tei_path}")
-        
+
 process_pdf = process_pdf_grobid
 
-# just leaving this here in case we need it for some more aggressive "soft-reset" or whatever
+# Files to ignore during operations
 ignore_files = [
     "gh-store-snapshot.json",
     "papers-archive.json",
@@ -160,63 +159,64 @@ ignore_files = [
     "papers.yaml"
 ]
 
-def flush_old_conversions(data_path: str = "data/papers", tag: str = "grobid", suffix=".md"):
+def flush_old_conversions(data_path: str = "data/papers", tag: str = "grobid"):
     """
-    I want to be able to just fill in missing files that we expect to be present. 
-    In service of that pattern, especially while I'm still developing the markdown conversion procedure,
-    it would be helpful to have a mechanism that removes all of the markdown conversions previously generated
-    by some procedure.
-
-    Moving forward, I'm going to include the procedure name in the markdown filename. This is the purpose of the 'tag' field.
+    Remove all previous conversions with the specified tag from feature directories.
     """
-    data_path = Path(data_path)
-    for fpath in data_path.rglob("*"+suffix):
-        if tag in str(fpath):
+    base_path = Path(data_path).parent
+    tei_dir = base_path / 'features' / f'tei-xml-{tag}'
+    md_dir = base_path / 'features' / f'markdown-{tag}'
+    
+    if tei_dir.exists():
+        for fpath in tei_dir.glob("*.xml"):
             fpath.unlink()
+        tei_dir.rmdir()
+    
+    if md_dir.exists():
+        for fpath in md_dir.glob("*.md"):
+            fpath.unlink()
+        md_dir.rmdir()
 
 def generate_missing_conversions(
     data_path: str = "data/papers",
     tag: str = "grobid",
-    suffix=".md",
     checkpoint_cadence=5,
     regenerate_tei: bool = True,
 ):
     """
-    We assume that every pdf under the data_path should have an accompanying markdown conversion.
-    This function looks for these PDFs and filters on the ones that contain the tag. For each of 
-    these PDFs, if a corresponding markdown file (with the same tag somewhere in its filename)
-    can't be found, this function generates one.
-
-    I have no idea how long this will take, so instead of locking the repo for the entire procedure, 
-    I'm going to add a commit-and-push cadence. If the push errors, we'll exit the job and the 
-    "generate missing" procedure can pick up where it left off since it just needs to backfill 
-    whatever isn't there. Once backfilling is completed, the procedure will just fill in the gaps for 
-    new papers as they arrive.
+    Generate missing conversions for PDFs, saving outputs to feature directories.
     """
     data_path = Path(data_path)
     modified_files = []
+    
     for i, pdf_fpath in enumerate(data_path.rglob("*.pdf")):
-        # skip PDFs that snuck in via latex source dirs downloaded from arxiv 
+        # Skip PDFs in source directories
         if "source" in str(pdf_fpath):
             continue
-        outname = f"{pdf_fpath.stem}{suffix}" if not tag else f"{pdf_fpath.stem}_{tag}{suffix}"
-        md_fpath = pdf_fpath.parent / outname
-        if not md_fpath.exists():
-            process_pdf_grobid(pdf_fpath, output_path=md_fpath, regenerate_tei=regenerate_tei)
-            modified_files.append(md_fpath) #... + tei path
-            logger.info(md_fpath)
-        if (i % checkpoint_cadence) == 0:
-            msg="persisting markdown conversions"
-            commit_and_push(files_to_commit=modified_files, message = msg)
-            modified_files=[]
-    if modified_files:
-        commit_and_push(files_to_commit=modified_files, message = msg)
-
+            
+        # Determine feature paths
+        base_dir = pdf_fpath.parent.parent
+        paper_id = pdf_fpath.stem
+        md_path = get_feature_path(base_dir, f'markdown-{tag}', paper_id, '.md')
         
+        if not md_path.exists():
+            process_pdf_grobid(pdf_fpath, regenerate_tei=regenerate_tei)
+            # Add both markdown and TEI paths
+            tei_path = get_feature_path(base_dir, f'tei-xml-{tag}', paper_id, '.xml')
+            modified_files.extend([md_path, tei_path])
+            logger.info(f"Generated conversions for {pdf_fpath.name}")
+            
+        if (i % checkpoint_cadence) == 0 and modified_files:
+            msg = "Persisting feature conversions"
+            commit_and_push(files_to_commit=modified_files, message=msg)
+            modified_files = []
+            
+    if modified_files:
+        commit_and_push(files_to_commit=modified_files, message="Persisting remaining feature conversions")
 
 if __name__ == '__main__':
-    fire.Fire(
-        {"process_pdf":process_pdf,
-         "generate_missing_conversions":generate_missing_conversions,
-         "flush_old_conversions":flush_old_conversions,
-        })
+    fire.Fire({
+        "process_pdf": process_pdf,
+        "generate_missing_conversions": generate_missing_conversions,
+        "flush_old_conversions": flush_old_conversions,
+    })
