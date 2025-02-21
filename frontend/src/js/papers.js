@@ -47,6 +47,46 @@ const setActivePaper = (paperId) => {
     updatePaperDetails(paperId);
 };
 
+// Load collapsed sections state
+const loadCollapsedSections = () => {
+    const defaultState = {
+        metadata: false,
+        features: false
+    };
+    try {
+        return JSON.parse(localStorage.getItem('collapsedSections')) || defaultState;
+    } catch (e) {
+        return defaultState;
+    }
+};
+
+// Save collapsed sections state
+const saveCollapsedSections = (state) => {
+    localStorage.setItem('collapsedSections', JSON.stringify(state));
+};
+
+// Initialize section collapse handlers
+const initializeSectionHandlers = () => {
+    const collapsedState = loadCollapsedSections();
+    
+    document.querySelectorAll('.details-section').forEach(section => {
+        const header = section.querySelector('.details-section-header');
+        const sectionType = section.classList.contains('metadata-section') ? 'metadata' : 'features';
+        
+        // Set initial state
+        if (collapsedState[sectionType]) {
+            section.classList.add('collapsed');
+        }
+        
+        // Add click handler
+        header.addEventListener('click', () => {
+            section.classList.toggle('collapsed');
+            collapsedState[sectionType] = section.classList.contains('collapsed');
+            saveCollapsedSections(collapsedState);
+        });
+    });
+};
+
 const updatePaperDetails = async (paperId) => {
     const detailsPanel = document.getElementById('paperDetails');
     const paper = window.yamlData[paperId];
@@ -235,7 +275,7 @@ const toggleDayGroup = (element) => {
     localStorage.setItem('collapsedDays', JSON.stringify(collapsedDays));
 };
 
-// Initialize close button handler
+// Initialize close button handler and section handlers
 document.addEventListener('DOMContentLoaded', () => {
     const closeButton = document.getElementById('closeDetails');
     if (closeButton) {
@@ -250,4 +290,7 @@ document.addEventListener('DOMContentLoaded', () => {
             activePaperId = null;
         });
     }
+
+    // Initialize section handlers
+    initializeSectionHandlers();
 });
