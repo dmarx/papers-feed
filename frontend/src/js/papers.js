@@ -31,20 +31,54 @@ const calculateColor = (paper, coloringEnabled = true) => {
 
 const setActivePaper = (paperId) => {
     // Remove active class from previous paper
-    const previousActive = document.querySelector('.paper-card.active');
+    const previousActive = document.querySelector('tr.active');
     if (previousActive) {
         previousActive.classList.remove('active');
     }
 
     // Set new active paper
     activePaperId = paperId;
-    const paperCard = document.querySelector(`.paper-card[data-paper-id="${paperId}"]`);
-    if (paperCard) {
-        paperCard.classList.add('active');
+    const paperRow = document.querySelector(`tr[data-paper-id="${paperId}"]`);
+    if (paperRow) {
+        paperRow.classList.add('active');
     }
 
     // Show paper details
     updatePaperDetails(paperId);
+};
+
+// Load collapsed items state
+const loadCollapsedState = () => {
+    try {
+        return JSON.parse(localStorage.getItem('collapsedItems')) || {};
+    } catch (e) {
+        return {};
+    }
+};
+
+// Save collapsed items state
+const saveCollapsedState = (state) => {
+    localStorage.setItem('collapsedItems', JSON.stringify(state));
+};
+
+// Create a collapsible item
+const createCollapsibleItem = (id, title, content, isHtml = false) => {
+    const collapsedState = loadCollapsedState();
+    const isCollapsed = collapsedState[id] || false;
+    
+    return `
+        <div class="collapsible-item ${isCollapsed ? 'collapsed' : ''}" data-item-id="${id}">
+            <div class="collapsible-header">
+                <h4 class="collapsible-title">${title}</h4>
+                <span class="collapsible-toggle">▼</span>
+            </div>
+            <div class="collapsible-content">
+                <div class="collapsible-inner">
+                    ${isHtml ? content : `<p class="metadata-value">${content}</p>`}
+                </div>
+            </div>
+        </div>
+    `;
 };
 
 const updatePaperDetails = async (paperId) => {
@@ -56,106 +90,143 @@ const updatePaperDetails = async (paperId) => {
         return;
     }
 
-    // Update details panel content
-    const titleEl = detailsPanel.querySelector('.paper-details-title');
-    const metadataEl = detailsPanel.querySelector('.metadata-content');
-    const featuresEl = detailsPanel.querySelector('.features-content');
-
     // Update title
+    const titleEl = detailsPanel.querySelector('.paper-details-title');
     titleEl.textContent = paper.title;
 
-    // Update metadata
+    // Update metadata section
+    const metadataEl = detailsPanel.querySelector('.metadata-content');
+    const metadataItems = [
+        {
+            id: `${paperId}-authors`,
+            title: 'Authors',
+            content: paper.authors
+        },
+        {
+            id: `${paperId}-published`,
+            title: 'Published',
+            content: new Date(paper.published_date).toLocaleDateString()
+        },
+        {
+            id: `${paperId}-arxiv`,
+            title: 'arXiv ID',
+            content: `<a href="${paper.url}" target="_blank">${paper.arxivId}</a>`,
+            isHtml: true
+        },
+        {
+            id: `${paperId}-categories`,
+            title: 'Categories',
+            content: paper.arxiv_tags.join(', ')
+        },
+        {
+            id: `${paperId}-abstract`,
+            title: 'Abstract',
+            content: paper.abstract
+        }
+    ];
+
     metadataEl.innerHTML = `
-        <dl class="metadata-list">
-            <dt>Authors</dt>
-            <dd>${paper.authors}</dd>
-            <dt>Published</dt>
-            <dd>${new Date(paper.published_date).toLocaleDateString()}</dd>
-            <dt>arXiv ID</dt>
-            <dd><a href="${paper.url}" target="_blank">${paper.arxivId}</a></dd>
-            <dt>Categories</dt>
-            <dd>${paper.arxiv_tags.join(', ')}</dd>
-            <dt>Abstract</dt>
-            <dd>${paper.abstract}</dd>
-        </dl>
+        <div class="details-section">
+            <div class="details-section-header">Paper Information</div>
+            ${metadataItems.map(item => 
+                createCollapsibleItem(item.id, item.title, item.content, item.isHtml)
+            ).join('')}
+        </div>
     `;
 
-    // Update features
+    // Update features section
+    const featuresEl = detailsPanel.querySelector('.features-content');
     if (paper.features_path) {
-        const featuresList = await Promise.all(
+        const features = await Promise.all(
             Object.entries(paper.features_path).map(async ([type, path]) => {
                 try {
                     const response = await fetch(path);
                     if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
                     const content = await response.text();
-                    return `
-                        <div class="feature-section">
-                            <h4>${formatFeatureName(type)}</h4>
-                            <div class="feature-content markdown-body">${marked.parse(content)}</div>
-                        </div>
-                    `;
+                    return {
+                        id: `${paperId}-feature-${type}`,
+                        title: formatFeatureName(type),
+                        content: `<div class="feature-content markdown-body">${marked.parse(content)}</div>`,
+                        isHtml: true
+                    };
                 } catch (error) {
                     console.error(`Error loading feature ${type}:`, error);
-                    return `
-                        <div class="feature-section">
-                            <h4>${formatFeatureName(type)}</h4>
-                            <div class="feature-content error">Error loading feature content</div>
-                        </div>
-                    `;
+                    return {
+                        id: `${paperId}-feature-${type}`,
+                        title: formatFeatureName(type),
+                        content: `<div class="feature-content error">Error loading feature content</div>`,
+                        isHtml: true
+                    };
                 }
             })
         );
-        
-        featuresEl.innerHTML = featuresList.join('');
+
+        featuresEl.innerHTML = `
+            <div class="details-section">
+                <div class="details-section-header">Features</div>
+                ${features.map(feature => 
+                    createCollapsibleItem(feature.id, feature.title, feature.content, feature.isHtml)
+                ).join('')}
+            </div>
+        `;
     } else {
         featuresEl.innerHTML = '<p class="no-features">No features available for this paper</p>';
     }
+
+    // Add event listeners for collapsible items
+    detailsPanel.querySelectorAll('.collapsible-header').forEach(header => {
+        header.addEventListener('click', () => {
+            const item = header.closest('.collapsible-item');
+            const itemId = item.dataset.itemId;
+            const collapsedState = loadCollapsedState();
+            
+            item.classList.toggle('collapsed');
+            collapsedState[itemId] = item.classList.contains('collapsed');
+            saveCollapsedState(collapsedState);
+        });
+    });
 
     // Show panel
     detailsPanel.classList.add('visible');
 };
 
-const renderPaperCard = (paper) => {
+const renderPaperRow = (paper) => {
     const readingTime = paper.total_reading_time_seconds 
-        ? `${Math.round(paper.total_reading_time_seconds / 60)} min read`
-        : '';
+        ? `${Math.round(paper.total_reading_time_seconds / 60)} min`
+        : '—';
 
     const coloringEnabled = document.getElementById('coloringToggle')?.checked ?? true;
     const bgColor = calculateColor(paper, coloringEnabled);
     
-    const metaParts = [];
-    metaParts.push(`<span>${paper.authors}</span>`);
-    
-    if (readingTime) {
-        metaParts.push(`<span class="meta-divider">•</span><span>${readingTime}</span>`);
-    }
-    
-    if (paper.published_date) {
-        const pubDate = new Date(paper.published_date).toLocaleDateString();
-        metaParts.push(`<span class="meta-divider">•</span><span>Published: ${pubDate}</span>`);
-    }
-    
-    if (paper.arxiv_tags?.length > 0) {
-        const tags = paper.arxiv_tags.join(', ');
-        metaParts.push(`<span class="meta-divider">•</span><span>${tags}</span>`);
-    }
+    const categories = paper.arxiv_tags?.slice(0, 2).join(', ') || '';
+    const hasMoreCategories = paper.arxiv_tags?.length > 2 ? '...' : '';
+
+    // Truncate authors to a reasonable length
+    const authorsList = paper.authors.split(', ');
+    const displayAuthors = authorsList.length > 2 
+        ? `${authorsList[0]}, ${authorsList[1]}...`
+        : paper.authors;
 
     // Check if this is the active paper
     const isActive = paper.id === activePaperId;
     
     return `
-        <article class="paper-card ${isActive ? 'active' : ''}" data-paper-id="${paper.id}">
-            <div class="paper-header">
+        <tr class="${isActive ? 'active' : ''}" data-paper-id="${paper.id}">
+            <td class="col-arxiv-id">
                 <a href="${paper.url}" class="arxiv-id" onclick="event.stopPropagation()" 
-                   style="background-color: ${bgColor}; padding: 4px 8px; border-radius: 4px;">
+                   style="background-color: ${bgColor}">
                     ${paper.arxivId}
                 </a>
-                <span class="paper-title">${paper.title}</span>
-            </div>
-            <div class="paper-content">
-                <div class="paper-meta">${metaParts.join('')}</div>
-            </div>
-        </article>
+            </td>
+            <td class="col-title" title="${paper.title}">${paper.title}</td>
+            <td class="col-authors" title="${paper.authors}">${displayAuthors}</td>
+            <td class="col-categories" title="${paper.arxiv_tags?.join(', ')}">
+                <span class="paper-categories">${categories}${hasMoreCategories}</span>
+            </td>
+            <td class="col-read-time">
+                <span class="read-time">${readingTime}</span>
+            </td>
+        </tr>
     `;
 };
 
@@ -163,6 +234,11 @@ const renderPapers = () => {
     const container = document.getElementById('papers-container');
     container.innerHTML = '';
     const collapsedDays = JSON.parse(localStorage.getItem('collapsedDays') || '{}');
+    
+    if (!window.yamlData || Object.keys(window.yamlData).length === 0) {
+        container.innerHTML = '<div class="no-papers">No papers available</div>';
+        return;
+    }
     
     const papersByDay = {};
     Object.entries(window.yamlData)
@@ -191,9 +267,13 @@ const renderPapers = () => {
 
         const papersContainerInner = document.createElement('div');
         papersContainerInner.className = 'papers-container-inner';
-        papersContainerInner.innerHTML = papers
-            .map(paper => renderPaperCard(paper))
-            .join('');
+        papersContainerInner.innerHTML = `
+            <table class="papers-table">
+                <tbody>
+                    ${papers.map(paper => renderPaperRow(paper)).join('')}
+                </tbody>
+            </table>
+        `;
 
         papersContainer.appendChild(papersContainerInner);
         dayGroup.appendChild(dayHeader);
@@ -214,13 +294,13 @@ function formatFeatureName(featureType) {
 }
 
 function addPaperHandlers(container) {
-    // Add click handlers for paper cards
-    container.querySelectorAll('.paper-card').forEach(card => {
-        card.addEventListener('click', (e) => {
+    // Add click handlers for paper rows
+    container.querySelectorAll('tr[data-paper-id]').forEach(row => {
+        row.addEventListener('click', (e) => {
             // Don't trigger on links
             if (e.target.closest('a')) return;
             
-            const paperId = card.dataset.paperId;
+            const paperId = row.dataset.paperId;
             setActivePaper(paperId);
         });
     });
@@ -243,9 +323,9 @@ document.addEventListener('DOMContentLoaded', () => {
             const detailsPanel = document.getElementById('paperDetails');
             detailsPanel.classList.remove('visible');
             // Clear active paper
-            const activeCard = document.querySelector('.paper-card.active');
-            if (activeCard) {
-                activeCard.classList.remove('active');
+            const activeRow = document.querySelector('tr.active');
+            if (activeRow) {
+                activeRow.classList.remove('active');
             }
             activePaperId = null;
         });

@@ -35,56 +35,6 @@ function initializeFeatures() {
     // Save to localStorage
     localStorage.setItem('enabledFeatures', 
         JSON.stringify(window.featureState.enabledFeatures));
-        
-    // Render feature toggles
-    renderFeatureToggles(Array.from(features));
-}
-
-// Render feature toggle controls
-function renderFeatureToggles(features) {
-    const container = document.querySelector('.feature-toggles');
-    if (!container) {
-        console.warn('Feature toggles container not found');
-        return;
-    }
-    
-    if (features.length === 0) {
-        container.innerHTML = '<div class="no-features">No paper features currently available</div>';
-        return;
-    }
-    
-    container.innerHTML = features.map(featureType => {
-        const isEnabled = window.featureState.enabledFeatures[featureType] ?? true;
-        return `
-            <div class="feature-toggle" data-feature="${featureType}">
-                <label class="toggle-switch">
-                    <input type="checkbox" ${isEnabled ? 'checked' : ''}>
-                    <span class="slider"></span>
-                </label>
-                <div class="feature-info">
-                    <span class="feature-label">${formatFeatureName(featureType)}</span>
-                </div>
-            </div>
-        `;
-    }).join('');
-        
-    // Add event listeners
-    container.querySelectorAll('.feature-toggle').forEach(toggle => {
-        const checkbox = toggle.querySelector('input[type="checkbox"]');
-        const featureId = toggle.dataset.feature;
-        
-        if (!checkbox || !featureId) return;
-        
-        checkbox.addEventListener('change', () => {
-            window.featureState.enabledFeatures[featureId] = checkbox.checked;
-            localStorage.setItem('enabledFeatures', 
-                JSON.stringify(window.featureState.enabledFeatures));
-            // Refresh current paper details if active
-            if (window.activePaperId) {
-                updatePaperDetails(window.activePaperId);
-            }
-        });
-    });
 }
 
 // Format feature name for display (also used in papers.js)
