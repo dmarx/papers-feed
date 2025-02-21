@@ -31,16 +31,16 @@ const calculateColor = (paper, coloringEnabled = true) => {
 
 const setActivePaper = (paperId) => {
     // Remove active class from previous paper
-    const previousActive = document.querySelector('.paper-card.active');
+    const previousActive = document.querySelector('tr.active');
     if (previousActive) {
         previousActive.classList.remove('active');
     }
 
     // Set new active paper
     activePaperId = paperId;
-    const paperCard = document.querySelector(`.paper-card[data-paper-id="${paperId}"]`);
-    if (paperCard) {
-        paperCard.classList.add('active');
+    const paperRow = document.querySelector(`tr[data-paper-id="${paperId}"]`);
+    if (paperRow) {
+        paperRow.classList.add('active');
     }
 
     // Show paper details
@@ -190,47 +190,43 @@ const updatePaperDetails = async (paperId) => {
     detailsPanel.classList.add('visible');
 };
 
-const renderPaperCard = (paper) => {
+const renderPaperRow = (paper) => {
     const readingTime = paper.total_reading_time_seconds 
-        ? `${Math.round(paper.total_reading_time_seconds / 60)} min read`
-        : '';
+        ? `${Math.round(paper.total_reading_time_seconds / 60)} min`
+        : '—';
 
     const coloringEnabled = document.getElementById('coloringToggle')?.checked ?? true;
     const bgColor = calculateColor(paper, coloringEnabled);
     
-    const metaParts = [];
-    metaParts.push(`<span>${paper.authors}</span>`);
-    
-    if (readingTime) {
-        metaParts.push(`<span class="meta-divider">•</span><span>${readingTime}</span>`);
-    }
-    
-    if (paper.published_date) {
-        const pubDate = new Date(paper.published_date).toLocaleDateString();
-        metaParts.push(`<span class="meta-divider">•</span><span>Published: ${pubDate}</span>`);
-    }
-    
-    if (paper.arxiv_tags?.length > 0) {
-        const tags = paper.arxiv_tags.join(', ');
-        metaParts.push(`<span class="meta-divider">•</span><span>${tags}</span>`);
-    }
+    const categories = paper.arxiv_tags?.slice(0, 2).join(', ') || '';
+    const hasMoreCategories = paper.arxiv_tags?.length > 2 ? '...' : '';
+
+    // Truncate authors to a reasonable length
+    const authorsList = paper.authors.split(', ');
+    const displayAuthors = authorsList.length > 2 
+        ? `${authorsList[0]}, ${authorsList[1]}...`
+        : paper.authors;
 
     // Check if this is the active paper
     const isActive = paper.id === activePaperId;
     
     return `
-        <article class="paper-card ${isActive ? 'active' : ''}" data-paper-id="${paper.id}">
-            <div class="paper-header">
+        <tr class="${isActive ? 'active' : ''}" data-paper-id="${paper.id}">
+            <td class="col-arxiv-id">
                 <a href="${paper.url}" class="arxiv-id" onclick="event.stopPropagation()" 
-                   style="background-color: ${bgColor}; padding: 4px 8px; border-radius: 4px;">
+                   style="background-color: ${bgColor}">
                     ${paper.arxivId}
                 </a>
-                <span class="paper-title">${paper.title}</span>
-            </div>
-            <div class="paper-content">
-                <div class="paper-meta">${metaParts.join('')}</div>
-            </div>
-        </article>
+            </td>
+            <td class="col-title" title="${paper.title}">${paper.title}</td>
+            <td class="col-authors" title="${paper.authors}">${displayAuthors}</td>
+            <td class="col-categories" title="${paper.arxiv_tags?.join(', ')}">
+                <span class="paper-categories">${categories}${hasMoreCategories}</span>
+            </td>
+            <td class="col-read-time">
+                <span class="read-time">${readingTime}</span>
+            </td>
+        </tr>
     `;
 };
 
@@ -238,6 +234,11 @@ const renderPapers = () => {
     const container = document.getElementById('papers-container');
     container.innerHTML = '';
     const collapsedDays = JSON.parse(localStorage.getItem('collapsedDays') || '{}');
+    
+    if (!window.yamlData || Object.keys(window.yamlData).length === 0) {
+        container.innerHTML = '<div class="no-papers">No papers available</div>';
+        return;
+    }
     
     const papersByDay = {};
     Object.entries(window.yamlData)
@@ -266,9 +267,13 @@ const renderPapers = () => {
 
         const papersContainerInner = document.createElement('div');
         papersContainerInner.className = 'papers-container-inner';
-        papersContainerInner.innerHTML = papers
-            .map(paper => renderPaperCard(paper))
-            .join('');
+        papersContainerInner.innerHTML = `
+            <table class="papers-table">
+                <tbody>
+                    ${papers.map(paper => renderPaperRow(paper)).join('')}
+                </tbody>
+            </table>
+        `;
 
         papersContainer.appendChild(papersContainerInner);
         dayGroup.appendChild(dayHeader);
@@ -289,13 +294,13 @@ function formatFeatureName(featureType) {
 }
 
 function addPaperHandlers(container) {
-    // Add click handlers for paper cards
-    container.querySelectorAll('.paper-card').forEach(card => {
-        card.addEventListener('click', (e) => {
+    // Add click handlers for paper rows
+    container.querySelectorAll('tr[data-paper-id]').forEach(row => {
+        row.addEventListener('click', (e) => {
             // Don't trigger on links
             if (e.target.closest('a')) return;
             
-            const paperId = card.dataset.paperId;
+            const paperId = row.dataset.paperId;
             setActivePaper(paperId);
         });
     });
@@ -310,7 +315,7 @@ const toggleDayGroup = (element) => {
     localStorage.setItem('collapsedDays', JSON.stringify(collapsedDays));
 };
 
-// Initialize close button handler and section handlers
+// Initialize close button handler
 document.addEventListener('DOMContentLoaded', () => {
     const closeButton = document.getElementById('closeDetails');
     if (closeButton) {
@@ -318,14 +323,11 @@ document.addEventListener('DOMContentLoaded', () => {
             const detailsPanel = document.getElementById('paperDetails');
             detailsPanel.classList.remove('visible');
             // Clear active paper
-            const activeCard = document.querySelector('.paper-card.active');
-            if (activeCard) {
-                activeCard.classList.remove('active');
+            const activeRow = document.querySelector('tr.active');
+            if (activeRow) {
+                activeRow.classList.remove('active');
             }
             activePaperId = null;
         });
     }
-
-    // Initialize section handlers
-    initializeSectionHandlers();
 });
