@@ -87,8 +87,8 @@ def process_pdf_grobid(
     if not pdf_path.exists():
         raise FileNotFoundError(f"PDF file not found: {pdf_path}")
 
-    # Get base directory (repository root)
-    base_dir = pdf_path.parent.parent
+    # Get paper directory
+    paper_dir = pdf_path.parent
 
     # Generate paper ID from PDF filename
     paper_id = pdf_path.stem
@@ -100,8 +100,8 @@ def process_pdf_grobid(
         md_path = output_path.with_suffix('.md')
     else:
         # Use feature directory structure
-        tei_path = get_feature_path(base_dir, f'tei-xml-{tag}', paper_id, '.xml')
-        md_path = get_feature_path(base_dir, f'markdown-{tag}', paper_id, '.md')
+        tei_path = get_feature_path(paper_dir, f'tei-xml-{tag}', paper_id, '.xml')
+        md_path = get_feature_path(paper_dir, f'markdown-{tag}', paper_id, '.md')
     
     logger.info(f"Processing {pdf_path}")
     logger.info(f"TEI output will go to {tei_path}")
@@ -159,23 +159,23 @@ ignore_files = [
     "papers.yaml"
 ]
 
-def flush_old_conversions(data_path: str = "data/papers", tag: str = "grobid"):
-    """
-    Remove all previous conversions with the specified tag from feature directories.
-    """
-    base_path = Path(data_path).parent
-    tei_dir = base_path / 'features' / f'tei-xml-{tag}'
-    md_dir = base_path / 'features' / f'markdown-{tag}'
+# def flush_old_conversions(data_path: str = "data/papers", tag: str = "grobid"):
+#     """
+#     Remove all previous conversions with the specified tag from feature directories.
+#     """
+#     base_path = Path(data_path).parent
+#     tei_dir = base_path / 'features' / f'tei-xml-{tag}'
+#     md_dir = base_path / 'features' / f'markdown-{tag}'
     
-    if tei_dir.exists():
-        for fpath in tei_dir.glob("*.xml"):
-            fpath.unlink()
-        tei_dir.rmdir()
+#     if tei_dir.exists():
+#         for fpath in tei_dir.glob("*.xml"):
+#             fpath.unlink()
+#         tei_dir.rmdir()
     
-    if md_dir.exists():
-        for fpath in md_dir.glob("*.md"):
-            fpath.unlink()
-        md_dir.rmdir()
+#     if md_dir.exists():
+#         for fpath in md_dir.glob("*.md"):
+#             fpath.unlink()
+#         md_dir.rmdir()
 
 def generate_missing_conversions(
     data_path: str = "data/papers",
@@ -218,5 +218,5 @@ if __name__ == '__main__':
     fire.Fire({
         "process_pdf": process_pdf,
         "generate_missing_conversions": generate_missing_conversions,
-        "flush_old_conversions": flush_old_conversions,
+        #"flush_old_conversions": flush_old_conversions,
     })
