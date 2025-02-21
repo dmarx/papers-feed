@@ -1,0 +1,1680 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<TEI xml:space="preserve" xmlns="http://www.tei-c.org/ns/1.0" 
+xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" 
+xsi:schemaLocation="http://www.tei-c.org/ns/1.0 https://raw.githubusercontent.com/kermitt2/grobid/master/grobid-home/schemas/xsd/Grobid.xsd"
+ xmlns:xlink="http://www.w3.org/1999/xlink">
+	<teiHeader xml:lang="en">
+		<fileDesc>
+			<titleStmt>
+				<title level="a" type="main">Over-Tokenized Transformer: Vocabulary is Generally Worth Scaling</title>
+			</titleStmt>
+			<publicationStmt>
+				<publisher/>
+				<availability  status="unknown">
+					<licence/>
+				</availability>
+				<date type="published" when="2025-01-28">28 Jan 2025</date>
+			</publicationStmt>
+			<sourceDesc>
+				<biblStruct>
+					<analytic>
+						<author>
+							<persName><forename type="first">Hongzhi</forename><surname>Huang</surname></persName>
+						</author>
+						<author>
+							<persName><forename type="first">Defa</forename><surname>Zhu</surname></persName>
+						</author>
+						<author>
+							<persName><forename type="first">Banggu</forename><surname>Wu</surname></persName>
+						</author>
+						<author>
+							<persName><forename type="first">Yutao</forename><surname>Zeng</surname></persName>
+						</author>
+						<author>
+							<persName><forename type="first">Ya</forename><surname>Wang</surname></persName>
+						</author>
+						<author>
+							<persName><forename type="first">Qiyang</forename><surname>Min</surname></persName>
+						</author>
+						<author>
+							<persName><forename type="first">Xun</forename><surname>Zhou</surname></persName>
+						</author>
+						<title level="a" type="main">Over-Tokenized Transformer: Vocabulary is Generally Worth Scaling</title>
+					</analytic>
+					<monogr>
+						<imprint>
+							<date type="published" when="2025-01-28">28 Jan 2025</date>
+						</imprint>
+					</monogr>
+					<idno type="MD5">867AED4C9F15F593F04820205B7D470D</idno>
+					<idno type="arXiv">arXiv:2501.16975v1[cs.CL]</idno>
+				</biblStruct>
+			</sourceDesc>
+		</fileDesc>
+		<encodingDesc>
+			<appInfo>
+				<application version="0.8.2-SNAPSHOT" ident="GROBID" when="2025-02-21T07:05+0000">
+					<desc>GROBID - A machine learning software for extracting information from scholarly documents</desc>
+					<ref target="https://github.com/kermitt2/grobid"/>
+				</application>
+			</appInfo>
+		</encodingDesc>
+		<profileDesc>
+			<abstract>
+<div xmlns="http://www.tei-c.org/ns/1.0"><p>Tokenization is a fundamental component of large language models (LLMs), yet its influence on model scaling and performance is not fully explored. In this paper, we introduce Over-Tokenized Transformers, a novel framework that decouples input and output vocabularies to improve language modeling performance. Specifically, our approach scales up input vocabularies to leverage multi-gram tokens. Through extensive experiments, we uncover a log-linear relationship between input vocabulary size and training loss, demonstrating that larger input vocabularies consistently enhance model performance, regardless of model size. Using a large input vocabulary, we achieve performance comparable to doublesized baselines with no additional cost. Our findings highlight the importance of tokenization in scaling laws and provide practical insight for tokenizer design, paving the way for more efficient and powerful LLMs.</p></div>
+			</abstract>
+		</profileDesc>
+	</teiHeader>
+	<text xml:lang="en">
+		<body>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="1.">Introduction</head><p>The rapid advancements in large language models (LLMs) have been driven by innovations in model architectures <ref type="bibr" target="#b17">(Vaswani et al., 2017)</ref> and training paradigms <ref type="bibr" target="#b13">(Radford et al., 2019;</ref><ref type="bibr" target="#b2">Brown et al., 2020)</ref>. Moreover, with the guidance of scaling laws <ref type="bibr" target="#b7">(Kaplan et al., 2020)</ref>, models prove to become stronger with increasing number of parameters or training data. Tokenization, the process of converting raw text into discrete tokens as the input and output of the model, is recently found relevant to scaling laws, where larger models deserve larger vocabulary and achieve better performance under the same training cost <ref type="bibr" target="#b16">(Tao et al., 2024)</ref>. In fact, expanding the input vocabulary incurs almost no additional computational cost, whereas expanding the output vocabulary significantly increases the training overhead for smaller models. Thus, it is natural to consider decoupling the input and output vocabularies for separate investigations.</p><p>1 Seed-Foundation-Model Team, Bytedance. Correspondence to: Hongzhi Huang &lt;huanghongzhi.51@bytedance.com&gt;.</p><p>151M 400M 1B Dense Parameters (log scale) 2.5 2.6 2.7 2.8 2.9 Loss Baseline OE-1.2M OE-12.8M 0.1M 1.2M 12.8M Vocabulary Size (log scale) 2.6 2.7 2.8 2.9 Loss 151M Param 400M Param 1B Param</p><p>Figure <ref type="figure">1</ref>: Scaling trend for Over-Encoded models and baselines on OLMo2. We plot the loss with 400B tokens' training. For over-encoding, input vocabulary size is extended from 0.1 to 1.2 and 12.8 million (12× and 128× larger than baseline), referred to as OE-1.2M and OE-12.8M. We observe OE-12.8M with 400M parameters matches the baseline with 1B parameters.</p><p>Our research is fundamentally based on this idea.</p><p>Starting with synthetic experiments on context-free grammar modeling, we systematically analyze the effects of token granularity and vocabulary size on models of varying scales. Firstly, it is revealed that larger tokenizers improve the performance of larger models while introducing challenges for smaller ones, which is consistent with previous studies. Furthermore, once the input and output vocabulary is decoupled, we find that scaling up input vocabulary solely keeps improving model, while larger output vocabulary may be harmful to smaller models. This insight motivates the development of Over-Tokenized Transformers, which decouple the encoding and decoding vocabularies to achieve greater flexibility and performance gains.</p><p>Specifically, we introduce Over-Encoding(OE), which utilizes large hierarchical n-gram input vocabulary. As shown in Figure <ref type="figure">1</ref>, our method improves the model scalability by a significant margin. Increasing the input vocabulary size by 128×, our 400M model matches the training loss of a 1B baseline with no additional training cost (see left panel). More interestingly, we observe a strong log-linear relationship between the input vocabulary size and model performance, i.e., exponentially increasing the input vocabulary size consistently results in a linear decrease in loss (see right panel). These findings represent a new dimension in scaling laws and also indicate embedding parameters as a new scalable sparse dimension. Moreover, we propose the concept of Over-Decoding(OD), which leverages larger output vocabulary to provide more fine-grained supervision.</p><p>We typically treat multi-token prediction methods <ref type="bibr" target="#b5">(Gloeckle et al., 2024;</ref><ref type="bibr" target="#b3">DeepSeek-AI et al., 2024)</ref> as approximations of OD. Combining OE and OD together, we build Over-Tokenized Transformer, which shows greater potential than apply either OE or OD solely.</p><p>Although introducing a large amount of embedding parameters for OE, the training and inference cost barely increases, as embedding parameters are used in an extremely sparse manner. In practice, we propose efficient engineering solutions to mitigate the computational and memory challenges introduced by large vocabularies, resulting an additional training overhead less than 5%.</p><p>Through this work, we aim to bridge the gap between tokenizer design and model scaling, positioning tokenization as a critical factor in the continued evolution of large language models.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="2.">Related Work</head></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="2.1.">Tokenization Design</head><p>Tokenization is a critical component in the development of large language models (LLMs). Established methods such as Byte-Pair Encoding (BPE) <ref type="bibr" target="#b14">(Sennrich, 2015)</ref> and Unigram Language Models <ref type="bibr" target="#b8">(Kudo, 2018)</ref> have been widely adopted to create subword vocabularies that balance sequence length and vocabulary size. Recently, alternative paradigms have been proposed to address the computational inefficiencies of byte-level models <ref type="bibr" target="#b17">(Xue et al., 2022;</ref><ref type="bibr" target="#b18">Yu et al., 2023)</ref>. For instance, MegaByte <ref type="bibr" target="#b18">(Yu et al., 2023)</ref> combines byte-level modeling with patching by first predicting patches and then predicting bytes within each patch, improving processing efficiency. However, its performance at scale remains inferior to that of tokenizer-based approaches. Building on this concept, In this work, our findings suggest that applying n-gram patching on top of BPE expands the vocabulary size, improving model capability, while BLT <ref type="bibr" target="#b12">(Pagnoni et al., 2024)</ref> also has the same finding on byte-level models.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="2.2.">Scaling Vocabulary</head><p>Recent empirical studies have systematically investigated the relationship between vocabulary size and model performance. <ref type="bibr" target="#b16">(Tao et al., 2024)</ref> demonstrates that expanded vocabularies enhance both training efficiency and model performance, particularly in larger architectures. Building on these findings, we argue that vocabulary size research should separately consider embedding (input) and unembedding (output). While embedding incurs only lookup costs, unembedding introduces computational costs that scale with Training Step 0.0 0.2 0.4 0.6 0.8 1.0 Generation Accuracy 1-gram GPT 85M 1-gram GPT 2.4M 3-gram GPT 85M 3-gram GPT 2.4M Training Step 0.0 0.2 0.4 0.6 0.8 1.0 Generation Accuracy 1-gram GPT 85M 3-gram Input 85M 3-gram Output 85M Figure 2: Performance comparison for models trained on CFG data. The left panel compares 1-gram and 3-gram tokenizers, showing that 3-gram improves larger (85M parameters) models but harms smaller (2.4M parameters) ones. The right panel examines 3-gram usage in encoders and decoders, revealing consistent gains with 3-gram encoders regardless of model size, while 3-gram decoders degrade performance in smaller models.</p><p>vocabulary size. More importantly, we find that input and output vocabularies exhibit distinct scaling behaviors, underscoring the need for independent scaling strategies to optimize model design.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="2.3.">Multi-Token Prediction and n-Gram Modeling</head><p>Multi-Token Prediction (MTP) <ref type="bibr" target="#b5">(Gloeckle et al., 2024)</ref> has advanced the field of next-token prediction through the introduction of auxiliary objectives for simultaneous multi-token prediction. This methodology shares fundamental principles with our n-gram modeling framework, where multi-token prediction can be theoretically formulated as an approximation of n-gram unembedding utilization (over-decoded models). In our work, we further compare the effectiveness of MTP and over-encoded models, demonstrating that the performance gains from MTP and over-encoded models are complementary and can be combined to achieve even greater improvements.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.">Method</head></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.1.">Insights from Synthetic Experiments</head><p>We initiate our research on tokenizers on a synthetic language modeling task to investigate their impact on model performance.</p><p>Following the experimental setup in the previous study <ref type="bibr" target="#b0">(Allen-Zhu &amp; Li, 2024)</ref>, we employ a Context-Free Grammar (CFG) as the target language to generate sequences composed of 3 distinct characters, with sequence lengths up to 729. With this setup, the ground-truth language distribution is completely known, enabling precise evaluation of the language models. We train GPT-2 mod- Note that 2-gram decoding only preserves the predicted next 1 token though next 2 is predicted, which keeps inference cost identical to the vanilla model.</p><p>els <ref type="bibr" target="#b13">(Radford et al., 2019)</ref> of various sizes on CFG-generated samples using next-token prediction loss and evaluate them based on the accuracy of model-generated sequences, which measures the proportion of valid generations. Additional details regarding the experimental setup can be found in Appendix B.2.</p><p>Our first experiment aims to compare the performance of language models using tokenizers with varying levels of granularity. A baseline tokenizer constructs a vocabulary using the three terminal characters defined by the CFG, tokenizing sentences character-wisely, which we refer as a 1gram tokenizer. We further define n-gram tokenizers, whose vocabulary comprises all 3 n possible combinations of n sequential characters. We train both larger and smaller GPT-2 models using 1-gram and 3-gram tokenizers, respectively.</p><p>As illustrated in the left panel of Figure <ref type="figure">2</ref>, we observe that a larger tokenizer improves the performance of larger models but negatively impacts smaller models. Notably, larger tokenizers result in shorter training sequences, which significantly reduces training cost. Thus, training larger models with a 3-gram tokenizer not only reduces training costs but also enhances model performance. An intuitive insight is that larger models benefit from larger vocabularies, improving both training efficiency and performance. This finding is also supported by previous studies <ref type="bibr" target="#b16">(Tao et al., 2024)</ref>.</p><p>To decouple the influences of enlarging input and output vocabularies, we separately introduce n-gram encoding and decoding models, as illustrated in Figure <ref type="figure" target="#fig_0">3</ref>. To begin, the raw text is tokenized character-wisely via 1-gram tokenizer.</p><p>In the n-gram encoding model, input tokens are converted to n-gram tokens at the input layer, making a large input vocabulary of size 3 n , and the unembedding layer remains 1-gram, predicting next one character. In the n-gram decoding model, the input remains 1-gram tokens while the target labels (i.e., the next token) are converted to n-gram labels, resulting a fine-grained classification head that predicts the conditional joint distribution of next n tokens. Note that the training sequence length remains unchanged and matches the length produced by the 1-gram tokenizer for both variants.</p><p>To maintain comparable inference costs, the n-gram output model does not generate n tokens simultaneously. Instead, it samples an n-gram prediction but preserves the next 1 token only, disregarding extra token predictions during inference.</p><p>The results for n = 3 of the two variants are shown in the right panel of Figure <ref type="figure">2</ref>. We find that the two models exhibit different behaviors. The 3-gram encoding model consistently enhances performance across all model sizes. However, the 3-gram decoding model improves performance for larger models but degrades it for smaller ones.</p><p>We conclude that, when using large tokenizers, the large input vocabulary is always positive while the large output vocabulary can be negative for smaller models. We hypothesize that the difference lies in their respective roles: the input embedding is responsible for encoding the context into feature embeddings, where a larger vocabulary enhances the representational capacity of the feature mapping, thereby positively impacting the model. In contrast, the output vocabulary determines the granularity of the prediction task.</p><p>A larger output vocabulary implies more fine-grained supervision signals, which can either be beneficial (e.g., for large models prone to overfitting) or burdensome (e.g., for smaller models suffering from severe underfitting). Motivated by this observation, we extend our exploration to over-tokenized transformers in real-world natural language modeling.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.2.">Over-Tokenized Transformer</head><p>Above all, we use a standard natural language tokenizer as the base tokenizer. Then, the challenge arises: if the base tokenizer has a vocabulary size of V , which is usually as large as 10 5 , the n-gram vocabulary with a size of V n becomes exceedingly large and impractical. To address this, we propose approximating the large embedding table through a series of matrix decompositions.</p><p>Given a sequence of input ids x 1 , x 2 , . . . , x t from the base tokenizer, we define the n-gram input token x</p><formula xml:id="formula_0">(-n) i</formula><p>as follows:</p><formula xml:id="formula_1">x (-n) i = f (x i , x i-1 , . . . , x i-n+1 ),<label>(1)</label></formula><p>where f (z 1 , ..., z n ) is an index mapping function, and outof-range indices are padded with zero tokens, i.e., x i = 0, ∀i ̸ ∈ [1, t]. One intuitive design treats (z 1 , . . . , z n ) as a p-base number, defining f as</p><formula xml:id="formula_2">f (z 1 , ..., z n ) = n i=1 z i p i-1 ,<label>(2)</label></formula><p>where p ≥ V ensures that f is a bijection. Typically, p is set to V to keep the range of f as compact as possible. Notably, x</p><p>(-1) i = x i corresponds to the standard transformer input.</p><p>General n-gram Embedder. The key to designing an flexible n-gram embedder module is to make the vocabulary size configurable. We achieve this efficiently using a simple tiled matrix parameterization approach. Specifically, the tiled matrix parameterization extends an m × d embedding table into a V n × d embedding table by tiling, where m is a configurable size. In practice, the lookup process is straightforward: an input token x (n) is mapped by taking its modulus with respect to m. In summary, our n-gram embedder is formalized as</p><formula xml:id="formula_3">h = E x (n) % m , (<label>3</label></formula><formula xml:id="formula_4">)</formula><p>where h is the output embedding, E ∈ R m×d is the embedding matrix, and % is the modulo operation. We denote this n-gram m × d embedder as E m×d (x (n) ).</p><p>Over-Encoding(OE). We find a hierarchical encoding paradigm to be highly effective. Specifically, we compute the input embedding to the GPT model as the sum of 1-, 2-, ..., n-gram embeddings. Additionally, we observe further benefits from using smaller embedding dimensions. An embedder E m×d n can be sliced into k low-rank decomposed embedders, represented as:</p><formula xml:id="formula_5">E m×d|k (x (-n) ) = k i=1 E m× d k i (x (-n) )W i ,<label>(4)</label></formula><p>where W i ∈ R d k ×d model projects the embedding vector to match the model dimension. Using the same number of embedding parameters and incurring only minimal additional cost through k dense matrices W i ∈ R d k ×d model , this approach significantly enhances performance.</p><p>Overall, the over-encoding process maps an input token to an embedding as follows:</p><formula xml:id="formula_6">OE(x) = E V ×d (x (-1) ) + n i=2 E m× d n |k (x (-n) ),<label>(5)</label></formula><p>where the 1-gram embedding E V ×d (x (-1) ) is implemented consistently with the original Transformer to align with the tied weight design. Generally, m is set to a value much larger than V , and the model performance is observed to improve consistently as m increases.</p><p>Notably, for multiple embedders with m rows, minor adjustments (e.g., replacing m with m + 2) are made to ensure each embedder has a unique mapping. This increases the combinatorial capacity of the embedding; otherwise, the slice trick would make no difference. A detailed pytorchlike implementation for OE can be found in Appendix A.</p><p>We also acknowledge a concurrent work, BLT <ref type="bibr" target="#b12">(Pagnoni et al., 2024)</ref>, which employs a similar n-gram hashing embedding strategy for byte-level tokens.</p><p>Over-Decoding(OD). Based on the conclusions from our CFG experiments, decoding additional tokens is only effective for sufficiently large models. As a matter of fact, previous researches on Multi-Token Prediction (MTP) <ref type="bibr" target="#b5">(Gloeckle et al., 2024)</ref> are typically approximations of over-decoding, and share the same conclusion that only large models benefit from future token predictions. Generally, MTP-like methods are viewed as over-decoding in this paper. In addition, we explore other solutions for over-decoding in Appendix C for reference.</p><p>Over-Tokenized Transformer(OT). Integrating overencoding and over-decoding, we obtain over-tokenized transformer. Specifically, we focus on the conditional recursive form of MTP proposed in DeepSeek V3 <ref type="bibr" target="#b3">(DeepSeek-AI et al., 2024)</ref>, which we refer as MTP-DS. In this formulation, MTP no longer predicts the next few tokens in parallel but instead predicts them sequentially. For the n-th head, the embedding of the next (n -1)-th token is concatenated to the layer input as a condition for the next n-th token prediction.</p><p>Under MTP-DS architecture, over-encoding enhances the representation capacity of token embeddings and directly participates future token predictions. On the one hand, the future token prediction tasks become easier to learn. On the other hand, the over-encoding can be trained more sufficiently. With these advantages, the integration of the two methods yields greater benefits, even on relatively smaller models.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.3.">Engineering Challenges and Solutions</head><p>The over-encoding constructs a very large input vocabulary.</p><p>In theory, as the embeddings are sparsely accessed based on token ids, enlarging vocabulary should barely impact the training or inference cost. However, the large embedding parameters can place substantial memory pressure on GPUs. Furthermore, when parameter sharding strategies, such as FSDP <ref type="bibr" target="#b20">(Zhao et al., 2023)</ref>, are applied during training, the communication of these sparse parameters can severely degrade training efficiency, further constraining the choice of m (the vocabulary size) to smaller values.</p><p>To mitigate this issue, we recommend using tensor paral-lelism specifically for the over-encoding embedding layer to reduce communication overhead. The embedding table is row-wise sharded across all data-parallel (DP) ranks. For a given input, the token is sent to the corresponding DP rank that holds its embedding, queried for the embedding vector, and then the resulting embedding is sent back to the original DP rank. This process involves two all-to-all communications during the forward pass and one all-to-all communication during the backward pass, resulting in a total communication volume significantly lower than that of FSDP.</p><p>We implement this optimization and find that training an over-encoded model with m = 10 7 on FSDP reduces throughput by less than 5%. In contrast, without this optimization, FSDP experiences a 25% slowdown and easily runs out of memory for vocabulary sizes exceeding m = 5 × 10 6 .</p><p>We believe that the current implementation still does not represent the limit of over-encoding performance optimization. Its greatest advantage is that the vocabulary input is decoupled from the model architecture. This decoupling allows the embedding lookup for the next micro-batch to be performed in advance. For example, we can design a dedicated embedding lookup stage in a pipeline-parallel training framework, which overlaps the communication required for embedding lookups with the transformer forward of the current micro-batch. This strategy would maintain training throughput without any performance degradation. Additionally, under this approach, the over-encoding parameters could be offloaded to the CPU, completely alleviating GPU memory pressure. Notably, similar training frameworks have already been implemented <ref type="bibr" target="#b4">(Fang et al., 2022;</ref><ref type="bibr" target="#b9">Li et al., 2023)</ref>. Over-Encoding could leverage these designs to improve model performance with minimal additional cost.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4.">Experiments</head><p>Implementation. Our experiments focus on large language modeling tasks and basically follow OLMo series works. We maintain the training configuration of baseline model, replacing the word embedding with over-encoding technique. The original tokenizer used in baseline models is preserved as the base tokenizer in our method. The experiments are run with engineering optimized implementation. We refer OE-m to over-encoded models with m × d model embedding parameters in total. Typically, we implement with n = 3, m = 1.28 × 10 7 , i.e. OE-12.8M, and variate k according to d model , making d model nk ≈ 256.</p><p>Metrics. We report the average perplexities (PPL) and losses on the c4 en-validation dataset as the 'Eval PPL' or 'Eval Loss', along with the metrics for zero-shot evaluation on downstream benchmarks. We observe signif-icant volatility in the zero-shot performance indicators for the datasets. For more reliable and consistent results, we mainly concern five stable tasks in our analysis: MMLU-Var, Hellaswag, ARC-Challenge, ARC-Easy and PIQA. Detailed descriptions on these tasks and more comprehensive evaluations can be found in Appendix B.</p><p>4.1. Over-Encoding Scaling Trend Dense Models We follow the experimental setup described in OLMo2 (OLMo et al., 2024), which is currently the state-of-the-art fully open model. We maintain most of the training configurations, but modify the architecture to obtain models with 151M, 400M and 1B dense parameters, which is denoted by OLMo2-151M, OLMo2-400M and OLMo2-1B, respectively. We train OLMo2-151M and OLMo2-400M models with 400B tokens, and OLMo2-1B with 1T tokens. In addition to OE-12.8M models, we also run experiments for OE-1.2M to offer a rough scaling trend on vocabulary size. The result is ploted in Figure 1. From comparisons across model scales, OE models hold consistent improvements from baseline models. Specifically, the OE-12.8M model achieves comparable performance to a baseline model that is 2.5 times larger in model scale (comparing the 400M OE model with the 1B baseline model). Moreover, the vocabulary size of OE-12.8M, OE-1.2M, and the baseline model (vocabulary size V = 100278) exhibits exponential growth, while their scaling curves maintain approximately equal spacing. This observation suggests a log-linear relationship between vocabulary size and model performance, which we further validate in the ablation studies. We present the training dynamics for OLMo2-1B models in Figure 4. Compared to the baseline model, OE demonstrates consistently increasing performance gains, with an improvement of 0.12 at 400B tokens that expands to 0.14 at 1T tokens. From the perspective of convergence acceleration, training loss achieves a remarkable 5.7× speedup. Furthermore, in terms of downstream evaluation, OE exhibits substantial acceleration, achieving 3.2×, 3.0×, 2.6×, 3.1× and 3.9× speedups on MMLU-Var, Hellaswag, ARC-Challenge, ARC-Easy and PIQA, respectively. A thorough evaluation is ploted in Appendix B.3. MoE Models Sparse Mixture-of-Experts (MoE) models (Shazeer et al., 2017) have also achieved great success in recent years. These models aim to introduce sparse Feed-Forward Network (FFN) modules, enabling the addition of a large number of sparse parameters to improve model performance while keeping the same number of activated parameters, making the training and inference costs unchanged. Similarly, we evaluate the effectiveness of OE under the MoE architecture. 0 200 400 600 800 1000 Training Tokens(B) 2.6 2.8 3.0 3.2 5.7x Training Loss Baseline OE-12.8M 0 200 400 600 800 1000 Training Tokens(B) 0.28 0.30 0.32 0.34 0.36 3.2x MMLU-Var Baseline OE-12.8M 0 200 400 600 800 1000 Training Tokens(B) 0.35 0.40 0.45 0.50 0.55 0.60 0.65 3.0x Hellaswag Baseline OE-12.8M 0 200 400 600 800 1000 Training Tokens(B) 0.50 0.55 0.60 0.65 0.70 2.6x ARC-Challenge Baseline OE-12.8M 0 200 400 600 800 1000 Training Tokens(B) 0.250 0.275 0.300 0.325 0.350 0.375 0.400 3.1x ARC-Easy Baseline OE-12.8M 0 200 400 600 800 1000 Training Tokens(B) 0.66 0.68 0.70 0.72 0.74 3.9x PIQA Baseline OE-12.8M Figure 4: Training curves for OE-12.8M and baseline model on OLMo2-1B. The metrics are smoothed via exponential moving average with weight 0.99 for loss and 0.9 for downstream tasks. We observe significant convergence acceleration for the OE model: 5.7× on loss, 3.2× on MMLU-Var, 3.0× on Hellaswag, 2.6× on ARC-Challenge, 3.1× on ARC-Easy and 3.9× on PIQA. Table 1: Performance of Over-Encoding on MoE architecture with 500B tokens' training. The column 'Emb. P.' represents 'Embedding Parameters'. 'Downstream' stands for the average of MMLU-Var, Hellaswag, ARC-Challenge, ARC-Easy, and PIQA. For '+OE' rows, we provide metric difference with blue labels. Model # Emb. P. Loss↓ Downstream↑ OLMoE-1.3B 51M 2.554 0.510 +OE-12.8M 13.1B 2.472 -0.082 0.524 +0.014 OLMoE-7B 102M 2.305 0.601 +OE-12.8M 26.3B 2.229 -0.076 0.608 +0.007</p><p>We follow the experimental setup described by OL-MoE <ref type="bibr" target="#b10">(Muennighoff et al., 2024)</ref>. In the experiments, OLMoE-1.3B refers to a model with 260M active parameters and a total of 1.3B parameters, while OLMoE-7B refers to models with 1.3B active parameters and a total of 7B parameters. In this setting, the base tokenizer has vocabulary size V = 50280, and we train 500B tokens for all these models.</p><p>The results are shown in Table <ref type="table">1</ref>. We first compare the training loss. At two different model scales, OE-12.8M achieves approximately the same improvement in loss compared to the baseline, despite decreases in the proportion of embed-ding parameters as the model scales up (i.e., 10× dense parameters for OLMoE-1.3B and 3.7× for OLMoE-7B). However, in terms of downstream evaluation metrics, the performance improvement of OE diminishes. We hypothesize that this reduction is related to the sparse parameters utilized in the MoE architecture, which may overlap with the benefits provided by sparse embedding parameters.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4.2.">Ablation Study</head><p>We conduct ablation study basing on the setup of OLMoE-1.3B. To save computational resources, for ablation variants that are non-promising, we only train for 50B tokens. Otherwise, we train for 500B tokens to obtain solid conclusions.</p><p>Vocabulary Size Scaling. We first analyze the scaling behavior of over-encoding based. Specifically, we use the simplest over-encoding setup with fixed n = 2 and k = 1, while varying the value of m. The size of m ranges from 20K to 12.8M. We train on 500B tokens and evaluate the model performance. As shown in the figure, the experimental results reveal a logarithmic linear relationship between the training loss and m: for every 4× increase in m, the training loss decreases by 0.015. Finally, we extracted the loss at 500B tokens and plotted the scaling curve shown in Figure <ref type="figure" target="#fig_1">5</ref>. Here, the input vocabulary size is defined as the sum of the sizes of the 1-gram and 2-gram vocabularies, i.e.,  What's Good for OE. We conducted extensive ablation studies on different configurations for the over-encoding. To ensure fairness, all configurations have the same number of embedding parameters. The results are shown in the Table <ref type="table" target="#tab_4">2</ref>.</p><p>For simplification, we denote C-i as configuration i in the table.</p><p>We first validate that slicing the embedding table along the d dimension yields further gains (comparing C-2, C-4, and C-5). Then, C-3 is constructed as a baseline, where we keep using one embedding table but scale up m and scale down d. Such configuration also improves baseline but underperforms C-4 and C-5. We attribute this to the reduced memory access: configuration 4 accesses 2d model embedding parameters while configuration 3 accesses only 1.5d model per token. Moreover, we validate the benefits of enlarging n from 2 to 3 by comparing C-5 and C-6. With longer-range dependencies introduced, C-6 further improves performance. Lastly, these tricks are then applied on a larger vocabulary with m = 12.8M (comparing C-7 and C-8). We observe even larger gains comparing to experiments with m = 3.2M. Note that C-6 and C-8 meets our default OE implementation, i.e., OE-3.2M and OE-12.8M respectively, as described in (5).</p><p>What's Bad for OE. We also identify certain configurations that result in significant performance degradation and First, we validate the importance of hierarchical multi-gram tokens. As shown in Table <ref type="table" target="#tab_5">3</ref>, removing the 1-gram vocabulary and using only the 2-gram vocabulary leads to a significant performance drop. This may be due to conflicts in the lookup results of the 2-gram table when 1-gram information is absent, making it difficult for the model to disambiguate the current semantics. On the other hand, skipping the 2-gram tokens and using only 1-gram and 3-gram tokens still shows gains over the baseline but underperforms the proposed model using 1-, 2-, and 3-gram tokens together. Overall, we hypothesize that the model benefits from hierarchical encoding to handle conflicting entries in the embedding table, thereby accurately resolving semantics.</p><p>Another supporting observation is that when we deliberately introduce more encoding conflicts (by setting m to be an exact multiple of V ), the gains of over-encoding are significantly reduced, as shown in Table <ref type="table" target="#tab_6">4</ref>. This observation also suggests that m should set to a value coprime with V to avoid such degeneration.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4.3.">Over-Tokenized Transformer</head><p>In this section, we verify the effectiveness of over-tokenized transformer. We conduct the experiments on OLMoE-1.3B with 500B tokens' training. As MTP is less efficient for smaller models, our implementation has only one extra head predicting the next 2 token, and set the weight 0.1 for future token loss. Then, the over-tokenized transformer is constructed, combining OE-12.8M with MTP-DS, which we refer as OT-12.8M.</p><p>Results are shown in Table <ref type="table" target="#tab_7">5</ref>. Limited by model capacity, MTP shows no improvement, as well as its stronger verison MTP-DS. However, with over-encoding plugged, MTP-DS presents greater power. OT further improves the downstream metric by 1. 3% compared to OE, although it slightly sacrifices the loss gains of OE. The detailed metrics </p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="5.">Conclusion</head><p>In this work, we have explored over-tokenized transformer for language modeling. By systematically analyzing the impact of token granularity and vocabulary size across models of varying scales, we uncover an important scaling phenomena that inspires tokenizer design. Our findings reveal that larger input vocabularies consistently enhance model performance, no matter model scales, while larger output vocabulary can be harmful and difficult to learn for smaller models. These insights have significant implications for the continued scaling of LLMs. With such inspirations, we introduce over-encoding technique that scales up the input vocabulary via multi-gram token embeddings. Moreover, we develop over-tokenized transformer combining over-encoding and multi-token prediction. Extensive experiments validated the effectiveness of our methods, showcasing significant gains in model performance. Notably, we demonstrated a strong log-linear relationship between input vocabulary size and training loss, highlighting a new dimension in the scaling laws of LLMs. These results emphasize the importance of tokenizer design as a key driver of advancements in language modeling. In summary, this work bridges the gap between tokenizer design and model scaling, positioning tokenization as a critical factor in the development of next-generation language models. We believe that the proposed Over-Tokenized Transformers framework and the insights derived from our study will inspire further research into tokenization strategies and their role in scaling LLMs efficiently and effectively.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>A. Pytorch Implementation</head><p>We provide a pytorch-like pseudocode for Over-Encoding in Algorithm 1.</p><p>Algorithm 1 Over-Encoding in a PyTorch-like style. We give a detailed description for the major benchmarks used in our experiments.</p><p>piqa <ref type="bibr" target="#b1">(Bisk et al., 2020)</ref>: a benchmark designed to evaluate models on commonsense physical reasoning. It tests the ability of models to reason about everyday physical interactions and affordances, requiring both textual understanding and physical intuition to solve tasks effectively.</p><p>hellaswag <ref type="bibr" target="#b19">(Zellers et al., 2019)</ref>: a dataset that focuses on testing commonsense reasoning and the ability to predict the most plausible continuation of a given scenario. It is considered a challenging benchmark due to adversarially filtered incorrect options aimed at confusing models. arc easy <ref type="bibr" target="#b2">(Clark et al., 2018)</ref>: a subset of the AI2 Reasoning Challenge (ARC) benchmark that contains grade-school-level multiple-choice questions. The questions in this subset are relatively straightforward and assess basic scientific knowledge and reasoning. arc challenge <ref type="bibr" target="#b2">(Clark et al., 2018)</ref>: the more difficult subset of the ARC benchmark, comprising scientifically challenging multiple-choice questions that require advanced reasoning, background knowledge, and problem-solving skills beyond basic memorization. mmlu <ref type="bibr">(Hendrycks et al., 2021)</ref> (Massive Multitask Language Understanding): a large-scale benchmark designed to test models across a wide range of academic and professional fields. It includes multiple-choice questions from diverse domains, such as humanities, STEM, and social sciences, aiming to measure comprehensive language understanding and reasoning capabilities.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>B.2. CFG Experiments</head><p>Detailed Setup. We obtain the grammar following <ref type="bibr" target="#b0">(Allen-Zhu &amp; Li, 2024)</ref> with the configuration named cfg3f, as illustrated in Figure <ref type="figure">6</ref>. 20 million sentences are sampled from the grammar, serving as a fixed training dataset. We use standard GPT2 architecture, where the larger model uses a hidden size of 768 and the smaller model 128. Both larger and smaller models have 12 transformer layers, as depth is discovered essential to complex CFG modeling <ref type="bibr" target="#b0">(Allen-Zhu &amp; Li, 2024)</ref>. We use AdamW optimizer with β = (0.9, 0.98), weight decay 0.1, initial learning rate 3e -4 and batch size 64 × 8. The models are trained with cosine learning rate scheduler for 10 epoch. To evaluate model performance, we 10,000 sample sentences from the trained model auto-regressively using the raw next token probability. The sentences are then verified by the ground-truth grammar, and the ratio of accurate samples is denoted as generation accuracy.</p><p>Implementation of n-gram tokenization or over-tokenization. Though we mentioned a 3 n -sized vocabulary for n-gram tokenization or n-gram over-tokenization in the main text, the actual vocabulary should be 2 + n i=1 3 i . The bias 2 stands for the BOS(Begin Of Sequence) and EOS(End of Sequence) token and extra 3 i terms are for the corner cases where the sequence length may not be divisible by n. We refer to 3 n -sized vocabulary in the main text primarily to emphasize the order of magnitude.</p><p>Hierarchical n-gram input further improves. We experiment with introducing hierarchical n-gram inputs in the CFG setting. Initially, we use a single V n -size n-gram embedding table to handle the model's input. To consider hierarchical n-gram modeling, we add n -1 additional embedding tables, where the i-th table has a size of V i , and use i-gram token as input. Notably, the parameters of these n -1 embedding tables can be fully merged into the n-gram embedding table, so the effective parameter count does not increase. Instead, this process re-parameterizes the embedding table to decompose parameters hierarchically. The experimental results, shown in Figure <ref type="figure">7(a)</ref>, indicate that the model with hierarchically decomposed 3-gram inputs outperforms the model with naive 3-gram inputs. This further validates that even for models with a complete n-gram vocabulary (rather than approximated through matrix decomposition), hierarchically modeling multi-granularity tokens remains highly effective.</p><p>Ablation on base tokenizers. We replaced the base tokenizer to investigate whether further increasing the input vocabulary size could lead to additional improvements. Specifically, we expanded the input vocabulary for 2-gram and 3-gram base tokenizers to 2-gram inputs with vocabulary sizes of (3 2 ) 2 = 81 and (3 3 ) 2 = 729, respectively. The experimental results, shown in Figure <ref type="figure">7</ref>(b) and Figure <ref type="figure">7</ref>(c), demonstrate that increasing the input vocabulary consistently improves model performance. Another observation is that, when using the 3-gram base tokenizer, the benefit of increased convergence speed from 2-gram inputs becomes notably smaller. We hypothesize that this is related to the "slow-start" nature of large vocabularies. Similar observations have been made in natural language processing, where larger input vocabularies require more training tokens to realize their expected benefits.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>B.3. OLMo2 Experiments</head><p>Detailed metrics. We present a detailed training dynamics comparison for models on OLMo2-1B in Figure <ref type="figure">11</ref>. OE achieves significant improvements across most metrics, while maintaining at least parity on the remaining ones.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>B.4. OLMoE Experiments</head><p>Loss curves for vocabulary scaling. We present the loss curves and loss difference curves in Figure <ref type="figure">9</ref>. The larger input vocabulary requires longer training to obtain all its gains.</p><p>Loss curves for OLMoE-7B models. We present the loss curves for OLMoE-7B in Figure <ref type="figure" target="#fig_4">10</ref>. The gains of OE have not fully converged in 500B tokens' training. Comparing to the experiments on OLMoE-1.3B, it is likely that larger models require more training to fully leverage the power of over-encoding.</p><p>Detailed metrics for OE. We present a detailed training dynamics comparison for OE-12.8M and baseline model in Figure <ref type="figure">11</ref>(OLMoE-1.3B) and Figure <ref type="figure" target="#fig_5">12</ref>(OLMoE-7B). Our model has significant improvements on most evaluation metrics, and has at least comparable performance for the rest.</p><p>Detailed metrics for OT. We present detailed metrics comparing OT-12.8M and OE-12.8M on OLMoE-1.3B in Figure ??. OT is not always better than OE, e.g., Winogrande and Social IQA.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>C. Over-Decoding</head><p>Method. From previous experiments on synthetic data, we know that an excessively large output vocabulary is detrimental to small models. Therefore, when designing an over-decoding method based on natural language, we aim to leverage the advantages of n-gram prediction while keeping the decoding vocabulary size as small as possible. We found that product decomposition provides a promising solution to this problem.</p><p>For the n-gram decoding vocabulary, the product embedding decomposition parameterizes a V n -sized embedding table using n separate V -sized embedding tables, formulated as:</p><formula xml:id="formula_7">ẽx = n j=1 E V ×d j (x/V j-1 ) = n j=1 E j (z j ),<label>(6)</label></formula><p>where ẽx is the reparameterized 2-gram embedding, and z 1 , . . . , z n correspond to the reverse mapping of the function f given x, as described in 2. Then, during training, we compute the next n-gram token prediction loss on the reparameterized embeddings {ẽ i }:</p><formula xml:id="formula_8">L = CE( ĥ Ẽ⊤ , x (+n) ) = n j=1 CE( ĥE ⊤ j , z j ),<label>(7)</label></formula><p>where ĥ represents the output hidden state, CE(•, •) denotes the cross-entropy loss, and the loss decomposition is detailed later.</p><p>A notable challenge is that the decoding embedding is densely activated, making the unembedding layer computationally expensive, particularly for smaller models. To address this, we optionally apply a low-rank decomposition by projecting the last hidden state to a smaller dimension. Additionally, we reweigh these losses using a set of hyperparameters λ 1 , . . . , λ n , resulting in the final training loss:</p><formula xml:id="formula_9">L = n j=1 λ j CE( ĥW j E ⊤ j , z j ),<label>(8)</label></formula><p>where W j is the optional projection matrix corresponding to the j-th embedding table. We typically set λ 1 = 1 and ∀i &gt; 1, λ i ≤ 1. A pytorch-like implementation is provided in Algorithm 2.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>Derivation of Loss Decomposition</head><p>We provide a detailed derivation of the loss decomposition in (7). Recall that {ẽ i } are the n-gram token embedding table. Each of them is reparameterized by ẽi = n j=1 E j (z j ) with i = j z j V j . We denote</p><p>0 250 500 750 1000 10 15 20 25 30 35 40 training ppl Baseline OE-12.8M 0 250 500 750 1000 2.8 3.0 3.2 3.4 3.6 3.8 4.0 c4 en val. loss Baseline OE-12.8M 0 250 500 750 1000 20 30 40 50 c4 en val. ppl Baseline OE-12.8M 0 250 500 750 1000 2.75 3.00 3.25 3.50 3.75 4.00 dolma books val. loss Baseline OE-12.8M 0 250 500 750 1000 3.0 3.2 3.4 3.6 3.8 4.0 dolma cc val. loss Baseline OE-12.8M 0 250 500 750 1000 2.2 2.4 2.6 2.8 3.0 3.2 3.4 dolma pes2o val. loss Baseline OE-12.8M 0 250 500 750 1000 3.2 3.4 3.6 3.8 4.0 dolma reddit val. loss Baseline OE-12.8M 0 250 500 750 1000 1.25 1.50 1.75 2.00 2.25 2.50 2.75 dolma stack val. loss Baseline OE-12.8M 0 250 500 750 1000 2.25 2.50 2.75 3.00 3.25 3.50 3.75 dolma wiki val. loss Baseline OE-12.8M 0 250 500 750 1000 2.75 3.00 3.25 3.50 3.75 4.00 4.25 ice val. loss Baseline OE-12.8M 0 250 500 750 1000 3.2 3.4 3.6 3.8 4.0 m2d2-s2orc val. loss Baseline OE-12.8M 0 250 500 750 1000 2.25 2.50 2.75 3.00 3.25 3.50 pile val. loss Baseline OE-12.8M 0 250 500 750 1000 2.50 2.75 3.00 3.25 3.50 3.75 4.00 wikitext 103 val. loss Baseline OE-12.8M 0 250 500 750 1000 0.24 0.26 0.28 0.30 0.32 0.34 MMLU stem Acc. Baseline OE-12.8M 0 250 500 750 1000 0.24 0.26 0.28 0.30 0.32 0.34 MMLU humanities Acc. Baseline OE-12.8M 0 250 500 750 1000 0.250 0.275 0.300 0.325 0.350 0.375 MMLU social sci Acc. Baseline OE-12.8M 0 250 500 750 1000 0.30 0.35 0.40 0.45 0.50 MMLU other Acc. Baseline OE-12.8M 0 250 500 750 1000 0.3 0.4 0.5 0.6 hellaswag Acc. Baseline OE-12.8M 0 250 500 750 1000 0.6 0.7 0.8 0.9 sciq Acc. Baseline OE-12.8M 0 250 500 750 1000 0.25 0.30 0.35 0.40 arc Challenge Acc. Baseline OE-12.8M 0 250 500 750 1000 0.4 0.5 0.6 0.7 arc easy Acc. Baseline OE-12.8M 0 250 500 750 1000 0.60 0.65 0.70 0.75 piqa Acc. Baseline OE-12.8M 0 250 500 750 1000 0.475 0.500 0.525 0.550 0.575 0.600 0.625 winogrande Acc. Baseline OE-12.8M 0 250 500 750 1000 0.275 0.300 0.325 0.350 0.375 0.400 0.425 openbook_qa Acc. Baseline OE-12.8M 0 250 500 750 1000 0.525 0.550 0.575 0.600 0.625 0.650 boolq Acc. Baseline OE-12.8M 0 250 500 750 1000 0.60 0.65 0.70 0.75 0.80 0.85 copa Acc. Baseline OE-12.8M 0 250 500 750 1000 0.30 0.35 0.40 0.45 commonsense qa Acc. Baseline OE-12.8M 0 250 500 750 1000 0.42 0.44 0.46 0.48 social iqa Acc. Baseline OE-12.8M Figure 8: All metrics for OLMo2-1B, comparing OE-12.8M and baseline. 0 100 200 300 400 500 Training Tokens(B) 2.5 2.6 2.7 2.8 2.9 3.0 3.1 3.2 Training Loss Baseline OE-0.2M OE-0.8M OE-3.2M OE-12.8M (a) Loss Curves 0 100 200 300 400 500 Training Tokens(B) -0.06 -0.05 -0.04 -0.03 -0.02 -0.01 0.00 Training Loss Diff Baseline OE-0.2M OE-0.8M OE-3.2M OE-12.8M (b) Loss Diff Figure 9: Loss curves for vocabulary scaling experiments, where OE models use the setting of n = 2, k = 1. The curves are smoothed with exponential moving average of weight 0.99. 0 100 200 300 400 500 Training Tokens(B) 2.2 2.3 2.4 2.5 2.6 2.7 2.8 2.9 3.0 Training Loss Baseline OE-12.8M 3.6 3.8 dolma cc val. loss Baseline OE-12.8M 0 100 200 300 400 500 2.4 2.6 2.8 3.0 3.2 3.4 dolma pes2o val. loss Baseline OE-12.8M 0 100 200 300 400 500 3.2 3.4 3.6 3.8 dolma reddit val. loss Baseline OE-12.8M 0 100 200 300 400 500 1.2 1.4 1.6 1.8 dolma stack val. loss Baseline OE-12.8M 0 100 200 300 400 500 2.4 2.6 2.8 3.0 3.2 3.4 3.6 dolma wiki val. loss Baseline OE-12.8M 0 100 200 300 400 500 2.8 3.0 3.2 3.4 3.6 ice val. loss Baseline OE-12.8M 0 100 200 300 400 500 3.2 3.4 3.6 3.8 4.0 m2d2-s2orc val. loss Baseline OE-12.8M 0 200 300 400 500 2.2 2.4 2.6 2.8 3.0 3.2 pile val. loss Baseline OE-12.8M 0 100 200 300 400 500 2.75 3.00 3.25 3.50 3.75 wikitext 103 val. loss Baseline OE-12.8M 0 100 200 300 400 500 0.26 0.28 0.30 0.32 MMLU stem Acc. Baseline OE-12.8M 0 100 200 300 400 500 0.24 0.26 0.28 0.30 MMLU humanities Acc. Baseline OE-12.8M 0 100 200 300 400 500 0.250 0.275 0.300 0.325 0.350 MMLU social sci Acc. Baseline OE-12.8M 0 100 200 300 400 500 0.300 0.325 0.350 0.375 0.400 0.425 MMLU other Acc. Baseline OE-12.8M 0 100 200 300 400 500 0.30 0.35 0.40 0.45 0.50 0.55 hellaswag Acc. Baseline OE-12.8M 0 100 200 300 400 500 0.6 0.7 0.8 0.9 sciq Acc. Baseline OE-12.8M 0 100 200 300 400 500 0.225 0.250 0.275 0.300 0.325 0.350 arc Challenge Acc. Baseline OE-12.8M 0 100 200 300 400 500 0.40 0.45 0.50 0.55 0.60 0.65 arc easy Acc. Baseline OE-12.8M 0 100 200 300 400 500 0.600 0.625 0.650 0.675 0.700 0.725 piqa Acc. Baseline OE-12.8M 0 100 200 300 400 500 0.50 0.52 0.54 0.56 0.58 winogrande Acc. Baseline OE-12.8M 0 100 200 300 400 500 0.26 0.28 0.30 0.32 0.34 0.36 0.38 openbook_qa Acc. Baseline OE-12.8M 0 100 200 300 400 500 0.500 0.525 0.550 0.575 0.600 0.625 boolq Acc. Baseline OE-12.8M 0 100 200 300 400 500 0.60 0.65 0.70 0.75 0.80 copa Acc. Baseline OE-12.8M 0 100 200 300 400 500 0.30 0.35 0.40 commonsense qa Acc. Baseline OE-12.8M 0 100 200 300 400 500 0.41 0.42 0.43 0.44 0.45 social iqa Acc. Baseline OE-12.8M Figure 11: All metrics for OLMoE-1.3B, comparing OE-12.8M and baseline. 0 100 200 300 400 500 10 12 14 16 18 20 training ppl Baseline OE-12.8M 0 100 200 300 400 500 3.0 3.5 4.0 c4 en val. loss Baseline OE-12.8M 0 100 200 300 400 500 20 40 60 80 c4 en val. ppl Baseline OE-12.8M 0 100 200 300 400 500 2.5 3.0 3.5 4.0 dolma books val. loss Baseline OE-12.8M 0 100 200 300 400 500 2.75 3.00 3.25 3.50 3.75 4.00 4.25 dolma cc val. loss Baseline OE-12.8M 0 100 200 300 400 500 2.0 2.5 3.0 3.5 4.0 dolma pes2o val. loss Baseline OE-12.8M 0 100 200 300 400 500 3.00 3.25 3.50 3.75 4.00 dolma reddit val. loss Baseline OE-12.8M 0 100 200 300 400 500 1.0 1.5 2.0 2.5 3.0 dolma stack val. loss Baseline OE-12.8M 0 100 200 300 400 500 2.5 3.0 3.5 4.0 dolma wiki val. loss Baseline OE-12.8M 0 100 200 300 400 500 2.5 3.0 3.5 4.0 ice val. loss Baseline OE-12.8M 0 100 200 300 400 500 3.00 3.25 3.50 3.75 4.00 4.25 4.50 m2d2-s2orc val. loss Baseline OE-12.8M 0 100 200 300 400 500 2.0 2.5 3.0 3.5 pile val. loss Baseline OE-12.8M 0 100 200 300 400 500 2.5 3.0 3.5 4.0 4.5 wikitext 103 val. loss Baseline OE-12.8M 0 100 200 300 400 500 0.26 0.28 0.30 0.32 0.34 MMLU stem Acc. Baseline OE-12.8M 0 100 200 300 400 500 0.26 0.28 0.30 0.32 0.34 MMLU humanities Acc. Baseline OE-12.8M 0 100 200 300 400 500 0.25 0.30 0.35 0.40 MMLU social sci Acc. Baseline OE-12.8M 0 100 200 300 400 500 0.30 0.35 0.40 0.45 0.50 MMLU other Acc. Baseline OE-12.8M 0 100 200 300 400 500 0.3 0.4 0.5 0.6 0.7 hellaswag Acc. Baseline OE-12.8M 0 100 200 300 400 500 0.5 0.6 0.7 0.8 0.9 sciq Acc. Baseline OE-12.8M 0 100 200 300 400 500 0.25 0.30 0.35 0.40 0.45 arc Challenge Acc. Baseline OE-12.8M 0 100 200 300 400 500 0.4 0.5 0.6 0.7 arc easy Acc. Baseline OE-12.8M 0 100 200 300 400 500 0.60 0.65 0.70 0.75 piqa Acc. Baseline OE-12.8M 0 100 200 300 400 500 0.500 0.525 0.550 0.575 0.600 0.625 0.650 winogrande Acc. Baseline OE-12.8M 0 100 200 300 400 500 0.30 0.35 0.40 openbook_qa Acc. Baseline OE-12.8M 0 100 200 300 400 500 0.50 0.55 0.60 0.65 0.70 boolq Acc. Baseline OE-12.8M 0 100 200 300 400 500 0.60 0.65 0.70 0.75 0.80 0.85 copa Acc. Baseline OE-12.8M 0 100 200 300 400 500 0.25 0.30 0.35 0.40 0.45 0.50 commonsense qa Acc. Baseline OE-12.8M 0 100 200 300 400 500 0.40 0.42 0.44 0.46 0.48 social iqa Acc. Baseline OE-12.8M  OE-12.8M OT-12.8M 0 100 200 300 400 500 2.8 3.0 3.2 3.4 3.6 3.8 dolma books val. loss OE-12.8M OT-12.8M 0 100 200 300 400 500 3.0 3.2 3.4 3.6 3.8 dolma cc val. loss OE-12.8M OT-12.8M 0 100 200 300 400 500 2.4 2.6 2.8 3.0 3.2 3.4 dolma pes2o val. loss OE-12.8M OT-12.8M 0 100 200 300 400 500 3.2 3.4 3.6 3.8 dolma reddit val. loss OE-12.8M OT-12.8M 0 100 200 300 400 500 1.2 1.4 1.6 1.8 dolma stack val. loss OE-12.8M OT-12.8M 0 100 200 300 400 500 2.4 2.6 2.8 3.0 3.2 3.4 3.6 dolma wiki val. loss OE-12.8M OT-12.8M 0 100 200 300 400 500 2.8 3.0 3.2 3.4 3.6 ice val. loss OE-12.8M OT-12.8M 0 100 200 300 400 500 3.2 3.4 3.6 3.8 4.0 m2d2-s2orc val. loss OE-12.8M OT-12.8M 0 100 200 300 400 500 2.2 2.4 2.6 2.8 3.0 3.2 pile val. loss OE-12.8M OT-12.8M 0 100 200 300 400 500 2.75 3.00 3.25 3.50 3.75 wikitext 103 val. loss OE-12.8M OT-12.8M 0 100 200 300 400 500 0.24 0.26 0.28 0.30 0.32 MMLU stem Acc. OE-12.8M OT-12.8M 0 100 200 300 400 500 0.24 0.26 0.28 0.30 0.32 MMLU humanities Acc. OE-12.8M OT-12.8M 0 100 200 300 400 500 0.250 0.275 0.300 0.325 0.350 MMLU social sci Acc. OE-12.8M OT-12.8M 0 100 200 300 400 500 0.30 0.35 0.40 0.45 MMLU other Acc. OE-12.8M OT-12.8M 0 100 200 300 400 500 0.30 0.35 0.40 0.45 0.50 0.55 hellaswag Acc. OE-12.8M OT-12.8M 0 100 200 300 400 500 0.6 0.7 0.8 0.9 sciq Acc. OE-12.8M OT-12.8M 0 100 200 300 400 500 0.25 0.30 0.35 arc Challenge Acc. OE-12.8M OT-12.8M 0 100 200 300 400 500 0.40 0.45 0.50 0.55 0.60 0.65 arc easy Acc. OE-12.8M OT-12.8M 0 100 200 300 400 500 0.60 0.65 0.70 0.75 piqa Acc. OE-12.8M OT-12.8M 0 100 200 300 400 500 0.50 0.52 0.54 0.56 0.58 winogrande Acc. OE-12.8M OT-12.8M 0 100 200 300 400 500 0.26 0.28 0.30 0.32 0.34 0.36 0.38 openbook_qa Acc. OE-12.8M OT-12.8M 0 100 200 300 400 500 0.500 0.525 0.550 0.575 0.600 0.625 0.650 boolq Acc. OE-12.8M OT-12.8M 0 100 200 300 400 500 0.60 0.65 0.70 0.75 0.80 copa Acc. OE-12.8M OT-12.8M 0 100 200 300 400 500 0.30 0.35 0.40 commonsense qa Acc. OE-12.8M OT-12.8M 0 100 200 300 400 500 0.40 0.41 0.42 0.43 0.44 0.45 social iqa Acc. OE-12.8M OT-12.8M   the next-one-token loss for over-decoding surpasses the baseline with a steeper slope. Downstream metrics, as illustrated in Table <ref type="table" target="#tab_11">6</ref>, also show slight improvements with proper loss weight choosen. Typically, we find training loss converges to similar values regardless of loss weights. But from the downstream tasks, a smaller weight leads to better overall performance.</p></div><figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_0"><head>Figure 3 :</head><label>3</label><figDesc>Figure 3: Illustration of 2-gram encoding/decoding GPT.Note that 2-gram decoding only preserves the predicted next 1 token though next 2 is predicted, which keeps inference cost identical to the vanilla model.</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_1"><head>Figure 5 :</head><label>5</label><figDesc>Figure 5: Log-linear relationship is observed between vocabulary size m and training loss L, i.e. L = 2.6754 -0.0256 × log 10 m. The values are collected with 500B tokens' training on OLMoE-1.3B models.</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_2"><head>#</head><figDesc>OE parameters: # m: OE vocabulary size # k: split num # n: the number of neighboring tokens involved #Model parameters: # V: base vocabulary size # D: model dimension #Torch Modules wte = nn.Embedding(V, d) oe_embedders = nn.ModuleList([nn.Embedding(m+i * 2, D//(k * (n-1)) for i in range(k * (n-1)]) oe_projs = nn.ModuleList([nn.Linear(D//(k * (n-1)), D) for _ in range(k * (n-1)]) def forward(self, input_ids): # input_ids: [bs, seqlens] x = self.wte(input_ids) n_gram_ids = input_ids.clone() for i in range(2, n+1): n_gram_ids += F.pad(input_ids, i-1) * V ** (i-1) for j in range(k): index = (i-2) * k+j x_oe = oe_embedders[index](n_gram_ids % (m + 2 * index)) x += oe_projs[index](x_oe) x /= 1 + k * (n-1</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_3"><head>Figure 6 :Figure 7 :</head><label>67</label><figDesc>Figure 6: Left Panel: CFG rules used in our experiments; Right Panel: an example of the generated sequences using the rules. This figure is taken from (Allen-Zhu &amp; Li, 2024).</figDesc><graphic coords="12,55.44,67.06,486.00,100.09" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_4"><head>Figure 10 :</head><label>10</label><figDesc>Figure 10: Loss curves for OLMoE-7B experiments. The OE model uses the setting of n = 3, k = 4. The curves are smoothed with exponential moving average of weight 0.99. The flat part in baseline is a consequence of wandb log missing.</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_5"><head>Figure 12 :</head><label>12</label><figDesc>Figure 12: All metrics for OLMoE-7B, comparing OE-12.8M and baseline.</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_7"><head>Figure 13 :</head><label>13</label><figDesc>Figure13: All metrics for OLMoE-1.3B, comparing OT-12.8 and OE-12.8M.</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_8"><head>Figure 14 :</head><label>14</label><figDesc>Figure 14: Loss diff curves comparing over-decoded models and baselines. OD models use the setting of n = 2 and λ 2 ∈ [0.1, 0.2, 0.5, 1.0]. The curves are smoothed with exponential moving average of weight 0.99.</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_4"><head>Table 2 :</head><label>2</label><figDesc>Ablation study on different input vocabulary designs. The downstream tasks follow the eval settings in OLMoE, where MMLU-V stands for MMLU-Var, HS for Hellaswag, ARC-C for ARC-Challenge and ARC-E for ARC-Easy. All models are trained with 500B tokens.</figDesc><table><row><cell cols="2">Id Model</cell><cell></cell><cell></cell><cell></cell><cell cols="2">Train</cell><cell>Eval</cell><cell>Downstream</cell></row><row><cell></cell><cell></cell><cell></cell><cell></cell><cell></cell><cell cols="2">Loss↓ PPL↓ Loss↓ PPL↓ MMLU-V↑ HS↑ ARC-C↑ ARC-E↑ PIQA↑</cell></row><row><cell cols="3">1 OLMoE-1.3B</cell><cell></cell><cell></cell><cell cols="2">2.554 12.864 2.924 18.625</cell><cell>0.327</cell><cell>0.553 0.325</cell><cell>0.622</cell><cell>0.727</cell></row><row><cell cols="4">2 +E 3.2M×d (x (-2) )</cell><cell></cell><cell cols="2">2.511 12.319 2.887 17.944</cell><cell>0.340</cell><cell>0.569 0.351</cell><cell>0.656</cell><cell>0.734</cell></row><row><cell cols="4">3 +E 6.4M× d 2 (x (-2) )</cell><cell></cell><cell cols="2">2.507 12.268 2.882 17.851</cell><cell>0.330</cell><cell>0.573 0.341</cell><cell>0.648</cell><cell>0.731</cell></row><row><cell cols="4">4 +E 3.2M×d|2 (x (-2) )</cell><cell></cell><cell cols="2">2.503 12.221 2.877 17.754</cell><cell>0.337</cell><cell>0.575 0.345</cell><cell>0.651</cell><cell>0.740</cell></row><row><cell cols="4">5 +E 3.2M×d|4 (x (-2) )</cell><cell></cell><cell cols="2">2.503 12.226 2.876 17.736</cell><cell>0.328</cell><cell>0.575 0.337</cell><cell>0.653</cell><cell>0.734</cell></row><row><cell cols="4">6 + i∈{2,3} E 3.2M× d 2 |2 i</cell><cell cols="3">(x (-i) ) 2.495 12.127 2.870 17.638</cell><cell>0.340</cell><cell>0.578 0.330</cell><cell>0.636</cell><cell>0.738</cell></row><row><cell cols="4">7 +E 12.8M×d (x (-2) )</cell><cell></cell><cell cols="2">2.493 12.100 2.881 17.832</cell><cell>0.334</cell><cell>0.569 0.343</cell><cell>0.643</cell><cell>0.730</cell></row><row><cell cols="5">8 + i∈{2,3} E 12.8M× d 2 |2 i</cell><cell cols="2">(x (-i) ) 2.472 11.854 2.862 17.494</cell><cell>0.342</cell><cell>0.577 0.329</cell><cell>0.645</cell><cell>0.728</cell></row><row><cell></cell><cell>2.55</cell><cell></cell><cell></cell><cell></cell><cell cols="2">Fitted Observed Data</cell></row><row><cell></cell><cell>2.54</cell><cell></cell><cell></cell><cell></cell><cell></cell></row><row><cell>Loss</cell><cell>2.52 2.53</cell><cell></cell><cell></cell><cell></cell><cell></cell></row><row><cell></cell><cell>2.51</cell><cell></cell><cell></cell><cell></cell><cell></cell></row><row><cell></cell><cell>2.50</cell><cell></cell><cell></cell><cell></cell><cell></cell></row><row><cell></cell><cell>2.49</cell><cell>10 5</cell><cell cols="3">10 6 Vocabulary Size (log scale)</cell><cell>10 7</cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_5"><head>Table 3 :</head><label>3</label><figDesc>Ablation study for the hierarchical design of over-</figDesc><table><row><cell>✓</cell><cell>✗</cell><cell>✗</cell><cell>-2.714 15.094</cell></row><row><cell>✗</cell><cell>✓</cell><cell>✗</cell><cell>1 2.785 16.205</cell></row><row><cell>✓</cell><cell>✓</cell><cell>✗</cell><cell>1 2.678 14.555</cell></row><row><cell>✓</cell><cell>✓</cell><cell>✗</cell><cell>4 2.670 14.447</cell></row><row><cell>✓</cell><cell>✗</cell><cell>✓</cell><cell>4 2.684 14.642</cell></row><row><cell>✓</cell><cell>✓</cell><cell>✓</cell><cell>4 2.667 14.394</cell></row></table><note><p>encoding. The symbol '✓' on the n-gram column denotes n-gram token x (-n) is adopted. The experiments are conducted with m = 3.2M, and the metrics are reported after training on 50B tokens. 1-Gram 2-Gram 3-Gram k Loss↓ PPL↓</p></note></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_6"><head>Table 4 :</head><label>4</label><figDesc>Ablation study on hashing conflicts. Note the experiments are kept roughly the same vocabulary size, i.e. 64V ≈ 3.218M. The metrics are reported after training with 50B tokens.</figDesc><table><row><cell>Model</cell><cell cols="3">Loss↓ PPL↓ Eval Loss↓ Eval PPL↓</cell></row><row><cell>baseline</cell><cell>2.714 15.094</cell><cell>3.094</cell><cell>22.060</cell></row><row><cell cols="2">+E 64V ×d 2.702 14.892</cell><cell>3.077</cell><cell>21.710</cell></row><row><cell cols="2">+E 3.2M×d 2.678 14.555</cell><cell>3.054</cell><cell>21.202</cell></row><row><cell cols="4">should avoid in practice. For this part of the experiments,</cell></row><row><cell cols="4">due to the obvious performance drop, we report results af-</cell></row><row><cell cols="4">ter training on only 50B tokens, and simply use loss and</cell></row><row><cell cols="2">perplexity as evaluation metrics.</cell><cell></cell><cell></cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_7"><head>Table 5 :</head><label>5</label><figDesc>MTP Experiments on OLMoE-1.3B. The loss refers to the next one token prediction loss for MTP methods. Metric difference that improves baseline are marked blue while degrations are marked red.</figDesc><table><row><cell>Model</cell><cell>Loss↓</cell><cell cols="2">Eval Loss↓ Downstream↑</cell></row><row><cell>baseline</cell><cell>2.554</cell><cell>2.924</cell><cell>0.510</cell></row><row><cell>+MTP</cell><cell cols="3">2.556 +0.002 2.925 +0.001 0.508 -0.002</cell></row><row><cell cols="4">+MTP-DS 2.555 +0.001 2.926 +0.002 0.511 +0.001</cell></row><row><cell cols="2">OE-12.8M 2.472</cell><cell>2.862</cell><cell>0.524</cell></row><row><cell cols="4">OT-12.8M 2.481 +0.009 2.869 +0.007 0.537 +0.013</cell></row><row><cell cols="3">are presented in Appendix B.4.</cell><cell></cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_11"><head>Table 6 :</head><label>6</label><figDesc>Ablation study on loss weights for OD. The column downstream represents the average score of MMLU-Var, Hellaswag, ARC-Challenge, ARC-Easy and PIQA.</figDesc><table><row><cell>Model</cell><cell cols="7">Loss↓ Eval Loss↓ MMLU-Var↑ Hellaswag↑ Arc-Challenge↑ Arc-Easy↑ PIQA↑</cell></row><row><cell cols="2">OLMoE-1.3B 2.554</cell><cell>2.924</cell><cell>0.327</cell><cell>0.553</cell><cell>0.325</cell><cell>0.622</cell><cell>0.727</cell></row><row><cell cols="2">+OD λ 2 = 0.1 2.549</cell><cell>2.920</cell><cell>0.325</cell><cell>0.553</cell><cell>0.331</cell><cell>0.610</cell><cell>0.721</cell></row><row><cell cols="2">+OD λ 2 = 0.2 2.549</cell><cell>2.918</cell><cell>0.327</cell><cell>0.551</cell><cell>0.323</cell><cell>0.633</cell><cell>0.728</cell></row><row><cell cols="2">+OD λ 2 = 0.5 2.549</cell><cell>2.918</cell><cell>0.325</cell><cell>0.553</cell><cell>0.308</cell><cell>0.619</cell><cell>0.727</cell></row><row><cell cols="2">+OD λ 2 = 1.0 2.555</cell><cell>2.923</cell><cell>0.328</cell><cell>0.550</cell><cell>0.320</cell><cell>0.629</cell><cell>0.722</cell></row><row><cell>OLMoE-7B</cell><cell>2.306</cell><cell>2.670</cell><cell>0.385</cell><cell>0.695</cell><cell>0.414</cell><cell>0.740</cell><cell>0.775</cell></row><row><cell cols="2">+OD λ 2 = 0.1 2.304</cell><cell>2.672</cell><cell>0.387</cell><cell>0.691</cell><cell>0.409</cell><cell>0.724</cell><cell>0.776</cell></row></table></figure>
+		</body>
+		<back>
+			<div type="annex">
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>e</head><p>(j) zj = E j (z j ), then ẽi = n j=1 e (j) zj . Cross-entropy loss using n-gram token prediction task on {ẽ i } can be written as: L( ĥ, x (+n) ; Ẽ) = -log exp( ĥẽ x (+n) )</p><p>i exp( ĥẽ i ) = -log exp( ĥ( j e (j) xj ))</p><p>z1,...,zn exp( ĥ( j e (j) zj ))</p><p>= -log j exp( ĥe</p><p>z1,...,zn j exp( ĥe</p><p>where x j is the next-j token, and x (+n) = j x j V j-1 . Hence, with product embedding decomposition, the n-gram token prediction can be decomposed to multiple next-j token prediction loss, which can be calculated efficiently.</p><p>Discussion. Based on product embedding decomposition, we propose a training objective similar to MTP <ref type="bibr" target="#b5">(Gloeckle et al., 2024)</ref>. Formally, we remove the additional transformer layer introduced by the multiple prediction heads in MTP. Instead, we directly decode the next 1 to n tokens from the last hidden state using n different vocabularies.</p><p>From the perspective of MTP, the nonlinear transformation introduced by directly using new vocabularies in the prediction heads is not weaker than adding a transformer layer. Moreover, since the unembedding process is a computational bottleneck, using a new set of parameters does not reduce training throughput compared to MTP.</p><p>From the perspective of Over-decoding, we retain the potential to scale up the output vocabularies. This means that the training process provides finer-grained supervision signals, which may enable the model to learn better representations. However, this approach is likely only practical for sufficiently large models. On one hand, larger models have a smaller proportion of computation spent on unembedding. On the other hand, larger models offer greater capacity to take advantage of this setup.</p><p>Algorithm 2 Over-Decoding in a PyTorch-like style. </p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>C.1. Experiments</head><p>We conduct experiments for Over-Decoding under OLMoE settings, where both OLMoE-1.3B and OLMoE-7B are considered. We train 500B tokens for all the experiments. OD improves baseline with sufficient training. We first observed that over-decoding significantly lags behind the baseline in the early stages of training. However, after training on more than 200B tokens, over-decoding begins to outperform the baseline. This experiment is conducted on both 1.3B and 7B OLMoE models, where we set n = 2. As shown in Figure <ref type="figure">14,</ref>  </p></div>			</div>
+			<div type="references">
+
+				<listBibl>
+
+<biblStruct xml:id="b0">
+	<monogr>
+		<title level="m" type="main">Physics of language models: Part 1, learning hierarchical language structures</title>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Allen-Zhu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Li</surname></persName>
+		</author>
+		<ptr target="https://arxiv.org/abs/2305.13673" />
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b1">
+	<analytic>
+		<title level="a" type="main">Piqa: Reasoning about physical commonsense in natural language</title>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Bisk</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><surname>Zellers</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Gao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Choi</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Pro-ceedings of the AAAI conference on artificial intelligence</title>
+		<imprint>
+			<date type="published" when="2020">2020</date>
+			<biblScope unit="volume">34</biblScope>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b2">
+	<analytic>
+		<title level="a" type="main">Language models are few-shot learners</title>
+		<author>
+			<persName><forename type="first">T</forename><surname>Brown</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">B</forename><surname>Mann</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">N</forename><surname>Ryder</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Subbiah</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><forename type="middle">D</forename><surname>Kaplan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">P</forename><surname>Dhariwal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Neelakantan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">P</forename><surname>Shyam</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">G</forename><surname>Sastry</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Askell</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Agarwal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Herbert-Voss</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">G</forename><surname>Krueger</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Henighan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><surname>Child</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Ramesh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>Ziegler</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><surname>Winter</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><surname>Hesse</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">E</forename><surname>Sigler</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Litwin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Gray</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">B</forename><surname>Chess</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Clark</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><surname>Berner</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Mccandlish</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Radford</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">I</forename><surname>Sutskever</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>Amodei</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">P</forename><surname>Clark</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">I</forename><surname>Cowhey</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">O</forename><surname>Etzioni</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Khot</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Sabharwal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><surname>Schoenick</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tafjord</forename></persName>
+		</author>
+		<idno type="arXiv">arXiv:1803.05457v1</idno>
+		<ptr target="https://proceedings.neurips.cc/paper_files/paper/2020/" />
+	</analytic>
+	<monogr>
+		<title level="m">Advances in Neural Information Processing Systems</title>
+		<editor>
+			<persName><forename type="first">H</forename><surname>Larochelle</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">M</forename><surname>Ranzato</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">R</forename><surname>Hadsell</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">M</forename><surname>Balcan</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">H</forename><surname>Lin</surname></persName>
+		</editor>
+		<imprint>
+			<publisher>Curran Associates, Inc</publisher>
+			<date type="published" when="2018">2020. 2018</date>
+			<biblScope unit="volume">33</biblScope>
+			<biblScope unit="page" from="1877" to="1901" />
+		</imprint>
+	</monogr>
+	<note>Think you have solved question answering? try arc, the ai2 reasoning challenge</note>
+</biblStruct>
+
+<biblStruct xml:id="b3">
+	<monogr>
+		<title/>
+		<author>
+			<persName><forename type="first">Deepseek-Ai</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Feng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">B</forename><surname>Xue</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">B</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">B</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">B</forename><surname>Lu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><surname>Zhao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><surname>Deng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><surname>Ruan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><surname>Dai</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>Guo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>Yang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>Ji</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">E</forename><surname>Lin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">F</forename><surname>Dai</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">F</forename><surname>Luo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">F</forename><surname>Hao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">G</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">G</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">G</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Bao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Xu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Ding</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Xin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Gao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Qu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Cai</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><forename type="middle">L</forename><surname>Liang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Guo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Ni</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Yuan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Qiu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Song</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Dong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">K</forename><surname>Hu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">K</forename><surname>Gao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">K</forename><surname>Guan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">K</forename><surname>Huang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">K</forename><surname>Yu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">K</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Xu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Xia</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Zhao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Tang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Tian</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">N</forename><surname>Huang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">P</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">P</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">P</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Q</forename><surname>Zhu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Q</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Q</forename><surname>Du</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Q</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><forename type="middle">J</forename><surname>Jin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><forename type="middle">L</forename><surname>Ge</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><surname>Pan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><surname>Xu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><forename type="middle">S</forename><surname>Lu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Zhou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Ye</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Ye</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Ma</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Zhou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Yu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Zhou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Pan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Yun</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Pei</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Sun</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Xiao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">W</forename><forename type="middle">L</forename><surname>Zeng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">W</forename><surname>Zhao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">W</forename><surname>An</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">W</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">W</forename><surname>Liang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">W</forename><surname>Gao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">W</forename><surname>Yu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">W</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">W</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">X</forename><forename type="middle">Q</forename><surname>Jin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">X</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">X</forename><surname>Bi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">X</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">X</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">X</forename><surname>Shen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">X</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">X</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">X</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">X</forename><surname>Nie</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">X</forename><surname>Sun</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">X</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">X</forename><surname>Cheng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">X</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">X</forename><surname>Xie</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">X</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">X</forename><surname>Yu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">X</forename><surname>Song</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">X</forename><surname>Shan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">X</forename><surname>Zhou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">X</forename><surname>Yang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">X</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">X</forename><surname>Su</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">X</forename><surname>Lin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">X</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><forename type="middle">K</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><forename type="middle">Q</forename><surname>Wei</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><forename type="middle">X</forename><surname>Zhu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><forename type="middle">X</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Xu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Xu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Huang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Zhao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Sun</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Yu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Zheng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Shi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Xiong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>He</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Tang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Piao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Tan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Ma</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Guo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Ou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Zhu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Gong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Zou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>He</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Zha</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Xiong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Ma</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Yan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Luo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>You</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Zhou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><forename type="middle">F</forename><surname>Ren</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><forename type="middle">Z</forename><surname>Ren</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Sha</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Fu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Xu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Huang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Xie</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Hao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Gou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Ma</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Yan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Shao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Xu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Gu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Zhu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Xie</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Song</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Gao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Pan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename></persName>
+		</author>
+		<ptr target="https://arxiv.org/abs/2412.19437" />
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+	<note>Deepseek-v3 technical report</note>
+</biblStruct>
+
+<biblStruct xml:id="b4">
+	<monogr>
+		<author>
+			<persName><forename type="first">J</forename><surname>Fang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">G</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Han</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Bian</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>You</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2208.05321</idno>
+		<title level="m">A frequency-aware software cache for large recommendation system embeddings</title>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b5">
+	<analytic>
+		<title level="a" type="main">Better &amp; faster large language models via multi-token prediction</title>
+		<author>
+			<persName><forename type="first">F</forename><surname>Gloeckle</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">B</forename><forename type="middle">Y</forename><surname>Idrissi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">B</forename><surname>Roziere</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>Lopez-Paz</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">G</forename><surname>Synnaeve</surname></persName>
+		</author>
+		<ptr target="https://openreview.net/forum?id=pEWAcejiU2" />
+	</analytic>
+	<monogr>
+		<title level="m">Forty-first International Conference on Machine Learning</title>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b6">
+	<analytic>
+		<title level="a" type="main">Measuring massive multitask language understanding</title>
+		<author>
+			<persName><forename type="first">D</forename><surname>Hendrycks</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><surname>Burns</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Basart</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Zou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Mazeika</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>Song</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Steinhardt</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the International Conference on Learning Representations (ICLR)</title>
+		<meeting>the International Conference on Learning Representations (ICLR)</meeting>
+		<imprint>
+			<biblScope unit="page">2021</biblScope>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b7">
+	<monogr>
+		<author>
+			<persName><forename type="first">J</forename><surname>Kaplan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Mccandlish</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Henighan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><forename type="middle">B</forename><surname>Brown</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">B</forename><surname>Chess</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><surname>Child</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Gray</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Radford</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>Amodei</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2001.08361</idno>
+		<title level="m">Scaling laws for neural language models</title>
+		<imprint>
+			<date type="published" when="2020">2020</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b8">
+	<monogr>
+		<title level="m" type="main">Subword regularization: Improving neural network translation models with multiple subword candidates</title>
+		<author>
+			<persName><forename type="first">T</forename><surname>Kudo</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:1804.10959</idno>
+		<imprint>
+			<date type="published" when="2018">2018</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b9">
+	<analytic>
+		<title level="a" type="main">Colossal-ai: A unified deep learning system for large-scale parallel training</title>
+		<author>
+			<persName><forename type="first">S</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Bian</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Fang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Huang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">B</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>You</surname></persName>
+		</author>
+		<idno type="DOI">10.1145/3605573.3605613</idno>
+		<ptr target="https://doi.org/10.1145/3605573.3605613" />
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 52nd International Conference on Parallel Processing, ICPP &apos;23</title>
+		<meeting>the 52nd International Conference on Parallel Processing, ICPP &apos;23<address><addrLine>New York, NY, USA</addrLine></address></meeting>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+			<biblScope unit="volume">9798400708435</biblScope>
+			<biblScope unit="page" from="766" to="775" />
+		</imprint>
+	</monogr>
+	<note>Association for Computing Machinery</note>
+</biblStruct>
+
+<biblStruct xml:id="b10">
+	<monogr>
+		<title level="m" type="main">Open mixture-of-experts language models</title>
+		<author>
+			<persName><forename type="first">N</forename><surname>Muennighoff</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Soldaini</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>Groeneveld</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">K</forename><surname>Lo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Morrison</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Min</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">W</forename><surname>Shi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">P</forename><surname>Walsh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">O</forename><surname>Tafjord</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">N</forename><surname>Lambert</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Gu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Arora</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Bhagia</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>Schwenk</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>Wadden</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Wettig</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">B</forename><surname>Hui</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Dettmers</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>Kiela</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Farhadi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">N</forename><forename type="middle">A</forename><surname>Smith</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">P</forename><forename type="middle">W</forename><surname>Koh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Singh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Hajishirzi</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Olmoe</surname></persName>
+		</author>
+		<ptr target="https://arxiv.org/abs/2409.02060" />
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b11">
+	<monogr>
+		<title/>
+		<author>
+			<persName><forename type="first">T</forename><surname>Olmo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">P</forename><surname>Walsh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Soldaini</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>Groeneveld</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">K</forename><surname>Lo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Arora</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Bhagia</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Gu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Huang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Jordan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">N</forename><surname>Lambert</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>Schwenk</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">O</forename><surname>Tafjord</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Anderson</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>Atkinson</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">F</forename><surname>Brahman</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><surname>Clark</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">P</forename><surname>Dasigi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">N</forename><surname>Dziri</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Guerquin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Ivison</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">P</forename><forename type="middle">W</forename><surname>Koh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Malik</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">W</forename><surname>Merrill</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><forename type="middle">J V</forename><surname>Miranda</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Morrison</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Murray</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><surname>Nam</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">V</forename><surname>Pyatkin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Rangapur</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Schmitz</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Skjonsberg</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>Wadden</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><surname>Wilhelm</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Wilson</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Zettlemoyer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Farhadi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">N</forename><forename type="middle">A</forename><surname>Smith</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Hajishirzi</surname></persName>
+		</author>
+		<ptr target="https://arxiv.org/abs/2501.00656" />
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+	<note>2 olmo 2 furious</note>
+</biblStruct>
+
+<biblStruct xml:id="b12">
+	<monogr>
+		<author>
+			<persName><forename type="first">A</forename><surname>Pagnoni</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><surname>Pasunuru</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">P</forename><surname>Rodriguez</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Nguyen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">B</forename><surname>Muller</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><surname>Zhou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Yu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Weston</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Zettlemoyer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">G</forename><surname>Ghosh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Lewis</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Holtzman</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Iyer</surname></persName>
+		</author>
+		<ptr target="https://arxiv.org/abs/2412.09871" />
+		<title level="m">Byte latent transformer: Patches scale better than tokens</title>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b13">
+	<monogr>
+		<title level="m" type="main">Language models are unsupervised multitask learners</title>
+		<author>
+			<persName><forename type="first">A</forename><surname>Radford</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><surname>Child</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>Luan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>Amodei</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">I</forename><surname>Sutskever</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2019">2019</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b14">
+	<monogr>
+		<author>
+			<persName><forename type="first">R</forename><surname>Sennrich</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:1508.07909</idno>
+		<title level="m">Neural machine translation of rare words with subword units</title>
+		<imprint>
+			<date type="published" when="2015">2015</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b15">
+	<analytic>
+		<title level="a" type="main">Outrageously large neural networks: The sparsely-gated mixture-of-experts layer</title>
+		<author>
+			<persName><forename type="first">N</forename><surname>Shazeer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Mirhoseini</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">K</forename><surname>Maziarz</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Davis</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Q</forename><surname>Le</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">G</forename><surname>Hinton</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Dean</surname></persName>
+		</author>
+		<ptr target="https://openreview.net/forum?id=B1ckMDqlg" />
+	</analytic>
+	<monogr>
+		<title level="m">International Conference on Learning Representations</title>
+		<imprint>
+			<date type="published" when="2017">2017</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b16">
+	<monogr>
+		<title level="m" type="main">Scaling laws with vocabulary: Larger models deserve larger vocabularies</title>
+		<author>
+			<persName><forename type="first">C</forename><surname>Tao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Q</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Dou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">N</forename><surname>Muennighoff</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Wan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">P</forename><surname>Luo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Lin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">N</forename><surname>Wong</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2407.13623</idno>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b17">
+	<analytic>
+		<title level="a" type="main">ByT5: Towards a token-free future with pre-trained byte-to-byte models</title>
+		<author>
+			<persName><forename type="first">A</forename><surname>Vaswani</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">N</forename><surname>Shazeer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">N</forename><surname>Parmar</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Uszkoreit</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Jones</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><forename type="middle">N</forename><surname>Gomez</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><forename type="middle">U</forename><surname>Kaiser</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">I</forename><surname>Polosukhin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">I</forename><surname>Guyon</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">U</forename><forename type="middle">V</forename><surname>Luxburg</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Bengio</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Wallach</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><surname>Fergus</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Vishwanathan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Xue</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Barua</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">N</forename><surname>Constant</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><surname>Al-Rfou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Narang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Kale</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Roberts</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><surname>Raffel</surname></persName>
+		</author>
+		<idno type="DOI">10.1162/tacla00461</idno>
+		<ptr target="https://aclanthology.org/2022.tacl-1.17" />
+	</analytic>
+	<monogr>
+		<title level="m">Advances in Neural Information Processing Systems</title>
+		<editor>
+			<persName><forename type="first">R</forename><surname>Garnett</surname></persName>
+		</editor>
+		<imprint>
+			<publisher>Curran Associates, Inc</publisher>
+			<date type="published" when="2017">2017. 2022</date>
+			<biblScope unit="volume">30</biblScope>
+			<biblScope unit="page" from="291" to="306" />
+		</imprint>
+	</monogr>
+	<note>Attention is all you need f5ee243547dee91fbd053c1c4a845aa-Paper. pdf</note>
+</biblStruct>
+
+<biblStruct xml:id="b18">
+	<analytic>
+		<title level="a" type="main">Predicting million-byte sequences with multiscale transformers</title>
+		<author>
+			<persName><forename type="first">L</forename><surname>Yu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>Simig</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><surname>Flaherty</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Aghajanyan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Zettlemoyer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Lewis</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Megabyte</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Advances in Neural Information Processing Systems</title>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+			<biblScope unit="volume">36</biblScope>
+			<biblScope unit="page" from="78808" to="78823" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b19">
+	<monogr>
+		<author>
+			<persName><forename type="first">R</forename><surname>Zellers</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Holtzman</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Bisk</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Farhadi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Choi</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Hellaswag</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:1905.07830</idno>
+		<title level="m">Can a machine really finish your sentence? arXiv preprint</title>
+		<imprint>
+			<date type="published" when="2019">2019</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b20">
+	<analytic>
+		<title level="a" type="main">Pytorch fsdp: Experiences on scaling fully sharded data parallel</title>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Zhao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Gu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><surname>Varma</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Luo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C.-C</forename><surname>Huang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Xu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Wright</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Shojanazeri</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Ott</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Shleifer</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the VLDB Endowment</title>
+		<meeting>the VLDB Endowment</meeting>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+			<biblScope unit="volume">16</biblScope>
+			<biblScope unit="page" from="3848" to="3860" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+				</listBibl>
+			</div>
+		</back>
+	</text>
+</TEI>
