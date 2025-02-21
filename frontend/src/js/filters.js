@@ -25,6 +25,8 @@ const renderTagCloud = () => {
 
     // Render tag cloud
     const tagCloud = document.getElementById('tag-cloud');
+    if (!tagCloud) return;
+    
     tagCloud.innerHTML = sortedTags.map(([tag, count]) => {
         const { name, color } = getCategoryInfo(tag);
         return `
@@ -56,8 +58,8 @@ const applyFilters = () => {
     const { mode, activeTags } = window.filterState;
     let visibleCount = 0;
 
-    document.querySelectorAll('.paper-card').forEach(card => {
-        const paperId = card.dataset.paperId;
+    document.querySelectorAll('tr[data-paper-id]').forEach(row => {
+        const paperId = row.dataset.paperId;
         const paper = window.yamlData[paperId];
         const paperTags = new Set(paper.arxiv_tags || []);
 
@@ -75,12 +77,15 @@ const applyFilters = () => {
             }
         }
 
-        card.classList.toggle('filtered', !visible);
+        row.classList.toggle('filtered', !visible);
         if (visible) visibleCount++;
     });
 
-    document.getElementById('filtered-count').textContent = visibleCount;
-    document.getElementById('total-count').textContent = Object.keys(window.yamlData).length;
+    // Update counters
+    const filteredCount = document.getElementById('filtered-count');
+    const totalCount = document.getElementById('total-count');
+    if (filteredCount) filteredCount.textContent = visibleCount;
+    if (totalCount) totalCount.textContent = Object.keys(window.yamlData).length;
 };
 
 const initializeFilters = () => {
@@ -92,6 +97,8 @@ const initializeFilters = () => {
 
     // Initial render of tag cloud and counters
     renderTagCloud();
-    document.getElementById('total-count').textContent = 
-        Object.keys(window.yamlData).length;
+    const totalCount = document.getElementById('total-count');
+    if (totalCount) {
+        totalCount.textContent = Object.keys(window.yamlData).length;
+    }
 };
