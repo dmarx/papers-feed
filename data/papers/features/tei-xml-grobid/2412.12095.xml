@@ -1,0 +1,2557 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<TEI xml:space="preserve" xmlns="http://www.tei-c.org/ns/1.0" 
+xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" 
+xsi:schemaLocation="http://www.tei-c.org/ns/1.0 https://raw.githubusercontent.com/kermitt2/grobid/master/grobid-home/schemas/xsd/Grobid.xsd"
+ xmlns:xlink="http://www.w3.org/1999/xlink">
+	<teiHeader xml:lang="en">
+		<fileDesc>
+			<titleStmt>
+				<title level="a" type="main">Causal Diffusion Transformers for Generative Modeling</title>
+			</titleStmt>
+			<publicationStmt>
+				<publisher/>
+				<availability  status="unknown">
+					<licence/>
+				</availability>
+				<date type="published" when="2024-12-17">17 Dec 2024</date>
+			</publicationStmt>
+			<sourceDesc>
+				<biblStruct>
+					<analytic>
+						<author>
+							<persName><forename type="first">Chaorui</forename><surname>Deng</surname></persName>
+						</author>
+						<author>
+							<persName><forename type="first">Deyao</forename><surname>Zhu</surname></persName>
+						</author>
+						<author>
+							<persName><forename type="first">Kunchang</forename><surname>Li</surname></persName>
+						</author>
+						<author>
+							<persName><forename type="first">Shi</forename><surname>Guang</surname></persName>
+						</author>
+						<author>
+							<persName><forename type="first">Haoqi</forename><surname>Fan</surname></persName>
+						</author>
+						<author>
+							<persName><forename type="first">Bytedance</forename><surname>Research</surname></persName>
+						</author>
+						<title level="a" type="main">Causal Diffusion Transformers for Generative Modeling</title>
+					</analytic>
+					<monogr>
+						<imprint>
+							<date type="published" when="2024-12-17">17 Dec 2024</date>
+						</imprint>
+					</monogr>
+					<idno type="MD5">F8DF2A979DEA8EC225A3681D3D41D251</idno>
+					<idno type="arXiv">arXiv:2412.12095v2[cs.CV]</idno>
+				</biblStruct>
+			</sourceDesc>
+		</fileDesc>
+		<encodingDesc>
+			<appInfo>
+				<application version="0.8.2-SNAPSHOT" ident="GROBID" when="2025-02-21T07:05+0000">
+					<desc>GROBID - A machine learning software for extracting information from scholarly documents</desc>
+					<ref target="https://github.com/kermitt2/grobid"/>
+				</application>
+			</appInfo>
+		</encodingDesc>
+		<profileDesc>
+			<abstract>
+<div xmlns="http://www.tei-c.org/ns/1.0"><p>We introduce Causal Diffusion as the autoregressive (AR) counterpart of Diffusion models. It is a next-token(s) forecasting framework that is friendly to both discrete and continuous modalities and compatible with existing nexttoken prediction models like LLaMA and GPT. While recent works attempt to combine diffusion with AR models, we show that introducing sequential factorization to a diffusion model can substantially improve its performance and enables a smooth transition between AR and diffusion generation modes. Hence, we propose CausalFusion -a decoderonly transformer that dual-factorizes data across sequential tokens and diffusion noise levels, leading to state-of-the-art results on the ImageNet generation benchmark while also enjoying the AR advantage of generating an arbitrary number of tokens for in-context reasoning. We further demonstrate CausalFusion's multimodal capabilities through a joint image generation and captioning model, and showcase CausalFusion's ability for zero-shot in-context image manipulations. We hope that this work could provide the community with a fresh perspective on training multimodal models over discrete and continuous data.</p></div>
+			</abstract>
+		</profileDesc>
+	</teiHeader>
+	<text xml:lang="en">
+		<body>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="1.">Introduction</head><p>Autoregressive (AR) and diffusion models are two powerful paradigms for data distribution modeling. AR models, also known as the next token prediction approach, dominate language modeling and are considered central to the success of large language models (LLMs) <ref type="bibr" target="#b4">[5,</ref><ref type="bibr" target="#b15">16,</ref><ref type="bibr" target="#b45">46,</ref><ref type="bibr" target="#b46">47,</ref><ref type="bibr" target="#b60">61,</ref><ref type="bibr" target="#b61">62]</ref>. On the other hand, diffusion models <ref type="bibr" target="#b12">[13,</ref><ref type="bibr" target="#b25">26,</ref><ref type="bibr" target="#b28">29,</ref><ref type="bibr" target="#b43">44]</ref>, or scorebased generative models <ref type="bibr" target="#b36">[37,</ref><ref type="bibr" target="#b53">54]</ref>, have emerged as the leading approach for visual generation, driving unprecedented progress in the era of visual content generation <ref type="bibr" target="#b3">[4,</ref><ref type="bibr" target="#b16">17,</ref><ref type="bibr" target="#b49">50]</ref>.</p><p>The intrinsic distinction between AR and diffusion models lies in their approach to data distribution factorization. AR models treat data as an ordered sequence, factorizing it along the sequential axis, where the probability of each token is conditioned on all preceding tokens. This factorization enables the AR paradigm to generalize effectively and efficiently across arbitrary number of tokens, making it well-suited for long-sequence reasoning and in-context generation. In contrast, diffusion models factorize data along the noise-level axis, where the tokens at each step are a refined (denoised) version of themselves from the previous step. As a result, the diffusion paradigm is generalizable to arbitrary number of data refinement steps, enabling iterative quality improvement with scaled inference compute. While AR and diffusion models each excel within their respective domains, their distinct factorization approaches reveal complementary potential. Although recent studies <ref type="bibr" target="#b20">[21,</ref><ref type="bibr" target="#b71">72,</ref><ref type="bibr" target="#b74">75]</ref> have attempted to integrate AR and diffusion within a sin-  gle model, they typically treat these paradigms as separate modes, missing the potential benefits of jointly exploring them within a 2-D factorization plane.</p><p>To this end, we introduce CausalFusion, a flexible framework that integrates both sequential and noise-level data factorization to unify their advantages. The degree of factorization along these two axes-namely, the AR step and diffusion step-is adjustable, enabling CausalFusion to revert seamlessly to the traditional AR or diffusion paradigms at either extreme. To enhance its generality, CausalFusion is designed to predict any number of tokens at any AR step, with any pre-defined sequence order and any level of inference compute, thereby minimizing the inductive biases presented in existing generative models. As shown in Figure <ref type="figure" target="#fig_0">1</ref>, this approach provides a broad spectrum between the AR and diffusion paradigms, allowing smooth interpolation within two endpoints during both training and inference. Specifically, we explore CausalFusion in image generation and multimodal generation scenarios, where we observe that the level of training difficulties significantly influences the overall effectiveness of CausalFusion.</p><p>Difficulties of generative tasks in CausalFusion: Both AR and diffusion paradigms present unique challenges based on difficulties of their specific generative stages. In diffusion models, the effectiveness of training depends heavily on proper loss weighting across noise levels <ref type="bibr" target="#b21">[22,</ref><ref type="bibr" target="#b25">26]</ref>, as higher noise levels are more difficult and usually provide more valuable signals than lower noise levels. Similarly, AR models are susceptible to error accumulation <ref type="bibr" target="#b2">[3]</ref> as early-stage predictions are made with limited visible context, making them more error-prone. Optimizing CausalFusion thus requires balancing across these varying task difficulties to optimize training signal impact and ensure sufficient exploration across the entire factorization plane.</p><p>In this paper, we formally examine the difficulties of generative tasks within CausalFusion. We show that, in addition to the noise levels in diffusion and the amount of visible context in AR, the total number of AR steps, which controls the interpolation between AR and diffusion, also plays a critical role in shaping training difficulties. Driven by these factors, we develop a scalable and versatile model based on the CausalFusion framework. Starting from the DiT architecture <ref type="bibr" target="#b43">[44]</ref>, we gradually convert it into a decoderonly transformer compatible with existing AR models like GPT <ref type="bibr" target="#b4">[5,</ref><ref type="bibr" target="#b45">46,</ref><ref type="bibr" target="#b46">47]</ref> and LLaMA <ref type="bibr" target="#b15">[16,</ref><ref type="bibr" target="#b60">61,</ref><ref type="bibr" target="#b61">62]</ref>. We provide insights on how to appropriately choose the number of AR steps during the training of CausalFusion models, and further introduce loss weighing along both the diffusion and AR axis to balance the impact of different generative stages. As shown in Figure <ref type="figure" target="#fig_0">1</ref> and 2, our model achieves state-ofthe-art performance on the ImageNet class-conditional generation benchmark, significantly outperforming DiT <ref type="bibr" target="#b43">[44]</ref> and enabling zero-shot image manipulations due to its AR nature. When pretraining on both text-to-image and image-to-text tasks, our model surpasses forced-fusion frameworks such as TransFusion <ref type="bibr" target="#b74">[75]</ref>, demonstrating the versatility of our CausalFusion framework.</p><p>We highlight our main contribution below: • We propose CausalFusion as the AR counterpart to DiT, achieving state-of-the-art results and enabling the unlimited token generation for in-context reasoning. • We systematically study CausalFusion on the dualfactorization plane and identify key factors that improve the effectiveness of CausalFusion models. • Compared with recent studies <ref type="bibr" target="#b74">[75]</ref>, CausalFusion enables a smooth, cohesive integration with language modeling for cross-modal generation and reasoning.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="2.">Related Works</head><p>Diffusion Models. Diffusion models <ref type="bibr" target="#b25">[26,</ref><ref type="bibr" target="#b51">52,</ref><ref type="bibr" target="#b52">53]</ref> decompose the image generation task into a sequence of iterative denoising steps, gradually transforming noise into a coherent image. Early diffusion models <ref type="bibr" target="#b12">[13,</ref><ref type="bibr" target="#b42">43,</ref><ref type="bibr" target="#b44">45,</ref><ref type="bibr" target="#b48">49,</ref><ref type="bibr" target="#b49">50]</ref> with U-net architectures pioneered denoising techniques for high-quality image synthesis. Later works <ref type="bibr" target="#b0">[1,</ref><ref type="bibr" target="#b43">44]</ref> like DiT shift from the U-net to transformer-based architectures, enabling greater compute scalability. Modern methods <ref type="bibr" target="#b7">[8,</ref><ref type="bibr" target="#b32">33]</ref> further extend DiT architectures leveraging significantly larger training resources to achieve impressive image generation quality.</p><p>Autoregressive Generation. Another popular approach for image generation involves autoregressive (AR) transformers that predict images token by token. Early works <ref type="bibr" target="#b13">[14,</ref><ref type="bibr" target="#b18">19,</ref><ref type="bibr" target="#b47">48,</ref><ref type="bibr" target="#b67">68]</ref> generated image tokens in raster order, progressing sequentially across the image grid. This rasterized approach was later identified as inefficient <ref type="bibr" target="#b5">[6]</ref>, prompting researchers to explore random-order generation methods <ref type="bibr" target="#b5">[6,</ref><ref type="bibr" target="#b6">7]</ref>. AR methods are further evolved to include new modalities such as video generation <ref type="bibr" target="#b30">[31]</ref> and any-to-any generation <ref type="bibr" target="#b39">[40,</ref><ref type="bibr" target="#b69">70]</ref>.</p><p>Combining Diffusion and Autoregressive Models. Recent models explore different methods for integrating AR and diffusion processes. DART <ref type="bibr" target="#b20">[21]</ref> unifies AR and diffusion in a non-Markovian framework by conditioning on multiple historical denoising steps instead of only the current one. BiGR <ref type="bibr" target="#b22">[23]</ref> generates discrete binary image codes autoregressively using a Bernoulli diffusion process. MAR <ref type="bibr" target="#b33">[34]</ref> employs an AR model with a small diffusion head to enable continuous-value generation. Emu2 <ref type="bibr" target="#b56">[57]</ref> applies an external diffusion module to decode its AR-based multimodal outputs. Compared to previous methods, CausalFusion focuses on autoregressive sequence factorization and decouples diffusion data processing across both sequential tokens and noise levels, achieving significant performance gains over traditional diffusion frameworks.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.">CausalFusion</head><p>Preliminaries. We first briefly review the Autoregressive (AR) and Diffusion paradigms in the context of image modeling before introducing our CausalFusion model. Both paradigms factorize the image distribution into a chain of conditional distributions. However, they do so along different axes. Given a sample of training images X, AR models split X along the spatial dimensions into a sequence of tokens, X = {x 1 , . . . , x L }, where L is the number of tokens. The joint distribution of X can be then factorized sequentially:</p><formula xml:id="formula_0">q(x 1:L ) = q(x 1 ) L l=2 q(x l |x 1:l-1 ).<label>(1)</label></formula><p>During training, a neural network p θ (x l |x 1:l-1 ) is trained to approximate q(x l |x 1:l-1 ) by minimizing the cross-entropy -E q(x 1:L ) log p θ (x 1:L ). At inference time, the image is generated via the next token prediction paradigm.</p><p>In contrast, Diffusion models gradually add random noise (typically Gaussian) to X in a so-called forward process. It is a Markov chain along the noise level, where each noisy version x t is conditioned on the previous state x t-1 as q</p><formula xml:id="formula_1">(x t |x t-1 ) = N (x t ; √ 1 -β t x t-1 , β t I).</formula><p>Here, β t is a variance schedule that ensures the forward process starts with a clean image x 0 = X and gradually converges to random noise as t → T . The joint distribution of X is then factorized as: q(x 0:T ) = q(x 0 ) T t=1 q(x t |x t-1 ).</p><p>(</p><formula xml:id="formula_2">)<label>2</label></formula><p>To obtain X from noise, a neural network is trained to approximate the reverse transition of the forward process for t ∈ [1, T ]:</p><formula xml:id="formula_3">p θ (x t-1 |x t ) = N (x t-1 ; µ θ (x t ), Σ θ (x t ))<label>(3)</label></formula><p>As in AR models, training involves minimizing the crossentropy between q(x 0:T ) and p θ (x 0:T ). In DDPM <ref type="bibr" target="#b25">[26]</ref>, Σ θ (x t ) is set to a constant value derived from the forward process, and µ θ (x t ) is set to be the linear combination of x t and a noise prediction model ϵ θ that predicts the noise ϵ of the forward process. This parameterization leads to the following training objective:</p><formula xml:id="formula_4">min θ E x0,ϵ,t [w(t)∥ϵ -ϵ θ (x t , t)∥ 2 ]<label>(4)</label></formula><p>where w(t) is derived according to the noise schedule β t , which gradually decays as t grows. This objective is further simplified by setting w(t) = 1 for all t, results in a weighted evidence lower bound that emphasizes more difficult denoising tasks (i.e., larger noise level) at larger t step. This approach enforces the model to reconstruct the image with partial observation, embodying the spirit of masked feature prediction models <ref type="bibr" target="#b23">[24,</ref><ref type="bibr" target="#b34">35,</ref><ref type="bibr" target="#b66">67]</ref>.</p><p>Our approach. From the above formulations, the AR and diffusion paradigms naturally support the scaling of sequence length and denoising steps, respectively, offering complementary advantages for image generation. To unify their advantages, we present CausalFusion, a general paradigm that scales effectively in both directions. We start by directly extending Eqn. (2) to encompass the AR factorization: q(x 0:T,κs |x 0,κ1:s-1 ) = q(x 0,κs ) T t=1 q(x t,κs |x t-1,κs , x 0,κ1:s-1 )</p><p>(5)</p><formula xml:id="formula_5">for s ∈ [1, S].</formula><p>Here, S denotes the total number of AR steps, while κ s is an index set that identifies the subset of image tokens to be processed at the s-th AR step, with |κ s | representing the number of tokens in this subset. Each AR step processes only the tokens indicated by κ s , isolating specific portions of the image, as shown in the top row of Figure <ref type="figure" target="#fig_0">1</ref>. The term x t,κs represents the dual-factorized image tokens at the s-th AR step and t-th diffusion step.</p><p>During training, the objective of our CausalFusion model is to approximate p θ (x t-1,κs |x t,κs , x 0,κ1:s-1 ) for all t and s. Compared with the formulation in Eqn. (3), Causal-Fusion requires the training sequence to contain not only noised image tokens at the current AR step x t,κs , but also the clean image tokens from all previous AR steps x 0,κ1:s-1 , allowing the model to leverage information from earlier AR steps to refine the current tokens effectively. A generalized version of causal attention mask is also required to prevent x 0,κ1:s-1 from observing x t,κs . During inference, the dualfactroization in Eqn. <ref type="bibr" target="#b4">(5)</ref>  an unlimited sequence of image tokens through a next token(s) diffusion approach while enhancing the quality of each token by applying larger numbers of diffusion steps. See Figure <ref type="figure" target="#fig_3">3</ref>(b) for an illustration of CausalFusion model architecture. Further details on the generalized causal attention mask can be found in Appendix A. Notably, adhering to the principle of minimal inductive bias, CausalFusion imposes no restrictions on the number of AR steps S, the number of tokens processed at each AR step |κ s |, or the specific token indices within each AR step. This flexibility enables a broad exploration space for generative modeling in both training and inference stages.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4.">Initial studies on CausalFusion</head><p>To systematically study the design space of CausalFusion, we conduct experiments on the ImageNet dataset <ref type="bibr" target="#b11">[12]</ref>, where we train class-conditional image generation models at 256×256 resolution. We use the DiT-L/2 model as our base configuration. All models are trained with 240 epochs and evaluated using FID-10k (unless specified, we use FID-10K and FID interchangeably) and the ADM <ref type="bibr" target="#b12">[13]</ref> codebase.</p><p>Detailed training recipes and model configurations are provided in Appendix C.</p><p>Baseline setup: In-context DiT. As our target is to unify the AR and Diffusion paradigms, we need to unify their architectures first. To this end, we begin with the Transformer-based DiT <ref type="bibr" target="#b43">[44]</ref> model. Following the DiT design, the 256×256 images are encoded into 32×32 latent representations <ref type="bibr" target="#b49">[50]</ref> using a pretrained VAE model, followed by a 2×2 patchify layer that produces a sequence of L = 256 latent tokens. In original DiT, conditional information (e.g., label class) and the diffusion time step are incorporated through AdaLN-zero components, which are incompatible with decoder-only LLMs. To address this limitation, we adopt the in-context design of DiT from <ref type="bibr" target="#b43">[44]</ref>, treating the class and time step conditions as tokens and directly append them to the image token sequence. By default, we use 4 class tokens and one time step token. As a byproduct, this modification reduces the model size of incontext DiT to approximately To accelerate training, we use large batch sizes (e.g., 2048) and implement several improvements to stabilize training: (1) injecting the diffusion time step by adding a time step embedding to the image token embeddings instead of using a time step token; (2) applying head-wise QK layer normalization within the self-attention layers, following the practices in <ref type="bibr" target="#b10">[11]</ref>; and (3) incorporating a learning rate warmup stage during training.</p><p>The impact of our new designs is shown in Table <ref type="table" target="#tab_0">1</ref>. Initially, the native In-context DiT from <ref type="bibr" target="#b43">[44]</ref> performs significantly worse than the AdaLN-zero version. Our revised training recipe improves performance to 21.94 FID. Incorporating the time step embedding and head-wise QK norm further enhances performance, achieving an FID of 18.66. Adding the learning rate warmup yields an additional improvement. Overall, our final in-context DiT-L/2 model, though conceptually simple, reaches an FID-10k of 13.78-competitive to the best-performing DiT-XL/2 model (12.92 FID-10k) in <ref type="bibr" target="#b43">[44]</ref>-and serves as a robust baseline that can be steadily trained with large batch sizes.</p><p>CausalFusion with fixed number of AR steps. Building on the In-context DiT baseline, we begin with a simplified version of CausalFusion that uses a fixed number of AR steps S during both training and inference, with the number of tokens predicted at each AR step fixed to |κ s | = L S . Specifically, we modify the input sequence to include clean image tokens and use generalized causal attention masks within the attention modules. Figure <ref type="figure" target="#fig_3">3</ref> illustrates the architectural differences between DiT and CausalFusion. We train several CausalFusion models with different numbers of AR steps, i.e., S = 1, 2, 4, 8, and 256. Here, S = 1 indicates the In-context DiT, while S = 256, equivalent to L, represents the pure AR training mode. To evaluate these models, we first use the same number of AR steps as in training, and further study their generalization performance to other number of AR steps.</p><p>As shown in Table <ref type="table" target="#tab_1">2</ref>, CausalFusion trained with fixed AR steps cannot be robustly transferred to other inference settings. E.g., all models yield substantially worse performance when their inference settings are not aligned with training. By comparing the best evaluation result of each training setting, we observe that increasing the number of AR steps leads to a huge decline in performance. Specifically, the 8-step CausalFusion yields an FID of 20.01, clearly lagging behind the 13.78 FID achieved by In-context DiT. However, from the loss curves in Figure <ref type="figure" target="#fig_4">4</ref>(a), an opposite trend is observed, where models trained with more AR steps consistently exhibit lower loss values than those with fewer AR steps. This suggests that the learning tasks become over-simplified as the number of AR steps increases.</p><p>CausalFusion with random number of AR steps. Additionally, we train a CausalFusion model where the number of AR steps S are uniformly sampled from 1 to L, with |κ s | also randomly set at each AR step. We evaluate this model across various inference settings, same as above. As shown in Table <ref type="table" target="#tab_1">2</ref>, this training setting performs relatively consistent under different inference AR steps compared to those trained with fixed AR steps, demonstrating its greater flexibility during training and versatility during inference. However, this setting still leads to inferior results compared to the In-context DiT baseline, e.g., an FID of 21.31 when evaluated with a single AR step (S = 1) as diffusion mode. FID10k↓ ratio S eval = 1 S eval = 2 S eval = 4 S eval = 8 1.0 21.31 22.17 23.54 25.05 0.95 14.49 17.78 19.79 23.93 0.9 12.89 15.57 18.83 22.72 0.85 12.94 15.54 19.12 23.46 0.8 12.78 15.42 19.38 23.78 (a) Exponential decay in AR step sampling. A proper decay ratio leads to competitive or better performance across all inference settings than using fixed AR steps. Patch order FID10k↓ raster order 14.46 block-wise raster (8x8) 14.76 block-wise raster (4x4) 14.62 dilated order 15.54 random order 12.89 (b) Token order influences the locality of image tokens and further affects training difficulty. FID10k↓ weight S eval = 1 S eval = 2 S eval = 4 1→1 12.89 15.57 18.83 1.5→1 12.61 15.49 18.32 2→1 12.13 15.15 18.09 2.5→1 12.32 15.22 17.99 3→1 12.50 15.28 17.92 (c) AR loss weighting boosts performance by facilitating better learning from difficult samples.</p><p>Table 3. Ablations on AR step decay, ordering, and AR weighting. Baseline settings are marked by underlines and selected settings highlighted in gray . </p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="5.">Shaping task difficulties in CausalFusion</head><p>Based on the above observations, we aim to adjust the difficulties of the generative tasks in CausalFusion to balance training signal impact and ensure thorough exploration of the factorization space. By default, we use random AR steps during training due to its effectiveness in generalizing across various inference settings. Building on this setup, we identify several straightforward approaches that effectively shape task difficulties within CausalFusion, leading to significant performance improvements. We categorize the discussion into two parts: design choices for AR step sampling and loss weighting along the AR axis.</p><p>Random AR steps with decayed sampling. Instead of uniformly sampling the number of AR steps S from [1, L], we propose to exponentially decrease the sampling probability as S increases, which alleviates the problem of imbalanced |κ| s distribution, as shown in Figure <ref type="figure" target="#fig_4">4(b)</ref>. As a result, large |κ s | appears more frequently in the training sequence, and more tokens are predicted base on less visible context. We introduce a hyper-parameter γ ≤ 1 to control the exponential decay ratio where γ = 1 denotes the naive CausalFusion model trained with uniformly sampled AR steps, while γ = 0 represents our In-context DiT baseline. From Table <ref type="table">3</ref>(a), by decreasing γ from 1.0 to 0.95, we obtain remarkable performance improvements across all inference settings, with gains of nearly 7 and 5 points when S eval = 1 and 2, respectively. Furthermore, when γ = 0.9, CausalFusion surpasses the strong In-context DiT using the pure diffusion inference mode, and performance in other inference settings is further enhanced. While smaller values of γ, such as 0.8, yield even better performance with one AR step evaluation, we set the defualt value to 0.9 as it provides a balanced improvement across all inference settings.</p><p>Loss weighting along AR axis. We modify the weighting term w(•) in Eqn. ( <ref type="formula" target="#formula_4">4</ref>) to further consider the AR step s. In practice, we simply set w(s, t) to a pre-defined value λ ≥ 1 at s = 1, and linearly decay it to 1 at s = S, and keep using constant weight for different t. In this way, the model is trained to focus more on the hard generative tasks at early AR steps or larger noise levels. We analysis the impact of λ in Table <ref type="table">3</ref>(c). From the table, setting λ to a proper value improves the performance. Intuitively, as the model generates closer to the end of the AR axis, the task becomes easier due to high locality <ref type="bibr" target="#b64">[65]</ref> in the visible context, causing some generative tasks to degrade into local feature interpolation. In contrast, predictions made during earlier AR steps facilitate the learning of non-local dependencies within the visual context, which is beneficial to generative modeling.</p><p>Difficulty vs. locality. The hypothesis of locality aligns with our observations in Table <ref type="table">3</ref>(b), where using random sequence order in CausalFusion during training significantly outperforms manually assigned orders. Specifically, using fixed (block-wise) raster order leads the model to rely excessively on local tokens, which makes the training task easier. In contrast, CausalFusion is trained with a random order by default, following the principle of minimal inductive bias. This design encourages the model to develop robust generative modeling abilities rather than relying on fixed ordering priors, while allowing flexible inference orders.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="6.">Performance comparison</head><p>Class-conditional image generation. We evaluate our final method on the ImageNet class-conditional generation benchmark. For system-level comparisons, we use 64 tokens to encode the class condition. The impact of varying the number of class tokens is analyzed in Appendix B. We train three sizes of CausalFusion models: CausalFusion-L (368M), CausalFusion-XL (676M), and CausalFusion-H (1B). All models are trained for 800 epochs with a batch size of 2048. By default, we use a single AR step inference with 250 DDPM steps as in DiT <ref type="bibr" target="#b43">[44]</ref>, and report FID-50k for benchmarking against existing models. Detailed hyperparameters are provided Table 5. System performance comparison on 256×256 ImageNet generation, compared with previously reported large models.</p><p>in Appendix C. As shown in Table <ref type="table" target="#tab_4">4</ref>, on 256×256 image generation, CausalFusion-L achieves an FID-50k of 5.12 without classifier-free guidance <ref type="bibr" target="#b24">[25]</ref> (CFG), outperforming DiT-XL/2 by 4.5 points with 50% fewer parameters. CausalFusion-XL further improves this result to 3.61, and when using CFG, achieves a state-of-the-art result of 1.77, significantly outperforming strong baselines like DiT and SiT. Additionally, CausalFusion-XL demonstrates effectiveness in high-resolution generation, achieving an FID of 1.98 on 512×512 images with CFG.</p><p>We also provide a system-level comparison with existing methods in Table <ref type="table">5</ref>. CausalFusion-H achieves an FID of 1.64 using the standard 250-step DDPM sampler, outperforming previous diffusion models with larger model sizes, such as FiTv2-3B <ref type="bibr" target="#b65">[66]</ref> and Large-DiT-7B <ref type="bibr" target="#b19">[20]</ref>, and achieving comparable results to DiMR-G/2R (1.64 vs. 1.63) despite DiMR-G/2R's use of a stronger sampler (DPMsolver <ref type="bibr" target="#b50">[51]</ref>). By applying the CFG interval <ref type="bibr" target="#b31">[32]</ref> approach, CausalFusion-H further improves to an FID of 1.57, positioning it among the top-performing models on the Ima-geNet 256×256 benchmark.</p><p>A cupcake with sprinkles, lounging under a tiny umbrella on a beach.</p><p>A cactus wearing a sombrero and sunglasses in the desert.</p><p>A bear wearing a chef's hat baking cookies in a log cabin.</p><p>A goose in rain boots, stomping through puddles in the park.</p><p>(a) Samples on Text-to-Image generation.</p><p>A cat sitting on a red and white chair.</p><p>A kitchen with a stainless steel dishwasher and a wooden cabinet.  Source Size FID30k↓ CIDEr↑ Transfusion-L [75] IN1KCap 1M 8.1 34.5 CausalFusion-L IN1KCap 1M 7.1 47.9 (a) MSCOCO [36] is used for FID30k and CIDEr evalution. Params Data Size FID10k↓ Acc↑ CIDEr↑ DiT [44] 458M IN1K 1M 18.2 83.5 94.4 CausalFusion 368M IN1K 1M 11.8 84.2 98.0 CausalFusion † 368M IN1K 1M 9.3 84.7 103.2 (b) ImageNet is used for FID10k and Acc, MSCOCO is used for CIDEr evalution.</p><p>Table 6. (a) Comparison with Transfusion [75] on perception and generation benchmarks. All models are trained under the same settings using the same pretraining data. (b) Comparison with DiT [44] on perception and generation benchmarks. The model marked with † is trained with a VAE from <ref type="bibr" target="#b33">[34]</ref>, using a loss function to predict latent variables rather than noise.</p><p>Zero-shot image editing. CausalFusion naturally supports zero-shot image editing, as it is trained to predict a random subset of image tokens based on a random subset of visible image tokens. This inherent flexibility enables the model to perform localized edits without requiring task-specific fine-tuning. As shown in Figure <ref type="figure" target="#fig_2">2</ref>(b), our model can generate high-quality editing results even when only pretrained on the ImageNet class-conditional generation task, demonstrating its robustness and adaptability to editing tasks. Moreover, CausalFusion's dual-factorized design allows it to balance contextual coherence with highfidelity updates, ensuring that edited regions blend seamlessly into the surrounding content. See Appendix D for additional visualizations showcasing the model's ability to handle diverse editing scenarios.</p><p>Vision-Language joint modeling. CausalFusion can integrate the language modality by applying a separate nexttoken prediction loss on text, similar to GPT <ref type="bibr" target="#b45">[46]</ref>, enabling it to jointly model both image and text data. In this experiment, CausalFusion was trained on two tasks simultaneously: Text-to-Image (T2I) generation and Image Captioning. During training, text precedes the image in 90% of cases, framing it as a T2I task where only the image loss is applied. In the remaining cases, the text follows the image, and both text loss (for Image Captioning) and image loss (for classifier-free guidance <ref type="bibr" target="#b24">[25]</ref> in T2I) are applied, with the text loss weighted at 0.01 relative to the image loss. We follow the configurations and training/inference protocols from previous sections. For language tokenization, we use the LLaMA-3 <ref type="bibr" target="#b15">[16]</ref> tokenizer. Models are trained on a re-captioned ImageNet dataset, with each image labeled by 10 captions generated by Qwen2VL-7B <ref type="bibr" target="#b63">[64]</ref>. T2I and Image Captioning tasks are evaluated using zero-shot MSCOCO-30k FID and zero-shot MSCOCO CIDEr on Karpathy's test split, respectively. We compare Causal-Fusion with a contemporary multimodal model, Transfusion <ref type="bibr" target="#b74">[75]</ref>, which integrates language and vision modeling using standard diffusion loss for images and next-token prediction loss for text. In Transfusion, language tokens are conditioned on image embeddings with added diffusion noise. As Transfusion is not open-sourced, we implemented it based on the original paper, aligning the model architecture, VAE encoder, and language tokenizer with those used in CausalFusion. Results with 240-epoch training are presented in Table <ref type="table">6</ref>(a). Compared to Transfusion, Causal-Fusion demonstrates superior performance in both text-toimage generation and image captioning, highlighting its strong potential as a foundational model for multimodal tasks. In Figure <ref type="figure" target="#fig_7">5</ref>, we show a single pretrained CausalFusion XL model performing text-to-image generation at the top and image-to-text generation (image captioning) at the bottom. Further experiment details, including data, model design, and hyperparameters, are provided in Appendix C.</p><p>Visual Representation Learning. We further evaluate CausalFusion models from a representation learning perspective. Specifically, we leverage the CausalFusion model pretrained on the 256×256 ImageNet class-conditional generation task and fine-tune it on the ImageNet classification and MSCOCO captioning tasks. For image classification, we use the average-pooled features from the last layer of CausalFusion, followed by a linear classifier. For image captioning, we add a small transformer encoder-decoder module as the language head on top of CausalFusion. The pretrained CausalFusion model follows the default configuration described in previous sections. We compare it to the DiT-L/2 model pretrained for the same number of epochs. Detailed hyperparameters for fine-tuning are provided in Appendix C. As shown in Table <ref type="table">6</ref>(b), our CausalFusion model outperforms DiT on all fine-tuning tasks, indicating that CausalFusion learns superior representations compared to DiT. We hypothesize that the random grouped token diffusion mechanism in CausalFusion, which diffuses images with partially observed inputs, implicitly performs as masked representation prediction <ref type="bibr" target="#b23">[24,</ref><ref type="bibr" target="#b66">67]</ref>, enhancing the model's representation learning ability.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="7.">Conclusion</head><p>We propose CausalFusion, a decoder-only transformer that unifies AR and diffusion paradigms through a dualfactorized framework across sequential tokens and diffusion noise levels. This approach achieves state-of-the-art performance on the ImageNet generation benchmark, supports arbitrary-length token generation, and enables smooth transitions between AR and diffusion modes. CausalFusion also demonstrates multimodal capabilities, including joint image generation and captioning, as well as zero-shot image manipulations. Our framework offers a new perspective on unified learning of diffusion and AR models.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>A. Generalized Causal Attention</head><p>We design the Generalized Causal Attention for CausalFusion models. The core idea is to maintain causal dependencies across all AR steps while ensuring that each AR step relies only on clean image tokens from preceding AR steps. This design allows CausalFusion to generate images using a next-token(s) diffusion paradigm. We show an example of the generalized causal attention mask in Figure <ref type="figure" target="#fig_8">6</ref>, and the PyTorch-style pseudo code for obtaining generalized causal mask in Algorithm 1. </p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>B. More Analyses</head><p>Diffusion time steps sampling. Following DiT <ref type="bibr" target="#b43">[44]</ref>, we randomly sample the diffusion time step t during training. By default, the same t is used across all AR steps when training CausalFusion models. Here, we explore the impact of using different t values for different AR steps during training. The training and evaluation settings remain consistent with Section 4. As shown in Table <ref type="table" target="#tab_9">7</ref>, using either shared or random t values results in similar performance, indicating that CausalFusion is robust to this variation. Additionally, we evaluate a setting where multiple diffusion time steps are sampled for each AR step. Specifically, we experiment with sampling 4 and 8 different time steps, reducing the batch size by factors of 4× and 8×, respectively, to ensure the total number of tokens used for loss calculation remains constant. As shown in the table, using multiple diffusion time steps per AR step achieves comparable performance to the default setting, further demonstrating the robustness of CausalFusion to this factor. Notably, in this approach, the clean image tokens x 0,κs at each AR step need FID10k shared t for different AR steps 12.13 random t for different AR steps 12.27 4× t for each AR step 12.19 8× t for each AR step 12.23 Table 8. #Class tokens offers a trade-off between performance and number of parameters. The default setting is underlined.</p><p>Class condition tokens. As discussed in Sections 4 and 6, we use 4 class condition tokens for ablation studies and 64 tokens for system-level comparisons. Here, we examine the impact of the number of class tokens in the Causal-Fusion framework. As shown in Table <ref type="table">8</ref>, increasing the number of class tokens to 64 slightly improves performance (12.13 vs. 11.84 FID). However, this also adds 62.5M parameters, a significant increase (20%) for a CausalFusion-L model with 304M parameters. To address this, we adopt a token-repeating strategy from <ref type="bibr" target="#b33">[34]</ref>, which achieves comparable performance (11.75 vs. 11.84 FID) without increasing the parameter count. This finding suggests that the computation allocated to class conditioning is more critical than the number of parameters dedicated to it.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>C. Implementation Details</head><p>Class-conditional image generation. In   Table 11. Multi-modal experiment configuration for both Causal-Fusion and Transfusion.</p><p>Fine-tuning for ImageNet classification. When finetuning our CausalFusion model for ImageNet classification, we adhere to the basic architecture of the Vision Transformer (ViT) <ref type="bibr" target="#b14">[15]</ref>, with the exception of the class token. We exclude the extra timestep embedding, label embedding, and conditional position embedding. Layer normalization and a linear classification layer are applied to the averaged output tokens. Regarding hyperparameters, we follow the MAE training recipe <ref type="bibr" target="#b23">[24]</ref> as detailed in Table <ref type="table" target="#tab_15">12</ref>, but we use BFloat16 precision during training to enhance stability.</p><p>Fine-tuning for MSCOCO captioning. We follow the COCO caption fine-tuning setup of FLIP <ref type="bibr" target="#b34">[35]</ref>, incorporating an additional caption head consisting of a 3-layer transformer encoder and a 3-layer transformer decoder (with a width of 384 and 6 attention heads). This caption head takes RandAug (9, 0.5) [10] label smoothing <ref type="bibr" target="#b57">[58]</ref> 0.1 erasing <ref type="bibr" target="#b73">[74]</ref> 0.25 mixup <ref type="bibr" target="#b70">[71]</ref> 0.8 cutmix <ref type="bibr" target="#b68">[69]</ref> 1.0 drop path <ref type="bibr" target="#b27">[28]</ref> 0.1 (L) Table <ref type="table" target="#tab_0">13</ref>. MSCOCO captioning end-to-end fine-tuning setting image features from CausalFusion or DiT as input. We evaluate image features from the 14th, 21st, and 24th layers of CausalFusion and DiT, selecting the layer that achieves the highest performance. The models are fine-tuned on the Karpathy training split for 20 epochs.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>D. Additional Samples</head><p>We show more zero-shot editing results from our CausalDiffusion models in Figure <ref type="figure" target="#fig_12">7</ref>     </p></div><figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_0"><head>Figure 1 .</head><label>1</label><figDesc>Figure 1. Illustration of Dual-Factorization. The arrow line indicates CausalFusion's generation path, moving from one state to the next by jointly generating along the sequential and noise-level dimension at each step. Compared to DiT, our In-context DiT substantially improves results with fewer parameters. CausalFusion further enhances performance without changing the architecture or parameter count. Results were trained on IN1K for 240 epochs. CausalFusion adopts arbitrary AR steps for image generation, but each step only diffuses partial tokens, resulting in similar (or slightly lower) computational complexity.</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_1"><figDesc>(a) Samples generated by CausalFusion-XL/2, ImageNet 512×512, 800 epoch, DDPM 250 steps, CFG=4.0 (b) Zero-shot image editing results generated by CausalFusion-XL/2, ImageNet 512×512, 800 epoch. We first generate the original image (those on the left), then mask out its centre region, top-half, or bottom-half, and regenerate the image with new class conditions. Details are discussed in Sec 6.</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_2"><head>Figure 2 .</head><label>2</label><figDesc>Figure 2. Visualization results. All samples are generated by models trained only on ImageNet-1K class-conditional generation task, demonstrating CausalFusion's zero-shot image manipulation ability. See more visualization results in Appendix D.</figDesc><graphic coords="2,58.67,272.48,61.84,61.84" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_3"><head>Figure 3 .</head><label>3</label><figDesc>Figure 3. Conceptual comparison between the DiT and Causal-Fusion architectures. a) DiT incorporates conditioning via adaptive layer normalization, processing a fixed-size set of entire image tokens as input. All the noise tokens xt are fed into DiT with full attention observation, enabling comprehensive modeling of the input during processing. b) CausalFusion treats all input modalities equally in an in-context manner, denoising a random subset of image tokens xt,κ s at each step while causally conditioning on previously denoised tokens x0,1:κ s-1 , and other contextual inputs.This approach enforces the model to reconstruct the image with partial observation, embodying the spirit of masked feature prediction models<ref type="bibr" target="#b23">[24,</ref><ref type="bibr" target="#b34">35,</ref><ref type="bibr" target="#b66">67]</ref>.</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_4"><head>Figure 4 (</head><label>4</label><figDesc>b) offers further insight into this behavior, showing that uniform AR step sampling during training leads to a highly imbalanced |κ s | distribution. As a result, the training signal is dominated by AR steps with very few tokens-over 95% of AR steps have |κ s | ≤ 16. These steps are uniformly distributed along the AR axis, causing the model to overly rely on visible context and thus diminishing the complexity of the training task.</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_5"><figDesc>Lastly, given the CausalFusion model trained with random AR steps, we compare the loss values produced by different AR steps on the validation set. As shown in Figure 4(c), later AR steps yield much lower loss values than earlier steps, suggesting a clear trend of vanished training signals along the AR axis.</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_6"><figDesc>Samples on Image Caption generation.</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_7"><head>Figure 5 .</head><label>5</label><figDesc>Figure 5. Multimodal generation. Results are generated by a single CausalFusion XL model trained on ImageNet recaption data.</figDesc><graphic coords="7,317.52,564.30,58.98,58.98" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_8"><head>Figure 6 .</head><label>6</label><figDesc>Figure 6. Generalized causal mask. In this case, the input sequence is organized to have 3 AR-steps κ1, κ2, and κ3, containing 2, 2, and 3 tokens, respectively. x0,κ 1 and x0,κ 2 are the clean tokens at the first two AR steps, while xt,κ 1 , xt,κ 2 , and xt,κ 3 are noised tokens. White and gray blocks denote the masked and unmasked attention, respectively. Note that, each xt,κ s only attends to itself and the clean tokens from previous AR steps x0,κ 1:s-1 .</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_9"><head>Algorithm 1</head><label>1</label><figDesc>Generalized causal maskdef get_attn_mask(ctx_len, x_len, step): # tx_len: the length of clean tokens # x_len: the length of noisy tokens # step: number of AR steps # sample random tokens per AR step sumk = random.sample(range(1, x_len), step -1) sumk = [0] + sorted(sumk) + [x_len] # build 'causal' masks seq_len = ctx_len + x_len attn_mask = torch.ones(size=(seq_len, seq_len)) m1 = torch.ones(size=(ctx_len, ctx_len)) m2 = torch.ones(size=(x_len, ctx_len)) m3 = torch.ones(size=(x_len, x_len)) for i in range(len(sumk) -2): m1[sumk[i]:sumk[i+1], 0:sumk[i+1]] = 0 m2[sumk[i+1]:sumk[i+2], 0:sumk[i+1]] = 0 for i in range(len(sumk) -1): m3[sumk[i]:sumk[i+1], sumk[i]:sumk[i+1]] = 0 attn_mask[:ctx_len, :ctx_len] = m1 attn_mask[ctx_len:, :ctx_len] = m2 attn_mask[ctx_len:, ctx_len:] = m3 return attn_mask # 1 for mask, 0 for unmask to be computed only once and can be shared across multiple x t,κs with different t values. Consequently, the additional computational cost introduced by clean image tokens during training is minimized, amounting to only ∼10%.</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_11"><head>and 8 .</head><label>8</label><figDesc>The editing results are achieved by first generating the original image using the initial class label, then masking a portion of the image, and regenerating it conditioned on the unmasked region and the new class label. For example, in the first example in Figure7, an image of "volcano" is first generated. Then, the outer region of the image is masked out, and the new images are regenerated with new labels, such as "televison", "sliding door", and "car mirror".We further show uncurated samples from our CausalDiffusion-XL models at 512×512 and 256×256 resolution. Figures 17 through 22 display samples under varying classifier-free guidance scales and class labels.</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_12"><head>Figure 7 .</head><label>7</label><figDesc>Figure 7. Zero-shot editing samples. CausalFusion-XL, resolution 512×512, 800 epoch, Classifier-free guidance scale = 3.0.</figDesc><graphic coords="11,435.54,307.55,58.83,58.83" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_13"><head>Figure 8 .</head><label>8</label><figDesc>Figure 8. Zero-shot editing samples. CausalFusion-XL, resolution 256×256, 800 epoch, Classifier-free guidance scale = 1.5.</figDesc><graphic coords="11,317.95,588.93,58.84,58.84" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_14"><head>Figure 9 .Figure 10 .Figure 11 .Figure 12 .Figure 13 .Figure 14 .Figure 15 .Figure 16 .Figure 17 .Figure 18 .Figure 19 .Figure 20 .Figure 21 .Figure 22 .</head><label>910111213141516171819202122</label><figDesc>Figure 9. Uncurated 512 × 512 CausalFusion-XL samples. Classifier-free guidance scale = 4.0 Class label = "otter" (360)</figDesc><graphic coords="12,58.50,120.90,236.26,504.01" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0"><graphic coords="13,58.50,121.35,236.25,503.12" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0"><graphic coords="13,317.25,120.90,236.26,504.01" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0"><graphic coords="14,58.50,120.96,236.25,503.92" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0"><graphic coords="14,317.25,120.90,236.26,504.01" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0"><graphic coords="15,58.50,120.85,236.25,504.11" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0"><graphic coords="15,317.25,120.96,236.25,503.92" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0"><graphic coords="16,58.50,120.90,236.26,504.01" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0"><graphic coords="16,317.25,120.90,236.26,504.01" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0"><graphic coords="17,58.50,120.90,236.26,504.01" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0"><graphic coords="17,317.25,120.90,236.26,504.01" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0"><graphic coords="18,58.50,120.90,236.26,504.01" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0"><graphic coords="18,317.25,120.90,236.26,504.01" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_0"><head>Table 1 .</head><label>1</label><figDesc>enables CausalFusion to generateIn-context DiT baseline. ImageNet 256×256, 240 epoch. Baseline settings are marked by underlines and selected settings highlighted in gray .</figDesc><table><row><cell>Model</cell><cell cols="2">Params (M) FID10k↓</cell></row><row><cell>DiT [44]</cell><cell>458</cell><cell>18.24</cell></row><row><cell>-AdaLN-zero [44]</cell><cell>305</cell><cell>26.71</cell></row><row><cell>+ new recipe</cell><cell>305</cell><cell>21.94</cell></row><row><cell>+ T embedding</cell><cell>308</cell><cell>20.68</cell></row><row><cell>+ QK-norm</cell><cell>308</cell><cell>18.66</cell></row><row><cell>+ lr warmup</cell><cell>308</cell><cell>17.11</cell></row><row><cell>+ All (In-context DiT)</cell><cell>308</cell><cell>13.78</cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_1"><head>Table 2 .</head><label>2</label><figDesc>Ablations on AR steps. Strain and Seval indicates the fixed AR steps used during training and inference, respectively. Baseline settings are marked by underlines and selected settings highlighted in gray .</figDesc><table><row><cell>0.15 training loss</cell><cell></cell><cell></cell><cell>AR step=1 AR step=2 AR step=4 AR step=8 AR step=256 AR step=rand</cell><cell></cell><cell>0.2 prob</cell><cell></cell><cell>uniform sampling exp-decay sampling 0.9 exp-decay sampling 0.8</cell><cell></cell><cell>0.25 validation loss</cell><cell></cell><cell cols="2">step 0 step 50 step 100 step 150 step 200 step 250</cell></row><row><cell>0.13</cell><cell>0</cell><cell>Epoch</cell><cell cols="2">240</cell><cell>0.0</cell><cell>0</cell><cell>#tokens per AR step</cell><cell>32</cell><cell>0.14</cell><cell>0</cell><cell>Epoch</cell><cell>200</cell></row><row><cell></cell><cell></cell><cell>(a)</cell><cell></cell><cell></cell><cell></cell><cell></cell><cell>(b)</cell><cell></cell><cell></cell><cell></cell><cell>(c)</cell></row><row><cell cols="12">Figure 4. (a) Training loss using different number of AR steps. (b) Distribution of |κs|. (c) Validation loss at difference AR steps.</cell></row><row><cell></cell><cell></cell><cell></cell><cell cols="2">FID10k↓</cell><cell></cell><cell></cell><cell></cell><cell></cell><cell></cell><cell></cell><cell></cell></row><row><cell></cell><cell>#AR steps</cell><cell>S eval = 1</cell><cell>S eval = 2</cell><cell cols="2">S eval = 4</cell><cell>S eval = 8</cell><cell></cell><cell></cell><cell></cell><cell></cell><cell></cell></row><row><cell></cell><cell>S train = 1</cell><cell>13.78</cell><cell>356.69</cell><cell cols="2">404.67</cell><cell>390.18</cell><cell></cell><cell></cell><cell></cell><cell></cell><cell></cell></row><row><cell></cell><cell>S train = 2</cell><cell>16.69</cell><cell>14.77</cell><cell cols="2">47.49</cell><cell>136.04</cell><cell></cell><cell></cell><cell></cell><cell></cell><cell></cell></row><row><cell></cell><cell>S train = 4</cell><cell>24.14</cell><cell>15.37</cell><cell cols="2">18.13</cell><cell>33.14</cell><cell></cell><cell></cell><cell></cell><cell></cell><cell></cell></row><row><cell></cell><cell>S train = 8</cell><cell>54.08</cell><cell>24.49</cell><cell cols="2">22.66</cell><cell>20.01</cell><cell></cell><cell></cell><cell></cell><cell></cell><cell></cell></row><row><cell></cell><cell>S train = 256</cell><cell>313.28</cell><cell>321.62</cell><cell cols="2">261.26</cell><cell>192.25</cell><cell></cell><cell></cell><cell></cell><cell></cell><cell></cell></row><row><cell></cell><cell>random</cell><cell>21.31</cell><cell>22.17</cell><cell cols="2">23.54</cell><cell>25.05</cell><cell></cell><cell></cell><cell></cell><cell></cell><cell></cell></row></table><note><p>2 3 of the AdaLN-zero version.</p></note></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_4"><head>Table 4 .</head><label>4</label><figDesc>System performance comparison on ImageNet class-conditioned generation. Numbers marked with gray blocks use temperature sampling during inference.</figDesc><table><row><cell></cell><cell></cell><cell cols="3">256×256, w/o CFG</cell><cell></cell><cell></cell><cell cols="2">256×256, w/ CFG</cell><cell></cell><cell cols="3">512×512, w/ CFG</cell><cell></cell></row><row><cell cols="2">Params</cell><cell>FID↓</cell><cell>IS↑</cell><cell cols="2">Pre.↑ Rec.↑</cell><cell>FID↓</cell><cell>IS↑</cell><cell cols="2">Pre.↑ Rec.↑</cell><cell>FID↓</cell><cell>IS↑</cell><cell>Pre.↑</cell><cell>Rec.↑</cell></row><row><cell>GIVT [63]</cell><cell>304M</cell><cell>5.67</cell><cell>-</cell><cell>0.75</cell><cell>0.59</cell><cell>3.35</cell><cell>-</cell><cell>0.84</cell><cell>0.53</cell><cell>2.92</cell><cell>-</cell><cell>0.84</cell><cell>0.55</cell></row><row><cell>MAR-B [34]</cell><cell>208M</cell><cell>3.48</cell><cell>192.4</cell><cell>0.78</cell><cell>0.58</cell><cell>2.31</cell><cell>281.7</cell><cell>0.82</cell><cell>0.57</cell><cell>-</cell><cell>-</cell><cell>-</cell><cell>-</cell></row><row><cell>LDM-4 [50]</cell><cell>400M</cell><cell cols="2">10.56 103.5</cell><cell>0.71</cell><cell>0.62</cell><cell>3.6</cell><cell>247.7</cell><cell>0.87</cell><cell>0.48</cell><cell>-</cell><cell>-</cell><cell>-</cell><cell>-</cell></row><row><cell>CausalFusion-L</cell><cell>368M</cell><cell>5.12</cell><cell>166.1</cell><cell>0.73</cell><cell>0.66</cell><cell>1.94</cell><cell>264.4</cell><cell>0.82</cell><cell>0.59</cell><cell>-</cell><cell>-</cell><cell>-</cell><cell>-</cell></row><row><cell>MAR-L [34]</cell><cell>479M</cell><cell>2.6</cell><cell>221.4</cell><cell>0.79</cell><cell>0.60</cell><cell>1.78</cell><cell>296.0</cell><cell>0.81</cell><cell>0.60</cell><cell>1.73</cell><cell>279.9</cell><cell>-</cell><cell>-</cell></row><row><cell>ADM [13]</cell><cell>554M</cell><cell>10.94</cell><cell>-</cell><cell>0.69</cell><cell>0.63</cell><cell>4.59</cell><cell>186.7</cell><cell>0.82</cell><cell>0.52</cell><cell>3.85</cell><cell>221.7</cell><cell>0.84</cell><cell>0.53</cell></row><row><cell>DiT-XL [44]</cell><cell>675M</cell><cell>9.62</cell><cell>121.5</cell><cell>0.67</cell><cell>0.67</cell><cell>2.27</cell><cell>278.2</cell><cell>0.83</cell><cell>0.57</cell><cell>3.04</cell><cell>240.8</cell><cell>0.84</cell><cell>0.54</cell></row><row><cell>SiT-XL [42]</cell><cell>675M</cell><cell>8.3</cell><cell>-</cell><cell>-</cell><cell>-</cell><cell>2.06</cell><cell>270.3</cell><cell>0.82</cell><cell>0.59</cell><cell>2.62</cell><cell>252.2</cell><cell>0.84</cell><cell>0.57</cell></row><row><cell>ViT-XL [22]</cell><cell>451M</cell><cell>8.10</cell><cell>-</cell><cell>-</cell><cell>-</cell><cell>2.06</cell><cell>-</cell><cell>-</cell><cell>-</cell><cell>-</cell><cell>-</cell><cell>-</cell><cell>-</cell></row><row><cell>U-ViT-H/2 [1]</cell><cell>501M</cell><cell>6.58</cell><cell>-</cell><cell>-</cell><cell>-</cell><cell>2.29</cell><cell>263.9</cell><cell>0.82</cell><cell>0.57</cell><cell>4.05</cell><cell>-</cell><cell>-</cell><cell>-</cell></row><row><cell>MaskDiT [73]</cell><cell>675M</cell><cell>5.69</cell><cell>178.0</cell><cell>0.74</cell><cell>0.60</cell><cell>2.28</cell><cell>276.6</cell><cell>0.80</cell><cell>0.61</cell><cell>2.50</cell><cell>256.3</cell><cell>0.83</cell><cell>0.56</cell></row><row><cell>RDM [59]</cell><cell>553M</cell><cell>5.27</cell><cell>153.4</cell><cell>0.75</cell><cell>0.62</cell><cell>1.99</cell><cell>260.4</cell><cell>0.81</cell><cell>0.58</cell><cell>-</cell><cell>-</cell><cell>-</cell><cell>-</cell></row><row><cell>CausalFusion-XL</cell><cell>676M</cell><cell>3.61</cell><cell>180.9</cell><cell>0.75</cell><cell>0.66</cell><cell>1.77</cell><cell>282.3</cell><cell>0.82</cell><cell>0.61</cell><cell>1.98</cell><cell>283.2</cell><cell>0.83</cell><cell>0.58</cell></row><row><cell></cell><cell></cell><cell>Type</cell><cell cols="2">Tokenizer</cell><cell cols="3">Params Training Epoch</cell><cell cols="3">Sampler (Steps)</cell><cell cols="3">Sampling tricks FID↓</cell></row><row><cell cols="2">Open-MAGVIT2-L [41]</cell><cell>AR</cell><cell cols="2">MAGVIT2</cell><cell>800M</cell><cell></cell><cell>300</cell><cell></cell><cell cols="2">AR(256)</cell><cell></cell><cell>N/A</cell><cell>2.51</cell></row><row><cell cols="2">Open-MAGVIT2-XL [41]</cell><cell>AR</cell><cell cols="2">MAGVIT2</cell><cell>1.5B</cell><cell></cell><cell>300</cell><cell></cell><cell cols="2">AR(256)</cell><cell></cell><cell>N/A</cell><cell>2.33</cell></row><row><cell>LlamaGen-3B [56]</cell><cell></cell><cell>AR</cell><cell></cell><cell>custom</cell><cell>3.1B</cell><cell></cell><cell>-</cell><cell></cell><cell cols="2">AR(256)</cell><cell></cell><cell>N/A</cell><cell>2.18</cell></row><row><cell>VAR-d24 [60]</cell><cell></cell><cell>VAR</cell><cell></cell><cell>custom</cell><cell>1B</cell><cell></cell><cell>350</cell><cell></cell><cell>VAR</cell><cell></cell><cell></cell><cell>N/A</cell><cell>2.09</cell></row><row><cell>VAR-d30 [60]</cell><cell></cell><cell>VAR</cell><cell></cell><cell>custom</cell><cell>2B</cell><cell></cell><cell>350</cell><cell></cell><cell>VAR</cell><cell></cell><cell cols="2">reject sampling</cell><cell>1.73</cell></row><row><cell>Simple-diffusion [27]</cell><cell></cell><cell>Diffusion</cell><cell></cell><cell>N/A</cell><cell>2B</cell><cell></cell><cell>800</cell><cell></cell><cell>DDPM</cell><cell></cell><cell></cell><cell>N/A</cell><cell>2.44</cell></row><row><cell>FiTv2-3B [66]</cell><cell></cell><cell>Diffusion</cell><cell></cell><cell>SD</cell><cell>3B</cell><cell></cell><cell>256</cell><cell></cell><cell cols="2">DDPM(250)</cell><cell></cell><cell>N/A</cell><cell>2.15</cell></row><row><cell>VDM++ [30]</cell><cell></cell><cell>Diffusion</cell><cell></cell><cell>N/A</cell><cell>2B</cell><cell></cell><cell>-</cell><cell></cell><cell>EDM</cell><cell></cell><cell></cell><cell>-</cell><cell>2.12</cell></row><row><cell>Large-DiT-7B [20]</cell><cell></cell><cell>Diffusion</cell><cell></cell><cell>SD</cell><cell>3B</cell><cell></cell><cell>435</cell><cell></cell><cell cols="2">DDPM(250)</cell><cell></cell><cell>N/A</cell><cell>2.10</cell></row><row><cell>Flag-DiT-3B [20]</cell><cell></cell><cell>Diffusion</cell><cell></cell><cell>SD</cell><cell>3B</cell><cell></cell><cell>256</cell><cell cols="3">adaptive Dopri-5</cell><cell></cell><cell>N/A</cell><cell>1.96</cell></row><row><cell cols="2">DiT-MoE-XL/2-8E2A [18]</cell><cell>Diffusion</cell><cell></cell><cell>SD</cell><cell>16B</cell><cell></cell><cell>≈1000</cell><cell></cell><cell cols="2">DDPM(250)</cell><cell></cell><cell>N/A</cell><cell>1.72</cell></row><row><cell>DiMR-G/2R [38]</cell><cell></cell><cell>Diffusion</cell><cell></cell><cell>SD</cell><cell>1.1B</cell><cell></cell><cell>800</cell><cell cols="3">DPM-solver(250)</cell><cell></cell><cell>N/A</cell><cell>1.63</cell></row><row><cell>DART-XL [21]</cell><cell cols="3">AR+Diffusion</cell><cell>LDM</cell><cell>812M</cell><cell></cell><cell>-</cell><cell cols="3">AR(256)+FM(100)</cell><cell cols="2">τ sampling</cell><cell>3.98</cell></row><row><cell>MonoFormer [72]</cell><cell cols="3">AR+Diffusion</cell><cell>SD</cell><cell>1.1B</cell><cell></cell><cell>-</cell><cell></cell><cell cols="2">DDPM(250)</cell><cell></cell><cell>N/A</cell><cell>2.57</cell></row><row><cell>BiGR-XL-d24 [23]</cell><cell cols="3">AR+Diffusion</cell><cell>custom</cell><cell>799M</cell><cell></cell><cell>400</cell><cell cols="3">AR(256)+DDPM(100)</cell><cell cols="2">τ sampling</cell><cell>2.49</cell></row><row><cell>BiGR-XXL-d32 [23]</cell><cell cols="3">AR+Diffusion</cell><cell>custom</cell><cell>1.5B</cell><cell></cell><cell>400</cell><cell cols="3">AR(256)+DDPM(100)</cell><cell cols="2">τ sampling</cell><cell>2.36</cell></row><row><cell>MAR-H [34]</cell><cell cols="3">AR+Diffusion</cell><cell>custom</cell><cell>943M</cell><cell></cell><cell>800</cell><cell cols="3">AR(256)+DDPM(100)</cell><cell cols="2">τ sampling</cell><cell>1.55</cell></row><row><cell>CausalFusion-H</cell><cell></cell><cell>Diffusion</cell><cell></cell><cell>custom</cell><cell>1B</cell><cell></cell><cell>800</cell><cell></cell><cell cols="2">DDPM(250)</cell><cell></cell><cell>N/A</cell><cell>1.64</cell></row><row><cell>CausalFusion-H</cell><cell></cell><cell>Diffusion</cell><cell></cell><cell>custom</cell><cell>1B</cell><cell></cell><cell>800</cell><cell></cell><cell cols="2">DDPM(250)</cell><cell cols="2">CFG interval</cell><cell>1.57</cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_9"><head>Table 7 .</head><label>7</label><figDesc>Diffusion time steps sampling strategy does not affect the performance. The default setting is underlined.</figDesc><table><row><cell>#class tokens</cell><cell>params (M)</cell><cell>FID10k</cell></row><row><cell>4</cell><cell>308 (+3.9)</cell><cell>12.13</cell></row><row><cell>16</cell><cell>320 (+15.6)</cell><cell>12.04</cell></row><row><cell>64</cell><cell>368 (+62.5)</cell><cell>11.84</cell></row><row><cell>1 (repeat 64×)</cell><cell>305 (+1.0)</cell><cell>12.29</cell></row><row><cell>4 (repeat 16×)</cell><cell>308 (+ 3.9)</cell><cell>11.75</cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_11"><head>Table 9 ,</head><label>9</label><figDesc>we provide the detailed settings of CausalFusion models for classconditional image generation in Section 4 and 5.</figDesc><table><row><cell>config</cell><cell>value</cell></row><row><cell>image resolution</cell><cell>256×256</cell></row><row><cell>hidden dimension</cell><cell>1024</cell></row><row><cell>#heads</cell><cell>16</cell></row><row><cell>#layers</cell><cell>24</cell></row><row><cell>#cls tokens</cell><cell>4</cell></row><row><cell>patch size</cell><cell>2</cell></row><row><cell>positional embedding</cell><cell>sinusoidal</cell></row><row><cell>VAE</cell><cell>SD [55]</cell></row><row><cell>VAE donwsample</cell><cell>8×</cell></row><row><cell>latent channel</cell><cell>4</cell></row><row><cell>optimizer</cell><cell>AdamW [39]</cell></row><row><cell>base learning rate</cell><cell>1e-4</cell></row><row><cell>weight decay</cell><cell>0.0</cell></row><row><cell>optimizer momentum</cell><cell>β 1 , β 2 =0.9, 0.95</cell></row><row><cell>batch size</cell><cell>2048</cell></row><row><cell>learning rate schedule</cell><cell>constant</cell></row><row><cell>warmup epochs</cell><cell>40</cell></row><row><cell>training epochs</cell><cell>240</cell></row><row><cell>augmentation</cell><cell>horizontal flip, center crop</cell></row><row><cell>diffusion sampler</cell><cell>DDPM [26]</cell></row><row><cell>diffusion steps</cell><cell>250</cell></row><row><cell>evaluation suite</cell><cell>ADM [13]</cell></row><row><cell>evaluation metric</cell><cell>FID-10k</cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_12"><head>Table 9 .</head><label>9</label><figDesc>Ablation study configuration.</figDesc><table><row><cell cols="2">System-level comparisons. In Table 10, we provide the</cell></row><row><cell cols="2">detailed settings of CausalFusion models for system-level</cell></row><row><cell>comparisons in Section 6.</cell><cell></cell></row><row><cell>config</cell><cell>value</cell></row><row><cell>hidden dimension</cell><cell>1024 (L), 1280 (XL), 1408 (H)</cell></row><row><cell>#heads</cell><cell>16 (L), 20 (XL), 22 (H)</cell></row><row><cell>#layers</cell><cell>24 (L), 32 (XL), 40 (H)</cell></row><row><cell>#cls tokens</cell><cell>64</cell></row><row><cell>positional embedding</cell><cell>learnable</cell></row><row><cell>VAE</cell><cell>mar [34]</cell></row><row><cell>VAE donwsample</cell><cell>16×</cell></row><row><cell>latent channel</cell><cell>16</cell></row><row><cell>optimizer</cell><cell>AdamW [39]</cell></row><row><cell>base learning rate</cell><cell>1e-4</cell></row><row><cell>weight decay</cell><cell>0.0</cell></row><row><cell>optimizer momentum</cell><cell>β 1 , β 2 =0.9, 0.95</cell></row><row><cell>batch size</cell><cell>2048</cell></row><row><cell>learning rate schedule</cell><cell>constant</cell></row><row><cell>warmup epochs</cell><cell>40</cell></row><row><cell>training epochs</cell><cell>800</cell></row><row><cell>augmentation</cell><cell>horizontal flip, center crop</cell></row><row><cell>diffusion sampler</cell><cell>DDPM [26]</cell></row><row><cell>diffusion steps</cell><cell>250</cell></row><row><cell>evaluation suite</cell><cell>ADM [13]</cell></row><row><cell>evaluation metric</cell><cell>FID-50k</cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_13"><head>Table 10 .</head><label>10</label><figDesc>System-level comparison configuration.InTable 11, we provide the detail experiment hyperparameters for both CausalFusion and Transfusion experiments in Section 6. The training dataset is augmented with 10 captions per image from Ima-geNet, generated using Qwen2VL-7B-Instruct<ref type="bibr" target="#b63">[64]</ref> with the following prompt:You are an image captioner. You need to describe images in COCO style. COCO style is short. Here are some examples of COCO style descriptions: 'A car seems to be parked illegally behind a legally parked car' 'This is a blue and white bathroom with a wall sink and a lifesaver on the wall.' 'Meat with vegetable and fruit displayed in roasting pan.' 'Group of men playing baseball on an open makeshift field.'</figDesc><table><row><cell>config</cell><cell>value</cell></row><row><cell>image resolution</cell><cell>256×256</cell></row><row><cell>hidden dimension</cell><cell>1024</cell></row><row><cell>#heads</cell><cell>16</cell></row><row><cell>#layers</cell><cell>24</cell></row><row><cell>#max text tokens</cell><cell>35</cell></row><row><cell>patch size</cell><cell>2</cell></row><row><cell>image positional embedding</cell><cell>sinusoidal</cell></row><row><cell>text positional embedding</cell><cell>learnable</cell></row><row><cell>VAE</cell><cell>SD [55]</cell></row><row><cell>VAE donwsample</cell><cell>8×</cell></row><row><cell>latent channel</cell><cell>4</cell></row><row><cell>optimizer</cell><cell>AdamW [39]</cell></row><row><cell>base learning rate</cell><cell>1e-4</cell></row><row><cell>text loss coefficient</cell><cell>0.01</cell></row><row><cell>weight decay</cell><cell>0.0</cell></row><row><cell>optimizer momentum</cell><cell>β 1 , β 2 =0.9, 0.95</cell></row><row><cell>batch size</cell><cell>2048</cell></row><row><cell>learning rate schedule</cell><cell>constant</cell></row><row><cell>warmup epochs</cell><cell>40</cell></row><row><cell>training epochs</cell><cell>240</cell></row><row><cell>augmentation</cell><cell>horizontal flip, center crop</cell></row><row><cell>diffusion sampler</cell><cell>DDPM [26]</cell></row><row><cell>diffusion steps</cell><cell>250</cell></row><row><cell>generation eval. metric</cell><cell>MSCOCO 0-shot FID-30k</cell></row><row><cell>captioning eval. metric</cell><cell>MSCOCO CIDEr (Karpathy test)</cell></row></table><note><p>Multi-modal CausalFusion.</p></note></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_15"><head>Table 12 .</head><label>12</label><figDesc>ImageNet classification end-to-end fine-tuning setting.</figDesc><table><row><cell>config</cell><cell>value</cell></row><row><cell>optimizer</cell><cell>AdamW</cell></row><row><cell>caption head lr</cell><cell>1e-4</cell></row><row><cell>other parameters lr</cell><cell>1e-5</cell></row><row><cell>weight decay</cell><cell>0.01</cell></row><row><cell>dropout</cell><cell>0.1</cell></row><row><cell>optimizer momentum</cell><cell>β 1 , β 2 =0.9, 0.999</cell></row><row><cell>batch size</cell><cell>256</cell></row><row><cell>learning rate schedule</cell><cell>cosine decay</cell></row><row><cell>warmup</cell><cell>2</cell></row><row><cell>training epochs</cell><cell>20</cell></row></table></figure>
+		</body>
+		<back>
+			<div type="references">
+
+				<listBibl>
+
+<biblStruct xml:id="b0">
+	<analytic>
+		<title level="a" type="main">All are worth words: A vit backbone for diffusion models</title>
+		<author>
+			<persName><forename type="first">Fan</forename><surname>Bao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shen</forename><surname>Nie</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kaiwen</forename><surname>Xue</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yue</forename><surname>Cao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chongxuan</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hang</forename><surname>Su</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jun</forename><surname>Zhu</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the IEEE/CVF conference on computer vision and pattern recognition</title>
+		<meeting>the IEEE/CVF conference on computer vision and pattern recognition</meeting>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+			<biblScope unit="volume">3</biblScope>
+			<biblScope unit="page">7</biblScope>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b1">
+	<analytic>
+		<title level="a" type="main">Beit: Bert pre-training of image transformers</title>
+		<author>
+			<persName><forename type="first">Hangbo</forename><surname>Bao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Li</forename><surname>Dong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Songhao</forename><surname>Piao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Furu</forename><surname>Wei</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">International Conference on Learning Representations</title>
+		<imprint>
+			<date type="published" when="2021">2021</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b2">
+	<analytic>
+		<title level="a" type="main">Scheduled sampling for sequence prediction with recurrent neural networks</title>
+		<author>
+			<persName><forename type="first">Samy</forename><surname>Bengio</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Oriol</forename><surname>Vinyals</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Navdeep</forename><surname>Jaitly</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Noam</forename><surname>Shazeer</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Advances in neural information processing systems</title>
+		<imprint>
+			<date type="published" when="2015">2015</date>
+			<biblScope unit="volume">28</biblScope>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b3">
+	<analytic>
+		<title level="a" type="main">Video generation models as world simulators</title>
+		<author>
+			<persName><forename type="first">Tim</forename><surname>Brooks</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Bill</forename><surname>Peebles</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Connor</forename><surname>Holmes</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Will</forename><surname>Depue</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yufei</forename><surname>Guo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Li</forename><surname>Jing</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">David</forename><surname>Schnurr</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Joe</forename><surname>Taylor</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Troy</forename><surname>Luhman</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Eric</forename><surname>Luhman</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">OpenAI Blog</title>
+		<imprint>
+			<biblScope unit="issue">1</biblScope>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b4">
+	<monogr>
+		<title level="m" type="main">Language models are few-shot learners. Advances in neural information processing systems</title>
+		<author>
+			<persName><forename type="first">Tom</forename><surname>Brown</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Benjamin</forename><surname>Mann</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Nick</forename><surname>Ryder</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Melanie</forename><surname>Subbiah</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jared</forename><forename type="middle">D</forename><surname>Kaplan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Prafulla</forename><surname>Dhariwal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Arvind</forename><surname>Neelakantan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Pranav</forename><surname>Shyam</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Girish</forename><surname>Sastry</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Amanda</forename><surname>Askell</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sandhini</forename><surname>Agarwal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ariel</forename><surname>Herbert-Voss</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Gretchen</forename><surname>Krueger</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tom</forename><surname>Henighan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Rewon</forename><surname>Child</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Aditya</forename><surname>Ramesh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Daniel</forename><surname>Ziegler</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jeffrey</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Clemens</forename><surname>Winter</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chris</forename><surname>Hesse</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mark</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Eric</forename><surname>Sigler</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mateusz</forename><surname>Litwin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Scott</forename><surname>Gray</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Benjamin</forename><surname>Chess</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jack</forename><surname>Clark</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Christopher</forename><surname>Berner</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sam</forename><surname>Mccandlish</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alec</forename><surname>Radford</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ilya</forename><surname>Sutskever</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dario</forename><surname>Amodei</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2020">2020</date>
+			<biblScope unit="volume">33</biblScope>
+			<biblScope unit="page">2</biblScope>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b5">
+	<analytic>
+		<title level="a" type="main">Masked generative image transformer</title>
+		<author>
+			<persName><forename type="first">Huiwen</forename><surname>Chang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Han</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Lu</forename><surname>Jiang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ce</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">William</forename><forename type="middle">T</forename><surname>Freeman</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Maskgit</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition</title>
+		<meeting>the IEEE/CVF Conference on Computer Vision and Pattern Recognition</meeting>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+			<biblScope unit="page" from="11315" to="11325" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b6">
+	<analytic>
+		<title level="a" type="main">Textto-image generation via masked generative transformers</title>
+		<author>
+			<persName><forename type="first">Huiwen</forename><surname>Chang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Han</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jarred</forename><surname>Barber</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">José</forename><surname>Maschinot</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Lu</forename><surname>Lezama</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ming-Hsuan</forename><surname>Jiang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kevin</forename><surname>Yang</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Murphy</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Michael</forename><surname>William T Freeman</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Rubinstein</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 40th International Conference on Machine Learning</title>
+		<meeting>the 40th International Conference on Machine Learning</meeting>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+			<biblScope unit="page" from="4055" to="4075" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b7">
+	<monogr>
+		<title level="m" type="main">Pixart-\sigma: Weak-to-strong training of diffusion transformer for 4k text-to-image generation</title>
+		<author>
+			<persName><forename type="first">Junsong</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chongjian</forename><surname>Ge</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Enze</forename><surname>Xie</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yue</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Lewei</forename><surname>Yao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xiaozhe</forename><surname>Ren</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhongdao</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ping</forename><surname>Luo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Huchuan</forename><surname>Lu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhenguo</forename><surname>Li</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2403.04692</idno>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b8">
+	<analytic>
+		<title level="a" type="main">Electra: Pre-training text encoders as discriminators rather than generators</title>
+		<author>
+			<persName><forename type="first">Kevin</forename><surname>Clark</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Minh-Thang</forename><surname>Luong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Quoc</forename><forename type="middle">V</forename><surname>Le</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Christopher</forename><forename type="middle">D</forename><surname>Manning</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">International Conference on Learning Representations</title>
+		<imprint>
+			<date type="published" when="2020">2020</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b9">
+	<analytic>
+		<title level="a" type="main">Randaugment: Practical automated data augmentation with a reduced search space</title>
+		<author>
+			<persName><forename type="first">Barret</forename><surname>Ekin D Cubuk</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jonathon</forename><surname>Zoph</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Quoc V</forename><surname>Shlens</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Le</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the IEEE/CVF conference on computer vision and pattern recognition workshops</title>
+		<meeting>the IEEE/CVF conference on computer vision and pattern recognition workshops</meeting>
+		<imprint>
+			<date type="published" when="2020">2020</date>
+			<biblScope unit="page" from="702" to="703" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b10">
+	<analytic>
+		<title level="a" type="main">Scaling vision transformers to 22 billion pa-rameters</title>
+		<author>
+			<persName><forename type="first">Mostafa</forename><surname>Dehghani</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Josip</forename><surname>Djolonga</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Basil</forename><surname>Mustafa</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Piotr</forename><surname>Padlewski</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jonathan</forename><surname>Heek</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Justin</forename><surname>Gilmer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Andreas</forename><forename type="middle">Peter</forename><surname>Steiner</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mathilde</forename><surname>Caron</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Robert</forename><surname>Geirhos</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ibrahim</forename><surname>Alabdulmohsin</surname></persName>
+		</author>
+		<idno>PMLR, 2023. 5</idno>
+	</analytic>
+	<monogr>
+		<title level="m">International Conference on Machine Learning</title>
+		<imprint>
+			<biblScope unit="page" from="7480" to="7512" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b11">
+	<analytic>
+		<title level="a" type="main">Imagenet: A large-scale hierarchical image database</title>
+		<author>
+			<persName><forename type="first">Jia</forename><surname>Deng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wei</forename><surname>Dong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Richard</forename><surname>Socher</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Li-Jia</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kai</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Li</forename><surname>Fei-Fei</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">2009 IEEE conference on computer vision and pattern recognition</title>
+		<imprint>
+			<publisher>Ieee</publisher>
+			<date type="published" when="2009">2009</date>
+			<biblScope unit="page" from="248" to="255" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b12">
+	<monogr>
+		<title level="m" type="main">Advances in neural information processing systems</title>
+		<author>
+			<persName><forename type="first">Prafulla</forename><surname>Dhariwal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alexander</forename><surname>Nichol</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2021">2021. 1, 3, 4, 7, 10</date>
+			<biblScope unit="volume">34</biblScope>
+			<biblScope unit="page" from="8780" to="8794" />
+		</imprint>
+	</monogr>
+	<note>Diffusion models beat gans on image synthesis</note>
+</biblStruct>
+
+<biblStruct xml:id="b13">
+	<monogr>
+		<title level="m" type="main">Cogview: Mastering text-toimage generation via transformers</title>
+		<author>
+			<persName><forename type="first">Ming</forename><surname>Ding</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhuoyi</forename><surname>Yang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wenyi</forename><surname>Hong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wendi</forename><surname>Zheng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chang</forename><surname>Zhou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Da</forename><surname>Yin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Junyang</forename><surname>Lin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xu</forename><surname>Zou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhou</forename><surname>Shao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hongxia</forename><surname>Yang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jie</forename><surname>Tang</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2003">19822-19835, 2021. 3</date>
+			<biblScope unit="volume">34</biblScope>
+		</imprint>
+	</monogr>
+	<note>Advances in neural information processing systems</note>
+</biblStruct>
+
+<biblStruct xml:id="b14">
+	<analytic>
+		<title level="a" type="main">An image is worth 16x16 words: Transformers for image recognition at scale</title>
+		<author>
+			<persName><forename type="first">Alexey</forename><surname>Dosovitskiy</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Lucas</forename><surname>Beyer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alexander</forename><surname>Kolesnikov</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dirk</forename><surname>Weissenborn</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xiaohua</forename><surname>Zhai</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Thomas</forename><surname>Unterthiner</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mostafa</forename><surname>Dehghani</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Matthias</forename><surname>Minderer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Georg</forename><surname>Heigold</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sylvain</forename><surname>Gelly</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jakob</forename><surname>Uszkoreit</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Neil</forename><surname>Houlsby</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">International Conference on Learning Representations</title>
+		<imprint>
+			<date type="published" when="2021">2021</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b15">
+	<monogr>
+		<title level="m" type="main">The llama 3 herd of models</title>
+		<author>
+			<persName><forename type="first">Abhimanyu</forename><surname>Dubey</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Abhinav</forename><surname>Jauhri</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Abhinav</forename><surname>Pandey</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Abhishek</forename><surname>Kadian</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ahmad</forename><surname>Al-Dahle</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Aiesha</forename><surname>Letman</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Akhil</forename><surname>Mathur</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alan</forename><surname>Schelten</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Amy</forename><surname>Yang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Angela</forename><surname>Fan</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2407.21783</idno>
+		<imprint>
+			<date type="published" when="2008">2024. 1, 2, 8</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b16">
+	<analytic>
+		<title level="a" type="main">Scaling rectified flow transformers for high-resolution image synthesis</title>
+		<author>
+			<persName><forename type="first">Patrick</forename><surname>Esser</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sumith</forename><surname>Kulal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Andreas</forename><surname>Blattmann</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Rahim</forename><surname>Entezari</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jonas</forename><surname>Müller</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Harry</forename><surname>Saini</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yam</forename><surname>Levi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dominik</forename><surname>Lorenz</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Axel</forename><surname>Sauer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Frederic</forename><surname>Boesel</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Forty-first International Conference on Machine Learning</title>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b17">
+	<monogr>
+		<title level="m" type="main">Scaling diffusion transformers to 16 billion parameters</title>
+		<author>
+			<persName><forename type="first">Zhengcong</forename><surname>Fei</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mingyuan</forename><surname>Fan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Changqian</forename><surname>Yu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Debang</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Junshi</forename><surname>Huang</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2407.11633</idno>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b18">
+	<analytic>
+		<title level="a" type="main">Make-a-scene: Scenebased text-to-image generation with human priors</title>
+		<author>
+			<persName><forename type="first">Oran</forename><surname>Gafni</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Adam</forename><surname>Polyak</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Oron</forename><surname>Ashual</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shelly</forename><surname>Sheynin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Devi</forename><surname>Parikh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yaniv</forename><surname>Taigman</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">European Conference on Computer Vision</title>
+		<imprint>
+			<publisher>Springer</publisher>
+			<date type="published" when="2022">2022</date>
+			<biblScope unit="page" from="89" to="106" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b19">
+	<monogr>
+		<title level="m" type="main">Lumina-t2x: Transforming text into any modality, resolution, and duration via flow-based large diffusion transformers</title>
+		<author>
+			<persName><forename type="first">Peng</forename><surname>Gao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Le</forename><surname>Zhuo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ziyi</forename><surname>Lin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chris</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Junsong</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ruoyi</forename><surname>Du</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Enze</forename><surname>Xie</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xu</forename><surname>Luo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Longtian</forename><surname>Qiu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yuhang</forename><surname>Zhang</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2405.05945</idno>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b20">
+	<monogr>
+		<title level="m" type="main">Dart: Denoising autoregressive transformer for scalable text-to-image generation</title>
+		<author>
+			<persName><forename type="first">Jiatao</forename><surname>Gu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yuyang</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yizhe</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Qihang</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dinghuai</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Navdeep</forename><surname>Jaitly</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Josh</forename><surname>Susskind</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shuangfei</forename><surname>Zhai</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2410.08159</idno>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+			<biblScope unit="volume">3</biblScope>
+			<biblScope unit="page">7</biblScope>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b21">
+	<analytic>
+		<title level="a" type="main">Efficient diffusion training via min-snr weighting strategy</title>
+		<author>
+			<persName><forename type="first">Tiankai</forename><surname>Hang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shuyang</forename><surname>Gu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chen</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jianmin</forename><surname>Bao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dong</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Han</forename><surname>Hu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xin</forename><surname>Geng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Baining</forename><surname>Guo</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the IEEE/CVF International Conference on Computer Vision</title>
+		<meeting>the IEEE/CVF International Conference on Computer Vision</meeting>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+			<biblScope unit="volume">2</biblScope>
+			<biblScope unit="page">7</biblScope>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b22">
+	<monogr>
+		<title level="m" type="main">Bigr: Harnessing binary latent codes for image generation and improved visual representation capabilities</title>
+		<author>
+			<persName><forename type="first">Shaozhe</forename><surname>Hao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xuantong</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xianbiao</forename><surname>Qi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shihao</forename><surname>Zhao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Bojia</forename><surname>Zi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Rong</forename><surname>Xiao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kai</forename><surname>Han</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kwan-Yee K</forename><surname>Wong</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2410.14672</idno>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+			<biblScope unit="volume">3</biblScope>
+			<biblScope unit="page">7</biblScope>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b23">
+	<analytic>
+		<title level="a" type="main">Masked autoencoders are scalable vision learners</title>
+		<author>
+			<persName><forename type="first">Kaiming</forename><surname>He</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xinlei</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Saining</forename><surname>Xie</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yanghao</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Piotr</forename><surname>Dollár</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ross</forename><surname>Girshick</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the IEEE/CVF conference on computer vision and pattern recognition</title>
+		<meeting>the IEEE/CVF conference on computer vision and pattern recognition</meeting>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+			<biblScope unit="volume">4</biblScope>
+			<biblScope unit="page">10</biblScope>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b24">
+	<monogr>
+		<author>
+			<persName><forename type="first">Jonathan</forename><surname>Ho</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tim</forename><surname>Salimans</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2207.12598</idno>
+		<title level="m">Classifier-free diffusion guidance</title>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+			<biblScope unit="volume">7</biblScope>
+			<biblScope unit="page">8</biblScope>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b25">
+	<analytic>
+		<title level="a" type="main">Denoising diffusion probabilistic models</title>
+		<author>
+			<persName><forename type="first">Jonathan</forename><surname>Ho</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ajay</forename><surname>Jain</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Pieter</forename><surname>Abbeel</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Advances in neural information processing systems</title>
+		<imprint>
+			<date type="published" when="2020">2020. 1, 2, 3, 10</date>
+			<biblScope unit="volume">33</biblScope>
+			<biblScope unit="page" from="6840" to="6851" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b26">
+	<analytic>
+		<title level="a" type="main">simple diffusion: End-to-end diffusion for high resolution images</title>
+		<author>
+			<persName><forename type="first">Emiel</forename><surname>Hoogeboom</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jonathan</forename><surname>Heek</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tim</forename><surname>Salimans</surname></persName>
+		</author>
+		<idno>PMLR, 2023. 7</idno>
+	</analytic>
+	<monogr>
+		<title level="m">International Conference on Machine Learning</title>
+		<imprint>
+			<biblScope unit="page" from="13213" to="13232" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b27">
+	<analytic>
+		<title level="a" type="main">Deep networks with stochastic depth</title>
+		<author>
+			<persName><forename type="first">Gao</forename><surname>Huang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yu</forename><surname>Sun</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhuang</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Daniel</forename><surname>Sedra</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kilian</forename><forename type="middle">Q</forename><surname>Weinberger</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Computer Vision-ECCV 2016: 14th European Conference, Amsterdam</title>
+		<meeting><address><addrLine>The Netherlands</addrLine></address></meeting>
+		<imprint>
+			<publisher>Springer</publisher>
+			<date type="published" when="2016">October 11-14, 2016. 2016</date>
+			<biblScope unit="page" from="646" to="661" />
+		</imprint>
+	</monogr>
+	<note>Proceedings, Part IV 14</note>
+</biblStruct>
+
+<biblStruct xml:id="b28">
+	<analytic>
+		<title level="a" type="main">Elucidating the design space of diffusion-based generative models</title>
+		<author>
+			<persName><forename type="first">Tero</forename><surname>Karras</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Miika</forename><surname>Aittala</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Timo</forename><surname>Aila</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Samuli</forename><surname>Laine</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Advances in neural information processing systems</title>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+			<biblScope unit="volume">35</biblScope>
+			<biblScope unit="page" from="26565" to="26577" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b29">
+	<monogr>
+		<title level="m" type="main">Understanding diffusion objectives as the elbo with simple data augmentation. Advances in Neural Information Processing Systems</title>
+		<author>
+			<persName><forename type="first">Diederik</forename><surname>Kingma</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ruiqi</forename><surname>Gao</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+			<biblScope unit="volume">36</biblScope>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b30">
+	<analytic>
+		<title level="a" type="main">Videopoet: A large language model for zero-shot video generation</title>
+		<author>
+			<persName><forename type="first">Dan</forename><surname>Kondratyuk</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Lijun</forename><surname>Yu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xiuye</forename><surname>Gu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jose</forename><surname>Lezama</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jonathan</forename><surname>Huang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Grant</forename><surname>Schindler</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Rachel</forename><surname>Hornung</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Vighnesh</forename><surname>Birodkar</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jimmy</forename><surname>Yan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ming-Chang</forename><surname>Chiu</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Forty-first International Conference on Machine Learning</title>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b31">
+	<monogr>
+		<title level="m" type="main">Applying guidance in a limited interval improves sample and distribution quality in diffusion models</title>
+		<author>
+			<persName><forename type="first">Tuomas</forename><surname>Kynkäänniemi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Miika</forename><surname>Aittala</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tero</forename><surname>Karras</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Samuli</forename><surname>Laine</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Timo</forename><surname>Aila</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jaakko</forename><surname>Lehtinen</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2404.07724</idno>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b32">
+	<analytic>
+		<title/>
+	</analytic>
+	<monogr>
+		<title level="j">Black Forest Labs. Flux</title>
+		<imprint>
+			<biblScope unit="issue">3</biblScope>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b33">
+	<monogr>
+		<title level="m" type="main">Autoregressive image generation without vector quantization</title>
+		<author>
+			<persName><forename type="first">Tianhong</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yonglong</forename><surname>Tian</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">He</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mingyang</forename><surname>Deng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kaiming</forename><surname>He</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2406.11838</idno>
+		<imprint>
+			<date type="published" when="2009">2024. 3, 7, 8, 9</date>
+			<biblScope unit="page">10</biblScope>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b34">
+	<analytic>
+		<title level="a" type="main">Scaling language-image pre-training via masking</title>
+		<author>
+			<persName><forename type="first">Yanghao</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Haoqi</forename><surname>Fan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ronghang</forename><surname>Hu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Christoph</forename><surname>Feichtenhofer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kaiming</forename><surname>He</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition</title>
+		<meeting>the IEEE/CVF Conference on Computer Vision and Pattern Recognition</meeting>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+			<biblScope unit="volume">4</biblScope>
+			<biblScope unit="page">10</biblScope>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b35">
+	<analytic>
+		<title level="a" type="main">Microsoft coco: Common objects in context</title>
+		<author>
+			<persName><forename type="first">Tsung-Yi</forename><surname>Lin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Michael</forename><surname>Maire</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Serge</forename><surname>Belongie</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">James</forename><surname>Hays</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Pietro</forename><surname>Perona</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Deva</forename><surname>Ramanan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Piotr</forename><surname>Dollár</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><surname>Lawrence</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zitnick</forename></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Computer Vision-ECCV 2014: 13th European Conference</title>
+		<meeting><address><addrLine>Zurich, Switzerland</addrLine></address></meeting>
+		<imprint>
+			<publisher>Springer</publisher>
+			<date type="published" when="2014">September 6-12, 2014. 2014</date>
+			<biblScope unit="page" from="740" to="755" />
+		</imprint>
+	</monogr>
+	<note>Proceedings, Part V 13</note>
+</biblStruct>
+
+<biblStruct xml:id="b36">
+	<analytic>
+		<title level="a" type="main">Flow matching for generative modeling</title>
+		<author>
+			<persName><forename type="first">Yaron</forename><surname>Lipman</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ricky Tq</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Heli</forename><surname>Ben-Hamu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Maximilian</forename><surname>Nickel</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Matthew</forename><surname>Le</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">The Eleventh International Conference on Learning Representations</title>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b37">
+	<monogr>
+		<title level="m" type="main">Alleviating distortion in image generation via multi-resolution diffusion models</title>
+		<author>
+			<persName><forename type="first">Qihao</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhanpeng</forename><surname>Zeng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ju</forename><surname>He</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Qihang</forename><surname>Yu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xiaohui</forename><surname>Shen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Liang-Chieh</forename><surname>Chen</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2406.09416</idno>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b38">
+	<monogr>
+		<author>
+			<persName><surname>Loshchilov</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:1711.05101</idno>
+		<title level="m">Decoupled weight decay regularization</title>
+		<imprint>
+			<date type="published" when="2017">2017</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b39">
+	<analytic>
+		<title level="a" type="main">Unified-io 2: Scaling autoregressive multimodal models with vision language audio and action</title>
+		<author>
+			<persName><forename type="first">Jiasen</forename><surname>Lu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Christopher</forename><surname>Clark</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sangho</forename><surname>Lee</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zichen</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Savya</forename><surname>Khosla</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ryan</forename><surname>Marten</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Derek</forename><surname>Hoiem</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Aniruddha</forename><surname>Kembhavi</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition</title>
+		<meeting>the IEEE/CVF Conference on Computer Vision and Pattern Recognition</meeting>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+			<biblScope unit="page" from="26439" to="26455" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b40">
+	<monogr>
+		<title level="m" type="main">Open-magvit2: An open-source project toward democratizing auto-regressive visual generation</title>
+		<author>
+			<persName><forename type="first">Zhuoyan</forename><surname>Luo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Fengyuan</forename><surname>Shi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yixiao</forename><surname>Ge</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yujiu</forename><surname>Yang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Limin</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ying</forename><surname>Shan</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2409.04410</idno>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b41">
+	<monogr>
+		<title level="m" type="main">Sit: Exploring flow and diffusion-based generative models with scalable interpolant transformers</title>
+		<author>
+			<persName><forename type="first">Nanye</forename><surname>Ma</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mark</forename><surname>Goldstein</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Nicholas</forename><forename type="middle">M</forename><surname>Michael S Albergo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Eric</forename><surname>Boffi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Saining</forename><surname>Vanden-Eijnden</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Xie</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2401.08740</idno>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b42">
+	<monogr>
+		<title level="m" type="main">Glide: Towards photorealistic image generation and editing with text-guided diffusion models</title>
+		<author>
+			<persName><forename type="first">Alex</forename><surname>Nichol</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Prafulla</forename><surname>Dhariwal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Aditya</forename><surname>Ramesh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Pranav</forename><surname>Shyam</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Pamela</forename><surname>Mishkin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Bob</forename><surname>Mcgrew</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ilya</forename><surname>Sutskever</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mark</forename><surname>Chen</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2112.10741</idno>
+		<imprint>
+			<date type="published" when="2021">2021</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b43">
+	<analytic>
+		<title level="a" type="main">Scalable diffusion models with transformers</title>
+		<author>
+			<persName><forename type="first">William</forename><surname>Peebles</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Saining</forename><surname>Xie</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the IEEE/CVF International Conference on Computer Vision</title>
+		<meeting>the IEEE/CVF International Conference on Computer Vision</meeting>
+		<imprint>
+			<date type="published" when="2009">2023. 1, 2, 3, 4, 5, 6, 7, 8, 9</date>
+			<biblScope unit="page" from="4195" to="4205" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b44">
+	<analytic>
+		<title level="a" type="main">Sdxl: Improving latent diffusion models for high-resolution image synthesis</title>
+		<author>
+			<persName><forename type="first">Dustin</forename><surname>Podell</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zion</forename><surname>English</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kyle</forename><surname>Lacey</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Andreas</forename><surname>Blattmann</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tim</forename><surname>Dockhorn</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jonas</forename><surname>Müller</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Joe</forename><surname>Penna</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Robin</forename><surname>Rombach</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">The Twelfth International Conference on Learning Representations</title>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b45">
+	<analytic>
+		<title level="a" type="main">Improving language understanding by generative pre-training</title>
+		<author>
+			<persName><forename type="first">Alec</forename><surname>Radford</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Karthik</forename><surname>Narasimhan</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">OpenAI blog</title>
+		<imprint>
+			<date type="published" when="2008">2018. 1, 2, 8</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b46">
+	<analytic>
+		<title level="a" type="main">Language models are unsupervised multitask learners</title>
+		<author>
+			<persName><forename type="first">Alec</forename><surname>Radford</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jeffrey</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Rewon</forename><surname>Child</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">David</forename><surname>Luan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dario</forename><surname>Amodei</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ilya</forename><surname>Sutskever</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">OpenAI blog</title>
+		<imprint>
+			<biblScope unit="volume">1</biblScope>
+			<biblScope unit="page">2</biblScope>
+			<date type="published" when="2019">2019</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b47">
+	<analytic>
+		<title level="a" type="main">Zero-shot text-to-image generation</title>
+		<author>
+			<persName><forename type="first">Aditya</forename><surname>Ramesh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mikhail</forename><surname>Pavlov</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Gabriel</forename><surname>Goh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Scott</forename><surname>Gray</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chelsea</forename><surname>Voss</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alec</forename><surname>Radford</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mark</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ilya</forename><surname>Sutskever</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">International conference on machine learning</title>
+		<imprint>
+			<date type="published" when="2021">2021</date>
+			<biblScope unit="page" from="8821" to="8831" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b48">
+	<monogr>
+		<title level="m" type="main">Hierarchical text-conditional image generation with clip latents</title>
+		<author>
+			<persName><forename type="first">Aditya</forename><surname>Ramesh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Prafulla</forename><surname>Dhariwal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alex</forename><surname>Nichol</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Casey</forename><surname>Chu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mark</forename><surname>Chen</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2204.06125</idno>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b49">
+	<analytic>
+		<title level="a" type="main">High-resolution image synthesis with latent diffusion models</title>
+		<author>
+			<persName><forename type="first">Robin</forename><surname>Rombach</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Andreas</forename><surname>Blattmann</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dominik</forename><surname>Lorenz</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Patrick</forename><surname>Esser</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Björn</forename><surname>Ommer</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the IEEE/CVF conference on computer vision and pattern recognition</title>
+		<meeting>the IEEE/CVF conference on computer vision and pattern recognition</meeting>
+		<imprint>
+			<date type="published" when="2007">2022. 1, 3, 4, 7</date>
+			<biblScope unit="page" from="10684" to="10695" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b50">
+	<analytic>
+		<title level="a" type="main">Deep unsupervised learning using nonequilibrium thermodynamics</title>
+		<author>
+			<persName><forename type="first">Jascha</forename><surname>Sohl-Dickstein</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Eric</forename><surname>Weiss</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Niru</forename><surname>Maheswaranathan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Surya</forename><surname>Ganguli</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">International conference on machine learning</title>
+		<imprint>
+			<date type="published" when="2015">2015</date>
+			<biblScope unit="page" from="2256" to="2265" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b51">
+	<analytic>
+		<title level="a" type="main">Deep unsupervised learning using nonequilibrium thermodynamics</title>
+		<author>
+			<persName><forename type="first">Jascha</forename><surname>Sohl-Dickstein</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Eric</forename><surname>Weiss</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Niru</forename><surname>Maheswaranathan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Surya</forename><surname>Ganguli</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">International conference on machine learning</title>
+		<imprint>
+			<date type="published" when="2015">2015</date>
+			<biblScope unit="page" from="2256" to="2265" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b52">
+	<analytic>
+		<title level="a" type="main">Generative modeling by estimating gradients of the data distribution</title>
+		<author>
+			<persName><forename type="first">Yang</forename><surname>Song</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Stefano</forename><surname>Ermon</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Advances in neural information processing systems</title>
+		<imprint>
+			<date type="published" when="2019">2019</date>
+			<biblScope unit="volume">32</biblScope>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b53">
+	<analytic>
+		<title level="a" type="main">Score-based generative modeling through stochastic differential equations</title>
+		<author>
+			<persName><forename type="first">Yang</forename><surname>Song</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jascha</forename><surname>Sohl-Dickstein</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">P</forename><surname>Diederik</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Abhishek</forename><surname>Kingma</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Stefano</forename><surname>Kumar</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ben</forename><surname>Ermon</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Poole</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">International Conference on Learning Representations</title>
+		<imprint>
+			<date type="published" when="2021">2021</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b54">
+	<monogr>
+		<title/>
+		<author>
+			<persName><surname>Stabilityai</surname></persName>
+		</author>
+		<ptr target="https://huggingface.co/stabilityai/sd-vae-ft-ema" />
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b55">
+	<monogr>
+		<title level="m" type="main">Autoregressive model beats diffusion: Llama for scalable image generation</title>
+		<author>
+			<persName><forename type="first">Peize</forename><surname>Sun</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yi</forename><surname>Jiang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shoufa</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shilong</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Bingyue</forename><surname>Peng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ping</forename><surname>Luo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zehuan</forename><surname>Yuan</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2406.06525</idno>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b56">
+	<analytic>
+		<title level="a" type="main">Generative multimodal models are in-context learners</title>
+		<author>
+			<persName><forename type="first">Quan</forename><surname>Sun</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yufeng</forename><surname>Cui</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xiaosong</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Fan</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Qiying</forename><surname>Yu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yueze</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yongming</forename><surname>Rao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jingjing</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tiejun</forename><surname>Huang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xinlong</forename><surname>Wang</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition</title>
+		<meeting>the IEEE/CVF Conference on Computer Vision and Pattern Recognition</meeting>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+			<biblScope unit="page" from="14398" to="14409" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b57">
+	<analytic>
+		<title level="a" type="main">Rethinking the inception architecture for computer vision</title>
+		<author>
+			<persName><forename type="first">Christian</forename><surname>Szegedy</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Vincent</forename><surname>Vanhoucke</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sergey</forename><surname>Ioffe</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jon</forename><surname>Shlens</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zbigniew</forename><surname>Wojna</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the IEEE conference on computer vision and pattern recognition</title>
+		<meeting>the IEEE conference on computer vision and pattern recognition</meeting>
+		<imprint>
+			<date type="published" when="2016">2016</date>
+			<biblScope unit="page" from="2818" to="2826" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b58">
+	<monogr>
+		<title level="m" type="main">Relay diffusion: Unifying diffusion process across resolutions for image synthesis</title>
+		<author>
+			<persName><forename type="first">Jiayan</forename><surname>Teng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wendi</forename><surname>Zheng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ming</forename><surname>Ding</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wenyi</forename><surname>Hong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jianqiao</forename><surname>Wangni</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhuoyi</forename><surname>Yang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jie</forename><surname>Tang</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2309.03350</idno>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b59">
+	<monogr>
+		<author>
+			<persName><forename type="first">Keyu</forename><surname>Tian</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yi</forename><surname>Jiang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zehuan</forename><surname>Yuan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Bingyue</forename><surname>Peng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Liwei</forename><surname>Wang</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2404.02905</idno>
+		<title level="m">Visual autoregressive modeling: Scalable image generation via next-scale prediction</title>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b60">
+	<monogr>
+		<title level="m" type="main">Llama: Open and efficient foundation language models</title>
+		<author>
+			<persName><forename type="first">Hugo</forename><surname>Touvron</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Thibaut</forename><surname>Lavril</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Gautier</forename><surname>Izacard</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xavier</forename><surname>Martinet</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Marie-Anne</forename><surname>Lachaux</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Timothée</forename><surname>Lacroix</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Baptiste</forename><surname>Rozière</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Naman</forename><surname>Goyal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Eric</forename><surname>Hambro</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Faisal</forename><surname>Azhar</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2302.13971</idno>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+			<biblScope unit="volume">1</biblScope>
+			<biblScope unit="page">2</biblScope>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b61">
+	<monogr>
+		<title level="m" type="main">Llama 2: Open foundation and fine-tuned chat models</title>
+		<author>
+			<persName><forename type="first">Hugo</forename><surname>Touvron</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Louis</forename><surname>Martin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kevin</forename><surname>Stone</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Peter</forename><surname>Albert</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Amjad</forename><surname>Almahairi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yasmine</forename><surname>Babaei</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Nikolay</forename><surname>Bashlykov</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Soumya</forename><surname>Batra</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Prajjwal</forename><surname>Bhargava</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shruti</forename><surname>Bhosale</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2307.09288</idno>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+			<biblScope unit="volume">1</biblScope>
+			<biblScope unit="page">2</biblScope>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b62">
+	<analytic>
+		<title level="a" type="main">Givt: Generative infinite-vocabulary transformers</title>
+		<author>
+			<persName><forename type="first">Cian</forename><surname>Michael Tschannen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Fabian</forename><surname>Eastwood</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Mentzer</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">European Conference on Computer Vision</title>
+		<imprint>
+			<publisher>Springer</publisher>
+			<date type="published" when="2025">2025</date>
+			<biblScope unit="page" from="292" to="309" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b63">
+	<monogr>
+		<title level="m" type="main">Qwen2-vl: Enhancing vision-language model&apos;s perception of the world at any resolution</title>
+		<author>
+			<persName><forename type="first">Peng</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shuai</forename><surname>Bai</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sinan</forename><surname>Tan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shijie</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhihao</forename><surname>Fan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jinze</forename><surname>Bai</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Keqin</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xuejing</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jialin</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wenbin</forename><surname>Ge</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yang</forename><surname>Fan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kai</forename><surname>Dang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mengfei</forename><surname>Du</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xuancheng</forename><surname>Ren</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Rui</forename><surname>Men</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dayiheng</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chang</forename><surname>Zhou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jingren</forename><surname>Zhou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Junyang</forename><surname>Lin</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2409.12191</idno>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+			<biblScope unit="volume">8</biblScope>
+			<biblScope unit="page">10</biblScope>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b64">
+	<analytic>
+		<title level="a" type="main">Non-local neural networks</title>
+		<author>
+			<persName><forename type="first">Xiaolong</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ross</forename><surname>Girshick</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Abhinav</forename><surname>Gupta</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kaiming</forename><surname>He</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the IEEE conference on computer vision and pattern recognition</title>
+		<meeting>the IEEE conference on computer vision and pattern recognition</meeting>
+		<imprint>
+			<date type="published" when="2018">2018</date>
+			<biblScope unit="page" from="7794" to="7803" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b65">
+	<monogr>
+		<title level="m" type="main">Fitv2: Scalable and improved flexible vision transformer for diffusion model</title>
+		<author>
+			<persName><forename type="first">Zidong</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zeyu</forename><surname>Lu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Di</forename><surname>Huang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Cai</forename><surname>Zhou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wanli</forename><surname>Ouyang</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2410.13925</idno>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b66">
+	<analytic>
+		<title level="a" type="main">Masked feature prediction for self-supervised visual pre-training</title>
+		<author>
+			<persName><forename type="first">Chen</forename><surname>Wei</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Haoqi</forename><surname>Fan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Saining</forename><surname>Xie</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chao-Yuan</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alan</forename><surname>Yuille</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Christoph</forename><surname>Feichtenhofer</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition</title>
+		<meeting>the IEEE/CVF Conference on Computer Vision and Pattern Recognition</meeting>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+			<biblScope unit="volume">4</biblScope>
+			<biblScope unit="page">8</biblScope>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b67">
+	<analytic>
+		<title level="a" type="main">Scaling autoregressive models for content-rich text-to-image generation</title>
+		<author>
+			<persName><forename type="first">Jiahui</forename><surname>Yu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yuanzhong</forename><surname>Xu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jing</forename><surname>Yu Koh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Thang</forename><surname>Luong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Gunjan</forename><surname>Baid</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zirui</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Vijay</forename><surname>Vasudevan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alexander</forename><surname>Ku</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yinfei</forename><surname>Yang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Burcu</forename><surname>Karagol Ayan</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Transactions on Machine Learning Research</title>
+		<imprint>
+			<biblScope unit="issue">3</biblScope>
+			<date type="published" when="2022">2022</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b68">
+	<analytic>
+		<title level="a" type="main">Cutmix: Regularization strategy to train strong classifiers with localizable features</title>
+		<author>
+			<persName><forename type="first">Sangdoo</forename><surname>Yun</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dongyoon</forename><surname>Han</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Seong</forename><surname>Joon Oh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sanghyuk</forename><surname>Chun</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Junsuk</forename><surname>Choe</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Youngjoon</forename><surname>Yoo</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the IEEE/CVF international conference on computer vision</title>
+		<meeting>the IEEE/CVF international conference on computer vision</meeting>
+		<imprint>
+			<date type="published" when="2019">2019</date>
+			<biblScope unit="page" from="6023" to="6032" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b69">
+	<monogr>
+		<title level="m" type="main">Anygpt: Unified multimodal llm with discrete sequence modeling</title>
+		<author>
+			<persName><forename type="first">Jun</forename><surname>Zhan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Junqi</forename><surname>Dai</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jiasheng</forename><surname>Ye</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yunhua</forename><surname>Zhou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dong</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhigeng</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xin</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ruibin</forename><surname>Yuan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ge</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Linyang</forename><surname>Li</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2402.12226</idno>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b70">
+	<analytic>
+		<title level="a" type="main">mixup: Beyond empirical risk minimization</title>
+		<author>
+			<persName><forename type="first">Hongyi</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Moustapha</forename><surname>Cisse</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yann</forename><forename type="middle">N</forename><surname>Dauphin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">David</forename><surname>Lopez-Paz</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">International Conference on Learning Representations</title>
+		<imprint>
+			<date type="published" when="2018">2018</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b71">
+	<monogr>
+		<title level="m" type="main">Monoformer: One transformer for both diffusion and autoregression</title>
+		<author>
+			<persName><forename type="first">Chuyang</forename><surname>Zhao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yuxing</forename><surname>Song</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wenhao</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Haocheng</forename><surname>Feng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Errui</forename><surname>Ding</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yifan</forename><surname>Sun</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xinyan</forename><surname>Xiao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jingdong</forename><surname>Wang</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2409.16280</idno>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+			<biblScope unit="volume">1</biblScope>
+			<biblScope unit="page">7</biblScope>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b72">
+	<monogr>
+		<title level="m" type="main">Fast training of diffusion models with masked transformers</title>
+		<author>
+			<persName><forename type="first">Hongkai</forename><surname>Zheng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Weili</forename><surname>Nie</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Arash</forename><surname>Vahdat</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Anima</forename><surname>Anandkumar</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2306.09305</idno>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b73">
+	<analytic>
+		<title level="a" type="main">Random erasing data augmentation</title>
+		<author>
+			<persName><forename type="first">Zhun</forename><surname>Zhong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Liang</forename><surname>Zheng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Guoliang</forename><surname>Kang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shaozi</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yi</forename><surname>Yang</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the AAAI conference on artificial intelligence</title>
+		<meeting>the AAAI conference on artificial intelligence</meeting>
+		<imprint>
+			<date type="published" when="2020">2020</date>
+			<biblScope unit="page" from="13001" to="13008" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b74">
+	<monogr>
+		<author>
+			<persName><forename type="first">Chunting</forename><surname>Zhou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Lili</forename><surname>Yu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Arun</forename><surname>Babu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kushal</forename><surname>Tirumala</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Michihiro</forename><surname>Yasunaga</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Leonid</forename><surname>Shamis</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jacob</forename><surname>Kahn</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xuezhe</forename><surname>Ma</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Luke</forename><surname>Zettlemoyer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Omer</forename><surname>Levy</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2408.11039</idno>
+		<title level="m">Transfusion: Predict the next token and diffuse images with one multi-modal model</title>
+		<imprint>
+			<date type="published" when="2008">2024. 1, 3, 8</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+				</listBibl>
+			</div>
+		</back>
+	</text>
+</TEI>
