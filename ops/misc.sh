@@ -1,8 +1,8 @@
-#!/usr/bin/env python3
-"""One-off script to move misplaced grobid files to feature directories"""
+#!/bin/bash
 
+# Create temporary Python script
+cat << 'EOF' > /tmp/cleanup.py
 from pathlib import Path
-import shutil
 
 def move_grobid_files(base_path: str = "data/papers"):
     base_path = Path(base_path)
@@ -42,3 +42,12 @@ def move_grobid_files(base_path: str = "data/papers"):
 
 if __name__ == "__main__":
     move_grobid_files()
+EOF
+
+# Install Python if not present and run the script
+if ! command -v python3 &> /dev/null; then
+    apt-get update && apt-get install -y python3
+fi
+
+python3 /tmp/cleanup.py
+rm /tmp/cleanup.py
