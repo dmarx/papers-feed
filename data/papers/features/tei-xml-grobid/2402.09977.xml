@@ -1,0 +1,774 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<TEI xml:space="preserve" xmlns="http://www.tei-c.org/ns/1.0" 
+xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" 
+xsi:schemaLocation="http://www.tei-c.org/ns/1.0 https://raw.githubusercontent.com/kermitt2/grobid/master/grobid-home/schemas/xsd/Grobid.xsd"
+ xmlns:xlink="http://www.w3.org/1999/xlink">
+	<teiHeader xml:lang="en">
+		<fileDesc>
+			<titleStmt>
+				<title level="a" type="main">Fast Vocabulary Transfer for Language Model Compression</title>
+			</titleStmt>
+			<publicationStmt>
+				<publisher/>
+				<availability  status="unknown">
+					<licence/>
+				</availability>
+				<date type="published" when="2024-02-15">15 Feb 2024</date>
+			</publicationStmt>
+			<sourceDesc>
+				<biblStruct>
+					<analytic>
+						<author>
+							<persName><forename type="first">Leonidas</forename><surname>Gee</surname></persName>
+							<email>lgee@expert.ai</email>
+						</author>
+						<author>
+							<persName><forename type="first">Andrea</forename><surname>Zugarini</surname></persName>
+							<email>azugarini@expert.ai</email>
+						</author>
+						<author>
+							<persName><forename type="first">Leonardo</forename><surname>Rigutini</surname></persName>
+							<email>lrigutini@expert.ai</email>
+						</author>
+						<author>
+							<persName><forename type="first">Paolo</forename><surname>Torroni</surname></persName>
+							<email>paolo.torroni@unibo.it</email>
+						</author>
+						<author>
+							<affiliation key="aff0">
+								<orgName type="department">Department of Computer Science and Engineering</orgName>
+								<orgName type="institution">University of Siena</orgName>
+								<address>
+									<country key="IT">Italy</country>
+								</address>
+							</affiliation>
+						</author>
+						<author>
+							<affiliation key="aff1">
+								<orgName type="institution">University of Bologna</orgName>
+								<address>
+									<country key="IT">Italy</country>
+								</address>
+							</affiliation>
+						</author>
+						<title level="a" type="main">Fast Vocabulary Transfer for Language Model Compression</title>
+					</analytic>
+					<monogr>
+						<imprint>
+							<date type="published" when="2024-02-15">15 Feb 2024</date>
+						</imprint>
+					</monogr>
+					<idno type="MD5">1A1B2B8F99113D6AE75F15E78ACAFD8D</idno>
+					<idno type="arXiv">arXiv:2402.09977v1[cs.CL]</idno>
+				</biblStruct>
+			</sourceDesc>
+		</fileDesc>
+		<encodingDesc>
+			<appInfo>
+				<application version="0.8.2-SNAPSHOT" ident="GROBID" when="2025-02-21T06:58+0000">
+					<desc>GROBID - A machine learning software for extracting information from scholarly documents</desc>
+					<ref target="https://github.com/kermitt2/grobid"/>
+				</application>
+			</appInfo>
+		</encodingDesc>
+		<profileDesc>
+			<abstract>
+<div xmlns="http://www.tei-c.org/ns/1.0"><p>Real-world business applications require a trade-off between language model performance and size. We propose a new method for model compression that relies on vocabulary transfer. We evaluate the method on various vertical domains and downstream tasks. Our results indicate that vocabulary transfer can be effectively used in combination with other compression techniques, yielding a significant reduction in model size and inference time while marginally compromising on performance.</p></div>
+			</abstract>
+		</profileDesc>
+	</teiHeader>
+	<text xml:lang="en">
+		<body>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="1">Introduction</head><p>In the last few years, many NLP applications have been relying more and more on large pre-trained Language Models (LM) <ref type="bibr" target="#b2">(Devlin et al., 2018;</ref><ref type="bibr" target="#b10">Liu et al., 2019;</ref><ref type="bibr" target="#b6">He et al., 2020)</ref>. Because larger LMs, on average, exhibit higher accuracy, a common trend has been to increase the model's size. Some LMs like GPT-3 <ref type="bibr" target="#b0">(Brown et al., 2020)</ref> and BLOOM 1 have reached hundreds of billion parameters. However, these models' superior performance comes at the cost of a steep increase in computational footprint, both for development and for inference, ultimately hampering their adoption in real-world business use-cases. Besides models that only a few hi-tech giants can afford, like GPT-3, even smaller LMs with hundreds of million parameters could be too expensive or infeasible for certain products. For one thing, despite being tremendously cheaper than their bigger cousins, fine-tuning, deploying and maintaining large numbers of such models (one for each downstream task) soon becomes too expensive. Furthermore, latency and/or hardware requirements may limit their applicability to specific 1 <ref type="url" target="https://bigscience.huggingface.co/blog/bloom">https://bigscience.huggingface.co/blog/bloom</ref> use-cases. For all these reasons, significant efforts -in both academic and industry-driven researchare oriented towards the designing of solutions to drastically reduce the costs of LMs.</p><p>Recently, several attempts have been made to make these models smaller, faster and cheaper, while retaining most of their original performance <ref type="bibr" target="#b4">(Gupta et al., 2015;</ref><ref type="bibr" target="#b17">Shen et al., 2020)</ref>. Notably, Knowledge Distillation (KD) <ref type="bibr" target="#b7">(Hinton et al., 2015)</ref> is a teacher-student framework, whereby the teacher consists of a pre-trained large model and the student of a smaller one. The teacher-student framework requires that both the teacher and the student estimate the same probability distribution. While the outcome is a smaller model, yet, this procedure constrains the student to operate with the same vocabulary as the teacher in the context of Language Modeling.</p><p>In this work, we explore a method for further reducing an LM's size by compressing its vocabulary through the training of a tokenizer in the downstream task domain. The tokenizer <ref type="bibr" target="#b16">(Sennrich et al., 2016;</ref><ref type="bibr" target="#b15">Schuster and Nakajima, 2012;</ref><ref type="bibr">Kudo and Richardson, 2018</ref>) is a crucial part of modern LMs. In particular, moving from word to subwordlevel, the tokenization solves two problems: vocabulary explosion and unknown words. Moreover, the capability to tokenize text effectively in any domain is key for the massive adoption of pre-trained general-purpose LMs fine-tuned on downstream tasks. Indeed, tokenizers are still able to process out-of-distribution texts at the cost of producing frequent word splits into multiple tokens.</p><p>However, the language varies significantly in vertical domains or, more generally, in different topics. Hence, ad-hoc tokenizers, trained on the domain statistics, may perform a more efficient to-Figure <ref type="figure">1</ref>: Sketch of the VT procedure. First, the vocabulary is constructed on the in-domain data, then an embedding is assigned to each token, transferring information from the pre-trained representations of the general-purpose language model. kenization, reducing on average the length of the tokenized sequences. This is important since compact and meaningful inputs could reduce computational costs, while improving performance. Indeed, memory and time complexity of attention layers grows quadratically with respect to the sequence length <ref type="bibr" target="#b21">(Vaswani et al., 2017)</ref>. Furthermore, a vertical tokenizer may require a smaller vocabulary, which also affects the size of the embedding matrix, hence further reducing the model's size.</p><p>Following this intuition, we propose a Vocabulary Transfer (VT) technique to adapt LMs to in-domain, smaller tokenizers, in order to further compress and accelerate them. This technique is complementary to the aforementioned model compression methods and independent of the type of tokenizer. As a matter of fact, we apply it in combination with KD.</p><p>Our experiments show that VT achieves an inference speed-up between x1.07 and x1.40, depending on the downstream task, with a limited performance drop, and that a combination of VT with KD yields an overall reduction up to x2.76.</p><p>The paper is organized as follows. After reviewing related works in Section 2, we present the methodology in Section 3, we then outline the experiments in Section 4 and draw our conclusions in Section 5.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="2">Related Works</head><p>The goal of Model Compression is to shrink and optimize neural architectures, while retaining most of their initial performance. Research on LM compression has been carried out following a variety of approaches like quantization <ref type="bibr" target="#b4">(Gupta et al., 2015;</ref><ref type="bibr" target="#b17">Shen et al., 2020)</ref>, pruning <ref type="bibr" target="#b23">(Zhu and Gupta, 2017;</ref><ref type="bibr" target="#b11">Michel et al., 2019)</ref> knowledge distillation <ref type="bibr" target="#b14">(Sanh et al., 2019;</ref><ref type="bibr" target="#b8">Jiao et al., 2020;</ref><ref type="bibr" target="#b22">Wang et al., 2020)</ref>, and combinations thereof <ref type="bibr" target="#b12">(Polino et al., 2018)</ref>.</p><p>A most popular distillation approach in NLP was proposed by <ref type="bibr" target="#b14">Sanh et al. (2019)</ref>. The obtained model, called DistilBERT, is a smaller version of BERT, with the same architecture but half the layers, trained to imitate the full output distribution of the teacher (a pre-trained BERT model). Dis-tilBERT has a 40% smaller size than BERT and retains 97% of its language understanding capabilities. This enables a 60% inference-time speedup. Further compression was achieved by <ref type="bibr" target="#b8">Jiao et al. (2020)</ref> by adding transformer-layer, predictionlayer and embedding-layer distillation. The resulting model, TinyBERT, is 10 times smaller than BERT, with only four layers and reduced embeddings sizes. Related methods were proposed <ref type="bibr" target="#b18">(Sun et al., 2020;</ref><ref type="bibr" target="#b22">Wang et al., 2020)</ref>, achieving similar compression rates. All these works focus on the distillation of general-purpose language models. <ref type="bibr" target="#b3">Gordon and Duh (2020)</ref> investigated the interaction between KD and Domain Adaptation.</p><p>Little focus has been devoted thus far to the role of tokenization in the context of model compression. Even in domain adaptation <ref type="bibr" target="#b3">(Gordon and Duh, 2020)</ref>, the vocabulary was kept the same. Both the versatility of the subword-level tokenization, and the constraints imposed by the teacherstudent framework (same output distribution), discouraged such investigations. Recently, <ref type="bibr" target="#b13">Samenko et al. (2021)</ref> presented an approach for transferring the vocabulary of an LM into a new vocabulary learned from new domain, with the purpose of boosting the performance of the fine-tuned model. To the best of our knowledge, we are the first to study VT in the scope of model compression.</p><p>Let us consider a LM, trained on a general-purpose domain D gen and associated with a vocabulary V gen . Such a vocabulary is used by the LM's tokenizer in order to produce an encoding of the input string via an embedding matrix E gen defined on V gen . More specifically, a tokenizer is a function that maps a textual string into a sequence of symbols of a given vocabulary V. Let T be a tokenizer associated with a vocabulary V and a string s, we have</p><formula xml:id="formula_0">T : s → (t 1 , . . . , t n ), t i ∈ V, ∀i = 1, . . . , n.</formula><p>Hence, the vocabulary of the tokenizer determines how words in a text are split, whether as words, subwords, or even characters. These symbols, which define the LM's vocabulary, are statistically determined by training the tokenizer to learn the distribution of a dataset. Now, let us consider a vertical domain D in , also referred as in-domain. For the reasons discussed earlier, a vocabulary V in specialized on D in itself better fits the language distribution than V gen . Unfortunately, with a new vocabulary, embedding representations associated with the tokens of V gen would be lost. Thus, VT aims to initialize V in by re-using most of the information learned from the LM pre-trained on D gen . Once the new tokenizer T in has been trained on the in-domain dataset D in using a given vocabulary size, T in will be different from the LM's tokenizer T gen . However, the two tokenizers' vocabularies V gen and V in may still have a large portion of their symbols in common. Our objective is to transfer most of the information from V gen into V in . To this end, we first define a mapping between each symbol in V in and a set of symbols in V gen . Then, we define an assignment criterion, based on the mapping, to obtain the embeddings for the tokens of T in .</p><p>One such criterion, called Vocabulary Initialization with Partial Inheritance (VIPI), was defined by <ref type="bibr" target="#b13">Samenko et al. (2021)</ref>. Whenever a token is in V in but not in V gen , VIPI calculates all the partitions of the new token with tokens from V gen , then takes the minimal partitions and finally averages them to obtain an embedding for the new token. Differently, we define a simplified implementation of VIPI called FVT for Fast Vocabulary Transfer. Instead of calculating all tokenizations, FVT uses a straightforward assignment mechanism, whereby each token t i ∈ V in is partitioned using T gen . If t i belongs to both vocabularies, t i ∈ V in ∩ V gen , then T gen (t i ) = t i and the in-domain LM embedding  </p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>Dataset</head><p>T E in (t i ) is the same as the embedding in the general LM:</p><formula xml:id="formula_1">E in (t i ) = E gen (t i ).<label>(1)</label></formula><p>If instead t i ∈ V in \ V gen , then the in-domain embedding is the average of the embeddings associated with the tokens produced by T gen :</p><formula xml:id="formula_2">E in (t i ) = 1 |T gen (t i )| • t j ∈Tgen(t i ) E gen (t j ). (2)</formula><p>Please notice that Equation 2 is a generalization of Equation 1. Indeed, in case t i ∈ V in ∩ V gen , Equation 2 falls back to Equation <ref type="formula" target="#formula_1">1</ref>.</p><p>Once embeddings are initialized with FVT, we adjust the model's weights by training it with MLM on the in-domain data before fine-tuning it on the downstream task. MLM eases adaptation and has already been found to be beneficial in <ref type="bibr" target="#b13">(Samenko et al., 2021)</ref>. We observed this trend as well during preliminary experiments, therefore we kept such a tuning stage in all our experiments.</p><p>As a baseline model, we also implement a method called Partial Vocabulary Transfer (PVT), whereby only the tokens belonging to both vocabularies t i ∈ V in ∩ V gen are initialized with pretrained embeddings, while unseen new tokens are randomly initialized. </p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.1">Distillation</head><p>VT can be combined with other model compression methods like quantization, pruning and KD. For some of the methods, the combination is trivial, since they have no impact on the vocabulary. KD, however, requires the vocabularies of the student and teacher to be aligned. Hence, its integration with VT is non-trivial. Accordingly, we set up a KD procedure with VT, in order to determine the effects of applying both VT and KD to an LM. Our distillation consists of two steps. In the first step, we replicate the distillation process used in <ref type="bibr" target="#b14">(Sanh et al., 2019)</ref> for DistilBERT, in which the number of layers of the encoder is halved and a triple loss-function is applied: a distillation loss, a MLM loss, and a cosine embedding loss. However, unlike the original setup, we do not remove the token-type embeddings and pooler. Inspired by <ref type="bibr" target="#b3">Gordon and Duh (2020)</ref>, after distilling the student on D gen , we further distil the student using D in . However, instead of adapting the teacher before the second distillation, we simply distil the student a second time on the in-domain dataset. Finally, we apply VT using either FVT or PVT and fine-tune the student model on the in-domain datasets.</p><p>Our choice of applying VT after KD is based on findings by <ref type="bibr" target="#b9">Kim and Hassan (2020)</ref>, that different input embedding spaces will produce different output embedding spaces. This difference in spaces is not conducive to knowledge transfer during distillation. Hence, if VT were to be applied first to the student, its input embedding space would differ greatly from that of the pre-trained teacher during distillation. </p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>Distillation</head></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4">Experiments</head><p>In the experiments we measure the impact of FVT on three main KPIs: quality (F1 score), size of the models and speedup in inference.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4.1">Experimental Setup</head><p>We consider for all our experiments the pre-trained cased version of BERT base <ref type="bibr" target="#b2">(Devlin et al., 2018)</ref> as our pre-trained language model. Its tokenizer is composed of 28996 wordpieces. We then define four vocabulary sizes for retraining our tokenizers. Specifically, we take the original vocabulary size and define it as a vocabulary size of 100%. We subsequently reduce this size to 75%, 50%, and 25%.</p><p>From now on, we will refer to such tokenizers as T 100 , T 75 , T 50 , T 25 respectively, while the original vocabulary will be called T gen . Models are fine-tuned for 10 epochs with early stopping on the downstream task. We set the initial learning rate to 3 • 10 -5 and batch size to 64 for each task. The sequence length is set to 64 for ADE and CoNLL03 and 128 for LEDGAR. Each configuration is repeated 3 times with different random initializations. MLM is performed for one epoch.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4.2">Datasets</head><p>To best assess the effectiveness of VT, we apply it on three different tasks from three heterogeneous linguistic domains: medical (ADE), legal (LEDGAR) and news (CoNLL03). Table <ref type="table" target="#tab_3">4</ref> reports the dataset statistics.</p><p>ADE. The Adverse Drug Events (ADE) corpus <ref type="bibr" target="#b5">(Gurulingappa et al., 2012)</ref> is a binary sentence LEDGAR. LEDGAR <ref type="bibr" target="#b20">(Tuggener et al., 2020</ref>) is a document classification corpus of legal provisions in contracts from the US Securities and Exchange Commission (SEC). The dataset is annotated with 100 different mutually-exclusive labels. It is also part of LexGLUE <ref type="bibr" target="#b1">(Chalkidis et al., 2022)</ref>, a benchmark for legal language understanding.</p><p>CoNLL03. CoNLL03 <ref type="bibr" target="#b19">(Tjong Kim Sang and De Meulder, 2003</ref>) is a popular Named Entity Recognition (NER) benchmark. It is made of news stories from the Reuters corpus. We chose this corpus because, differently from ADE and LEDGAR, the news domain typically uses a more standard language, hence we expect its distribution to differ less from the one captured by a general-purpose tokenizers in the web. Statistics in Table <ref type="table" target="#tab_0">1</ref> confirms this hypothesis. We can observe that the sequence compression gain obtained with domainspecific tokenizers is less significant with respect to LEDGAR and ADE.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>Dataset</head><p>Train </p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4.3">Results</head><p>We report an extensive evaluation of FVT on different setups and perspectives. In-domain Tokenization. By retraining the tokenizer on the in-domain dataset, the average number of tokens per sequence decreases since the learned distribution reduces the number of word splits, as shown in Table <ref type="table" target="#tab_0">1</ref>. In the medical domain, which is particularly specialized, we notice a remarkable 32% reduction of the average number of tokens per sequence. We expect this to yield a noticeable impact on inference time speedup. Furthermore, we can notice in Figure <ref type="figure" target="#fig_2">3</ref> that the sequence length distribution shifts to the left for the learned tokenizers. It can also be observed that by reducing the vocabulary size of the in-domain tokenizer, the sequence length distribution will begin to shift back to the right. Indeed, with fewer tokens in its vocabulary, the tokenizer will need to break down words more frequently into subwords.</p><p>Vocabulary Transfer. From the results shown in Tables <ref type="table" target="#tab_1">2</ref> and <ref type="table" target="#tab_2">3</ref>, we note a few interesting findings. First, FVT vectors initialization method consistently outperforms the baseline PVT, which confirms the positive contribution of Equation</p><p>2. Second, transferring vocabulary with FVT causes limited drops in performance, especially in LEDGAR (the largest one), where F1 slightly increases despite a 75% vocabulary reduction. As a matter of Transfer ADE LEDGAR CoNLL03 ∆F1 ∆Size Speedup ∆F1 ∆Size Speedup ∆F1 ∆Size Speedup T gen 90.80 433.32 1.00 80.93 433.62 1.00 89.43 430.98 1.00 T 100 + FVT -0.04 0.00 1.40 -0.41 0.00 1.21 -1.75 0.00 1.07 T 75 + FVT -0.44 -5.14 1.35 0.00 -5.14 1.21 -1.71 -5.17 1.07 T 50 + FVT -0.81 -10.28 1.32 0.00 -10.27 1.10 -2.87 -10.33 1.02 T 25 + FVT -0.59 -15.42 1.20 0.12 -15.41 1.09 -3.65 -15.50 0.99 Distil + T 100 + FVT -1.47 -39.26 2.76 -3.21 -39.24 2.38 -5.37 -39.48 2.11 Distil + T 75 + FVT -2.46 -44.40 2.64 -2.51 -44.37 2.38 -5.81 -44.64 2.11 Distil + T 50 + FVT -2.61 -49.54 2.59 -2.02 -49.51 2.16 -6.30 -49.81 2.01 Distil + T 25 + FVT -2.83 -54.68 2.37 -3.50 -54.64 2.14 -7.04 -54.98 1.96</p><p>Table 5: The first row (T gen ) reports absolute values of the LM fine-tuned on the downstream task without VT or KD. The rows below show values relative to T gen .</p><p>fact, the effects of FVT on model performance do not have a steadily decreasing trend as might be expected when reducing the vocabulary size, as also evident from Figure <ref type="figure" target="#fig_3">4</ref>. In some cases, somewhat surprisingly, reducing the vocabulary size yields better model performance. In other cases, a 50% vocabulary size reduction yields better results than a full scale reduction or no reduction. Hence, vocabulary size should be considered as a hyperparameter.</p><p>Vocabulary Transfer and Distillation. The results summarized in Table <ref type="table" target="#tab_2">3</ref> clearly indicate that KD is complementary to VT: there is no harm in applying them together, in terms of performance on the downstream task. Crucially, this guarantees a full exploitation of FVT in the scope of language model compression.</p><p>Compression and Efficiency. After showcasing that VT has limited impact on performance, we analyze and discuss its effects on efficiency and model compression. Table <ref type="table">5</ref> reports the relative F1 drop on the downstream task with respect to the original LM (∆F1), the relative reduction in model size (∆Size) and the speedup gained by FVT alone and by FVT combined with KD for varying vocabulary sizes. Either way, FVT achieves a remarkable 15%+ reduction with respect to BERT's learnable parameters, with almost no loss in F1. Furthermore, the reduced input length enabled by in-domain tokenization brings a reduction in inference time. The more a language is specialized, the higher is the speedup with in-domain tokenizers. This is also confirmed by the experiments, where the major benefits are obtained on the medical domain, with a x1.40 speedup. In CoNLL03 instead where language is much less specialized, speedup reduces and even disappears with T 25 . Distillation further pushes compression and speedup in any benchmark and setup, up to about 55% (of which 15% due to VT) and x2.75 respectively.</p><p>In summary, depending on the application needs, VT enables a strategic trade-off between compression rate, inference speed and accuracy.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="5">Conclusion</head><p>The viability and success of industrial NLP applications often hinges on a delicate trade-off between computational requirements, responsiveness and output quality. Hence, language model compression methods are an active area of research whose practical ramifications are self-evident. One of the factors that greatly contribute to a model's inference speed and memory footprint is vocabulary size. VT has been recently proposed for improving performance, but never so far in the scope of model compression. In this work, we run an extensive experimental study on the application of a lightweight method for VT, called FVT. An analysis conducted on various downstream tasks, application domains, vocabulary sizes and on its possible combination with knowledge distillation indicates that FVT enables a strategic trade-off between compression rate, inference speed and accuracy, especially, but not only, in more specialized domains. Importantly, FVT appears to be orthogonal to other model compression methods.</p><p>In the future, we plan to fully integrate Vocabulary Transfer within Knowledge Distillation during the learning process in order to maximize the information transfer.</p></div><figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_0"><figDesc>Input:He was initially treated with interferon alfa.Tgen:He, was, initially, treated, with, inter,##fer, ##on, al, ##fa, . T100: He, was, initially, treated, with, interferon, alfa, .</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_1"><head>Figure 2 :</head><label>2</label><figDesc>Figure2: Example of different tokenizations using a pre-trained or an adapted tokenizer. In the latter case, domain-specific words are not broken down into multiple word pieces.</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_2"><head>Figure 3 :</head><label>3</label><figDesc>Figure 3: Sequence length distribution of each tokenizer on ADE, LEDGAR and CoNLL03 (left to right).</figDesc><graphic coords="5,72.22,70.99,147.39,89.30" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_3"><head>Figure 4 :</head><label>4</label><figDesc>Figure 4: F1-score vs model size of VT with or without KD on ADE. VT and KD together can further compress a LM's size in exchange for a limited performance drop. FVT is better than PVT. A smaller vocabulary size does not always imply a lower performance.</figDesc><graphic coords="5,306.14,202.14,218.27,111.71" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_0"><head>Table 1 :</head><label>1</label><figDesc>gen T 100 T 75 T 50 T 25 Average sequence length on the three datasets with different tokenizers. T gen is the generic tokenizer (BERT cased), the same in each corpus, while T % are the tokenizers trained in the vertical domain itself, where % indicates the percentage of the original vocabulary size that has been set for training it.</figDesc><table><row><cell>ADE</cell><cell>31</cell><cell>21</cell><cell>22</cell><cell>23</cell><cell>26</cell></row><row><cell cols="6">LEDGAR 155 131 131 132 135</cell></row><row><cell>CoNLL03</cell><cell>19</cell><cell>17</cell><cell>17</cell><cell>18</cell><cell>20</cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_1"><head>Table 2 :</head><label>2</label><figDesc>F1 results on the three benchmarks. A pretrained language model fine-tuned on the task (T gen ) is compared with models having differently sized in-domain tokenizers (T 100 , T 75 , T 50 , T 25 ) adapted by transferring information with FVT or PVT.</figDesc><table><row><cell>Transfer</cell><cell cols="3">ADE LEDGAR CoNLL03</cell></row><row><cell>T gen</cell><cell>90.80</cell><cell>80.93</cell><cell>89.43</cell></row><row><cell cols="2">T 100 + FVT 90.77</cell><cell>80.60</cell><cell>87.87</cell></row><row><cell cols="2">T 75 + FVT 90.40</cell><cell>80.93</cell><cell>87.90</cell></row><row><cell cols="2">T 50 + FVT 90.07</cell><cell>80.93</cell><cell>86.87</cell></row><row><cell cols="2">T 25 + FVT 90.27</cell><cell>81.03</cell><cell>86.17</cell></row><row><cell cols="2">T 100 + PVT 82.57</cell><cell>80.07</cell><cell>84.53</cell></row><row><cell cols="2">T 75 + PVT 82.47</cell><cell>80.33</cell><cell>84.63</cell></row><row><cell cols="2">T 50 + PVT 83.07</cell><cell>80.23</cell><cell>84.43</cell></row><row><cell cols="2">T 25 + PVT 83.57</cell><cell>80.20</cell><cell>83.47</cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_2"><head>Table 3 :</head><label>3</label><figDesc>F1 results on the three benchmarks. A distilled language model fine-tuned on the task (T gen ) is compared with models having differently sized in-domain tokenizers (T 100 , T 75 , T 50 , T 25 ) adapted by transferring information with FVT or PVT.</figDesc><table><row><cell>Transfer</cell><cell cols="3">ADE LEDGAR CoNLL03</cell></row><row><cell>T gen</cell><cell>90.47</cell><cell>78.37</cell><cell>86.90</cell></row><row><cell cols="2">T 100 + FVT 89.47</cell><cell>78.33</cell><cell>84.63</cell></row><row><cell cols="2">T 75 + FVT 88.57</cell><cell>78.90</cell><cell>84.23</cell></row><row><cell cols="2">T 50 + FVT 88.43</cell><cell>79.30</cell><cell>83.80</cell></row><row><cell cols="2">T 25 + FVT 88.23</cell><cell>78.10</cell><cell>83.13</cell></row><row><cell cols="2">T 100 + PVT 79.13</cell><cell>76.97</cell><cell>81.13</cell></row><row><cell cols="2">T 75 + PVT 78.87</cell><cell>76.93</cell><cell>81.40</cell></row><row><cell cols="2">T 50 + PVT 76.30</cell><cell>77.37</cell><cell>81.63</cell></row><row><cell cols="2">T 25 + PVT 77.90</cell><cell>77.33</cell><cell>79.50</cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_3"><head>Table 4 :</head><label>4</label><figDesc>Number of examples of each dataset.</figDesc><table><row><cell></cell><cell></cell><cell cols="2">Validation Test</cell></row><row><cell>ADE</cell><cell>16716</cell><cell>3344</cell><cell>836</cell></row><row><cell cols="2">LEDGAR 60000</cell><cell>10000</cell><cell>10000</cell></row><row><cell cols="2">CoNLL03 14042</cell><cell>3251</cell><cell>3454</cell></row></table></figure>
+		</body>
+		<back>
+			<div type="references">
+
+				<listBibl>
+
+<biblStruct xml:id="b0">
+	<analytic>
+		<title level="a" type="main">Language models are few-shot learners</title>
+		<author>
+			<persName><forename type="first">Tom</forename><surname>Brown</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Benjamin</forename><surname>Mann</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Nick</forename><surname>Ryder</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Melanie</forename><surname>Subbiah</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jared</forename><forename type="middle">D</forename><surname>Kaplan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Prafulla</forename><surname>Dhariwal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Arvind</forename><surname>Neelakantan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Pranav</forename><surname>Shyam</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Girish</forename><surname>Sastry</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Amanda</forename><surname>Askell</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Advances in neural information processing systems</title>
+		<imprint>
+			<biblScope unit="volume">33</biblScope>
+			<biblScope unit="page" from="1877" to="1901" />
+			<date type="published" when="2020">2020</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b1">
+	<analytic>
+		<title level="a" type="main">LexGLUE: A benchmark dataset for legal language understanding in English</title>
+		<author>
+			<persName><forename type="first">Ilias</forename><surname>Chalkidis</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Abhik</forename><surname>Jana</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dirk</forename><surname>Hartung</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Michael</forename><surname>Bommarito</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/2022.acl-long.297</idno>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 60th Annual Meeting of the Association for Computational Linguistics</title>
+		<meeting>the 60th Annual Meeting of the Association for Computational Linguistics<address><addrLine>Dublin, Ireland</addrLine></address></meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<date type="published" when="2022">2022</date>
+			<biblScope unit="volume">1</biblScope>
+			<biblScope unit="page" from="4310" to="4330" />
+		</imprint>
+	</monogr>
+	<note>Ion Androutsopoulos, Daniel Katz, and Nikolaos Aletras Long Papers)</note>
+</biblStruct>
+
+<biblStruct xml:id="b2">
+	<monogr>
+		<title level="m" type="main">BERT: Pre-training of deep bidirectional transformers for language understanding</title>
+		<author>
+			<persName><forename type="first">Jacob</forename><surname>Devlin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ming-Wei</forename><surname>Chang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kenton</forename><surname>Lee</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kristina</forename><surname>Toutanova</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:1810.04805</idno>
+		<imprint>
+			<date type="published" when="2018">2018</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b3">
+	<analytic>
+		<title level="a" type="main">Distill, adapt, distill: Training small, in-domain models for neural machine translation</title>
+		<author>
+			<persName><forename type="first">Mitchell</forename><surname>Gordon</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kevin</forename><surname>Duh</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/2020.ngt-1.12</idno>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the Fourth Workshop on Neural Generation and Translation</title>
+		<meeting>the Fourth Workshop on Neural Generation and Translation</meeting>
+		<imprint>
+			<publisher>Online. Association for Computational Linguistics</publisher>
+			<date type="published" when="2020">2020</date>
+			<biblScope unit="page" from="110" to="118" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b4">
+	<analytic>
+		<title level="a" type="main">Deep learning with limited numerical precision</title>
+		<author>
+			<persName><forename type="first">Suyog</forename><surname>Gupta</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ankur</forename><surname>Agrawal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kailash</forename><surname>Gopalakrishnan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Pritish</forename><surname>Narayanan</surname></persName>
+		</author>
+		<idno>PMLR</idno>
+	</analytic>
+	<monogr>
+		<title level="m">International conference on machine learning</title>
+		<imprint>
+			<date type="published" when="2015">2015</date>
+			<biblScope unit="page" from="1737" to="1746" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b5">
+	<analytic>
+		<title level="a" type="main">Development of a benchmark corpus to support the automatic extraction of drugrelated adverse effects from medical case reports</title>
+		<author>
+			<persName><forename type="first">Harsha</forename><surname>Gurulingappa</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Abdul</forename><surname>Mateen Rajput</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Angus</forename><surname>Roberts</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Juliane</forename><surname>Fluck</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Martin</forename><surname>Hofmann-Apitius</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Luca</forename><surname>Toldo</surname></persName>
+		</author>
+		<idno type="DOI">10.1016/j.jbi.2012.04.008</idno>
+	</analytic>
+	<monogr>
+		<title level="m">Text Mining and Natural Language Processing in Pharmacogenomics</title>
+		<imprint>
+			<date type="published" when="2012">2012</date>
+			<biblScope unit="volume">45</biblScope>
+			<biblScope unit="page" from="885" to="892" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b6">
+	<monogr>
+		<author>
+			<persName><forename type="first">Pengcheng</forename><surname>He</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xiaodong</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jianfeng</forename><surname>Gao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Weizhu</forename><surname>Chen</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2006.03654</idno>
+		<title level="m">DeBERTa: Decoding-enhanced BERT with disentangled attention</title>
+		<imprint>
+			<date type="published" when="2020">2020</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b7">
+	<monogr>
+		<author>
+			<persName><forename type="first">Geoffrey</forename><surname>Hinton</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Oriol</forename><surname>Vinyals</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jeff</forename><surname>Dean</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:1503.02531</idno>
+		<title level="m">Distilling the knowledge in a neural network</title>
+		<imprint>
+			<date type="published" when="2015">2015</date>
+			<biblScope unit="volume">2</biblScope>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b8">
+	<analytic>
+		<title level="a" type="main">TinyBERT: Distilling BERT for natural language understanding</title>
+		<author>
+			<persName><forename type="first">Xiaoqi</forename><surname>Jiao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yichun</forename><surname>Yin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Lifeng</forename><surname>Shang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xin</forename><surname>Jiang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xiao</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Linlin</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Fang</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Qun</forename><surname>Liu</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Findings of the Association for Computational Linguistics: EMNLP 2020</title>
+		<imprint>
+			<date type="published" when="2020">2020</date>
+			<biblScope unit="page" from="4163" to="4174" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b9">
+	<analytic>
+		<title level="a" type="main">Sentencepiece: A simple and language independent subword tokenizer and detokenizer for neural text processing</title>
+		<author>
+			<persName><forename type="first">Jin</forename><surname>Young</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hany</forename><surname>Kim</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Hassan</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/2020.sustainlp-1.20</idno>
+		<idno type="arXiv">arXiv:1808.06226</idno>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of SustaiNLP: Workshop on Simple and Efficient Natural Language Processing</title>
+		<meeting>SustaiNLP: Workshop on Simple and Efficient Natural Language Processing</meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<date type="published" when="2018">2020. 2018</date>
+			<biblScope unit="page" from="149" to="158" />
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+	<note>Taku Kudo and John Richardson Fast-Formers: Highly efficient transformer models for natural language understanding</note>
+</biblStruct>
+
+<biblStruct xml:id="b10">
+	<monogr>
+		<author>
+			<persName><forename type="first">Yinhan</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Myle</forename><surname>Ott</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Naman</forename><surname>Goyal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jingfei</forename><surname>Du</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mandar</forename><surname>Joshi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Danqi</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Omer</forename><surname>Levy</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mike</forename><surname>Lewis</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Luke</forename><surname>Zettlemoyer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Veselin</forename><surname>Stoyanov</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:1907.11692</idno>
+		<title level="m">RoBERTa: A robustly optimized BERT pretraining approach</title>
+		<imprint>
+			<date type="published" when="2019">2019</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b11">
+	<monogr>
+		<title level="m" type="main">Are sixteen heads really better than one? Advances in neural information processing systems</title>
+		<author>
+			<persName><forename type="first">Paul</forename><surname>Michel</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Omer</forename><surname>Levy</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Graham</forename><surname>Neubig</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2019">2019</date>
+			<biblScope unit="page">32</biblScope>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b12">
+	<monogr>
+		<title level="m" type="main">Model compression via distillation and quantization</title>
+		<author>
+			<persName><forename type="first">Antonio</forename><surname>Polino</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Razvan</forename><surname>Pascanu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dan</forename><surname>Alistarh</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:1802.05668</idno>
+		<imprint>
+			<date type="published" when="2018">2018</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b13">
+	<monogr>
+		<author>
+			<persName><forename type="first">Igor</forename><surname>Samenko</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alexey</forename><surname>Tikhonov</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Borislav</forename><surname>Kozlovskii</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ivan</forename><forename type="middle">P</forename><surname>Yamshchikov</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2112.14569</idno>
+		<title level="m">Fine-tuning transformers: Vocabulary transfer</title>
+		<imprint>
+			<date type="published" when="2021">2021</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b14">
+	<monogr>
+		<author>
+			<persName><forename type="first">Victor</forename><surname>Sanh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Lysandre</forename><surname>Debut</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Julien</forename><surname>Chaumond</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Thomas</forename><surname>Wolf</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:1910.01108</idno>
+		<title level="m">DistilBERT, a distilled version of BERT: smaller, faster, cheaper and lighter</title>
+		<imprint>
+			<date type="published" when="2019">2019</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b15">
+	<analytic>
+		<title level="a" type="main">Japanese and korean voice search</title>
+		<author>
+			<persName><forename type="first">Mike</forename><surname>Schuster</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kaisuke</forename><surname>Nakajima</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">2012 IEEE international conference on acoustics, speech and signal processing (ICASSP)</title>
+		<imprint>
+			<publisher>IEEE</publisher>
+			<date type="published" when="2012">2012</date>
+			<biblScope unit="page" from="5149" to="5152" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b16">
+	<analytic>
+		<title level="a" type="main">Neural machine translation of rare words with subword units</title>
+		<author>
+			<persName><forename type="first">Rico</forename><surname>Sennrich</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Barry</forename><surname>Haddow</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alexandra</forename><surname>Birch</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics</title>
+		<meeting>the 54th Annual Meeting of the Association for Computational Linguistics</meeting>
+		<imprint>
+			<date type="published" when="2016">2016</date>
+			<biblScope unit="volume">1</biblScope>
+			<biblScope unit="page" from="1715" to="1725" />
+		</imprint>
+	</monogr>
+	<note>Long Papers)</note>
+</biblStruct>
+
+<biblStruct xml:id="b17">
+	<analytic>
+		<title level="a" type="main">Q-BERT: Hessian based ultra low precision quantization of BERT</title>
+		<author>
+			<persName><forename type="first">Sheng</forename><surname>Shen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhen</forename><surname>Dong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jiayu</forename><surname>Ye</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Linjian</forename><surname>Ma</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhewei</forename><surname>Yao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Amir</forename><surname>Gholami</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Michael</forename><forename type="middle">W</forename><surname>Mahoney</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kurt</forename><surname>Keutzer</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the AAAI Conference on Artificial Intelligence</title>
+		<meeting>the AAAI Conference on Artificial Intelligence</meeting>
+		<imprint>
+			<date type="published" when="2020">2020</date>
+			<biblScope unit="volume">34</biblScope>
+			<biblScope unit="page" from="8815" to="8821" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b18">
+	<monogr>
+		<author>
+			<persName><forename type="first">Zhiqing</forename><surname>Sun</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hongkun</forename><surname>Yu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xiaodan</forename><surname>Song</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Renjie</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yiming</forename><surname>Yang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Denny</forename><surname>Zhou</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2004.02984</idno>
+		<title level="m">MobileBERT: a compact task-agnostic BERT for resource-limited devices</title>
+		<imprint>
+			<date type="published" when="2020">2020</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b19">
+	<analytic>
+		<title level="a" type="main">Introduction to the CoNLL-2003 shared task: Language-independent named entity recognition</title>
+		<author>
+			<persName><forename type="first">Erik</forename><forename type="middle">F</forename><surname>Tjong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kim</forename><surname>Sang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Fien</forename><surname>De</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Meulder</forename></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the Seventh Conference on Natural Language Learning at HLT-NAACL 2003</title>
+		<meeting>the Seventh Conference on Natural Language Learning at HLT-NAACL 2003</meeting>
+		<imprint>
+			<date type="published" when="2003">2003</date>
+			<biblScope unit="page" from="142" to="147" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b20">
+	<analytic>
+		<title level="a" type="main">Ledgar: A large-scale multilabel corpus for text classification of legal provisions in contracts</title>
+		<author>
+			<persName><forename type="first">Don</forename><surname>Tuggener</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Thomas</forename><surname>Pius Von Däniken</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mark</forename><surname>Peetz</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Cieliebak</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 12th Language Resources and Evaluation Conference</title>
+		<meeting>the 12th Language Resources and Evaluation Conference</meeting>
+		<imprint>
+			<date type="published" when="2020">2020</date>
+			<biblScope unit="page" from="1235" to="1241" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b21">
+	<analytic>
+		<title level="a" type="main">Attention is all you need</title>
+		<author>
+			<persName><forename type="first">Ashish</forename><surname>Vaswani</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Noam</forename><surname>Shazeer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Niki</forename><surname>Parmar</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jakob</forename><surname>Uszkoreit</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Llion</forename><surname>Jones</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Aidan</forename><forename type="middle">N</forename><surname>Gomez</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Łukasz</forename><surname>Kaiser</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Illia</forename><surname>Polosukhin</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Advances in neural information processing systems</title>
+		<imprint>
+			<date type="published" when="2017">2017</date>
+			<biblScope unit="page">30</biblScope>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b22">
+	<analytic>
+		<title level="a" type="main">Minilm: Deep selfattention distillation for task-agnostic compression of pre-trained transformers</title>
+		<author>
+			<persName><forename type="first">Wenhui</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Furu</forename><surname>Wei</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Li</forename><surname>Dong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hangbo</forename><surname>Bao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Nan</forename><surname>Yang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ming</forename><surname>Zhou</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Advances in Neural Information Processing Systems</title>
+		<imprint>
+			<biblScope unit="volume">33</biblScope>
+			<biblScope unit="page" from="5776" to="5788" />
+			<date type="published" when="2020">2020</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b23">
+	<monogr>
+		<title level="m" type="main">To prune, or not to prune: exploring the efficacy of pruning for model compression</title>
+		<author>
+			<persName><forename type="first">Michael</forename><surname>Zhu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Suyog</forename><surname>Gupta</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:1710.01878</idno>
+		<imprint>
+			<date type="published" when="2017">2017</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+				</listBibl>
+			</div>
+		</back>
+	</text>
+</TEI>
