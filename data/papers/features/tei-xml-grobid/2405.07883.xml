@@ -1,0 +1,3456 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<TEI xml:space="preserve" xmlns="http://www.tei-c.org/ns/1.0" 
+xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" 
+xsi:schemaLocation="http://www.tei-c.org/ns/1.0 https://raw.githubusercontent.com/kermitt2/grobid/master/grobid-home/schemas/xsd/Grobid.xsd"
+ xmlns:xlink="http://www.w3.org/1999/xlink">
+	<teiHeader xml:lang="en">
+		<fileDesc>
+			<titleStmt>
+				<title level="a" type="main">Zero-Shot Tokenizer Transfer</title>
+				<funder>
+					<orgName type="full">Google&apos;s TPU Research Cloud</orgName>
+					<orgName type="abbreviated">TRC</orgName>
+				</funder>
+				<funder ref="#_tvvxh2Y">
+					<orgName type="full">Royal Society University</orgName>
+				</funder>
+			</titleStmt>
+			<publicationStmt>
+				<publisher/>
+				<availability  status="unknown">
+					<licence/>
+				</availability>
+				<date type="published" when="2024-05-13">13 May 2024</date>
+			</publicationStmt>
+			<sourceDesc>
+				<biblStruct>
+					<analytic>
+						<author>
+							<persName><forename type="first">Benjamin</forename><surname>Minixhofer</surname></persName>
+							<affiliation key="aff0">
+								<orgName type="institution" key="instit1">University of Cambridge [CLS</orgName>
+								<orgName type="institution" key="instit2">University of Edinburgh</orgName>
+							</affiliation>
+						</author>
+						<author>
+							<persName><surname>Sep</surname></persName>
+							<affiliation key="aff0">
+								<orgName type="institution" key="instit1">University of Cambridge [CLS</orgName>
+								<orgName type="institution" key="instit2">University of Edinburgh</orgName>
+							</affiliation>
+						</author>
+						<author>
+							<persName><forename type="first">Edoardo</forename><forename type="middle">M</forename><surname>Ponti</surname></persName>
+							<affiliation key="aff0">
+								<orgName type="institution" key="instit1">University of Cambridge [CLS</orgName>
+								<orgName type="institution" key="instit2">University of Edinburgh</orgName>
+							</affiliation>
+						</author>
+						<author>
+							<persName><forename type="first">Ivan</forename><surname>Vulić</surname></persName>
+							<affiliation key="aff0">
+								<orgName type="institution" key="instit1">University of Cambridge [CLS</orgName>
+								<orgName type="institution" key="instit2">University of Edinburgh</orgName>
+							</affiliation>
+						</author>
+						<title level="a" type="main">Zero-Shot Tokenizer Transfer</title>
+					</analytic>
+					<monogr>
+						<imprint>
+							<date type="published" when="2024-05-13">13 May 2024</date>
+						</imprint>
+					</monogr>
+					<idno type="MD5">B493FC1F80D79893DF805A5F7A3C4990</idno>
+					<idno type="arXiv">arXiv:2405.07883v1[cs.CL]</idno>
+				</biblStruct>
+			</sourceDesc>
+		</fileDesc>
+		<encodingDesc>
+			<appInfo>
+				<application version="0.8.2-SNAPSHOT" ident="GROBID" when="2025-02-21T07:10+0000">
+					<desc>GROBID - A machine learning software for extracting information from scholarly documents</desc>
+					<ref target="https://github.com/kermitt2/grobid"/>
+				</application>
+			</appInfo>
+		</encodingDesc>
+		<profileDesc>
+			<abstract>
+<div xmlns="http://www.tei-c.org/ns/1.0"><p>Language models (LMs) are bound to their tokenizer, which maps raw text to a sequence of vocabulary items (tokens). This restricts their flexibility: for example, LMs trained primarily on English may still perform well in other natural and programming languages, but have vastly decreased efficiency due to their Englishcentric tokenizer. To mitigate this, we should be able to swap the original LM tokenizer with an arbitrary one, on the fly, without degrading performance. Hence, in this work we define a new problem: Zero-Shot Tokenizer Transfer (ZeTT). The challenge at the core of ZeTT is finding embeddings for the tokens in the vocabulary of the new tokenizer. Since prior heuristics for initializing embeddings often perform at chance level in a ZeTT setting, we propose a new solution: we train a hypernetwork taking a tokenizer as input and predicting the corresponding embeddings. We empirically demonstrate that the hypernetwork generalizes to new tokenizers both with encoder (e.g., XLM-R) and decoder LLMs (e.g., Mistral-7B). Our method comes close to the original models' performance in cross-lingual and coding tasks while markedly reducing the length of the tokenized sequence. We also find that the remaining gap can be quickly closed by continued training on less than 1B tokens. Finally, we show that a ZeTT hypernetwork trained for a base (L)LM can also be applied to fine-tuned variants without extra training. Overall, our results make substantial strides toward detaching LMs from their tokenizer. 1 We adopt a broad definition of LMs that also includes models that do not define a probability distribution over finite-length sequences, such as text encoders.</p><p>Preprint. Under review.</p></div>
+			</abstract>
+		</profileDesc>
+	</teiHeader>
+	<text xml:lang="en">
+		<body>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="1">Introduction</head><p>Language Models 1 typically operate on discrete tokens, so they need a means to map text into a sequence of tokens, namely a tokenizer. The vast majority of contemporary LMs use subword tokenizers <ref type="bibr" target="#b16">(Devlin et al., 2019;</ref><ref type="bibr" target="#b27">Jiang et al., 2023;</ref><ref type="bibr" target="#b64">Touvron et al., 2023;</ref><ref type="bibr">Parmar et al., 2024, among others)</ref>, whereas others use byte-level <ref type="bibr" target="#b69">(Xue et al., 2022;</ref><ref type="bibr" target="#b71">Yu et al., 2023;</ref><ref type="bibr" target="#b67">Wang et al., 2024)</ref> or character-level tokenizers <ref type="bibr" target="#b9">(Clark et al., 2022;</ref><ref type="bibr" target="#b63">Tay et al., 2022)</ref>. Regardless of the chosen tokenization 'granularity', these models share a fundamental limitation: once they are trained with a particular tokenizer, inference with a different tokenizer is impossible. In other terms, a pre-trained LM is "bound" to the tokenizer it was trained with. This has wide-ranging implications: since the focus during pretraining is typically primarily on the English language, the tokenizer often encodes languages besides English <ref type="bibr" target="#b56">(Rust et al., 2021)</ref> or other domains, such as code, less efficiently. This leads to large disparities in the inference cost between English and non-English text <ref type="bibr" target="#b0">(Ahia et al., 2023;</ref><ref type="bibr" target="#b51">Petrov et al., 2023)</ref>. Tokenizers may also be sub-optimal for domains which they were not designed to be used with, e.g. fine-tunings of the Llama models performing subpar on coding tasks <ref type="bibr" target="#b14">(Dagan et al., 2024)</ref>. Efficiency and performance are only some of the reasons to transfer models across tokenizers: methods of interaction between models, such as ensembling <ref type="bibr" target="#b57">(Sagi &amp; Rokach, 2018)</ref> and model merging <ref type="bibr" target="#b68">(Wortsman et al., 2022;</ref><ref type="bibr" target="#b1">Ainsworth et al., 2023;</ref><ref type="bibr" target="#b70">Yadav et al., 2023)</ref>, typically assume the same unit of representation (i.e., equivalent tokenization) across models; if two models adopt different tokenizers, they become unsuitable for ensembling or merging. Problematic artifacts of tokenization such as 'Glitch tokens' <ref type="bibr" target="#b34">(Land &amp; Bartolo, 2024)</ref> may also be fixed via transfer to a new tokenizer.</p><p>To address these issues, past work developed methods to equip an LM with a new tokenizer by retraining the embedding parameters, and optionally continuing to train the entire model <ref type="bibr" target="#b2">(Artetxe et al., 2020;</ref><ref type="bibr" target="#b15">de Vries &amp; Nissim, 2021)</ref>. This adaptation can be made faster by initializing the embedding parameters through heuristics <ref type="bibr" target="#b65">(Tran, 2020;</ref><ref type="bibr" target="#b46">Minixhofer et al., 2022;</ref><ref type="bibr" target="#b18">Gee et al., 2022;</ref><ref type="bibr" target="#b17">Dobler &amp; de Melo, 2023;</ref><ref type="bibr" target="#b38">Liu et al., 2023)</ref>. In this work, we formulate a new problem: given an LM, can we create an embedding matrix on-the-fly for any arbitrary tokenizer, without ever observing data for it? While past work investigated n-shot tokenizer transfer, we refer to this new problem as zero-shot tokenizer transfer (ZeTT). If the performance of the model can be approximately preserved, ZeTT effectively "detaches" LMs from the tokenizer they were trained with. We first evaluate the efficacy of prior (heuristic-based) approaches for ZeTT, finding that, while heuristics can preserve performance to some extent, there is generally a large gap to the original LM performance.</p><p>To close this gap, we introduce a new paradigm: We train a hypernetwork on a diverse distribution of tokenizers to predict the embedding parameters for any given tokenizer. By investing into the one-time-cost of training the hypernetwork, we aim to subsequently enable effective ZeTT. This proves to be possible: ZeTT via the hypernetwork preserves performance to a few percent accuracy in many cases. Furthermore, the hypernetwork can learn to rapidly adapt to a given target tokenizer by continued training on a small amount (&lt;1B) of extra tokens, whereas previous work typically needed hundreds of billions of tokens <ref type="bibr" target="#b14">(Dagan et al., 2024)</ref>. As such, our hypernetwork provides a state-of-the-art solution to n-shot tokenizer transfer, while also establishing a competitive baseline to our newly introduced zero-shot tokenizer transfer problem. This unlocks a range of new ways to combine language models with tokenizers. For example, in this work, we zero-shot substitute the Mistral-7B tokenizer <ref type="bibr" target="#b27">(Jiang et al., 2023)</ref> with a tokenizer that encodes code using 10% less tokens on average, while preserving functional code generation correctness to approx. 3% (Section 4.2). We also evaluate zero-shot cross-lingual transfer of the multilingual XLM-R encoder model to a range of different languages by substituting the XLM-R tokenizer with a target-language specific tokenizer and reusing adapters trained for the original XLM-R. This leads to a &gt;16% speedup and preserves performance on XNLI <ref type="bibr" target="#b12">(Conneau et al., 2018)</ref> to 1% on average, although the language model has never been trained with the target-language tokenizers. Finally, we show that a hypernetwork trained for a base large LM (e.g. Mistral-7B) can also be applied to fine-tunings of the same model (e.g. Mistral-7B-Instruct-v0.1), preserving capabilities to a large extent (Section 4.3). Our code and models are publicly available at github.com/bminixhofer/zett.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="2">Background</head><p>Tokenizers and Embeddings. Tokenizers operate as a tokenization function T mapping a text to a sequence of elements in the vocabulary V. By the term tokenizer, we henceforth refer to the tuple comprising the two crucial components, (V, T ). Importantly, the vocabulary and the tokenization function are distinct components; given some vocabulary, there are many ways to encode text as a sequence of tokens in this vocabulary (e.g. <ref type="bibr" target="#b23">Hofmann et al., 2022;</ref><ref type="bibr" target="#b66">Uzan et al., 2024)</ref>. After tokenization, the model represents the sequence of tokens via a function E ϕ : V → R dmodel (the embeddings). The embeddings are typically parametrized by a matrix ϕ as a lookup table which assigns a distinct d model -dimensional vector (a row of the matrix) to every element in V. Embeddings are used twice in the language model: once at the input to map tokens to a fixed-size vector, and again at the output to compute a logit for every token, typically via a dot-product of E ϕ (t) with the final hidden state of the LM. Embedding parameters may or may not be shared between the input and the output;<ref type="foot" target="#foot_0">foot_0</ref> our method works with both. We denote the entire set of embedding parameters via ϕ, denoting input embeddings as ϕ in and output embeddings as ϕ out , if necessary.</p><p>Contemporary language models typically use subword tokenizers via BPE <ref type="bibr" target="#b60">(Sennrich et al., 2016)</ref> or UnigramLM <ref type="bibr" target="#b30">(Kudo, 2018)</ref>. Subword tokenization is a common choice since it can represent arbitrary sequences of text ("open-vocabulary" language modeling) while largely retaining the efficiency of word-level models <ref type="bibr" target="#b44">(Mielke et al., 2021)</ref>. However, there are a number of problems with subword tokenization, e.g. models using subword tokenization struggle parsing sequences of numbers <ref type="bibr" target="#b19">(Golkar et al., 2023)</ref> and text with spelling mistakes <ref type="bibr" target="#b69">(Xue et al., 2022)</ref>. A recent strand of work aims to get rid of subword tokenization via byte-level (so-called "token-free") models <ref type="bibr" target="#b69">(Xue et al., 2022;</ref><ref type="bibr" target="#b71">Yu et al., 2023)</ref>. However, these models still operate on tokens, using the set of 256 bytes as the vocabulary, and Unicode as the tokenization function <ref type="bibr" target="#b44">(Mielke et al., 2021)</ref>. In a similar vein, some models use character-level tokenization <ref type="bibr" target="#b63">(Tay et al., 2022;</ref><ref type="bibr" target="#b9">Clark et al., 2022)</ref>, optionally learning to pool characters into longer tokens <ref type="bibr" target="#b48">(Nawrot et al., 2023)</ref>. <ref type="foot" target="#foot_1">3</ref> So far, byte-or character-level approaches have been unable to supplant subword tokenization due to reduced compute efficiency (because of longer sequences), and not necessarily being more robust <ref type="bibr" target="#b36">(Libovický et al., 2022)</ref>. Thus, although our approach is in principle applicable to any tokenizer, we focus our experiments on subword tokenizers. Specifically, we use the UnigramLM parametrization of the tokenization function, and show that other tokenizers can be converted to this parametrization later in Section 5. UnigramLM sets</p><formula xml:id="formula_0">T (x) := argmax C∈Cx t∈C log p(t)</formula><p>where C x is the set of all possible tokenizations of x (i.e., all possible decompositions of x in V). UnigramLM provides a convenient way to represent tokens as a 2-tuple (t, p(t)) ∈ (V, R).</p><p>Embedding Initialization Heuristics. Prior work transfers LMs to a new tokenizer by initializing embedding parameters via a heuristic, then continuing to train the embeddings. We denote the original tokenizer as (V a , T a ) and the original embedding parameters as ϕ a . Analogously, the target tokenizer is (V b , T b ) with embedding parameters ϕ b . FVT <ref type="bibr" target="#b18">(Gee et al., 2022)</ref> initializes embeddings for any new token t ∈ V b as the mean of the embeddings of T a (t) i.e. the mean of the sequence of embeddings the new token is decomposed into by the previous tokenizer T a . RAMEN <ref type="bibr" target="#b65">(Tran, 2020)</ref>, WECHSEL <ref type="bibr" target="#b46">(Minixhofer et al., 2022)</ref> and OFA <ref type="bibr" target="#b38">(Liu et al., 2023)</ref> require auxiliary embeddings</p><formula xml:id="formula_1">E aux : V aux → R daux with |V aux ∩ V a | ̸ ≪ |V a | and |V aux ∩ V b | ̸ ≪ |V b |.</formula><p>They use E aux to embed tokens in V a and V b in the same semantic space, then initialize embeddings in E ϕ b as a weighted average of embeddings in E ϕa with weights given by their similarity in E aux . FOCUS <ref type="bibr" target="#b17">(Dobler &amp; de Melo, 2023)</ref> initializes embeddings of tokens in V b \ V a as a weighted combination of the overlapping tokens V a ∩ V b , and copies the embeddings of the overlapping tokens. Weights are again computed using an auxiliary embedding matrix E aux , but the only requirement is</p><formula xml:id="formula_2">|V aux ∩ V b | ̸ ≪ |V b |.</formula><p>We use FOCUS as the main baseline since <ref type="bibr" target="#b17">Dobler &amp; de Melo (2023)</ref> show it obtains better performance without any training (i.e., zero-shot) than other heuristics, which we also confirm later in Section 4.2.</p><p>Heuristic-Free Tokenizer Transfer. While a significant amount of prior work has investigated heuristics to initialize the embedding layer, there is also research into changing the training procedure to facilitate n-shot tokenizer transfer. <ref type="bibr" target="#b42">Marchisio et al. (2023)</ref> show that forward-and backwardpropagating through a subset of the model layers is sufficient for learning embeddings for a new tokenizer. <ref type="bibr" target="#b24">Chen et al. (2023)</ref> find that regularly resetting the embedding parameters during pretraining boosts the speed at which they are relearnt upon transfer. These approaches can be seen as orthogonal to ours. They could be freely combined with our method; we leave this to future work.</p><p>Embedding Prediction Hypernetworks. Hypernetworks are networks that predict the parameters of another network <ref type="bibr" target="#b21">(Ha et al., 2017)</ref>. Prior work uses neural networks to predict embeddings for out-of-vocabulary <ref type="bibr" target="#b52">(Pinter et al., 2017)</ref> or rare words <ref type="bibr" target="#b58">(Schick &amp; Schütze, 2019)</ref> of word embedding models <ref type="bibr" target="#b45">(Mikolov et al., 2013)</ref>. <ref type="bibr" target="#b59">Schick &amp; Schütze (2020)</ref> extend this approach to predict embeddings for rare words in BERT models <ref type="bibr" target="#b16">(Devlin et al., 2019)</ref>. These methods can also be viewed as embedding prediction hypernetworks. In contrast, the hypernetwork we propose (i) approaches the more general problem of transferring to an arbitrary tokenizer, instead of extending the original tokenizer and (ii) can be applied to encoder, decoder, and encoder-decoder LMs, that is, it is objective-agnostic.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>Algorithm 1 Hypernetwork training loop for Zero-Shot Tokenizer Transfer</head><p>Input: corpus D, tokenizer sample size n, batch size m, max. token length l, vocabulary size k, noise parameters (µ, σ), pretrained LM parameters ψ, initial hypernetwork parameters θ init .</p><p>Output: Hypernetwork parameters θ. 1: procedure TRAINHYPERNETWORK 2:</p><p>θ ← θ init 3: q ← queue(x 1 , .., x n ∼ D) ▷Create a pool of n texts (where n ≥ m).</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>4: 5:</head><p>for step in train_steps do 6:</p><p>x 1 , .., x m ∼ D 7:</p><p>q ← pop(q, m) ▷Remove the least-recently-added batch.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>8:</head><p>q ← push(q, x 1 , .., x m ) ▷Add the current batch. 9: 10: t, f ← substrings(q, l) ▷Compute all substrings and their frequency in q.</p><p>11:</p><formula xml:id="formula_3">f ← f / i f i ▷Normalize frequencies to sum to one. 12: z ∼ Lognormal(µ, σ 2 ) 13: for t, f ∈ (t, f ) do 14: p(t) ← f + N (0, z 2 )</formula><p>▷Assign a score based on frequency + noise to the substrings. 15: Sort t by p(t) descending. 16: V b ← t[: k] ▷Assemble the top k substrings into the tokenizer. 17: </p><formula xml:id="formula_4">T b ← UnigramLM({(t, p(t)) | t ∈ t[: k]}) 18: 19: loss ← L θ (T b (x), H θ (V b , T b ), ψ)</formula></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3">Methodology</head></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.1">Hypernetwork Training</head><p>We aim to find parameters θ of a hypernetwork H θ : (V b , T b ) → ϕ b for some pretrained LM. Let ϕ a and ψ be the embedding and inner (non-embedding) parameters of the language model, respectively. L is the loss of the language model as a function of the tokens, the embedding parameters, and the inner parameters, typically:</p><formula xml:id="formula_5">L(t, ϕ a , ψ) = CrossEntropy(LM ψ (E ϕa (t)), label(t)),</formula><p>where LM ψ is the language model and label maps the sequence of tokens to corresponding labels, e.g., shifting the sequence in case of standard (autoregressive, causal) language modeling, or masking the sequence in case of Masked Language Modeling <ref type="bibr" target="#b16">(Devlin et al., 2019)</ref>. Importantly, however, we do not make any specific assumptions on L.</p><p>Note that the loss of the language model under the original tokenizer T a on a text x is L(T a (x), ϕ a , ψ). We train our hypernetwork to minimize the loss</p><formula xml:id="formula_6">L θ (T b (x), H θ (V b , T b ), ψ).</formula><p>That is, we substitute the original embedding parameters for the hypernet predictions, and substitute the original tokenizer for a tokenizer (V b , T b ). Figure <ref type="figure" target="#fig_0">1</ref> illustrates the flow of information.</p><p>Defining Distributions over Texts and Tokenizers. We follow standard practice and sample texts uniformly from the training corpus. Tokenizer sampling is not as trivial: we would like a distribution over tokenizers (V b , T b ) with high variance to encourage generalization to unseen tokenizers. To this end, we introduce a procedure to sample a diverse set of UnigramLM tokenizers. We show later in Section 5 that arbitrary tokenizers can be well-approximated via UnigramLM, motivating this choice.</p><p>We initially fill a queue q with n texts sampled randomly from the training corpus and, at every step in the training loop, push the m texts in the current batch and remove the m least recently added texts. We then compute all substrings t up to length l and their frequency in q. 45 We add Gaussian noise to the frequencies to arrive at a final score p(t) for every token t. Finally, we assemble the tokenizer by taking the top k tokens with the highest p(t) as the vocabulary and UnigramLM parametrized by p(t) as the tokenization function. The training loop is summarized in Algorithm 1. The 'rolling' queue of texts q ensures high variance in the vocabulary, while the Gaussian noise added to the frequencies ensures high variance in the tokenization function.</p><p>Importantly, the texts and the tokenizer are sampled dependently: the batch of m texts used for training is a subset of the n texts used for sampling the tokenizer. If they were sampled independently, the probability for a token to occur would be p(token) ∝ p(token ∈ V b ) × p(token ∈ x). Since both these factors are small for rare tokens, p(token) would get vanishingly small in this case.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>MIMICK-Style</head><p>Warmup &amp; Auxiliary Loss. In practice, directly minimizing L θ starting from randomly initialized θ is difficult. Thus, we include a warmup stage where we train the hypernetwork to mimic the embedding parameters of the original tokenizer, akin to MIMICK <ref type="bibr" target="#b52">(Pinter et al., 2017)</ref>.</p><formula xml:id="formula_7">L warmup θ = ∥H θ (V a , T a ) -ϕ a )∥ 2</formula><p>The warmup stage is substantially quicker than the main stage because there is no need to propagate through the main model. We found it prevents divergence in some cases. Afterwards, we add an auxiliary loss, which, for every token in the sampled vocabulary V b that also exists in the original vocabulary V a , penalizes the distance to the corresponding embedding in ϕ a .</p><formula xml:id="formula_8">L aux θ = 1 |V a ∩ V b | t∈|Va∩V b | ∥H θ (V b , T b )[V b [t]] -ϕ a [V a [t]]∥ 2</formula><p>This penalizes drift from the warmup stage. Combining it with the main loss yields the final loss.</p><formula xml:id="formula_9">L final θ = L θ (T b (x), H θ (V b , T b ), ψ) + α • L aux θ</formula><p>The hyperparameter α weighs the contribution of the auxiliary loss. Since H θ (V b , T b ) is also required for the main loss, it requires negligible extra computation. The auxiliary loss is necessary especially for models with separate input and output embedding matrices as shown in Appendix B.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.2">Hypernetwork Architecture</head><p>It remains to define the hypernetwork architecture, that is, how to map the tokenizer (V b , T b ) to the embedding parameters ϕ b . To this end, we represent the new tokens t b ∈ V b by decomposing them using the original tokenization function T a , and embedding them with the original embeddings E ϕa . <ref type="foot" target="#foot_4">6</ref> This sequence of embeddings is passed through multiple Transformer layers, plus a separate prediction head for the input embeddings and output embeddings ϕ in b and ϕ out b . The hypernetwork thus consists of another language model which is applied separately for every token. We refer to the hypernetwork's language model as HLM θ . HLM θ can be thought of as learning how to compose Table <ref type="table">1</ref>: Accuracy on XNLI when reusing adapters trained for the original XLM-R model with new zero-shot transferred language-specific tokenizers. Also shown are the absolute change in accuracy from applying our hypernetwork (∆accuracy) and the average decrease in token length of the language-specific tokenizers over the original tokenizer (∆length).</p><p>ar bg de el en es fr hi ru sw tr ur vi Avg. original 68.9 75.6 74.7 73.7 82.3 76.9 76.8 68.4 72.9 63.5 72.2 64.7 73.1 72.6 Lexical 58.7 63.1 65.3 61.7 72.8 68.4 66.7 61.8 62.3 51.8 58.5 60.0 72.0 63.3 FVT 63.9 70.3 70.9 67.4 79.0 73.9 71.9 65.7 67.8 57.1 66.3 61.7 72.9 68.4 OFA 57.3 64.2 67.3 62.8 73.6 68.6 68.4 61.8 63.1 54.8 59.7 59.3 72.3 64.1 FOCUS 64.8 71.0 71.6 67.7 79.6 74.4 72.6 64.5 68.1 55.7 67.3 61.9 72.6 68.6 ours 67.9 73.9 74.1 71.4 81.1 76.2 74.7 67.7 70.7 62.3 68.7 63.2 73.9 71.2 ∆accuracy -1% -2% -1% -2% -1% -1% -2% -1% -2% -1% -3% -2% +1% -1% ∆length -22% -14% -13% -23% -9% -11% -12% -13% -13% -19% -15% -9% -3% -14% the sequence of tokens T a (t)-which any given token is decomposed into-into one embedding, as illustrated in Figure <ref type="figure" target="#fig_2">2</ref>. Importantly, we do not take the tokenization function into account. By sampling diverse tokenizers during the training process, we aim for the hypernetwork to learn to produce a single embedding suitable to a wide variety of different tokenization functions. We analyze the impact of this choice later in Section 5. We also experiment with hypernetworks which do take the tokenization function into account in Appendix C.</p><p>On Token Decomposition. The input to the hypernetwork consists of the sequence of tokens T a (t) that any given token is decomposed into. However, this decomposition is not always trivial: for example, T a could be character-level, while the token t could be in the vocabulary of a byte-level tokenizer T b . In this case, t could be any arbitrary sequence of bytes (not necessarily valid UTF-8).</p><p>To solve this issue, we introduce a procedure to convert tokenizers to the byte level by adding a small amount of extra tokens to the vocabulary (c.f. Section 5). This guarantees that T a can decompose arbitrary tokens. The embeddings of the extra vocabulary are initialized randomly and trainable alongside the hypernetwork parameters.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4">Experiments</head></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4.1">Setup</head><p>Data. We use the English subset of the MADLAD-400 corpus <ref type="bibr" target="#b32">(Kudugunta et al., 2023)</ref> and code from the StarCoder data <ref type="bibr" target="#b74">(Li et al., 2023)</ref> for hypernetwork training. The sampling ratio of English to Code is 7:3 following <ref type="bibr" target="#b73">Zhang et al. (2024)</ref>. For the multilingual hypernetwork, we use a subset of 26 of the languages used in XGLM <ref type="bibr" target="#b37">(Lin et al., 2022)</ref>.<ref type="foot" target="#foot_5">foot_5</ref> with data from MADLAD-400. We sample  Evaluation. We use the standard benchmarks PiQA <ref type="bibr" target="#b3">(Bisk et al., 2020)</ref>, HellaSwag (HS <ref type="bibr" target="#b72">Zellers et al., 2019)</ref>, BoolQ <ref type="bibr" target="#b8">(Clark et al., 2019)</ref>, MMLU <ref type="bibr">(Hendrycks et al., 2021)</ref> and the "easy" subset of ARC <ref type="bibr" target="#b10">(Clark et al., 2018)</ref> for evaluation in English and the synthesis task of HumanEvalPack <ref type="bibr" target="#b47">(Muennighoff et al., 2023)</ref> for coding evaluation. For multilingual evaluation, we use XNLI <ref type="bibr" target="#b12">(Conneau et al., 2018)</ref>, XCOPA <ref type="bibr" target="#b53">(Ponti et al., 2020)</ref> and MMLU as machine-translated by <ref type="bibr" target="#b33">Lai et al. (2023)</ref>.</p><p>Models. To evaluate our method, we use Mistral-7B <ref type="bibr" target="#b27">(Jiang et al., 2023)</ref> as the main decoder-style language model and XLM-R <ref type="bibr" target="#b13">(Conneau et al., 2020)</ref> as a representative of encoder-style models. 9 We also experiment with the smaller TinyLlama-1.1B model <ref type="bibr" target="#b73">(Zhang et al., 2024)</ref> in Appendix G.</p><p>Tokenizers. We transfer models to the GPT2 tokenizer <ref type="bibr" target="#b55">(Radford et al., 2019)</ref> for evaluation on natural language benchmarks and to the StarCoder tokenizer <ref type="bibr" target="#b74">(Li et al., 2023)</ref> for evaluation on code benchmarks. 10 For multilingual evaluation, we train language-specific monolingual tokenizers with a vocabulary size of 50k using SentencePiece <ref type="bibr" target="#b31">(Kudo &amp; Richardson, 2018)</ref> and evaluate transfer to these. We also verify that the hypernetwork is robust to the choice of vocabulary size in Appendix E.</p><p>Hypernetwork training. We train the hypernetwork for 200k gradient update steps (10k of which are MIMICK-style warmup) with a batch size of 128 tokens and a sequence length of 128 (we find it sufficient to use short sequence lengths for learning embedding parameters). For the multilingual decoder-style models, we start from the English + Code checkpoint and forgo MIMICK-style warmup, keeping other hyperparameters unchanged. We use a RoBERTa-style architecture i.e. bidirectional attention and Post-LayerNorm Transformer layers <ref type="bibr" target="#b39">(Liu et al., 2019)</ref>, but use a feedforward dimension of 2x the hidden dimension (instead of RoBERTa's 4x) for the hypernetwork. See Appendix D for a full list of hyperparameters.</p><p>Continued training details. To keep runtime comparable between training the model with hypernetwork and direct training (without hypernetwork), we run hypernetwork inference only for a subset of 8 We use Flan v2 because we observed a strong decrease in accuracy from continuing to train on the MADLAD-400 data (even with the original tokenizer). The training data for most LLMs (including Mistral-7B) is not public, but it is plausible that this decrease stems from higher-quality data mixed in especially towards the end of training as in e.g. <ref type="bibr" target="#b20">Groeneveld et al. (2024)</ref>.</p><p>9 Although (decoder-style) LLMs are the centerpiece of a large amount of current NLP research, encoder-style LMs have wide-ranging applications in e.g. retrieval <ref type="bibr" target="#b29">(Khattab &amp; Zaharia, 2020)</ref> and LLM distillation <ref type="bibr" target="#b24">(Hsieh et al., 2023)</ref> due to their lower computational cost. 10 We chose these tokenizers due to their popularity and comparatively efficient encoding of the target domain.</p><p>Table <ref type="table">5</ref>: Single model rating results on MT-Bench of transferring Mistral-7B-Instruct-v0.1 to the GPT2 tokenizer using the hypernetwork trained for the base Mistral-7B model. We use gpt-3.5-turbo-1106 as a judge. orig. is the original fine-tuned model, base the model with the same tokenizer but embeddings substituted for the base models' embeddings. λ is the scaling factor for the weight differences in Task Arithmetic <ref type="bibr" target="#b26">(Ilharco et al., 2023)</ref>.</p><p>original 0-shot n-shot Embeddings orig. base FOCUS ours ours@800 λ ----0.0 0.3 0.5 0.7 Score (1 to 10) 7.33 7.48 5.03 6.56 6.59 6.75 6.82 6.77 k = 16384 tokens in the continued training case. The subset consists of all tokens occurring in the batch, plus a uniform sample of those that do not occur. The language modeling loss is then only computed over this subset of tokens. We found in preliminary experiments that this causes only minor performance degradation. Furthermore, we use the zero-shot predicted embeddings as the target for the auxiliary loss instead of using the original embeddings. This stabilizes training. We train for 50k steps with a batch size of 32 and sequence length of 512, resulting in 'seeing' 819.2M tokens.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4.2">Zero-Shot and n-shot Results</head><p>Results for XLM-R are shown in Table <ref type="table">1</ref>. We take task adapters trained for the original XLM-R model on the English XNLI dataset via <ref type="bibr" target="#b54">Poth et al. (2023)</ref> and substitute the tokenizer for our language-specific one. We compare our hypernetwork against a simple lexical baseline (copying the embeddings of overlapping tokens and initializing the rest randomly), FVT, OFA, and FOCUS (c.f. Section 2). We focus only on FOCUS in the following since it performs best among the baselines.<ref type="foot" target="#foot_6">foot_6</ref> Our hypernetwork consistently outperforms all baselines and preserves accuracy to 1% on average, losing 3% in the worst case and improving by 1% in the best case, while sequences are on average 14% shorter for the language-specific tokenizers; inference is thus more than 16% faster. 12 We show in Appendix E that these results are robust to the target vocabulary size.</p><p>Table <ref type="table" target="#tab_2">2</ref> shows results on English and Code for Mistral-7B. We find that ZeTT is more challenging in the decoder case: FOCUS performs roughly random in the worst case (-23.2% on BoolQ) and is reduced to 0% pass@1 on HumanEval in Python. The hypernetwork goes a long way in closing this gap but still falls behind on some benchmarks. However, continuing to train the hypernetwork with the target tokenizer closes the gap almost completely. In fact, continued training on 800M tokens with the StarCoder tokenizer performs better than continued training for the same amount of tokens with the original tokenizer, potentially because the StarCoder tokenizer is more well suited towards code; it results in approx. 10% less tokens on average. Also, notably, continued training with the original tokenizer slightly degrades performance on average; this may be due to a higher-quality data mix used for pretraining Mistral-7B, whereas we use public data sources (c.f. Section 4.1).</p><p>Results of the multilingual hypernetwork for Mistral-7B are shown in Table <ref type="table" target="#tab_3">3</ref> and <ref type="table" target="#tab_4">Table 4</ref>. On XCOPA, the hypernetwork on average improves performance over the original model, while also more than halving sequence length. XCOPA performance is close to random in some languages (e.g. Southern Quechua (qu) and Estonian (et)), so we also evaluate on multilingual MMLU. Here, although the hypernetwork clearly outperforms FOCUS (which performs close to random), there is still a substantial gap to the original model; this could presumably be fixed via continued training.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4.3">Applying a Hypernetwork trained for a Base Model to Fine-Tuned Models</head><p>So far, we have shown that the hypernetwork can be successfully applied for transferring the tokenizer of the base model 13 it was trained on. However, a large amount of the models used by practitioners are fine-tuned versions of base models, e.g. via SFT or RLHF <ref type="bibr" target="#b49">(Ouyang et al., 2022)</ref>. We now attempt to answer the question: Given a hypernetwork trained for a base model, can we apply this hypernetwork to fine-tuned versions of the same model without any extra training? This would act as a multiplying factor for the hypernetwork's applicability. First, we observe that the embedding space of a fine-tuned model is compatible with that of the base model: the embeddings of the fine-tuned Mistral-7B-Instruct-v0.1 have an average cosine similarity of 98.6% to the corresponding embedding in the base model while the average cosine similarity of the mean embedding vector is 17.4%.<ref type="foot" target="#foot_8">foot_8</ref> Embedding compatibility also holds true for other models (Appendix G). The predictions of a hypernetwork trained for a base model can thus be used out-of-the-box with fine-tuned models. We verify that this is the case by evaluating Mistral-7B-Instruct-v0.1 transferred to the GPT2 tokenizer on the corrected<ref type="foot" target="#foot_9">foot_9</ref> version of MT-Bench <ref type="bibr" target="#b74">(Zheng et al., 2023)</ref>. For n-shot transfer, since we train the full model we also need a way to transfer the non-embedding parameters; we achieve this via Task Arithmetic <ref type="bibr" target="#b26">(Ilharco et al., 2023)</ref>. Results are shown in Table <ref type="table">5</ref>.</p><p>The transferred fine-tuned model performs well, coming within approx. 0.5 score of the original model. Also, curiously, the fine-tuned model with the original tokenizer performs better when using the embeddings of the (not fine-tuned) base model; this may be a prudent direction for future work.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="5">Discussion</head><p>Converting tokenizers to byte-level. As per Section 3.2, we need a procedure to convert tokenizers to the byte level to ensure that token decomposition is always possible. This is trivial in most cases; the bytes just need to be added to the vocabulary. BPE is an exception: here, we need to change the atomic units on which merges are defined from characters to bytes. This can be achieved by adding merges to assemble the characters used by the tokenizer from their constituent bytes to the beginning of the merge table. We measure the success of the conversion to byte level as the probability that, given some pretoken sampled from a corpus, this pretoken results in the same token sequence in the original and the converted tokenizer. Results are shown in Table <ref type="table" target="#tab_5">6</ref>.</p><p>Converting tokenizers to UnigramLM. We also introduce a procedure to convert arbitrary tokenizers to tokenizers using UnigramLM as the tokenization function. We refer to this process as unigramifying (details in Appendix A). An important assumption of the hypernetwork training is that by using the UnigramLM parametrization with scores distributed as Gaussians we can cover a sufficiently Table <ref type="table">8</ref>: Parameter count and FLOPs estimates for our hypernetwork (and the corresponding main model) in different setups. The relatively lower computational cost compared to parameter count is mainly due to forgoing de-embedding which contributes significantly to FLOPs <ref type="bibr" target="#b28">(Kaplan et al., 2020)</ref>.</p><p>Model Hypernet #params FLOPs / token #params FLOPs / token GPT2 124M 253M 21M (16%) 4.5M (1.8%) TinyLlama-1.1B 1.1B 2.1G 170M (15%) 33.1M (1.6%) Mistral-7B 7.2G 15.4G 678M (9%) 132.1M (0.9%)</p><p>diverse distribution of tokenizers to enable the hypernetwork to generalize to e.g. BPE tokenizers.</p><p>Unigramifying allows us to check if, in principle, this is possible. Luckily, we find that it is: unigramifying results in minimal performance degradation when substituting the original tokenizer with the corresponding UnigramLM tokenizer (Table <ref type="table" target="#tab_5">6</ref>). Although this does not guarantee that our distribution of tokenizers is sufficiently diverse, our empirical results suggest it is (cf. Section 4.2).</p><p>We believe our conversion methods to UnigramLM and to byte-level will simplify further research into tokenizer transfer, showing that the wildly heterogeneous landscape of tokenizers can be well approximated via byte-level UnigramLM tokenizers.</p><p>What is the effect of amortizing over the tokenization function? As described earlier in Section 3, we 'amortize' over the tokenization function, that is, the tokenization function is not an input to our hypernetwork. We find that the predicted amortized embeddings are robust to the choice of tokenization function. For example, the set of embeddings predicted for the GPT2 vocabulary has low bits-per-character for both the original GPT2 tokenization function and a different UnigramLM tokenization function with scores based on token frequencies (Table <ref type="table" target="#tab_6">7</ref>). This is not the case for the original GPT2 embeddings: while they (as expected) perform well with the original GPT2 tokenizer, there is significant performance degradation when switching to the frequency-based UnigramLM tokenization function. This calls into question prior work copying the embeddings of overlapping tokens for transfer across tokenizers <ref type="bibr" target="#b17">(Dobler &amp; de Melo, 2023;</ref><ref type="bibr">Gee et al., 2022, among others)</ref>, indicating that even if there is an exactly overlapping token in the original tokenizer, it is not necessarily the optimal initialization of the corresponding token in the new tokenizer.</p><p>Although we amortize over most of the aspects of the tokenization function, in practice, tokenization functions rely on a considerable amount of engineering, so it is not possible to amortize over everything; we discuss remaining assumptions in Appendix H.</p><p>Analyzing computational overhead of the hypernetwork. We estimate the FLOPs per token of multiple hypernetworks in Table <ref type="table">8</ref>. <ref type="foot" target="#foot_10">16</ref> Given a batch size n and sequence length s for the main model, and using the hypernetwork to compose k token sequences of length t, the FLOPs per batch will be n × s × ( FLOPs token ) main + k × t × ( FLOPs token ) hypernet . Taking hypernet training for Mistral-7B as an example with n = s = 128, k = 32768 and t = 7 the FLOPs per batch will be 252T + 30T i.e. a 12% overhead from applying the hypernet. Notably, we observed in preliminary experiments that a hypernetwork size of three layers is sufficient, regardless of model size, so the relative overhead decreases with increased amounts of layers in the main model (as also evident in Table <ref type="table">8</ref>).</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="6">Conclusion</head><p>We have established Zero-Shot Tokenizer Transfer (ZeTT), the difficult problem of transferring language models to a new tokenizer without any training. We have found that prior heuristics for embedding initialization provide a first baseline for ZeTT, but fall short in many cases. To establish a much stronger baseline, we introduced a hypernetwork-based approach that closes the gap to a large extent, and can be further improved via continued training on a few (&lt;1B) tokens. Due to preserving the embedding space of the original model, ZeTT can be applied to e.g. reusing adapters trained for the original model with a different tokenizer, and to transferring fine-tuned models to a new tokenizer using a hypernetwork trained for the base model. In aggregate, this work is a substantial step towards detaching language models from their tokenizer, increasing their flexibility and reusability.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>A Unigramifying: Approximating Arbitrary Tokenizers via UnigramLM</head><p>We introduce a procedure to convert arbitrary tokenizers to UnigramLM in an optimal (but lossy) way which we refer to as unigramifying. Given a text x and the sequence of tokens T (x), for the UnigramLM tokenizer T to be equivalent to T , it is necessary that T fulfills t∈T (x) log p T (t) &gt; t∈C log p T (t) for all C in C x \ {T (x)}.<ref type="foot" target="#foot_11">foot_11</ref> Thus, given a corpus of texts X we can formulate a loss</p><formula xml:id="formula_10">L T (X, T ) = x∈X C∈Cx\{T (x)} max   0, t∈T (x) log p T (t) - t∈C log p T (t)  </formula><p>which is zero if and only if the condition above is satisfied for all texts in X. This objective is piecewise linear, so it can be converted to a standard Linear Programming (LP) form and solved via an LP solver. In practice, we use the CPLEX v22.1 (IBM ILOG, 2022) solver. Since applying the procedure to a corpus directly would be costly, we first pre-tokenize the training corpus, then count the pretokens, and choose the top n = 1000000 pretokens as the set X. </p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>B Stabilization Effect of the Auxiliary Loss</head><p>We found in preliminary experiments that the auxiliary loss is necessary, especially for models that do not share embedding parameters between the input and the output (models with untied embeddings).</p><p>To validate this hypothesis, we conducted an experiment where we manually untied the embeddings of GPT2 i.e. used a separate hypernetwork prediction head for the input and the output embeddings. Although everything else is kept the same, the untied GPT2 model diverges without the auxiliary loss, whereas the original GPT2 trains as expected, even without an auxiliary loss (Figure <ref type="figure" target="#fig_3">3</ref>).</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>C Non-Amortizing Hypernetworks</head><p>We experimented with hypernetworks taking the tokenization function into account by adding sparse inter-token attention blocks between the self-attention and the FFN in every hypernetwork layer. Sparse inter-token attention consists of two attention blocks. The first attention block attends from a fixed amount of learnable inter-token embeddings (e.g. 16, each a vector of size d model ) to the ith token representation of every token sequence passed to the hypernetwork. The second block attends from the ith token representation to the inter-token embeddings. This way, we factorize the attention to e.g. one 16 × k attention and one k × 16 attention, instead of regular the k × k self-attention which would be infeasibly slow for typical vocabulary sizes. We only add inter-token attention for the first token in every sequence. This improves performance on the sampled tokenizers, but does not improve performance on 'real-world' tokenizers (Table <ref type="table" target="#tab_8">9</ref>); investigating this mismatch is a direction for future work.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>D Additional Hyperparameters</head><p>Hyperparameters for hypernetwork training are shown in Table <ref type="table" target="#tab_9">10</ref>. For continued training, we use the same optimizer, but sequence length of 512, batch size of 32, training for 50k steps and a constant learning rate chosen among the set {1e-6, 3e-6, 6e-6, 1e-5, 3e-5} to maximize performance. The chosen learning rate is 1e-6 for the runs keeping the original tokenizer (original@800M), 6e-6 for continued training starting from FOCUS (FOCUS@800M) and 3e-6 for continued training with the hypernetwork (ours@800M). </p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>E Sensitivity to Tokenizer Size</head><p>Since the tokenizers we experiment with have similar vocabulary sizes (50k for the language-specific tokenizers and for GPT2, 49k for the StarCoder tokenizer) we conduct an additional experiment to quantify the sensitivity of the performance of our hypernetwork to the size of the target tokenizer. We find that although there is slight performance degradation when increasing the size of the new tokenizers' vocabulary, the hypernetwork is fairly robust to vocabulary size (Figure <ref type="figure" target="#fig_4">4</ref>).</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>F Reliance on Vocabulary Overlap</head><p>Intuitively, transfer is easier the more the target has in common with the source. One way to measure commonality between the original (source) and the target tokenizer is the fraction of tokens of the  target vocabulary which also exist in the source vocabulary (vocabulary overlap). Performance correlates with vocabulary overlap, but it correlates more strongly with the probability for tokens to overlap: that is, when randomly sampling some token from a corpus tokenized with T b , the probability that this token also exists in the vocabulary of T a . We refer to this metric as p(overlap). p(overlap) has higher correlation with the performance of FOCUS, indicating that our hypernetwork depends less on overlap (Figure <ref type="figure" target="#fig_5">5</ref>).  </p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>G Additional LLM Results</head><p>Zero-shot and n-shot results for TinyLlama-1.1B are shown in Table <ref type="table" target="#tab_10">11</ref> and MT-Bench results of transferring TinyLlama-1.1B-Chat-v1.0 in Table <ref type="table" target="#tab_11">12</ref>. We observe the same patterns as on Mistral-7B.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>H Assumptions on the Tokenization Function</head><p>In practice, besides the tokenization algorithm itself (e.g. BPE, UnigramLM) tokenization functions also contain other steps, in particular pretokenizing text into smaller chunks (usually words) on which to apply the tokenization function <ref type="bibr" target="#b44">(Mielke et al., 2021)</ref>. In our experiments, we assume fixed pretokenization given by a regular expression based on the regular expression used by GPT2 <ref type="bibr" target="#b55">(Radford et al., 2019)</ref>, adjusted to not over-segment text in languages using characters in the Unicode Mark category within words (e.g. Hindi and Tamil). We also add a prefix space (i.e., a whitespace at the start of the text to tokenize) if and only if the original tokenizer also uses a prefix space. Finally, we always add whitespace characters covering sequences of consecutive whitespaces up to 16 characters long similar to <ref type="bibr" target="#b4">Black et al. (2022)</ref> to ensure code is tokenized efficiently. These light assumptions mostly preserve the generality of our method but could be further relaxed in future work.</p></div><figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_0"><head>Figure 1 :</head><label>1</label><figDesc>Figure 1: The hypernetwork predicts input and output embeddings based on the tokenizer.</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_1"><figDesc>▷Compute the loss on the m texts in the current batch. 20: 21: update θ using ∇θ w.r.t. loss.</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_2"><head>Figure 2 :</head><label>2</label><figDesc>Figure 2: The hypernetwork consists of a language model HLM θ learning to compose embeddings under the original tokenization into a new embedding and amortizes over the tokenization function.</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_3"><head>Figure 3 :</head><label>3</label><figDesc>Figure 3: Language modeling loss of GPT2, and GPT2 with untied weight embeddings with and without the auxiliary loss across the first 50k training steps, excluding MIMICK-style warmup.</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_4"><head>Figure 4 :</head><label>4</label><figDesc>Figure 4: Difference in accuracy to the original XLM-R model on XNLI of our method and FOCUS across vocabularies with size 30k, 50k, and 100k of the new tokenizer.</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_5"><head>Figure 5 :</head><label>5</label><figDesc>Figure 5: Correlation of the difference in accuracy to the original XLM-R model with Unigram overlap probability p(overlap) (left) and vocabulary overlap (right).</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_2"><head>Table 2 :</head><label>2</label><figDesc>Performance of Mistral-7B-v0.1 after zero-shot and n-shot tokenizer transfer (training on 800M tokens). We evaluate transfer to the GPT2 tokenizer on natural language benchmarks and transfer to the StarCoder tokenizer on HumanEvalPack. Note that continued training with the original tokenizer (original@800M) does not consistently improve performance.</figDesc><table><row><cell></cell><cell></cell><cell></cell><cell cols="2">Natural Language</cell><cell></cell><cell></cell><cell cols="2">Code (pass@1)</cell></row><row><cell cols="2">#shots Method</cell><cell></cell><cell cols="2">(→ GPT2 Tok.)</cell><cell></cell><cell></cell><cell cols="2">(→ StarCoder Tok.)</cell></row><row><cell></cell><cell></cell><cell>PiQA</cell><cell>HS</cell><cell>ARC BoolQ MMLU</cell><cell>Avg.</cell><cell>js</cell><cell>HumanEvalPack go py</cell><cell>cpp</cell><cell>java</cell><cell>Avg.</cell></row><row><cell cols="2">original</cell><cell cols="8">80.7 81.0 79.5 83.6 59.6 76.9 28.7 20.1 29.3 29.9 32.3 28.1</cell></row><row><cell cols="2">original@800M</cell><cell cols="8">82.1 82.7 80.6 80.6 57.8 76.8 31.7 19.5 28.7 27.4 26.2 26.7</cell></row><row><cell>0-shot</cell><cell>FOCUS ours</cell><cell cols="8">69.2 63.8 45.7 60.4 38.8 55.6 21.9 79.7 77.5 73.0 81.9 53.0 73.0 23.8 17.7 18.9 28.7 26.8 23.2 1.8 0.0 20.1 22.6 13.3</cell></row><row><cell>n-shot</cell><cell cols="9">FOCUS@800M 74.8 74.3 72.4 73.3 48.9 68.7 24.4 17.1 22.6 22.6 26.2 22.6 ours@800M 80.9 80.7 77.8 80.7 54.4 74.9 28.0 25.0 26.2 29.9 28.7 27.6</cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_3"><head>Table 3 :</head><label>3</label><figDesc>Accuracy of Mistral-7B on XCOPA with language-specific tokenizers zero-shot transferred via FOCUS and our hypernetwork. The standard errors are between 2.1% and 2.3%.</figDesc><table><row><cell></cell><cell>et</cell><cell>ht</cell><cell>id</cell><cell>it</cell><cell>qu</cell><cell>sw</cell><cell>ta</cell><cell>tr</cell><cell>vi</cell><cell>Avg.</cell></row><row><cell>original</cell><cell>46.6</cell><cell>51.6</cell><cell>58.0</cell><cell>65.8</cell><cell>48.4</cell><cell>51.4</cell><cell>54.4</cell><cell>56.4</cell><cell>59.0</cell><cell>54.6</cell></row><row><cell>FOCUS</cell><cell>52.0</cell><cell>53.0</cell><cell>51.2</cell><cell>49.2</cell><cell>51.4</cell><cell>54.6</cell><cell>54.0</cell><cell>55.2</cell><cell>49.8</cell><cell>52.3</cell></row><row><cell>ours</cell><cell>53.4</cell><cell>57.2</cell><cell>60.0</cell><cell>65.6</cell><cell>50.0</cell><cell>57.2</cell><cell>55.8</cell><cell>57.4</cell><cell>57.2</cell><cell>57.1</cell></row><row><cell>∆accuracy</cell><cell>+7%</cell><cell>+6%</cell><cell>+2%</cell><cell>-0%</cell><cell>+1%</cell><cell>+6%</cell><cell>+1%</cell><cell>+1%</cell><cell>-2%</cell><cell>+3%</cell></row><row><cell>∆length</cell><cell>-72%</cell><cell>-42%</cell><cell>-52%</cell><cell>-36%</cell><cell>-54%</cell><cell>-51%</cell><cell>-83%</cell><cell>-57%</cell><cell>-59%</cell><cell>-54%</cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_4"><head>Table 4 :</head><label>4</label><figDesc>5-shot accuracy of Mistral-7B on multilingual MMLU with the original tokenizer and language-specific tokenizers zero-shot transferred via FOCUS and our hypernetwork. multinomial distribution as in<ref type="bibr" target="#b11">Conneau &amp; Lample (2019)</ref> with α = 0.1. For the n-shot experiments, we also train on the StarCoder data, but substitute the English section of the MADLAD-400 corpus for Flan v2<ref type="bibr" target="#b40">(Longpre et al., 2023)</ref> sampled as inSoldaini et al. (2024). 8   </figDesc><table><row><cell></cell><cell cols="4">original FOCUS ours ∆accuracy ∆length</cell></row><row><cell>German</cell><cell>51.6</cell><cell>26.2 43.7</cell><cell>-8%</cell><cell>-37%</cell></row><row><cell>Spanish</cell><cell>53.6</cell><cell>26.2 45.9</cell><cell>-8%</cell><cell>-32%</cell></row><row><cell>French</cell><cell>53.6</cell><cell>27.4 44.8</cell><cell>-9%</cell><cell>-30%</cell></row><row><cell>Italian</cell><cell>52.5</cell><cell>25.8 42.7</cell><cell>-10%</cell><cell>-36%</cell></row><row><cell>Russian</cell><cell>49.9</cell><cell>27.2 35.1</cell><cell>-15%</cell><cell>-47%</cell></row><row><cell>languages using a</cell><cell></cell><cell></cell><cell></cell><cell></cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_5"><head>Table 6 :</head><label>6</label><figDesc>Probability of pretokens sampled from the English MADLAD-400 data to be tokenized equivalently to the original tokenization when converting the tokenizer to byte-level (To Byte-Level) or to UnigramLM (Unigramify). Also shown is the LMs bits-per-character when applying the original vs. the corresponding UnigramLM tokenizer. Bits-per-character can not be measured for conversion to byte-level since extra tokens are added in this process (which there are no embeddings for).</figDesc><table><row><cell></cell><cell></cell><cell>BERT</cell><cell cols="2">Mistral-7B TinyLlama-1.1B</cell><cell>GPT2</cell></row><row><cell>Kind</cell><cell></cell><cell>WordPiece</cell><cell>BPE</cell><cell>BPE</cell><cell>BBPE</cell></row><row><cell>Original</cell><cell>p(preserved) bits per char</cell><cell>100% n/a</cell><cell>100% 0.675</cell><cell>100% 0.747</cell><cell>100% 0.930</cell></row><row><cell>To Byte-Level</cell><cell>p(preserved) Extra Tokens</cell><cell>99.6% 162</cell><cell>99.9% 522</cell><cell>99.9% 362</cell><cell>100% 0</cell></row><row><cell>Unigramify</cell><cell>p(preserved) bits per char</cell><cell>99.4% n/a</cell><cell>99.8% 0.678</cell><cell>99.8% 0.750</cell><cell>99.7% 0.932</cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_6"><head>Table 7 :</head><label>7</label><figDesc>Bits-per-character of GPT2 with the original tokenizer and the tokenization function being original (left), unigramified (middle) and UnigramLM with scores set to the substring frequency of the tokens (right). We compare the original embeddings with embeddings predicted from our hypernetwork, with or without Gaussian noise in the sampling process.</figDesc><table><row><cell cols="2">Model Embeddings</cell><cell cols="2">Tokenizer (V, T ) (GPT2, GPT2) (GPT2, unigramify(GPT2))</cell><cell>(GPT2, UnigramLM)</cell></row><row><cell></cell><cell>original</cell><cell>0.930</cell><cell>0.932</cell><cell>1.005</cell></row><row><cell>GPT2</cell><cell>ours</cell><cell>0.919</cell><cell>0.920</cell><cell>0.964</cell></row><row><cell></cell><cell>ours (no noise)</cell><cell>0.925</cell><cell>0.926</cell><cell>0.978</cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_8"><head>Table 9 :</head><label>9</label><figDesc>Performance of the hypernetwork in bits-per-byte with and without inter-token attention. Sampled Tokenizers are tokenizers as sampled during the training loop (c.f. Algorithm 1), en is an English UnigramLM tokenizer. The respective vocabulary sizes are shown in brackets.</figDesc><table><row><cell></cell><cell cols="3">Sampled Tokenizers (32k) GPT-NeoX (50k) en (30k)</cell></row><row><cell>ours</cell><cell>1.157</cell><cell>0.902</cell><cell>1.054</cell></row><row><cell>ours (+ inter-token attention)</cell><cell>1.118</cell><cell>0.904</cell><cell>1.103</cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_9"><head>Table 10 :</head><label>10</label><figDesc>Hypernetwork hyperparameters.</figDesc><table><row><cell>Optimizer</cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_10"><head>Table 11 :</head><label>11</label><figDesc>Performance of TinyLlama-1.1B after zero-shot and n-shot tokenizer transfer (training on 800M tokens), compare Table2.</figDesc><table><row><cell></cell><cell></cell><cell></cell><cell cols="2">Natural Language</cell><cell></cell><cell></cell><cell cols="3">Code (pass@1)</cell></row><row><cell cols="2">#shots Method</cell><cell></cell><cell cols="2">(→ GPT2 Tok.)</cell><cell></cell><cell></cell><cell cols="3">(→ StarCoder Tok.)</cell></row><row><cell></cell><cell></cell><cell>PiQA</cell><cell>HS</cell><cell>ARC BoolQ MMLU</cell><cell>Avg.</cell><cell>js</cell><cell cols="2">HumanEvalPack go py</cell><cell>cpp</cell><cell>java</cell><cell>Avg.</cell></row><row><cell cols="2">original</cell><cell cols="4">73.1 59.1 55.2 57.2 25.5 54.0</cell><cell>7.3</cell><cell>6.7</cell><cell>7.3</cell><cell>8.5</cell><cell>7.9</cell><cell>7.5</cell></row><row><cell cols="2">original@800M</cell><cell cols="4">73.2 59.5 63.3 65.1 26.3 57.5</cell><cell>9.8</cell><cell>7.3</cell><cell>9.1</cell><cell>8.5 10.4</cell><cell>9.0</cell></row><row><cell>0-shot</cell><cell>FOCUS ours</cell><cell cols="4">60.8 42.1 39.6 56.9 22.9 44.7 70.5 55.6 51.4 62.9 23.7 52.8</cell><cell>4.9 4.3</cell><cell>0.6 5.5</cell><cell>0.0 4.3</cell><cell>3.0 7.3</cell><cell>7.9 3.7</cell><cell>3.3 5.0</cell></row><row><cell>n-shot</cell><cell cols="5">FOCUS@800M 67.7 52.8 52.7 66.1 25.3 52.9 ours@800M 71.4 57.8 59.7 66.1 26.6 56.3</cell><cell>6.1 9.1</cell><cell cols="3">6.1 10.4 6.1 11.6 11.0 8.5</cell><cell>8.5 7.3</cell><cell>7.9 9.0</cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_11"><head>Table 12 :</head><label>12</label><figDesc>Single model rating results on MT-Bench of transferring TinyLlama-1.1B-Chat-v1.0 to the GPT2 tokenizer, compare Table12.</figDesc><table><row><cell></cell><cell cols="2">original</cell><cell>0-shot</cell><cell></cell><cell></cell><cell>n-shot</cell><cell></cell></row><row><cell>Embeddings</cell><cell cols="4">orig. base FOCUS ours</cell><cell></cell><cell>ours@800</cell><cell></cell></row><row><cell>λ</cell><cell>-</cell><cell>-</cell><cell>-</cell><cell>-</cell><cell>0.0</cell><cell>0.3 0.5</cell><cell>0.7</cell></row><row><cell>Score (1 to 10)</cell><cell>5.5</cell><cell>5.7</cell><cell>2.7</cell><cell cols="4">4.0 4.29 4.63 4.8 4.43</cell></row></table></figure>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="2" xml:id="foot_0"><p>Some models share the input and the output embedding parameters (e.g.<ref type="bibr" target="#b13">Conneau et al., 2020)</ref>, this has been shown to be problematic<ref type="bibr" target="#b7">(Chung et al., 2021)</ref> and many recent LLMs (e.g.<ref type="bibr" target="#b27">Jiang et al., 2023)</ref> separate them.</p></note>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="3" xml:id="foot_1"><p>See also<ref type="bibr" target="#b44">Mielke et al. (2021)</ref> for a comprehensive overview of tokenizers.</p></note>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="4" xml:id="foot_2"><p>In practice, implementing q as a queue allows efficiently caching the substrings and their probability p(t) at this step. They only need to be recomputed for the new m texts encountered in every batch.</p></note>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="5" xml:id="foot_3"><p>To ensure substrings do not cross word boundaries we pretokenize the text before computing substrings.</p></note>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="6" xml:id="foot_4"><p>In the multilingual case, we also append an element containing a learnable language-specific embedding.</p></note>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="7" xml:id="foot_5"><p>We exclude languages without whitespace between words since they would require language-specific pretokenizers (e.g.<ref type="bibr" target="#b62">Sun, 2012)</ref>. Although our method is also applicable to this case, we leave this to future work.</p></note>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="11" xml:id="foot_6"><p>We note, however, that FVT comes close to FOCUS' performance without requiring auxiliary embeddings so it may be a better choice for practical applications.</p></note>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" xml:id="foot_7"><p>1/(1-14%)=16%, plus additional speedup due to attention scaling quadratically with sequence length.13  We refer to models purely pretrained on the Language Modeling task as base models.</p></note>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="14" xml:id="foot_8"><p>Averaged across the input and the output embeddings.</p></note>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="15" xml:id="foot_9"><p>Using the corrections from https://github.com/InflectionAI/Inflection-Benchmarks.</p></note>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="16" xml:id="foot_10"><p>We estimate FLOPs on the basis of XLA-compiled instructions using Jax<ref type="bibr" target="#b5">(Bradbury et al., 2018)</ref>.</p></note>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="17" xml:id="foot_11"><p>This is not sufficient for equivalence since order is ignored e.g. T (x) = {ab, a, b} and T (x) = {a, b, ab} fulfill the criterion but are not equivalent.</p></note>
+		</body>
+		<back>
+
+			<div type="acknowledgement">
+<div><head>Acknowledgments</head><p>This work has been supported by a <rs type="funder">Royal Society University</rs> <rs type="grantName">Research Fellowship</rs> '<rs type="projectName">Inclusive and Sustainable Language Technology for a Truly Multilingual World</rs>' (no 221137; 2022-) awarded to <rs type="person">Ivan Vulić</rs>. Research supported with <rs type="person">Cloud TPUs</rs> from <rs type="funder">Google's TPU Research Cloud (TRC)</rs>. We thank <rs type="person">Markus Frohmann</rs>, <rs type="person">Marcell Fekete</rs> and <rs type="person">Piotr Nawrot</rs> for helpful feedback on a draft of this paper, and <rs type="person">Arduin Findeis</rs> for many valuable discussions during the entirety of this project.</p></div>
+			</div>
+			<listOrg type="funding">
+				<org type="funded-project" xml:id="_tvvxh2Y">
+					<orgName type="grant-name">Research Fellowship</orgName>
+					<orgName type="project" subtype="full">Inclusive and Sustainable Language Technology for a Truly Multilingual World</orgName>
+				</org>
+			</listOrg>
+			<div type="references">
+
+				<listBibl>
+
+<biblStruct xml:id="b0">
+	<analytic>
+		<title level="a" type="main">Do all languages cost the same? tokenization in the era of commercial language models</title>
+		<author>
+			<persName><forename type="first">Orevaoghene</forename><surname>Ahia</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sachin</forename><surname>Kumar</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hila</forename><surname>Gonen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jungo</forename><surname>Kasai</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">David</forename><surname>Mortensen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Noah</forename><surname>Smith</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yulia</forename><surname>Tsvetkov</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/2023.emnlp-main.614</idno>
+		<ptr target="https://aclanthology.org/2023.emnlp-main.614" />
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing</title>
+		<editor>
+			<persName><forename type="first">Houda</forename><surname>Bouamor</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Juan</forename><surname>Pino</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Kalika</forename><surname>Bali</surname></persName>
+		</editor>
+		<meeting>the 2023 Conference on Empirical Methods in Natural Language Processing<address><addrLine>Singapore</addrLine></address></meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<date type="published" when="2023-12">December 2023</date>
+			<biblScope unit="page" from="9904" to="9923" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b1">
+	<analytic>
+		<title level="a" type="main">Git re-basin: Merging models modulo permutation symmetries</title>
+		<author>
+			<persName><forename type="first">Samuel</forename><surname>Ainsworth</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jonathan</forename><surname>Hayase</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Siddhartha</forename><surname>Srinivasa</surname></persName>
+		</author>
+		<ptr target="https://openreview.net/forum?id=CQsmMYmlP5T" />
+	</analytic>
+	<monogr>
+		<title level="m">The Eleventh International Conference on Learning Representations</title>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b2">
+	<analytic>
+		<title level="a" type="main">On the cross-lingual transferability of monolingual representations</title>
+		<author>
+			<persName><forename type="first">Mikel</forename><surname>Artetxe</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sebastian</forename><surname>Ruder</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dani</forename><surname>Yogatama</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/2020.acl-main.421</idno>
+		<ptr target="https://aclanthology.org/2020.acl-main.421" />
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics</title>
+		<editor>
+			<persName><forename type="first">Dan</forename><surname>Jurafsky</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Joyce</forename><surname>Chai</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Natalie</forename><surname>Schluter</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Joel</forename><surname>Tetreault</surname></persName>
+		</editor>
+		<meeting>the 58th Annual Meeting of the Association for Computational Linguistics</meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<date type="published" when="2020-07">July 2020</date>
+			<biblScope unit="page" from="4623" to="4637" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b3">
+	<analytic>
+		<title level="a" type="main">Piqa: Reasoning about physical commonsense in natural language</title>
+		<author>
+			<persName><forename type="first">Yonatan</forename><surname>Bisk</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Rowan</forename><surname>Zellers</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Le</forename><surname>Ronan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jianfeng</forename><surname>Bras</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yejin</forename><surname>Gao</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Choi</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Thirty-Fourth AAAI Conference on Artificial Intelligence</title>
+		<imprint>
+			<date type="published" when="2020">2020</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b4">
+	<analytic>
+		<title level="a" type="main">GPT-NeoX-20B: An open-source autoregressive language model</title>
+		<author>
+			<persName><forename type="first">Sidney</forename><surname>Black</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Stella</forename><surname>Biderman</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Eric</forename><surname>Hallahan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Quentin</forename><surname>Anthony</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Leo</forename><surname>Gao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Laurence</forename><surname>Golding</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Horace</forename><surname>He</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Connor</forename><surname>Leahy</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kyle</forename><surname>Mcdonell</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jason</forename><surname>Phang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Michael</forename><surname>Pieler</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Usvsn</forename><surname>Sai Prashanth</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shivanshu</forename><surname>Purohit</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Laria</forename><surname>Reynolds</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jonathan</forename><surname>Tow</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ben</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Samuel</forename><surname>Weinbach</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/2022.bigscience-1.9</idno>
+		<ptr target="https://aclanthology.org/2022.bigscience-1.9" />
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of BigScience Episode #5 -Workshop on Challenges &amp; Perspectives in Creating Large Language Models</title>
+		<editor>
+			<persName><forename type="first">Angela</forename><surname>Fan</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Suzana</forename><surname>Ilic</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Thomas</forename><surname>Wolf</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Matthias</forename><surname>Gallé</surname></persName>
+		</editor>
+		<meeting>BigScience Episode #5 -Workshop on Challenges &amp; Perspectives in Creating Large Language Models</meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<date type="published" when="2022-05">May 2022</date>
+			<biblScope unit="page" from="95" to="136" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b5">
+	<monogr>
+		<title level="m" type="main">JAX: composable transformations of Python+NumPy programs</title>
+		<author>
+			<persName><forename type="first">James</forename><surname>Bradbury</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Roy</forename><surname>Frostig</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Peter</forename><surname>Hawkins</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Matthew</forename><forename type="middle">James</forename><surname>Johnson</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chris</forename><surname>Leary</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dougal</forename><surname>Maclaurin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">George</forename><surname>Necula</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Adam</forename><surname>Paszke</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jake</forename><surname>Vanderplas</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Skye</forename><surname>Wanderman-Milne</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Qiao</forename><surname>Zhang</surname></persName>
+		</author>
+		<ptr target="http://github.com/google/jax" />
+		<imprint>
+			<date type="published" when="2018">2018</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b6">
+	<analytic>
+		<title level="a" type="main">Improving language plasticity via pretraining with active forgetting</title>
+		<author>
+			<persName><forename type="first">Yihong</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kelly</forename><surname>Marchisio</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Roberta</forename><surname>Raileanu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">David</forename><surname>Ifeoluwa Adelani</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Pontus</forename><surname>Stenetorp</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sebastian</forename><surname>Riedel</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mikel</forename><surname>Artetxe</surname></persName>
+		</author>
+		<ptr target="https://openreview.net/forum?id=jvEbQBxd8X" />
+	</analytic>
+	<monogr>
+		<title level="m">Thirty-seventh Conference on Neural Information Processing Systems</title>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b7">
+	<analytic>
+		<title level="a" type="main">Rethinking embedding coupling in pre-trained language models</title>
+		<author>
+			<persName><forename type="first">Chung</forename><surname>Hyung Won</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Thibault</forename><surname>Fevry</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Henry</forename><surname>Tsai</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Melvin</forename><surname>Johnson</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sebastian</forename><surname>Ruder</surname></persName>
+		</author>
+		<ptr target="https://openreview.net/forum?id=xpFFI_NtgpW" />
+	</analytic>
+	<monogr>
+		<title level="m">International Conference on Learning Representations</title>
+		<imprint>
+			<date type="published" when="2021">2021</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b8">
+	<analytic>
+		<title level="a" type="main">BoolQ: Exploring the surprising difficulty of natural yes/no questions</title>
+		<author>
+			<persName><forename type="first">Christopher</forename><surname>Clark</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kenton</forename><surname>Lee</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ming-Wei</forename><surname>Chang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tom</forename><surname>Kwiatkowski</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Michael</forename><surname>Collins</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kristina</forename><surname>Toutanova</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/N19-1300</idno>
+		<ptr target="https://aclanthology.org/N19-1300" />
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies</title>
+		<title level="s">Long and Short Papers</title>
+		<editor>
+			<persName><forename type="first">Jill</forename><surname>Burstein</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Christy</forename><surname>Doran</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Thamar</forename><surname>Solorio</surname></persName>
+		</editor>
+		<meeting>the 2019 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies<address><addrLine>Minneapolis, Minnesota</addrLine></address></meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<date type="published" when="2019-06">June 2019</date>
+			<biblScope unit="volume">1</biblScope>
+			<biblScope unit="page" from="2924" to="2936" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b9">
+	<analytic>
+		<title level="a" type="main">Canine: Pre-training an efficient tokenization-free encoder for language representation</title>
+		<author>
+			<persName><forename type="first">Jonathan</forename><forename type="middle">H</forename><surname>Clark</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dan</forename><surname>Garrette</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Iulia</forename><surname>Turc</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">John</forename><surname>Wieting</surname></persName>
+		</author>
+		<idno type="DOI">10.1162/tacl_a_00448</idno>
+		<ptr target="https://aclanthology.org/2022.tacl-1.5" />
+	</analytic>
+	<monogr>
+		<title level="j">Transactions of the Association for Computational Linguistics</title>
+		<imprint>
+			<biblScope unit="volume">10</biblScope>
+			<biblScope unit="page" from="73" to="91" />
+			<date type="published" when="2022">2022</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b10">
+	<monogr>
+		<title level="m" type="main">Think you have solved question answering? try arc, the ai2 reasoning challenge</title>
+		<author>
+			<persName><forename type="first">Peter</forename><surname>Clark</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Isaac</forename><surname>Cowhey</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Oren</forename><surname>Etzioni</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tushar</forename><surname>Khot</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ashish</forename><surname>Sabharwal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Carissa</forename><surname>Schoenick</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Oyvind</forename><surname>Tafjord</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:1803.05457v1</idno>
+		<imprint>
+			<date type="published" when="2018">2018</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b11">
+	<analytic>
+		<title level="a" type="main">Cross-lingual language model pretraining</title>
+		<author>
+			<persName><forename type="first">Alexis</forename><surname>Conneau</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Guillaume</forename><surname>Lample</surname></persName>
+		</author>
+		<ptr target="https://proceedings.neurips.cc/paper_" />
+	</analytic>
+	<monogr>
+		<title level="m">Advances in Neural Information Processing Systems</title>
+		<editor>
+			<persName><forename type="first">H</forename><surname>Wallach</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">H</forename><surname>Larochelle</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">A</forename><surname>Beygelzimer</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">F</forename><surname>Alché-Buc</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">E</forename><surname>Fox</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">R</forename><surname>Garnett</surname></persName>
+		</editor>
+		<imprint>
+			<publisher>Curran Associates, Inc</publisher>
+			<date type="published" when="2019">2019. 2019</date>
+			<biblScope unit="volume">32</biblScope>
+		</imprint>
+	</monogr>
+	<note>2c2474dbf5f7ac4372c5b9af1-Paper.pdf</note>
+</biblStruct>
+
+<biblStruct xml:id="b12">
+	<analytic>
+		<title level="a" type="main">XNLI: Evaluating cross-lingual sentence representations</title>
+		<author>
+			<persName><forename type="first">Alexis</forename><surname>Conneau</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ruty</forename><surname>Rinott</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Guillaume</forename><surname>Lample</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Adina</forename><surname>Williams</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Samuel</forename><surname>Bowman</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Holger</forename><surname>Schwenk</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Veselin</forename><surname>Stoyanov</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/D18-1269</idno>
+		<ptr target="https://aclanthology.org/D18-1269" />
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing</title>
+		<editor>
+			<persName><forename type="first">Ellen</forename><surname>Riloff</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">David</forename><surname>Chiang</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Julia</forename><surname>Hockenmaier</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Jun'ichi</forename><surname>Tsujii</surname></persName>
+		</editor>
+		<meeting>the 2018 Conference on Empirical Methods in Natural Language Processing<address><addrLine>Brussels, Belgium</addrLine></address></meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<date type="published" when="2018-11">October-November 2018</date>
+			<biblScope unit="page" from="2475" to="2485" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b13">
+	<analytic>
+		<title level="a" type="main">Unsupervised cross-lingual representation learning at scale</title>
+		<author>
+			<persName><forename type="first">Alexis</forename><surname>Conneau</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kartikay</forename><surname>Khandelwal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Naman</forename><surname>Goyal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Vishrav</forename><surname>Chaudhary</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Guillaume</forename><surname>Wenzek</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Francisco</forename><surname>Guzmán</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Edouard</forename><surname>Grave</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Myle</forename><surname>Ott</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Luke</forename><surname>Zettlemoyer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Veselin</forename><surname>Stoyanov</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/2020.acl-main.747</idno>
+		<ptr target="https://aclanthology.org/2020.acl-main.747" />
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics</title>
+		<editor>
+			<persName><forename type="first">Dan</forename><surname>Jurafsky</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Joyce</forename><surname>Chai</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Natalie</forename><surname>Schluter</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Joel</forename><surname>Tetreault</surname></persName>
+		</editor>
+		<meeting>the 58th Annual Meeting of the Association for Computational Linguistics</meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<date type="published" when="2020-07">July 2020</date>
+			<biblScope unit="page" from="8440" to="8451" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b14">
+	<monogr>
+		<title level="m" type="main">Getting the most out of your tokenizer for pre-training and domain adaptation</title>
+		<author>
+			<persName><forename type="first">Gabriel</forename><surname>Gautier Dagan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Baptiste</forename><surname>Synnaeve</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Rozière</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b15">
+	<analytic>
+		<title level="a" type="main">As good as new. how to successfully recycle English GPT-2 to make models for other languages</title>
+		<author>
+			<persName><forename type="first">Wietse</forename><surname>De</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Vries</forename></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Malvina</forename><surname>Nissim</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/2021.findings-acl.74</idno>
+		<ptr target="https://aclanthology.org/2021.findings-acl.74" />
+	</analytic>
+	<monogr>
+		<title level="m">Findings of the Association for Computational Linguistics: ACL-IJCNLP 2021</title>
+		<editor>
+			<persName><forename type="first">Chengqing</forename><surname>Zong</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Fei</forename><surname>Xia</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Wenjie</forename><surname>Li</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Roberto</forename><surname>Navigli</surname></persName>
+		</editor>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<date type="published" when="2021-08">August 2021</date>
+			<biblScope unit="page" from="836" to="846" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b16">
+	<analytic>
+		<title level="a" type="main">BERT: Pre-training of deep bidirectional transformers for language understanding</title>
+		<author>
+			<persName><forename type="first">Jacob</forename><surname>Devlin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ming-Wei</forename><surname>Chang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kenton</forename><surname>Lee</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kristina</forename><surname>Toutanova</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/N19-1423</idno>
+		<ptr target="https://aclanthology.org/N19-1423" />
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies</title>
+		<title level="s">Long and Short Papers</title>
+		<editor>
+			<persName><forename type="first">Jill</forename><surname>Burstein</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Christy</forename><surname>Doran</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Thamar</forename><surname>Solorio</surname></persName>
+		</editor>
+		<meeting>the 2019 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies<address><addrLine>Minneapolis, Minnesota</addrLine></address></meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<date type="published" when="2019-06">June 2019</date>
+			<biblScope unit="volume">1</biblScope>
+			<biblScope unit="page" from="4171" to="4186" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b17">
+	<analytic>
+		<title level="a" type="main">FOCUS: Effective embedding initialization for monolingual specialization of multilingual models</title>
+		<author>
+			<persName><forename type="first">Konstantin</forename><surname>Dobler</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Gerard</forename><surname>De</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Melo</forename></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/2023.emnlp-main.829</idno>
+		<ptr target="https://aclanthology.org/2023.emnlp-main.829" />
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing</title>
+		<editor>
+			<persName><forename type="first">Houda</forename><surname>Bouamor</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Juan</forename><surname>Pino</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Kalika</forename><surname>Bali</surname></persName>
+		</editor>
+		<meeting>the 2023 Conference on Empirical Methods in Natural Language Processing<address><addrLine>Singapore</addrLine></address></meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<date type="published" when="2023-12">December 2023</date>
+			<biblScope unit="page" from="13440" to="13454" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b18">
+	<analytic>
+		<title level="a" type="main">Fast vocabulary transfer for language model compression</title>
+		<author>
+			<persName><forename type="first">Leonidas</forename><surname>Gee</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Andrea</forename><surname>Zugarini</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Leonardo</forename><surname>Rigutini</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Paolo</forename><surname>Torroni</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/2022.emnlp-industry.41</idno>
+		<ptr target="https://aclanthology.org/2022.emnlp-industry.41" />
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 2022 Conference on Empirical Methods in Natural Language Processing: Industry Track</title>
+		<editor>
+			<persName><forename type="first">Yunyao</forename><surname>Li</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Angeliki</forename><surname>Lazaridou</surname></persName>
+		</editor>
+		<meeting>the 2022 Conference on Empirical Methods in Natural Language Processing: Industry Track<address><addrLine>Abu Dhabi, UAE</addrLine></address></meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<date type="published" when="2022-12">December 2022</date>
+			<biblScope unit="page" from="409" to="416" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b19">
+	<analytic>
+		<title level="a" type="main">xval: A continuous number encoding for large language models</title>
+		<author>
+			<persName><forename type="first">Siavash</forename><surname>Golkar</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mariel</forename><surname>Pettee</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Michael</forename><surname>Eickenberg</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alberto</forename><surname>Bietti</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Miles</forename><surname>Cranmer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Geraud</forename><surname>Krawezik</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Francois</forename><surname>Lanusse</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Michael</forename><surname>Mccabe</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ruben</forename><surname>Ohana</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Liam</forename><surname>Parker</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Bruno Régaldo-Saint</forename><surname>Blancard</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tiberiu</forename><surname>Tesileanu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kyunghyun</forename><surname>Cho</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shirley</forename><surname>Ho</surname></persName>
+		</author>
+		<ptr target="https://openreview.net/forum?id=KHDMZtoF4i" />
+	</analytic>
+	<monogr>
+		<title level="m">NeurIPS 2023 AI for Science Workshop</title>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b20">
+	<monogr>
+		<title level="m" type="main">Accelerating the science of language models</title>
+		<author>
+			<persName><forename type="first">Dirk</forename><surname>Groeneveld</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Iz</forename><surname>Beltagy</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Pete</forename><surname>Walsh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Akshita</forename><surname>Bhagia</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Rodney</forename><surname>Kinney</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Oyvind</forename><surname>Tafjord</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ananya</forename><surname>Harsh Jha</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hamish</forename><surname>Ivison</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ian</forename><surname>Magnusson</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yizhong</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shane</forename><surname>Arora</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">David</forename><surname>Atkinson</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Russell</forename><surname>Authur</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Khyathi</forename><surname>Chandu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Arman</forename><surname>Cohan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jennifer</forename><surname>Dumas</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yanai</forename><surname>Elazar</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yuling</forename><surname>Gu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jack</forename><surname>Hessel</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tushar</forename><surname>Khot</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">William</forename><surname>Merrill</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jacob</forename><surname>Morrison</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Niklas</forename><surname>Muennighoff</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Aakanksha</forename><surname>Naik</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Crystal</forename><surname>Nam</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Matthew</forename><forename type="middle">E</forename><surname>Peters</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Valentina</forename><surname>Pyatkin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Abhilasha</forename><surname>Ravichander</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dustin</forename><surname>Schwenk</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Saurabh</forename><surname>Shah</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Will</forename><surname>Smith</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Nishant</forename><surname>Subramani</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mitchell</forename><surname>Wortsman</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Pradeep</forename><surname>Dasigi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Nathan</forename><surname>Lambert</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kyle</forename><surname>Richardson</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jesse</forename><surname>Dodge</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kyle</forename><surname>Lo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Luca</forename><surname>Soldaini</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Noah</forename><forename type="middle">A</forename><surname>Smith</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hannaneh</forename><surname>Hajishirzi</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+			<pubPlace>Olmo</pubPlace>
+		</imprint>
+	</monogr>
+	<note type="report_type">Preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b21">
+	<monogr>
+		<author>
+			<persName><forename type="first">David</forename><surname>Ha</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Andrew</forename><forename type="middle">M</forename><surname>Dai</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">V</forename><surname>Quoc</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Le</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Hypernetworks</surname></persName>
+		</author>
+		<ptr target="https://openreview.net/forum?id=rkpACe1lx" />
+		<title level="m">International Conference on Learning Representations</title>
+		<imprint>
+			<date type="published" when="2017">2017</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b22">
+	<analytic>
+		<title level="a" type="main">Measuring massive multitask language understanding</title>
+		<author>
+			<persName><forename type="first">Dan</forename><surname>Hendrycks</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Collin</forename><surname>Burns</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Steven</forename><surname>Basart</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Andy</forename><surname>Zou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mantas</forename><surname>Mazeika</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dawn</forename><surname>Song</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jacob</forename><surname>Steinhardt</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the International Conference on Learning Representations (ICLR)</title>
+		<meeting>the International Conference on Learning Representations (ICLR)</meeting>
+		<imprint>
+			<biblScope unit="page">2021</biblScope>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b23">
+	<analytic>
+		<title level="a" type="main">An embarrassingly simple method to mitigate undesirable properties of pretrained language model tokenizers</title>
+		<author>
+			<persName><forename type="first">Valentin</forename><surname>Hofmann</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hinrich</forename><surname>Schuetze</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Janet</forename><surname>Pierrehumbert</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/2022.acl-short.43</idno>
+		<ptr target="https://aclanthology.org/2022.acl-short" />
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 60th Annual Meeting of the Association for Computational Linguistics</title>
+		<editor>
+			<persName><forename type="first">Preslav</forename><surname>Smaranda Muresan</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Aline</forename><surname>Nakov</surname></persName>
+		</editor>
+		<editor>
+			<persName><surname>Villavicencio</surname></persName>
+		</editor>
+		<meeting>the 60th Annual Meeting of the Association for Computational Linguistics<address><addrLine>Dublin, Ireland</addrLine></address></meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<date type="published" when="2022-05">May 2022</date>
+			<biblScope unit="volume">2</biblScope>
+			<biblScope unit="page" from="385" to="393" />
+		</imprint>
+	</monogr>
+	<note>Short Papers)</note>
+</biblStruct>
+
+<biblStruct xml:id="b24">
+	<analytic>
+		<title level="a" type="main">Distilling step-by-step! outperforming larger language models with less training data and smaller model sizes</title>
+		<author>
+			<persName><forename type="first">Cheng-Yu</forename><surname>Hsieh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chun-Liang</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chih-Kuan</forename><surname>Yeh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hootan</forename><surname>Nakhost</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yasuhisa</forename><surname>Fujii</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alex</forename><surname>Ratner</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ranjay</forename><surname>Krishna</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chen-Yu</forename><surname>Lee</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tomas</forename><surname>Pfister</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/2023.findings-acl.507</idno>
+		<ptr target="https://aclanthology.org/2023.findings-acl.507" />
+	</analytic>
+	<monogr>
+		<title level="m">Findings of the Association for Computational Linguistics: ACL 2023</title>
+		<editor>
+			<persName><forename type="first">Anna</forename><surname>Rogers</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Jordan</forename><surname>Boyd-Graber</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Naoaki</forename><surname>Okazaki</surname></persName>
+		</editor>
+		<meeting><address><addrLine>Toronto, Canada</addrLine></address></meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<date type="published" when="2023-07">July 2023</date>
+			<biblScope unit="page" from="8003" to="8017" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b25">
+	<monogr>
+		<title level="m" type="main">V22.1: User&apos;s manual for cplex</title>
+		<author>
+			<persName><forename type="first">Ibm</forename><surname>Ilog</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b26">
+	<analytic>
+		<title level="a" type="main">Editing models with task arithmetic</title>
+		<author>
+			<persName><forename type="first">Gabriel</forename><surname>Ilharco</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Marco</forename><surname>Tulio Ribeiro</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mitchell</forename><surname>Wortsman</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ludwig</forename><surname>Schmidt</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hannaneh</forename><surname>Hajishirzi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ali</forename><surname>Farhadi</surname></persName>
+		</author>
+		<ptr target="https://openreview.net/forum?id=6t0Kwf8-jrj" />
+	</analytic>
+	<monogr>
+		<title level="m">The Eleventh International Conference on Learning Representations</title>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b27">
+	<monogr>
+		<title/>
+		<author>
+			<persName><forename type="first">Albert</forename><forename type="middle">Q</forename><surname>Jiang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alexandre</forename><surname>Sablayrolles</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Arthur</forename><surname>Mensch</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chris</forename><surname>Bamford</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Devendra</forename><surname>Singh Chaplot</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Diego</forename><surname>De Las Casas</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Florian</forename><surname>Bressand</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Gianna</forename><surname>Lengyel</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Guillaume</forename><surname>Lample</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Lucile</forename><surname>Saulnier</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Renard</forename><surname>Lélio</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Marie-Anne</forename><surname>Lavaud</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Pierre</forename><surname>Lachaux</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Teven</forename><surname>Stock</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Thibaut</forename><surname>Le Scao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Thomas</forename><surname>Lavril</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Timothée</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">William</forename><forename type="middle">El</forename><surname>Lacroix</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Sayed</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+	<note>Mistral 7b</note>
+</biblStruct>
+
+<biblStruct xml:id="b28">
+	<monogr>
+		<author>
+			<persName><forename type="first">Jared</forename><surname>Kaplan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sam</forename><surname>Mccandlish</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tom</forename><surname>Henighan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tom</forename><forename type="middle">B</forename><surname>Brown</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Benjamin</forename><surname>Chess</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Rewon</forename><surname>Child</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Scott</forename><surname>Gray</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alec</forename><surname>Radford</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jeffrey</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dario</forename><surname>Amodei</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2001.08361</idno>
+		<title level="m">Scaling laws for neural language models</title>
+		<imprint>
+			<date type="published" when="2020">2020</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b29">
+	<analytic>
+		<title level="a" type="main">Efficient and effective passage search via contextualized late interaction over bert</title>
+		<author>
+			<persName><forename type="first">Omar</forename><surname>Khattab</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Matei</forename><surname>Zaharia</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Colbert</surname></persName>
+		</author>
+		<idno type="DOI">10.1145/3397271.3401075</idno>
+		<ptr target="https://doi.org/10.1145/3397271.3401075" />
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 43rd International ACM SIGIR Conference on Research and Development in Information Retrieval, SIGIR &apos;20</title>
+		<meeting>the 43rd International ACM SIGIR Conference on Research and Development in Information Retrieval, SIGIR &apos;20<address><addrLine>New York, NY, USA</addrLine></address></meeting>
+		<imprint>
+			<publisher>Association for Computing Machinery</publisher>
+			<date type="published" when="2020">2020</date>
+			<biblScope unit="page" from="39" to="48" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b30">
+	<analytic>
+		<title level="a" type="main">Subword regularization: Improving neural network translation models with multiple subword candidates</title>
+		<author>
+			<persName><forename type="first">Taku</forename><surname>Kudo</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/P18-1007</idno>
+		<ptr target="https://aclanthology.org/P18-1007" />
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 56th Annual Meeting of the Association for Computational Linguistics</title>
+		<editor>
+			<persName><forename type="first">Iryna</forename><surname>Gurevych</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Yusuke</forename><surname>Miyao</surname></persName>
+		</editor>
+		<meeting>the 56th Annual Meeting of the Association for Computational Linguistics<address><addrLine>Melbourne, Australia</addrLine></address></meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<date type="published" when="2018-07">July 2018</date>
+			<biblScope unit="volume">1</biblScope>
+			<biblScope unit="page" from="66" to="75" />
+		</imprint>
+	</monogr>
+	<note>Long Papers)</note>
+</biblStruct>
+
+<biblStruct xml:id="b31">
+	<analytic>
+		<title level="a" type="main">SentencePiece: A simple and language independent subword tokenizer and detokenizer for neural text processing</title>
+		<author>
+			<persName><forename type="first">Taku</forename><surname>Kudo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">John</forename><surname>Richardson</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/D18-2012</idno>
+		<ptr target="https://aclanthology.org/D18-2012" />
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing: System Demonstrations</title>
+		<editor>
+			<persName><forename type="first">Eduardo</forename><surname>Blanco</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Wei</forename><surname>Lu</surname></persName>
+		</editor>
+		<meeting>the 2018 Conference on Empirical Methods in Natural Language Processing: System Demonstrations<address><addrLine>Brussels, Belgium</addrLine></address></meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<date type="published" when="2018-11">November 2018</date>
+			<biblScope unit="page" from="66" to="71" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b32">
+	<monogr>
+		<title level="m" type="main">Madlad-400: A multilingual and document-level large audited dataset</title>
+		<author>
+			<persName><forename type="first">Sneha</forename><surname>Kudugunta</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Isaac</forename><surname>Caswell</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Biao</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xavier</forename><surname>Garcia</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Christopher</forename><forename type="middle">A</forename><surname>Choquette-Choo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Katherine</forename><surname>Lee</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Derrick</forename><surname>Xin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Aditya</forename><surname>Kusupati</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Romi</forename><surname>Stella</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ankur</forename><surname>Bapna</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Orhan</forename><surname>Firat</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b33">
+	<analytic>
+		<title level="a" type="main">Okapi: Instruction-tuned large language models in multiple languages with reinforcement learning from human feedback</title>
+		<author>
+			<persName><forename type="first">Viet</forename><surname>Lai</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chien</forename><surname>Nguyen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Nghia</forename><surname>Ngo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Thuat</forename><surname>Nguyen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Franck</forename><surname>Dernoncourt</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ryan</forename><surname>Rossi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Thien</forename><surname>Nguyen</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/2023.emnlp-demo.28</idno>
+		<ptr target="https://aclanthology.org/2023.emnlp-demo.28" />
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing: System Demonstrations</title>
+		<editor>
+			<persName><forename type="first">Yansong</forename><surname>Feng</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Els</forename><surname>Lefever</surname></persName>
+		</editor>
+		<meeting>the 2023 Conference on Empirical Methods in Natural Language Processing: System Demonstrations<address><addrLine>Singapore</addrLine></address></meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<date type="published" when="2023-12">December 2023</date>
+			<biblScope unit="page" from="318" to="327" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b34">
+	<monogr>
+		<title level="m" type="main">Fishing for magikarp: Automatically detecting under-trained tokens in large language models</title>
+		<author>
+			<persName><forename type="first">Sander</forename><surname>Land</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Max</forename><surname>Bartolo</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b35">
+	<monogr>
+		<author>
+			<persName><forename type="first">Raymond</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Loubna</forename><surname>Ben Allal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yangtian</forename><surname>Zi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Niklas</forename><surname>Muennighoff</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Denis</forename><surname>Kocetkov</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chenghao</forename><surname>Mou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Marc</forename><surname>Marone</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Christopher</forename><surname>Akiki</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><forename type="middle">I</forename><surname>Jia</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jenny</forename><surname>Chim</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Qian</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Evgenii</forename><surname>Zheltonozhskii</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Terry</forename><surname>Yue Zhuo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Thomas</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Olivier</forename><surname>Dehaene</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Joel</forename><surname>Lamy-Poirier</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Joao</forename><surname>Monteiro</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Nicolas</forename><surname>Gontier</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ming-Ho</forename><surname>Yee</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Logesh</forename><surname>Kumar Umapathi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jian</forename><surname>Zhu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ben</forename><surname>Lipkin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Muhtasham</forename><surname>Oblokulov</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhiruo</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Rudra</forename><surname>Murthy</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jason</forename><forename type="middle">T</forename><surname>Stillerman</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sankalp</forename><surname>Siva</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dmitry</forename><surname>Patel</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Marco</forename><surname>Abulkhanov</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Manan</forename><surname>Zocca</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhihan</forename><surname>Dey</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Urvashi</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wenhao</forename><surname>Bhattacharyya</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sasha</forename><surname>Yu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Paulo</forename><surname>Luccioni</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Fedor</forename><surname>Villegas</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tony</forename><surname>Zhdanov</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Nadav</forename><surname>Lee</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jennifer</forename><surname>Timor</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Claire</forename><forename type="middle">S</forename><surname>Ding</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hailey</forename><surname>Schlesinger</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jan</forename><surname>Schoelkopf</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tri</forename><surname>Ebert</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mayank</forename><surname>Dao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alex</forename><surname>Mishra</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Carolyn</forename><forename type="middle">Jane</forename><surname>Gu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Brendan</forename><surname>Anderson</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Danish</forename><surname>Dolan-Gavitt</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Siva</forename><surname>Contractor</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Daniel</forename><surname>Reddy</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dzmitry</forename><surname>Fried</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yacine</forename><surname>Bahdanau</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Carlos</forename><surname>Jernite</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sean</forename><surname>Muñoz Ferrandis</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Thomas</forename><surname>Hughes</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Arjun</forename><surname>Wolf</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Guha</surname></persName>
+		</author>
+		<ptr target="https://openreview.net/forum?id=KoFOg41haE" />
+		<title level="m">Leandro Von Werra, and Harm de Vries. Starcoder: may the source be with you! Transactions on Machine Learning Research</title>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+	<note>Reproducibility Certification</note>
+</biblStruct>
+
+<biblStruct xml:id="b36">
+	<analytic>
+		<title level="a" type="main">Why don&apos;t people use character-level machine translation?</title>
+		<author>
+			<persName><forename type="first">Jindřich</forename><surname>Libovický</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Helmut</forename><surname>Schmid</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alexander</forename><surname>Fraser</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/2022.findings-acl.194</idno>
+		<ptr target="https://aclanthology.org/2022.findings-acl.194" />
+	</analytic>
+	<monogr>
+		<title level="m">Findings of the Association for Computational Linguistics: ACL 2022</title>
+		<editor>
+			<persName><forename type="first">Preslav</forename><surname>Smaranda Muresan</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Aline</forename><surname>Nakov</surname></persName>
+		</editor>
+		<editor>
+			<persName><surname>Villavicencio</surname></persName>
+		</editor>
+		<meeting><address><addrLine>Dublin, Ireland</addrLine></address></meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<date type="published" when="2022-05">May 2022</date>
+			<biblScope unit="page" from="2470" to="2485" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b37">
+	<analytic>
+		<title level="a" type="main">Few-shot learning with multilingual generative language models</title>
+		<author>
+			<persName><forename type="first">Victoria</forename><surname>Xi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Todor</forename><surname>Lin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mikel</forename><surname>Mihaylov</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tianlu</forename><surname>Artetxe</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shuohui</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Daniel</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Myle</forename><surname>Simig</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Naman</forename><surname>Ott</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shruti</forename><surname>Goyal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jingfei</forename><surname>Bhosale</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ramakanth</forename><surname>Du</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sam</forename><surname>Pasunuru</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Punit</forename><surname>Shleifer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Vishrav</forename><surname>Singh Koura</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Brian O'</forename><surname>Chaudhary</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jeff</forename><surname>Horo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Luke</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zornitsa</forename><surname>Zettlemoyer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mona</forename><surname>Kozareva</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Veselin</forename><surname>Diab</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xian</forename><surname>Stoyanov</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Li</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/2022.emnlp-main.616</idno>
+		<ptr target="https://aclanthology.org/2022.emnlp-main.616" />
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 2022 Conference on Empirical Methods in Natural Language Processing</title>
+		<editor>
+			<persName><forename type="first">Yoav</forename><surname>Goldberg</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Zornitsa</forename><surname>Kozareva</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Yue</forename><surname>Zhang</surname></persName>
+		</editor>
+		<meeting>the 2022 Conference on Empirical Methods in Natural Language Processing<address><addrLine>Abu Dhabi, United Arab Emirates</addrLine></address></meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<date type="published" when="2022">2022</date>
+			<biblScope unit="page" from="9019" to="9052" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b38">
+	<monogr>
+		<title level="m" type="main">Ofa: A framework of initializing unseen subword embeddings for efficient large-scale multilingual continued pretraining</title>
+		<author>
+			<persName><forename type="first">Yihong</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Peiqin</forename><surname>Lin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mingyang</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hinrich</forename><surname>Schütze</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2311.08849</idno>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b39">
+	<monogr>
+		<author>
+			<persName><forename type="first">Yinhan</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Myle</forename><surname>Ott</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Naman</forename><surname>Goyal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jingfei</forename><surname>Du</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mandar</forename><surname>Joshi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Danqi</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Omer</forename><surname>Levy</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mike</forename><surname>Lewis</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Luke</forename><surname>Zettlemoyer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Veselin</forename><surname>Stoyanov</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Roberta</surname></persName>
+		</author>
+		<title level="m">A robustly optimized bert pretraining approach</title>
+		<imprint>
+			<date type="published" when="2019">2019</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b40">
+	<monogr>
+		<title level="m" type="main">The flan collection: Designing data and methods for effective instruction tuning</title>
+		<author>
+			<persName><forename type="first">Shayne</forename><surname>Longpre</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Le</forename><surname>Hou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tu</forename><surname>Vu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Albert</forename><surname>Webson</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hyung</forename><forename type="middle">Won</forename><surname>Chung</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yi</forename><surname>Tay</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Denny</forename><surname>Zhou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">V</forename><surname>Quoc</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Barret</forename><surname>Le</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jason</forename><surname>Zoph</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Wei</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2301.13688</idno>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b41">
+	<analytic>
+		<title level="a" type="main">Decoupled weight decay regularization</title>
+		<author>
+			<persName><forename type="first">Ilya</forename><surname>Loshchilov</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Frank</forename><surname>Hutter</surname></persName>
+		</author>
+		<ptr target="https://openreview.net/forum?id=Bkg6RiCqY7" />
+	</analytic>
+	<monogr>
+		<title level="m">International Conference on Learning Representations</title>
+		<imprint>
+			<date type="published" when="2019">2019</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b42">
+	<analytic>
+		<title level="a" type="main">Mini-model adaptation: Efficiently extending pretrained models to new languages via aligned shallow training</title>
+		<author>
+			<persName><forename type="first">Kelly</forename><surname>Marchisio</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Patrick</forename><surname>Lewis</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yihong</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mikel</forename><surname>Artetxe</surname></persName>
+		</author>
+		<idno>doi: 10.18653</idno>
+		<ptr target="1/2023.findings-acl" />
+	</analytic>
+	<monogr>
+		<title level="m">Findings of the Association for Computational Linguistics: ACL 2023</title>
+		<editor>
+			<persName><forename type="first">Anna</forename><surname>Rogers</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Jordan</forename><surname>Boyd-Graber</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Naoaki</forename><surname>Okazaki</surname></persName>
+		</editor>
+		<meeting><address><addrLine>Toronto, Canada</addrLine></address></meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<date type="published" when="2023-07">July 2023</date>
+			<biblScope unit="page" from="5474" to="5490" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b43">
+	<monogr>
+		<ptr target="https://aclanthology.org/2023.findings-acl.338" />
+		<title level="m">URL</title>
+		<imprint/>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b44">
+	<monogr>
+		<title level="m" type="main">Between words and characters: A brief history of open-vocabulary modeling and tokenization in nlp</title>
+		<author>
+			<persName><forename type="first">Sabrina</forename><forename type="middle">J</forename><surname>Mielke</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zaid</forename><surname>Alyafeai</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Elizabeth</forename><surname>Salesky</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Colin</forename><surname>Raffel</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Manan</forename><surname>Dey</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Matthias</forename><surname>Gallé</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Arun</forename><surname>Raja</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chenglei</forename><surname>Si</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wilson</forename><forename type="middle">Y</forename><surname>Lee</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Benoît</forename><surname>Sagot</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Samson</forename><surname>Tan</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2021">2021</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b45">
+	<monogr>
+		<title level="m" type="main">Efficient estimation of word representations in vector space</title>
+		<author>
+			<persName><forename type="first">Tomas</forename><surname>Mikolov</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kai</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Greg</forename><surname>Corrado</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jeffrey</forename><surname>Dean</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2013">2013</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b46">
+	<analytic>
+		<title level="a" type="main">WECHSEL: Effective initialization of subword embeddings for cross-lingual transfer of monolingual language models</title>
+		<author>
+			<persName><forename type="first">Benjamin</forename><surname>Minixhofer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Fabian</forename><surname>Paischer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Navid</forename><surname>Rekabsaz</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/2022.naacl-main.293</idno>
+		<ptr target="https://aclanthology.org/2022.naacl-main.293" />
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 2022 Conference of the North American Chapter</title>
+		<editor>
+			<persName><forename type="first">Marine</forename><surname>Carpuat</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Marie-Catherine</forename><surname>De Marneffe</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Ivan</forename><surname>Vladimir</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Meza</forename><surname>Ruiz</surname></persName>
+		</editor>
+		<meeting>the 2022 Conference of the North American Chapter<address><addrLine>Seattle, United States</addrLine></address></meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<date type="published" when="2022-07">July 2022</date>
+			<biblScope unit="page" from="3992" to="4006" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b47">
+	<monogr>
+		<author>
+			<persName><forename type="first">Niklas</forename><surname>Muennighoff</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Qian</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Armel</forename><surname>Zebaze</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Qinkai</forename><surname>Zheng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Binyuan</forename><surname>Hui</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Terry</forename><surname>Yue Zhuo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Swayam</forename><surname>Singh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xiangru</forename><surname>Tang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Leandro</forename><surname>Von Werra</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shayne</forename><surname>Longpre</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Octopack</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2308.07124</idno>
+		<title level="m">Instruction tuning code large language models</title>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b48">
+	<analytic>
+		<title level="a" type="main">Efficient transformers with dynamic token pooling</title>
+		<author>
+			<persName><forename type="first">Piotr</forename><surname>Nawrot</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jan</forename><surname>Chorowski</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Adrian</forename><surname>Lancucki</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Maria</forename><surname>Edoardo</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Ponti</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/2023.acl-long.353</idno>
+		<ptr target="https://aclanthology.org/2023.acl-long.353" />
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 61st Annual Meeting of the Association for Computational Linguistics</title>
+		<editor>
+			<persName><forename type="first">Anna</forename><surname>Rogers</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Jordan</forename><surname>Boyd-Graber</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Naoaki</forename><surname>Okazaki</surname></persName>
+		</editor>
+		<meeting>the 61st Annual Meeting of the Association for Computational Linguistics<address><addrLine>Toronto, Canada</addrLine></address></meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<date type="published" when="2023-07">July 2023</date>
+			<biblScope unit="volume">1</biblScope>
+			<biblScope unit="page" from="6403" to="6417" />
+		</imprint>
+	</monogr>
+	<note>Long Papers)</note>
+</biblStruct>
+
+<biblStruct xml:id="b49">
+	<analytic>
+		<title level="a" type="main">Training language models to follow instructions with human feedback</title>
+		<author>
+			<persName><forename type="first">Long</forename><surname>Ouyang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jeffrey</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xu</forename><surname>Jiang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Diogo</forename><surname>Almeida</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Carroll</forename><surname>Wainwright</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Pamela</forename><surname>Mishkin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chong</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sandhini</forename><surname>Agarwal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Katarina</forename><surname>Slama</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alex</forename><surname>Gray</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">John</forename><surname>Schulman</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jacob</forename><surname>Hilton</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Fraser</forename><surname>Kelton</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Luke</forename><surname>Miller</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Maddie</forename><surname>Simens</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Amanda</forename><surname>Askell</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Peter</forename><surname>Welinder</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Paul</forename><surname>Christiano</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jan</forename><surname>Leike</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ryan</forename><surname>Lowe</surname></persName>
+		</author>
+		<ptr target="https://openreview.net/forum?id=TG8KACxEON" />
+	</analytic>
+	<monogr>
+		<title level="m">Advances in Neural Information Processing Systems</title>
+		<editor>
+			<persName><forename type="first">Alice</forename><forename type="middle">H</forename><surname>Oh</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Alekh</forename><surname>Agarwal</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Danielle</forename><surname>Belgrave</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Kyunghyun</forename><surname>Cho</surname></persName>
+		</editor>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b50">
+	<monogr>
+		<title/>
+		<author>
+			<persName><forename type="first">Jupinder</forename><surname>Parmar</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shrimai</forename><surname>Prabhumoye</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Joseph</forename><surname>Jennings</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mostofa</forename><surname>Patwary</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sandeep</forename><surname>Subramanian</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dan</forename><surname>Su</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chen</forename><surname>Zhu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Deepak</forename><surname>Narayanan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Aastha</forename><surname>Jhunjhunwala</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ayush</forename><surname>Dattagupta</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Vibhu</forename><surname>Jawa</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jiwei</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ameya</forename><surname>Mahabaleshwarkar</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Osvald</forename><surname>Nitski</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Annika</forename><surname>Brundyn</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">James</forename><surname>Maki</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Miguel</forename><surname>Martinez</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jiaxuan</forename><surname>You</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">John</forename><surname>Kamalu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Patrick</forename><surname>Legresley</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Denys</forename><surname>Fridman</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jared</forename><surname>Casper</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ashwath</forename><surname>Aithal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Oleksii</forename><surname>Kuchaiev</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mohammad</forename><surname>Shoeybi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jonathan</forename><surname>Cohen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Bryan</forename><surname>Catanzaro</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+	<note>Nemotron-4 15b technical report</note>
+</biblStruct>
+
+<biblStruct xml:id="b51">
+	<analytic>
+		<title level="a" type="main">Language model tokenizers introduce unfairness between languages</title>
+		<author>
+			<persName><forename type="first">Aleksandar</forename><surname>Petrov</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">La</forename><surname>Emanuele</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Philip</forename><surname>Malfa</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Adel</forename><surname>Torr</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Bibi</surname></persName>
+		</author>
+		<ptr target="https://proceedings.neurips.cc/paper_files/paper/2023/file/74" />
+	</analytic>
+	<monogr>
+		<title level="m">Advances in Neural Information Processing Systems</title>
+		<editor>
+			<persName><forename type="first">A</forename><surname>Oh</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">T</forename><surname>Neumann</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">A</forename><surname>Globerson</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">K</forename><surname>Saenko</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">M</forename><surname>Hardt</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">S</forename><surname>Levine</surname></persName>
+		</editor>
+		<imprint>
+			<publisher>Curran Associates, Inc</publisher>
+			<date type="published" when="2023">2023</date>
+			<biblScope unit="volume">36</biblScope>
+			<biblScope unit="page" from="36963" to="36990" />
+		</imprint>
+	</monogr>
+	<note>bb24dca8334adce292883b4b651eda-Paper-Conference.pdf</note>
+</biblStruct>
+
+<biblStruct xml:id="b52">
+	<analytic>
+		<title level="a" type="main">Mimicking word embeddings using subword rnns</title>
+		<author>
+			<persName><forename type="first">Yuval</forename><surname>Pinter</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Robert</forename><surname>Guthrie</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jacob</forename><surname>Eisenstein</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 2017 Conference on Empirical Methods in Natural Language Processing</title>
+		<meeting>the 2017 Conference on Empirical Methods in Natural Language Processing</meeting>
+		<imprint>
+			<date type="published" when="2017">2017</date>
+			<biblScope unit="page" from="102" to="112" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b53">
+	<analytic>
+		<title level="a" type="main">XCOPA: A multilingual dataset for causal commonsense reasoning</title>
+		<author>
+			<persName><forename type="first">Maria</forename><surname>Edoardo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Goran</forename><surname>Ponti</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Olga</forename><surname>Glavaš</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Qianchu</forename><surname>Majewska</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ivan</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Anna</forename><surname>Vulić</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Korhonen</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/2020.emnlp-main.185</idno>
+		<ptr target="https://aclanthology.org/2020.emnlp-main.185" />
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing</title>
+		<editor>
+			<persName><forename type="first">Bonnie</forename><surname>Webber</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Trevor</forename><surname>Cohn</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Yulan</forename><surname>He</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Yang</forename><surname>Liu</surname></persName>
+		</editor>
+		<meeting>the 2020 Conference on Empirical Methods in Natural Language Processing</meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<date type="published" when="2020-11">November 2020</date>
+			<biblScope unit="page" from="2362" to="2376" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b54">
+	<analytic>
+		<title level="a" type="main">Adapters: A unified library for parameter-efficient and modular transfer learning</title>
+		<author>
+			<persName><forename type="first">Clifton</forename><surname>Poth</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hannah</forename><surname>Sterz</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Indraneil</forename><surname>Paul</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sukannya</forename><surname>Purkayastha</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Leon</forename><surname>Engländer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Timo</forename><surname>Imhof</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ivan</forename><surname>Vulić</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sebastian</forename><surname>Ruder</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Iryna</forename><surname>Gurevych</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jonas</forename><surname>Pfeiffer</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/2023.emnlp-demo.13</idno>
+		<ptr target="https://aclanthology.org/2023.emnlp-demo.13" />
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing: System Demonstrations</title>
+		<editor>
+			<persName><forename type="first">Yansong</forename><surname>Feng</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Els</forename><surname>Lefever</surname></persName>
+		</editor>
+		<meeting>the 2023 Conference on Empirical Methods in Natural Language Processing: System Demonstrations<address><addrLine>Singapore</addrLine></address></meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<date type="published" when="2023-12">December 2023</date>
+			<biblScope unit="page" from="149" to="160" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b55">
+	<monogr>
+		<title level="m" type="main">Language models are unsupervised multitask learners</title>
+		<author>
+			<persName><forename type="first">Alec</forename><surname>Radford</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jeff</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Rewon</forename><surname>Child</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">David</forename><surname>Luan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dario</forename><surname>Amodei</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ilya</forename><surname>Sutskever</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2019">2019</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b56">
+	<analytic>
+		<title level="a" type="main">How good is your tokenizer? on the monolingual performance of multilingual language models</title>
+		<author>
+			<persName><forename type="first">Phillip</forename><surname>Rust</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jonas</forename><surname>Pfeiffer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ivan</forename><surname>Vulić</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sebastian</forename><surname>Ruder</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Iryna</forename><surname>Gurevych</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/2021.acl-long.243</idno>
+		<ptr target="https://aclanthology.org/2021.acl-long.243" />
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 59th Annual Meeting of the Association for Computational Linguistics and the 11th International Joint Conference on Natural Language Processing</title>
+		<editor>
+			<persName><forename type="first">Chengqing</forename><surname>Zong</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Fei</forename><surname>Xia</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Wenjie</forename><surname>Li</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Roberto</forename><surname>Navigli</surname></persName>
+		</editor>
+		<meeting>the 59th Annual Meeting of the Association for Computational Linguistics and the 11th International Joint Conference on Natural Language Processing</meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<date type="published" when="2021-08">August 2021</date>
+			<biblScope unit="volume">1</biblScope>
+			<biblScope unit="page" from="3118" to="3135" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b57">
+	<analytic>
+		<title level="a" type="main">Ensemble learning: A survey</title>
+		<author>
+			<persName><forename type="first">Omer</forename><surname>Sagi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Lior</forename><surname>Rokach</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Wiley Interdisciplinary Reviews: Data Mining and Knowledge Discovery</title>
+		<imprint>
+			<biblScope unit="volume">8</biblScope>
+			<biblScope unit="issue">4</biblScope>
+			<biblScope unit="page">1249</biblScope>
+			<date type="published" when="2018">2018</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b58">
+	<analytic>
+		<title level="a" type="main">Attentive mimicking: Better word embeddings by attending to informative contexts</title>
+		<author>
+			<persName><forename type="first">Timo</forename><surname>Schick</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hinrich</forename><surname>Schütze</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/N19-1048</idno>
+		<ptr target="https://aclanthology.org/N19-1048" />
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies</title>
+		<title level="s">Long and Short Papers</title>
+		<editor>
+			<persName><forename type="first">Jill</forename><surname>Burstein</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Christy</forename><surname>Doran</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Thamar</forename><surname>Solorio</surname></persName>
+		</editor>
+		<meeting>the 2019 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies<address><addrLine>Minneapolis, Minnesota</addrLine></address></meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<date type="published" when="2019-06">June 2019</date>
+			<biblScope unit="volume">1</biblScope>
+			<biblScope unit="page" from="489" to="494" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b59">
+	<analytic>
+		<title level="a" type="main">BERTRAM: Improved word embeddings have big impact on contextualized model performance</title>
+		<author>
+			<persName><forename type="first">Timo</forename><surname>Schick</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hinrich</forename><surname>Schütze</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/2020.acl-main.368</idno>
+		<ptr target="https://aclanthology.org/2020.acl-main.368" />
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics</title>
+		<editor>
+			<persName><forename type="first">Dan</forename><surname>Jurafsky</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Joyce</forename><surname>Chai</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Natalie</forename><surname>Schluter</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Joel</forename><surname>Tetreault</surname></persName>
+		</editor>
+		<meeting>the 58th Annual Meeting of the Association for Computational Linguistics</meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<date type="published" when="2020-07">July 2020</date>
+			<biblScope unit="page" from="3996" to="4007" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b60">
+	<analytic>
+		<title level="a" type="main">Neural machine translation of rare words with subword units</title>
+		<author>
+			<persName><forename type="first">Rico</forename><surname>Sennrich</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Barry</forename><surname>Haddow</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alexandra</forename><surname>Birch</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/P16-1162</idno>
+		<ptr target="https://aclanthology.org/P16-1162" />
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics</title>
+		<editor>
+			<persName><forename type="first">Katrin</forename><surname>Erk</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Noah</forename><forename type="middle">A</forename><surname>Smith</surname></persName>
+		</editor>
+		<meeting>the 54th Annual Meeting of the Association for Computational Linguistics<address><addrLine>Berlin, Germany</addrLine></address></meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<date type="published" when="2016-08">August 2016</date>
+			<biblScope unit="volume">1</biblScope>
+			<biblScope unit="page" from="1715" to="1725" />
+		</imprint>
+	</monogr>
+	<note>Long Papers)</note>
+</biblStruct>
+
+<biblStruct xml:id="b61">
+	<monogr>
+		<author>
+			<persName><forename type="first">Luca</forename><surname>Soldaini</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Rodney</forename><surname>Kinney</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Akshita</forename><surname>Bhagia</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dustin</forename><surname>Schwenk</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">David</forename><surname>Atkinson</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Russell</forename><surname>Authur</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ben</forename><surname>Bogin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Khyathi</forename><surname>Chandu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jennifer</forename><surname>Dumas</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yanai</forename><surname>Elazar</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Valentin</forename><surname>Hofmann</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ananya</forename><surname>Harsh Jha</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sachin</forename><surname>Kumar</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Li</forename><surname>Lucy</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xinxi</forename><surname>Lyu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Nathan</forename><surname>Lambert</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ian</forename><surname>Magnusson</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jacob</forename><surname>Morrison</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Niklas</forename><surname>Muennighoff</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Aakanksha</forename><surname>Naik</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Crystal</forename><surname>Nam</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Matthew</forename><forename type="middle">E</forename><surname>Peters</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Abhilasha</forename><surname>Ravichander</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kyle</forename><surname>Richardson</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zejiang</forename><surname>Shen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Emma</forename><surname>Strubell</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Nishant</forename><surname>Subramani</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Oyvind</forename><surname>Tafjord</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Pete</forename><surname>Walsh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Luke</forename><surname>Zettlemoyer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Noah</forename><forename type="middle">A</forename><surname>Smith</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hannaneh</forename><surname>Hajishirzi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Iz</forename><surname>Beltagy</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dirk</forename><surname>Groeneveld</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jesse</forename><surname>Dodge</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kyle</forename><surname>Lo</surname></persName>
+		</author>
+		<title level="m">Dolma: an Open Corpus of Three Trillion Tokens for Language Model Pretraining Research</title>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b62">
+	<monogr>
+		<title level="m" type="main">Jieba chinese word segmentation tool</title>
+		<author>
+			<persName><forename type="first">Junyi</forename><surname>Sun</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2012">2012</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b63">
+	<analytic>
+		<title level="a" type="main">Charformer: Fast character transformers via gradientbased subword tokenization</title>
+		<author>
+			<persName><forename type="first">Yi</forename><surname>Tay</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Q</forename><surname>Vinh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sebastian</forename><surname>Tran</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jai</forename><surname>Ruder</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hyung</forename><forename type="middle">Won</forename><surname>Gupta</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dara</forename><surname>Chung</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhen</forename><surname>Bahri</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Simon</forename><surname>Qin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Cong</forename><surname>Baumgartner</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Donald</forename><surname>Yu</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Metzler</surname></persName>
+		</author>
+		<ptr target="https://openreview.net/forum?id=JtBRnrlOEFN" />
+	</analytic>
+	<monogr>
+		<title level="m">International Conference on Learning Representations</title>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b64">
+	<monogr>
+		<title/>
+		<author>
+			<persName><forename type="first">Hugo</forename><surname>Touvron</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Louis</forename><surname>Martin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kevin</forename><surname>Stone</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Peter</forename><surname>Albert</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Amjad</forename><surname>Almahairi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yasmine</forename><surname>Babaei</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Nikolay</forename><surname>Bashlykov</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Soumya</forename><surname>Batra</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Prajjwal</forename><surname>Bhargava</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shruti</forename><surname>Bhosale</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dan</forename><surname>Bikel</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Lukas</forename><surname>Blecher</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Cristian Canton</forename><surname>Ferrer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Moya</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Guillem</forename><surname>Cucurull</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">David</forename><surname>Esiobu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jude</forename><surname>Fernandes</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jeremy</forename><surname>Fu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wenyin</forename><surname>Fu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Brian</forename><surname>Fuller</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Cynthia</forename><surname>Gao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Vedanuj</forename><surname>Goswami</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Naman</forename><surname>Goyal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Anthony</forename><surname>Hartshorn</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Saghar</forename><surname>Hosseini</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Rui</forename><surname>Hou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hakan</forename><surname>Inan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Marcin</forename><surname>Kardas</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Viktor</forename><surname>Kerkez</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Madian</forename><surname>Khabsa</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Isabel</forename><surname>Kloumann</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Artem</forename><surname>Korenev</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Punit</forename><surname>Singh Koura</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Marie-Anne</forename><surname>Lachaux</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Thibaut</forename><surname>Lavril</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jenya</forename><surname>Lee</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Diana</forename><surname>Liskovich</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yinghai</forename><surname>Lu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yuning</forename><surname>Mao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xavier</forename><surname>Martinet</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Todor</forename><surname>Mihaylov</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Pushkar</forename><surname>Mishra</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Igor</forename><surname>Molybog</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yixin</forename><surname>Nie</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Andrew</forename><surname>Poulton</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jeremy</forename><surname>Reizenstein</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Rashi</forename><surname>Rungta</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kalyan</forename><surname>Saladi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alan</forename><surname>Schelten</surname></persName>
+		</author>
+		<editor>Ruan Silva, Eric Michael Smith, Ranjan Subramanian, Xiaoqing Ellen Tan, Binh Tang, Ross Taylor, Adina Williams, Jian Xiang Kuan, Puxin Xu, Zheng Yan, Iliyan Zarov, Yuchen Zhang, Angela Fan, Melanie Kambadur, Sharan Narang, Aurelien Rodriguez, Robert Stojnic, Sergey Edunov</editor>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+	<note>and Thomas Scialom. Llama 2: Open foundation and fine-tuned chat models</note>
+</biblStruct>
+
+<biblStruct xml:id="b65">
+	<monogr>
+		<author>
+			<persName><forename type="first">Ke</forename><surname>Tran</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2002.07306</idno>
+		<title level="m">From english to foreign languages: Transferring pre-trained language models</title>
+		<imprint>
+			<date type="published" when="2020">2020</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b66">
+	<monogr>
+		<title level="m" type="main">Greed is all you need: An evaluation of tokenizer inference methods</title>
+		<author>
+			<persName><forename type="first">Omri</forename><surname>Uzan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Craig</forename><forename type="middle">W</forename><surname>Schmidt</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chris</forename><surname>Tanner</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yuval</forename><surname>Pinter</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b67">
+	<monogr>
+		<title level="m" type="main">Mambabyte: Token-free selective state space model</title>
+		<author>
+			<persName><forename type="first">Junxiong</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tushaar</forename><surname>Gangavarapu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jing</forename><surname>Nathan Yan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alexander</forename><forename type="middle">M</forename><surname>Rush</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b68">
+	<analytic>
+		<title level="a" type="main">Model soups: averaging weights of multiple fine-tuned models improves accuracy without increasing inference time</title>
+		<author>
+			<persName><forename type="first">Mitchell</forename><surname>Wortsman</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Gabriel</forename><surname>Ilharco</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ya</forename><surname>Samir</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Rebecca</forename><surname>Gadre</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Raphael</forename><surname>Roelofs</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ari</forename><forename type="middle">S</forename><surname>Gontijo-Lopes</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hongseok</forename><surname>Morcos</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ali</forename><surname>Namkoong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yair</forename><surname>Farhadi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Simon</forename><surname>Carmon</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ludwig</forename><surname>Kornblith</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Schmidt</surname></persName>
+		</author>
+		<ptr target="https://proceedings.mlr.press/v162/wortsman22a.html" />
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 39th International Conference on Machine Learning</title>
+		<editor>
+			<persName><forename type="first">Kamalika</forename><surname>Chaudhuri</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Stefanie</forename><surname>Jegelka</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Le</forename><surname>Song</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Csaba</forename><surname>Szepesvari</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Gang</forename><surname>Niu</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Sivan</forename><surname>Sabato</surname></persName>
+		</editor>
+		<meeting>the 39th International Conference on Machine Learning</meeting>
+		<imprint>
+			<date type="published" when="2022-07">Jul 2022</date>
+			<biblScope unit="volume">162</biblScope>
+			<biblScope unit="page" from="17" to="23" />
+		</imprint>
+	</monogr>
+	<note>PMLR</note>
+</biblStruct>
+
+<biblStruct xml:id="b69">
+	<analytic>
+		<title level="a" type="main">ByT5: Towards a token-free future with pre-trained byte-to-byte models</title>
+		<author>
+			<persName><forename type="first">Linting</forename><surname>Xue</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Aditya</forename><surname>Barua</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Noah</forename><surname>Constant</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Rami</forename><surname>Al-Rfou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sharan</forename><surname>Narang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mihir</forename><surname>Kale</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Adam</forename><surname>Roberts</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Colin</forename><surname>Raffel</surname></persName>
+		</author>
+		<idno type="DOI">10.1162/tacl_a_00461</idno>
+		<ptr target="https://aclanthology.org/2022.tacl-1.17" />
+	</analytic>
+	<monogr>
+		<title level="j">Transactions of the Association for Computational Linguistics</title>
+		<imprint>
+			<biblScope unit="volume">10</biblScope>
+			<biblScope unit="page" from="291" to="306" />
+			<date type="published" when="2022">2022</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b70">
+	<analytic>
+		<title level="a" type="main">TIES-merging: Resolving interference when merging models</title>
+		<author>
+			<persName><forename type="first">Prateek</forename><surname>Yadav</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Derek</forename><surname>Tam</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Leshem</forename><surname>Choshen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Colin</forename><surname>Raffel</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mohit</forename><surname>Bansal</surname></persName>
+		</author>
+		<ptr target="https://openreview.net/forum?id=xtaX3WyCj1" />
+	</analytic>
+	<monogr>
+		<title level="m">Thirty-seventh Conference on Neural Information Processing Systems</title>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b71">
+	<analytic>
+		<title level="a" type="main">MEGABYTE: Predicting million-byte sequences with multiscale transformers</title>
+		<author>
+			<persName><forename type="first">Lili</forename><surname>Yu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Daniel</forename><surname>Simig</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Colin</forename><surname>Flaherty</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Armen</forename><surname>Aghajanyan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Luke</forename><surname>Zettlemoyer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mike</forename><surname>Lewis</surname></persName>
+		</author>
+		<ptr target="https://openreview.net/forum?id=JTmO2V9Xpz" />
+	</analytic>
+	<monogr>
+		<title level="m">Thirty-seventh Conference on Neural Information Processing Systems</title>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b72">
+	<analytic>
+		<title level="a" type="main">HellaSwag: Can a machine really finish your sentence?</title>
+		<author>
+			<persName><forename type="first">Rowan</forename><surname>Zellers</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ari</forename><surname>Holtzman</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yonatan</forename><surname>Bisk</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ali</forename><surname>Farhadi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yejin</forename><surname>Choi</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/P19-1472</idno>
+		<ptr target="https://aclanthology.org/P19-1472" />
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics</title>
+		<editor>
+			<persName><forename type="first">Anna</forename><surname>Korhonen</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">David</forename><surname>Traum</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Lluís</forename><surname>Màrquez</surname></persName>
+		</editor>
+		<meeting>the 57th Annual Meeting of the Association for Computational Linguistics<address><addrLine>Florence, Italy</addrLine></address></meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<date type="published" when="2019-07">July 2019</date>
+			<biblScope unit="page" from="4791" to="4800" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b73">
+	<monogr>
+		<title level="m" type="main">Tinyllama: An open-source small language model</title>
+		<author>
+			<persName><forename type="first">Peiyuan</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Guangtao</forename><surname>Zeng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tianduo</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wei</forename><surname>Lu</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b74">
+	<monogr>
+		<title level="m" type="main">Judging llm-as-a-judge with mt-bench and chatbot arena</title>
+		<author>
+			<persName><forename type="first">Lianmin</forename><surname>Zheng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wei-Lin</forename><surname>Chiang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ying</forename><surname>Sheng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Siyuan</forename><surname>Zhuang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhanghao</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yonghao</forename><surname>Zhuang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zi</forename><surname>Lin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhuohan</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dacheng</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Eric</forename><forename type="middle">P</forename><surname>Xing</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hao</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Joseph</forename><forename type="middle">E</forename><surname>Gonzalez</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ion</forename><surname>Stoica</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+				</listBibl>
+			</div>
+		</back>
+	</text>
+</TEI>
