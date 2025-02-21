@@ -1,0 +1,1243 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<TEI xml:space="preserve" xmlns="http://www.tei-c.org/ns/1.0" 
+xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" 
+xsi:schemaLocation="http://www.tei-c.org/ns/1.0 https://raw.githubusercontent.com/kermitt2/grobid/master/grobid-home/schemas/xsd/Grobid.xsd"
+ xmlns:xlink="http://www.w3.org/1999/xlink">
+	<teiHeader xml:lang="en">
+		<fileDesc>
+			<titleStmt>
+				<title level="a" type="main">Under review as a conference paper at ICLR 2022 NORMFORMER: IMPROVED TRANSFORMER PRETRAINING WITH EXTRA NORMALIZATION</title>
+			</titleStmt>
+			<publicationStmt>
+				<publisher/>
+				<availability  status="unknown">
+					<licence/>
+				</availability>
+				<date type="published" when="2021-11-01">1 Nov 2021</date>
+			</publicationStmt>
+			<sourceDesc>
+				<biblStruct>
+					<analytic>
+						<author>
+							<persName><forename type="first">Sam</forename><surname>Shleifer</surname></persName>
+						</author>
+						<author>
+							<persName><forename type="first">Jason</forename><surname>Weston</surname></persName>
+						</author>
+						<author>
+							<persName><forename type="first">Myle</forename><surname>Ott Facebook</surname></persName>
+						</author>
+						<author>
+							<persName><forename type="first">A</forename><forename type="middle">I</forename><surname>Research</surname></persName>
+						</author>
+						<author>
+							<persName><forename type="first">Naman</forename><surname>Goyal</surname></persName>
+						</author>
+						<author>
+							<persName><forename type="first">Xian</forename><surname>Li</surname></persName>
+						</author>
+						<author>
+							<persName><forename type="first">Susan</forename><surname>Zhang</surname></persName>
+						</author>
+						<author>
+							<persName><forename type="first">Zoe</forename><surname>Shleifer</surname></persName>
+						</author>
+						<title level="a" type="main">Under review as a conference paper at ICLR 2022 NORMFORMER: IMPROVED TRANSFORMER PRETRAINING WITH EXTRA NORMALIZATION</title>
+					</analytic>
+					<monogr>
+						<imprint>
+							<date type="published" when="2021-11-01">1 Nov 2021</date>
+						</imprint>
+					</monogr>
+					<idno type="MD5">9C75EB7E16ABD59E4FEBAB7420B45B44</idno>
+					<idno type="arXiv">arXiv:2110.09456v2[cs.CL]</idno>
+				</biblStruct>
+			</sourceDesc>
+		</fileDesc>
+		<encodingDesc>
+			<appInfo>
+				<application version="0.8.2-SNAPSHOT" ident="GROBID" when="2025-02-21T07:08+0000">
+					<desc>GROBID - A machine learning software for extracting information from scholarly documents</desc>
+					<ref target="https://github.com/kermitt2/grobid"/>
+				</application>
+			</appInfo>
+		</encodingDesc>
+		<profileDesc>
+			<abstract>
+<div xmlns="http://www.tei-c.org/ns/1.0"><p>During pretraining, the Pre-LayerNorm transformer suffers from a gradient magnitude mismatch: gradients at early layers are much larger than at later layers. These issues can be alleviated by our proposed NormFormer architecture, which adds three normalization operations to each layer: a Layer Norm after self attention, head-wise scaling of self-attention outputs, and a Layer Norm after the first fully connected layer. The extra operations incur negligible compute cost (+0.4% parameter increase), but improve pretraining perplexity and downstream task performance for both causal and masked language models ranging from 125 Million to 2.7 Billion parameters. For example, adding NormFormer on top of our strongest 1.3B parameter baseline can reach equal perplexity 24% faster, or converge 0.27 perplexity better in the same compute budget. This model reaches GPT3-Large (1.3B) zero shot performance 60% faster. For masked language modeling, NormFormer improves fine-tuned GLUE performance by 1.9% on average. Code to train NormFormer models is available in fairseq.</p><p>* Jason implemented residual scaling and helped with writing. Myle helped with writing and hardware issues. Thanks to Tim Dettmers for giving us early access to the Adam8Bit Optimizer, and to</p></div>
+			</abstract>
+		</profileDesc>
+	</teiHeader>
+	<text xml:lang="en">
+		<body>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="1">INTRODUCTION</head><p>The original transformer architecture <ref type="bibr" target="#b27">(Vaswani et al., 2017)</ref> applies Layer Normalization <ref type="bibr" target="#b0">(Ba et al., 2016)</ref> after each sublayer's residual connection ("Post-LN") in order to reduce the variance of the inputs to the following sublayer, i.e.:</p><p>PostLN(x) = LayerNorm(x + Sublayer(x)), with</p><formula xml:id="formula_0">LayerNorm(x) = x -E[x] V ar[x] + • γ + β,</formula><p>where γ and β are trainable parameters, and is a small constant. Recent work has observed that Post-LN transformers tend to have larger magnitude gradients in later layers compared to earlier layers <ref type="bibr" target="#b29">(Xiong et al., 2020)</ref> and has advocated moving the LayerNorm operation to the beginning of each sublayer ("Pre-LN"; see Figure <ref type="figure" target="#fig_0">1</ref>, left), i.e.:</p><p>PreLN(x) = x + Sublayer(LayerNorm(x)).</p><p>In practice Pre-LN transformers can be trained with larger learning rates, shorter learning rate warmup and often yield improved performance compared to Post-LN transformers <ref type="bibr" target="#b29">(Xiong et al., 2020)</ref>, so most recent, large pretrained language models tend to use Pre-LN transformers <ref type="bibr">(Baevski &amp; Auli, 2019;</ref><ref type="bibr" target="#b21">Radford et al., 2019;</ref><ref type="bibr" target="#b22">Raffel et al., 2020;</ref><ref type="bibr" target="#b5">Brown et al., 2020;</ref><ref type="bibr" target="#b11">Lieber et al., 2021)</ref>.</p><p>In this work we show that, while Pre-LN improves stability over Post-LN, it has the opposite side effect: gradients at earlier layers tend to be larger than gradients at later layers. We propose NormFormer, which alleviates the gradient magnitude mismatch by adding 3 normalization operations to each layer (see Figure <ref type="figure" target="#fig_0">1</ref>, middle). These operations reduce gradients to early layers and increase gradients to later layers, bringing their magnitudes closer together. Compared to compute-matched, well-tuned Pre-LN baselines, NormFormer models reach target pretraining perplexities faster and achieve better pretraining perplexities and downstream task performance.</p><p>The rest of this paper is organized as follows: Section 2 describes the proposed modifications, Section 3 shows pretraining and downstream task performance for fully trained NormFormer models against well-tuned, compute-matched baselines. Section 4 shows the gradient mismatch introduced by Pre-LN and how NormFormer alleviates it. Section 4.2 analyzes residual scaling, a related technique proposed to stabilize Post-LN architectures <ref type="bibr" target="#b29">(Xiong et al., 2020;</ref><ref type="bibr" target="#b31">Zhu et al., 2021)</ref>. Section 5 shows that removing any of the added operations degrades performance and that NormFormer improves over the baseline at a wide range of hyperparameter configurations.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="2">APPROACH</head><p>2.1 NORMFORMER NormFormer includes three modifications to the Pre-LN transformer: First, we apply head-wise scaling inside the attention module and add two additional LayerNorm operations: one after the attention module and a second after the first fully connected layer. The modifications introduce a small number of additional learnable parameters, which provide a cost-effective way for each layer to change the magnitude of its features, and therefore the magnitude of the gradients to subsequent components. The changes are visualized in Figure <ref type="figure" target="#fig_0">1</ref> and described below.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>Scaling Attention Heads</head><p>The standard multi-head attention operation is defined as:</p><formula xml:id="formula_1">MultiHeadAttention(Q, K, V ) = Concat(h 1 , . . . , h n )W O h i = Attention(QW Q i , KW K i , V W V i ) Attention(Q, K, V ) = softmax QK T √ d k V,</formula><p>where n is the number of heads, i is the attention head index, d k is the dimensionality of the keys and W O , W Q i , W K i , W V i are learned projection matrices for the output, query, key and value, respectively.</p><p>We propose scaling the output of each attention head via learned scalar coefficients γ i :</p><formula xml:id="formula_2">HeadScaleMHA(Q, K, V ) = Concat(γ 1 h 1 , . . . , γ n h n )W O where γ are learnable parameters initialized to 1. Model Size GPT-3 Paper Baseline NormFormer 125M 6e-4 3e-3 3e-3 355M 3e-4 1e-3 1e-3 1.3B 2e-4 6e-4 6e-4</formula><p>Table <ref type="table">1</ref>: Searching for learning rates on our dataset results in higher values than reported in <ref type="bibr" target="#b5">Brown et al. (2020)</ref>, providing stronger baselines to compare to our NormFormer architecture.</p><p>Additional Layer Normalization and Putting it All Together In the Pre-LN transformer each layer l modifies an input x l as follows:</p><p>x</p><formula xml:id="formula_3">PreLN l+1 = FFN(MHA(x l ))</formula><p>where</p><formula xml:id="formula_4">MHA(x) = x + MultiHeadAttention(LN(x), LN(x), LN(x)) FFN(x) = x + σ(LN(x)W 1 + b 1 )W 2 + b 2 LN(x) = LayerNorm(x)</formula><p>In this work σ is the GELU non-linear activation introduced in Hendrycks &amp; Gimpel (2016).</p><p>Our overall method, NormFormer, instead modifies each input x l as:</p><formula xml:id="formula_5">x NormFormer l+1 = NormFFN(NormScaledMHA(x l ))</formula><p>where</p><formula xml:id="formula_6">NormScaledMHA(x) = x + LN(HeadScaleMHA(LN(x), LN(x), LN(x))) NormFFN(x) = x + LN(σ(LN(x)W 1 + b 1 ))W 2 + b 2</formula><p>where bolded operations are newly introduced.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="2.2">EXPERIMENTS</head><p>Causal Language Models We pretrain causal LMs (CLM) that roughly match the "Small" (125M parameter), "Medium" (355M), "Large" (1.3B) and "XL" (2.7B) sizes from <ref type="bibr" target="#b5">Brown et al. (2020)</ref>.</p><p>Our model architecture differs from <ref type="bibr" target="#b5">Brown et al. (2020)</ref> in two ways: (1) we use only dense attention, while they alternate between dense and locally banded sparse attention;</p><p>(2) we train our models with sinusoidal positional embeddings, following Shortformer <ref type="bibr">(Press et al., 2020b)</ref>, since early experiments found this to produce comparable results with fewer learned parameters.</p><p>We train the baseline models for 300 billion tokens. We train NormFormer models for an equivalent number of GPU hours, which typically results in 2-6% fewer steps and tokens due to the additional overhead of the normalization operations.</p><p>On our dataset, we find that the learning rates proposed in GPT-3 are suboptimally low.<ref type="foot" target="#foot_0">foot_0</ref> For both baseline and NormFormer at each size besides 2.7B, we tune the learning rate by training models for 50,000 steps and selecting the best performing learning rate among: {1e-4, 6e-4, 3e-4, 6e-4, 1e-3, 3e-3}. The learning rates we obtained from this process, shown in Table <ref type="table">1</ref>, are 3-5 times larger than those used in the GPT-3 paper. Additionally, we have verified that the baseline and NormFormer both perform worse at the full training budget with the GPT-3 learning rates than with the higher learning rates. Other hyperparameters do not differ from GPT-3.<ref type="foot" target="#foot_1">foot_1</ref> </p><p>Residual Scaling Standard Post-LN transformers simply sum the previous output (residual) with the new output. Recent work attempts to stabilize Post-LN architectures by weighting the residual connection for each layer <ref type="bibr" target="#b31">(Zhu et al., 2021;</ref><ref type="bibr" target="#b12">Liu et al., 2020)</ref>. We thus experiment with scaling the residual in each embedding dimension via learned scalar coefficients (λ resid ) i :</p><formula xml:id="formula_7">ResScale(x) = λ resid • x + Sublayer(LayerNorm(x))</formula><p>where • is elementwise multiplication, and λ resid are learned parameters initialized to 1.</p><p>While this can be applied at any normalization layer, we find it it most effective for normalizing the feedforward network (FFN) submodule for the smaller sized language models. In this setting,</p><formula xml:id="formula_8">NormFFN(x) = λ resid • x + LN(σ(LN(x)W 1 + b 1 ))W 2 + b 2 For 1.</formula><p>3B parameter models and larger, scaling residuals hurts performance (see discussion in Section 4.2), so ResScale is not used in our 1.3B and 2.7B CLM results.</p><p>Large scale experiments We also train three large-scale models with 2.7B parameters. Our first baseline is a replicated version of GPT-3-2.7B with GELU activations, the published learning rate (1.6e-4) and the same number of training steps and tokens (286K steps; 300B tokens). This model slightly exceeds the reference zero shot performance <ref type="bibr" target="#b5">(Brown et al., 2020)</ref>. Next, we train two variants of GPT3-2.7B with Relu 2 activations <ref type="bibr" target="#b26">(So et al., 2021)</ref>, but use slightly fewer training steps (20% less) for compute efficiency. The first of these uses the baseline learning rate (1.6e-4) and the second uses NormFormer-2.7B with a higher learning rate of 6e-4. We note that training baseline 2.7B CLMs (i.e., without NormFormer modifications) with a higher 6e-4 learning rate diverged and failed to train. However, as opposed to the smaller architectures, we did not exhaustively tune the learning rate, so it is possible that an intermediate value would perform better.</p><p>Zero Shot Evaluation In addition to validation perplexity, we evaluate CLMs on a subset of the tasks that GPT3 evaluated on in a zero-shot setting <ref type="bibr" target="#b5">(Brown et al., 2020)</ref>, with the same prompts. We select WinoGrande <ref type="bibr" target="#b24">(Sakaguchi et al., 2020)</ref>, StoryCloze <ref type="bibr" target="#b16">(Mostafazadeh et al., 2016)</ref>, Open-BookQA <ref type="bibr" target="#b15">(Mihaylov et al., 2018)</ref>, HellaSwag <ref type="bibr" target="#b30">(Zellers et al., 2019)</ref> and PIQA <ref type="bibr" target="#b4">(Bisk et al., 2020)</ref> because GPT3 showed strong performance on these tasks at small scale, as well as consistently improving performance with scale.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>Masked Language Models (MLM)</head><p>We adopt the RoBERTa-base, Pre-LN architecture and hyperparameters used in <ref type="bibr" target="#b13">Liu et al. (2019)</ref>. For the baseline, we pretrain for 2 million batches of 1 million tokens, about 1 4 of the training budget of the original roberta-base. NormFormer runs through 1.92 million batches in the same amount of time.</p><p>Fine-Tuning We fine-tune both the baseline MLM and NormFormer with learning rates 1e-5, 1e-4, 3e-4, 1e-3, 3e-3, 6e-3 and report the best performance on the validation set for each GLUE task <ref type="bibr" target="#b28">(Wang et al., 2019)</ref>, following <ref type="bibr" target="#b13">Liu et al. (2019)</ref>. Other fine-tuning hyperparameters match those used for roberta-base in <ref type="bibr" target="#b13">Liu et al. (2019)</ref>.</p><p>Pretraining data We pretrain all models on a collection of English language text including the English portion of the CC100 corpus <ref type="bibr" target="#b7">(Conneau et al., 2020)</ref> as well as the data from <ref type="bibr" target="#b13">Liu et al. (2019)</ref>, consisting of BookCorpus <ref type="bibr" target="#b32">(Zhu et al., 2019)</ref>, English Wikipedia and filtered subsets of Common Crawl. We encode our data with the byte-level Byte Pair Encoding (BPE) vocabulary from <ref type="bibr" target="#b13">Liu et al. (2019)</ref>, originally introduced in <ref type="bibr" target="#b21">Radford et al. (2019)</ref>. The combined dataset contains around 450GB of uncompressed text and 110B BPE tokens. We hold out 40M BPE tokens from this data as a validation set on which we report pretraining perplexities.</p><p>Implementation details We train our causal and masked language models in fairseq <ref type="bibr" target="#b17">(Ott et al., 2019;</ref><ref type="bibr" target="#b18">Paszke et al., 2019)</ref>. Although NormFormer introduces fewer than 0.07% additional parameters, it slows individual training updates and increases memory usage between 2% (2.7B model) to 6% (125M model) due to the FFN LNs. Accordingly, we compare NormFormer to baseline models trained for an equal amount of GPU time, i.e., controlling for compute rather than the number of training updates. Finally, we note that the HeadScale operation can be moved outside the self attention module to allow the use of the very efficient pytorch F.multihead attention. This change reduces overhead without noticeable performance degradation.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3">RESULTS</head><p>We report pretraining perplexities for CLMs and MLMs as a function of training wall-time (GPU days) in Figure <ref type="figure" target="#fig_1">2</ref>. We observe that NormFormer trains significantly faster and achieves better vali-</p><p>|θ| LR Relu 2 λ resid Steps PPL HS PI WG SC OB Avg Random Baseline ------25.0 50.0 50.0 50.0 25.0 40.0 GPT3-125M (paper) 124.4 6e-4 --572K -33.7 64.6 52.0 63.3 35.6 49.8 GPT3-125M (replicated) 124.4 6e-4 --572K 21.11 33.7 66.5 52.2 66.1 35.4 50.8 GPT3-125M (High LR) 124.4 3e-3 --572K 21.09 35.3 67.5 50.5 66.3 35.0 50.9 NormFormer-125M 124.5 3e-3 --540K 20.34 34.9 67.1 52.3 66.3 38.0 51.7 NormFormer-125M 124.5 3e-3 -539K 20.11 34.9 65.9 53.4 67.5 40.0 52.3 GPT3-355M (paper) 354.7 3e-4 --572K -43.6 70.2 52.1 68.5 43.2 55.5 GPT3-355M (replicated) 354.7 3e-4 --572K 15.41 46.1 70.8 54.6 71.1 41.2 56.8 GPT3-355M (High LR) 354.7 1e-3 --572K 14.85 48.4 71.7 53.8 73.3 43.4 58.1 NormFormer-355M 355.0 1e-3 --552K 14.54 49.7 71.8 56.0 73.8 43.6 59.0 NormFormer-355M 355.0 1e-3 -550K 14.52 49.7 72.0 56.7 73.2 43.8 59.1 GPT3-1.3B (paper) 1313.5 2e-4 --286K -54.7 75.1 58.0 73.4 46.8 61.6 GPT3-1.3B (replicated) 1313.5 2e-4 --286K 12.56 58.5 74.6 58.1 76.8 49.4 63.5 GPT3-1.3B (High LR) 1313.5 6e-4 --286K 12.21 57.5 74.3 59.3 76.3 50.8 63.6 NormFormer-1.3B 1314.0 6e-4 --275K 11.94 60.5 74.5 60.1 77.5 50.8 64.7 GPT3-2.7B (paper) 2648.7 1.6e-4 --286K -62.8 75.6 62.3 77.2 53.0 66.2 GPT3-2.7B (replicated) 2648.7 1.6e-4 --286K 10.92 65.9 76.6 61.4 78.2 49.6 66.3 NormFormer-2.7B 2649.5 6e-4 -277K 10.55 68.1 78.1 64.4 79.4 53.4 68.7 GPT3-2.7B-Relu 2648.7 1.6e-4 -230K 10.99 65.9 76.1 63.2 79.3 49.4 66.8 GPT3-2.7B-Relu 2648.7 6e-4 -28K diverged NormFormer-2.7B 2649.5 6e-4 -222K 10.73 67.4 77.2 64.4 78.9 52.6 68.1 Table 2: Zero-Shot Accuracy for Causal LMs for the following tasks: HS: HellaSwag, PI: PIQA, WG: WinoGrande, SC: StoryCloze, OB: OpenBookQA. PPL is validation perplexity during pretraining. GPT-3 (paper) results taken from Brown et al. ( <ref type="formula">2020</ref>). Horizontal lines group compute-matched runs. High LR corresponds to using a larger learning rate than reported in <ref type="bibr" target="#b5">Brown et al. (2020)</ref>. λ resid indicates whether residual scaling was used. λ resid did not help at 1.3B scale, as shown in 2, but that run is not compute matched so it is not included here. Model size (|θ|) is reported in millions of parameters. We observe a similar trend on downstream tasks. In</p><p>Table 2 we report zero shot accuracy for causal LMs using the tasks and prompts from Brown et al. (2020). NormFormer outperforms GPT-3 at all sizes. The gains from Normformer extra parameters operations outpace the gains from normal Model Size λ resid PPL CoLA MNLI MRPC QNLI QQP RTE SST-2 Avg Baseline 125.42 -3.42 74.3 85.9 84.6 91.6 90.7 66.4 92.9 83.77 NormFormer 125.50 -3.31 82.6 86.3 86.0 91.9 91.3 67.9 93.8 85.69 NormFormer 125.51 3.29 80.9 86.2 85.3 91.5 91.2 62.8 94.2 84.59</p><p>Table <ref type="table">3</ref>: Masked LM: Pretraining validation perplexity (PPL) and fine-tuned performance on GLUE tasks for Pre-LN and NormFormer models. Note that models are trained for an equal amount of compute, which is less than the publicly-released roberta-base models. scaling laws. Changing the hidden dimension of a 125M parameter model from 768 to 780, for example, results in a 127 million parameter model that is only 0.08 perplexity better than the baseline whereas NormFormer-125M adds only 100,000 parameters and is 0.83 perplexity better than the baseline.</p><p>For MLM models, we report fine-tuned accuracy on GLUE in Table <ref type="table">3</ref>. We again find that Norm-Former MLM models outperform their Pre-LN counterparts on every task (rows 1 vs 2). Adding ResScale improves improves pre-training performance marginally (3.29 valid PPL vs 3.31), but the gains to do not translate to finetuned performance.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4">ANALYSIS</head></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4.1">ANALYSIS OF GRADIENT NORMS BY LAYER</head><p>We begin by examining the magnitude of the gradients at different layers for Post-LN, Pre-LN and NormFormer models, since large magnitude differences in gradients across layers can destabilize training, particularly when training in mixed precision <ref type="bibr" target="#b14">(Micikevicius et al., 2018)</ref>. Figure <ref type="figure" target="#fig_2">3</ref> shows the average L1 norm of the gradients to the second fully connected weight in various layers for a 12 layer, 125M parameter CLM model at the beginning of training. As reported in past work <ref type="bibr" target="#b29">(Xiong et al., 2020)</ref>, we observe that the gradients to later layers in Post-LN models are much larger than for earlier layers, and that the gradients to early layers quickly vanish in the early stages of training.</p><p>Pre-LN models have the opposite behavior, with early layers instead receiving significantly larger gradients than later layers. NormFormer brings the average gradient norms closer together for different layers in the network.</p><p>In Figure <ref type="figure" target="#fig_3">4</ref> we present the distribution of scaling parameters learned by NormFormer models.</p><p>For the FFN LN, the γ parameters are smaller for earlier layers, reducing the magnitude of the inputs to early fully connected parameters, thereby decreasing the magnitude of their gradients. The post attention LN, in the middle of Figure <ref type="figure" target="#fig_3">4</ref>, all layers have γ coefficients below 1, indicating  downscaling. <ref type="foot" target="#foot_2">3</ref> The HeadScale γ parameters, shown in the rightmost plot in Figure <ref type="figure" target="#fig_3">4</ref> vary more than the others, and have no relationship with depth in the network. We interpret this as evidence that the HeadScale parameters dynamically increase the importance of well initialized attention heads, as suggested in <ref type="bibr" target="#b31">Chen et al. (2021)</ref>.</p><p>One result of reducing the gradient mismatch, besides better perplexities and downstream task performance, is the ability to train stably with larger learning rates. To measure the stability of an architecture, we train it on a learning rate schedule with a very large peak learning rate, so that the learning rate increases a little each step until the loss explodes. Figure <ref type="figure" target="#fig_4">5</ref> shows that NormFormer models can survive for more updates in this environment than the baseline. For the baseline 125M model (the left most blue dot), the loss eventually explodes, with the activations from multiplying the query and key features at layer 0 overflowing the FP16 range. The down scaling of the attention outputs allows NormFormer to avoid this issue and remain stable with larger learning rates. Figure <ref type="figure" target="#fig_4">5</ref> also shows that λ resid reduces the stability improvement at all sizes.</p><p>Under review as a conference paper at ICLR 2022</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4.2">RESIDUAL SCALING</head><p>By comparing adjacent NormFormer-125M and NormFormer-355M rows in Table <ref type="table">2</ref> we can see that adding ResScale to NormFormer improves perplexity and zero shot performance for small scale CLMs. For 125M parameter MLM, ResScale improves pre-training perplexity marginally, but hurts fine-tuned performance. At 1.3 billion parameter scale, however, adding ResScale to NormFormer does not improve performance (Figure <ref type="figure" target="#fig_1">2</ref>). Although it's not included in our tables, we find that ResScale without NormFormer is stronger than the baseline at small scale, but not large scale. This suggests that the negative result is caused by scale, rather than interaction with NormFormer.</p><p>Figure <ref type="figure" target="#fig_5">6</ref> shows the Avg. λ resid weights at each layer of different sized CLMs. We can see that at 125M and 355M parameters, the weights in the later layers are lower, indicating down weighting of the residual connection, whereas at the largest scale, 1.3B, the weights are larger deeper into the network.</p><p>Adding the λ resid parameters to the other (earlier) residual connection in each layer, or using a scalar instead of a vector for each λ resid , does not fix the large scale issue, but hurts small scale performance marginally. Depth is layer number / total layers.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="5">ABLATIONS</head><p>This section provides evidence that removing any of our additions to the transformer block degrades performance on language modeling tasks, and that our additions improve language modeling performance across a wide range of hyperparameter settings. Experiments use 125M parameter CLMs, and are run with the default hyperparameters given in Table <ref type="table">7</ref> in the appendix for 470 V100 Hours (100,000 updates for the baseline) unless otherwise mentioned.</p><p>Removing any of the added operations hurts performance Table <ref type="table" target="#tab_2">4</ref> shows that none of the four introduced operations can be removed without degrading performance. Rows 2-5 remove each operation one at a time. In all cases perplexity increases, with the removal of HeadScale being the most damaging and the removal of the Post-Attn LN being the least damaging. In Row 6 (+ 3 More LN) we try to introduce more normalization inside self attention, applying LN to the query, key and value features in addition to our 3 other operations, for a total of 6 new operations. In this setting, every other parameterized operation inside the transformer layer is an LN. We find that this does not change perplexities at a fixed number of updates, but reduces training speed by another 5%. This result suggests that there is not much upside to adding even more normalization on top of NormFormer. Other Experiments Replacing the FFN LN with the FFNGeGlu proposed in Shazeer (2020), which includes scaling but no normalization, degraded performance in our 125M parameter CLM setting, the only place we tried it. We also find that the LN variant proposed in <ref type="bibr" target="#b22">Raffel et al. (2020)</ref>, which removes the bias and the mean substraction from the normalization, performs equally well to our LN and has fewer trainable parameters, but is about 2x slower than the FusedLayerNorm implementation we use. We therefore do not adopt it. <ref type="bibr" target="#b8">Ding et al. (2021)</ref> propose related stabilization strategies for text to image generation tasks with larger models including a downscaled embedding gradient, a layer norm after the final fully connected layer, and the same post-attention LN. We find that, besides the post attention LN, these techniques do not help in our setting.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>Architecture</head><p>Table <ref type="table" target="#tab_3">5</ref> in the appendix shows language modeling perplexities for 7 different hyperparameter configurations, separated by horizontal lines. NormFormer outperforms the baseline in all settings.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="6">RELATED WORK</head><p>Layer normalization <ref type="bibr" target="#b0">(Ba et al., 2016)</ref> is an important component of the transformer architecture. <ref type="bibr" target="#b29">Xiong et al. (2020)</ref> shows that for Post-LN: gradients are too big for later layers and solves this problem with Pre-LN. We build on the Pre-LN architecture to make it even more stable and efficient. <ref type="bibr">Press et al. (2020a)</ref> proposes an architecture where instead of interleaving attention and feed forward sublayers, the attention all happens first. This increases the number of late FFN parameters, rather than increasing their importance and gradient norm, as our FFN LN does, and does not impact stability.</p><p>Our HeadScale operation is related to that used in <ref type="bibr" target="#b31">Chen et al. (2021)</ref>, but used differently.</p><p>Whereas that work prunes attention heads with low γ parameters, we use the γ parameters to improve pretraining performance.</p><p>These approaches are also related to techniques for initializing neural networks: GradInit <ref type="bibr" target="#b31">(Zhu et al., 2021)</ref> introduces a set of scalars and biases for initialization based on a variance heuristic, and Admin <ref type="bibr" target="#b12">(Liu et al., 2020)</ref> applies a similar heuristic in profiling and initialization stages. These works also use variants of our ResScale operation, which we find helpful at small scale and harmful at large scale.</p><p>Similarly, some other approaches targeted initialization as well, in particular ReZero <ref type="bibr" target="#b1">(Bachlechner et al., 2020</ref><ref type="bibr">), FixUp (Huang et al., 2020)</ref> and LookLinear <ref type="bibr" target="#b3">(Balduzzi et al., 2017)</ref>. We note that DALL-E <ref type="bibr" target="#b23">(Ramesh et al., 2021</ref>) also added a per residual scaling factor (only during backprop). Our approach, in contrast, only has new learnable parameters without variance heuristics, and has no extra stages or changes in initialization.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="7">CONCLUSION</head><p>We identify a mismatch in the gradients of Pre-LN transformer weights: earlier layers receive much larger gradients than later layers, while the optimal scaling of residuals is larger at earlier layers than at later layers. We propose NormFormer, which alleviates these issues by adding 3 extra operations to each transformer layer. These modifications help the gradient mismatch for fully connected parameters and improve validation perplexity and downstream task performance for both causal and masked language models. None can be removed without degrading performance back towards the baseline, and adding more normalization -at least of the types we have tried -does not improve performance. Since NormFormer primarily addresses the gradient mismatch by increasing the gradients to the last FFN layers while decreasing the gradient magnitudes in other parts of the network, future work could examine whether all 3 operations need to be added to every layer. Additionally, the small computational overhead associated with NormFormer could be alleviated by fusing the FFN LN with the preceding fully connected layer, with or without the mean centering and bias, which do not appear to improve pretraining perplexity. Wikitext103 Table <ref type="table" target="#tab_4">6</ref> shows that NormFormer can also provide gains on top of a well tuned language model in settings with much less data. We simply add our three operations to the architecture and hyperparameters of <ref type="bibr">Baevski &amp; Auli (2019)</ref>. Convergence perplexity improves, and we reach the baseline perplexity in 70% as many steps. In this setting, NormFormer does not improve in the last 30% of training, which suggests that with more tuning the perplexity gap could be widened.</p><p>Steps Table 7: Hyperparameters for ablations in Tables <ref type="table" target="#tab_2">4</ref> and <ref type="table">7</ref>. This train budget allows the baseline model to run for 100,000 updates. </p></div><figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_0"><head>Figure 1 :</head><label>1</label><figDesc>Figure 1: Left: a baseline Pre-LayerNorm transformer layer. Center: NormFormer, with the three proposed additions in bold. Right: a single attention head with our proposed HeadScale operation applied prior to the output projection with trainable parameters γ i . * When applied, residual scaling impacts the second residual connection in each layer.</figDesc><graphic coords="2,168.75,81.86,274.50,155.00" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_1"><head>Figure 2 :</head><label>2</label><figDesc>Figure 2: Pretraining perplexity on held-out validation data for Causal and Masked Language Models as a function of training compute (GPU days). The blue stars show the point where a model matches the baseline's lowest perplexity.</figDesc><graphic coords="5,137.70,399.62,336.60,160.29" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_2"><head>Figure 3 :</head><label>3</label><figDesc>Figure 3: Average L1 norm of gradients to the second fully connected weight for layers 0,1,6,10 and 11, early in training.</figDesc><graphic coords="6,108.00,201.88,396.01,124.99" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_3"><head>Figure 4 :</head><label>4</label><figDesc>Figure 4: Distribution of learned scaling parameters in three of the added operations. For FFN LN, earlier layers receive downscaled inputs, keeping their gradients in the same range as the gradients of later layers. This plot is discussed in detail in Section 4.</figDesc><graphic coords="7,111.20,81.86,389.60,127.60" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_4"><head>Figure 5 :</head><label>5</label><figDesc>Figure 5: LR Stability Test: learning rate starts from 0 and linearly increases by 5e-5 at each training step until training destabilizes. NormFormer reaches a higher learning rate before destabilizing. Each data point is the median of 3 runs with a different random seed.</figDesc><graphic coords="7,116.00,269.74,380.00,194.50" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_5"><head>Figure 6 :</head><label>6</label><figDesc>Figure 6: λ resid weights at each layer of different sized CLMs in the NormFormer+λ resid setting. Depth is layer number / total layers.</figDesc><graphic coords="8,222.20,297.95,167.60,154.40" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_6"><head>Figure 7 :</head><label>7</label><figDesc>Figure 7: Change in grad norm with each operation of NormFormer compared to the baseline. Norms are the average between step 950 and 1000, normalized to control for different losses. 2.0 on the Y axis means the gradient to a parameter is twice as large as the baseline, on average. The NormFormer increases the norm to fully connected parameters in later layers, while reducing the gradient norm to attention parameters at all layers. The results are discussed in detail in Section 4.</figDesc><graphic coords="12,203.00,81.86,206.00,151.50" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_2"><head>Table 4 :</head><label>4</label><figDesc>125M parameter Language Modeling Validation perplexities after 470 V100 Hours of pretraining. Removing any of our proposed additions degrades performance (Rows 2-5). Adding more normalization inside the Multi Headed Attention (Row 6) does not impact perplexity at a fixed number of updates, but reduces throughput such that the model can only complete 87,500 updates vs. 92,500 for Rows 1-5 and 100,000 for Row 7. Note that these PPL scores are not directly comparable to other tables -they use a different validation set.</figDesc><table><row><cell></cell><cell>Valid PPL</cell></row><row><cell>NormFormer+ResScale</cell><cell>15.88</cell></row><row><cell>-Post-Attn LN</cell><cell>15.92</cell></row><row><cell>-FFN LN</cell><cell>16.14</cell></row><row><cell>-Head Scale</cell><cell>16.22</cell></row><row><cell>-Res Scale</cell><cell>16.20</cell></row><row><cell>+ 3 More LN</cell><cell>15.88</cell></row><row><cell>Baseline</cell><cell>16.37</cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_3"><head>Table 5 :</head><label>5</label><figDesc>In general, we have shown that adding small numbers of learnable parameters in the right places in our architectures can alleviate certain issues in current state of the art networks. Future work should ascertain if there are additional similarly efficient modifications that can bring gains, while helping us understand current deficiencies further.Longer Warmup: increase LR Warmup to 6,000 steps (from 500). GPT3: increase sequence length to 2048, increase dropout to 0.1, increase training budget to 1,000 V100 hours. Grad Clip: clip gradient norms at 0.1. NormFormer outperforms the baseline in all settings.</figDesc><table><row><cell></cell><cell>Learning Rate</cell><cell>Setting Changes</cell><cell>Valid PPL</cell></row><row><cell>Baseline</cell><cell>0.001</cell><cell>-</cell><cell>16.80</cell></row><row><cell>NormFormer</cell><cell>0.001</cell><cell>-</cell><cell>16.33</cell></row><row><cell>Baseline</cell><cell>0.003</cell><cell>-</cell><cell>16.37</cell></row><row><cell>NormFormer</cell><cell>0.003</cell><cell>-</cell><cell>15.88</cell></row><row><cell>Baseline</cell><cell>0.006</cell><cell>-</cell><cell>16.58</cell></row><row><cell>NormFormer</cell><cell>0.006</cell><cell>-</cell><cell>16.22</cell></row><row><cell>Baseline</cell><cell>0.003</cell><cell>Longer Warmup</cell><cell>16.50</cell></row><row><cell>NormFormer</cell><cell>0.003</cell><cell>Longer Warmup</cell><cell>16.06</cell></row><row><cell>Baseline</cell><cell>0.003</cell><cell>GPT3</cell><cell>16.29</cell></row><row><cell>NormFormer</cell><cell>0.003</cell><cell>GPT3</cell><cell>15.88</cell></row><row><cell>Baseline</cell><cell>0.003</cell><cell>Clip Grad Norms at 0.1</cell><cell>16.46</cell></row><row><cell>NormFormer</cell><cell>0.003</cell><cell>Clip Grad Norms at 0.1</cell><cell>16.14</cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_4"><head>Table 6 :</head><label>6</label><figDesc>Wikitext 103 results followingBaevski &amp; Auli (2019). Steps to Final PPL: at what percentage of the 280K steps did the model reach 18.70 perplexity. PPL: Best Perplexity</figDesc><table><row><cell cols="3">to Final PPL PPL</cell></row><row><cell>Baseline</cell><cell>100%</cell><cell>18.70</cell></row><row><cell>NormFormer</cell><cell>70%</cell><cell>18.65</cell></row><row><cell>Learning Rate</cell><cell>0.003</cell><cell></cell></row><row><cell>Batch Size</cell><cell cols="2">524K Tokens</cell></row><row><cell>Parameters</cell><cell>124M+</cell><cell></cell></row><row><cell>Layers</cell><cell>12</cell><cell></cell></row><row><cell>Layer Dimension</cell><cell>768</cell><cell></cell></row><row><cell>Dropout</cell><cell>0</cell><cell></cell></row><row><cell>LR Warmup Updates</cell><cell>500</cell><cell></cell></row><row><cell>LR Scheduler</cell><cell cols="2">Linear Decay</cell></row><row><cell>Sequence Length</cell><cell>1024</cell><cell></cell></row><row><cell>Train Budget</cell><cell cols="2">470 V100 Hours</cell></row></table></figure>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="1" xml:id="foot_0"><p>The difference in optimal learning rates may be due partly to architectural differences between our baseline and GPT-3 (e.g., not using locally banded sparse attention).</p></note>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="2" xml:id="foot_1"><p>See Table 2.1 in<ref type="bibr" target="#b5">Brown et al. (2020)</ref>.</p></note>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="3" xml:id="foot_2"><p>The downscaling is also apparent in Figure7in the Appendix, which plots the change in grad norm for each operation at each layer. It shows that adding extra normalization reduces the gradient norm for all attention parameters at every layer. Only FFN parameters at later layers, have increased gradient norms.</p></note>
+		</body>
+		<back>
+			<div type="references">
+
+				<listBibl>
+
+<biblStruct xml:id="b0">
+	<monogr>
+		<author>
+			<persName><forename type="first">Jimmy</forename><surname>Lei Ba</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jamie</forename><surname>Ryan Kiros</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Geoffrey</forename><forename type="middle">E</forename><surname>Hinton</surname></persName>
+		</author>
+		<title level="m">Layer normalization</title>
+		<imprint>
+			<date type="published" when="2016">2016</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b1">
+	<monogr>
+		<author>
+			<persName><forename type="first">Thomas</forename><surname>Bachlechner</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Prasad</forename><surname>Bodhisattwa</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Huanru</forename><surname>Majumder</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Garrison</forename><forename type="middle">W</forename><surname>Henry Mao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Julian</forename><surname>Cottrell</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Mcauley</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2003.04887</idno>
+		<title level="m">Rezero is all you need: Fast convergence at large depth</title>
+		<imprint>
+			<date type="published" when="2020">2020</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b2">
+	<analytic>
+		<title level="a" type="main">Adaptive input representations for neural language modeling</title>
+		<author>
+			<persName><forename type="first">Alexei</forename><surname>Baevski</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Michael</forename><surname>Auli</surname></persName>
+		</author>
+		<ptr target="https://openreview.net/forum?id=ByxZX20qFQ" />
+	</analytic>
+	<monogr>
+		<title level="m">International Conference on Learning Representations</title>
+		<imprint>
+			<date type="published" when="2019">2019</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b3">
+	<analytic>
+		<title level="a" type="main">The shattered gradients problem: If resnets are the answer, then what is the question?</title>
+		<author>
+			<persName><forename type="first">David</forename><surname>Balduzzi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Marcus</forename><surname>Frean</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Lennox</forename><surname>Leary</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kurt</forename><surname>Lewis</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wan-Duo</forename><surname>Ma</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Brian</forename><surname>Mcwilliams</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">International Conference on Machine Learning</title>
+		<imprint>
+			<publisher>PMLR</publisher>
+			<date type="published" when="2017">2017</date>
+			<biblScope unit="page" from="342" to="350" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b4">
+	<analytic>
+		<title level="a" type="main">Piqa: Reasoning about physical commonsense in natural language</title>
+		<author>
+			<persName><forename type="first">Yonatan</forename><surname>Bisk</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Rowan</forename><surname>Zellers</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ronan</forename><surname>Le Bras</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jianfeng</forename><surname>Gao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yejin</forename><surname>Choi</surname></persName>
+		</author>
+		<idno type="DOI">10.1609/aaai.v34i05.6239</idno>
+		<ptr target="https://ojs.aaai.org/index.php/AAAI/article/view/6239" />
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the AAAI Conference on Artificial Intelligence</title>
+		<meeting>the AAAI Conference on Artificial Intelligence</meeting>
+		<imprint>
+			<date type="published" when="2020-04">Apr. 2020</date>
+			<biblScope unit="volume">34</biblScope>
+			<biblScope unit="page" from="7432" to="7439" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b5">
+	<analytic>
+		<title level="a" type="main">Language models are few-shot learners</title>
+		<author>
+			<persName><forename type="first">Tom</forename><surname>Brown</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Benjamin</forename><surname>Mann</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Nick</forename><surname>Ryder</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Melanie</forename><surname>Subbiah</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jared</forename><forename type="middle">D</forename><surname>Kaplan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Prafulla</forename><surname>Dhariwal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Arvind</forename><surname>Neelakantan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Pranav</forename><surname>Shyam</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Girish</forename><surname>Sastry</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Amanda</forename><surname>Askell</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sandhini</forename><surname>Agarwal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ariel</forename><surname>Herbert-Voss</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Gretchen</forename><surname>Krueger</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tom</forename><surname>Henighan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Rewon</forename><surname>Child</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Aditya</forename><surname>Ramesh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Daniel</forename><surname>Ziegler</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jeffrey</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Clemens</forename><surname>Winter</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chris</forename><surname>Hesse</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mark</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Eric</forename><surname>Sigler</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mateusz</forename><surname>Litwin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Scott</forename><surname>Gray</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Benjamin</forename><surname>Chess</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jack</forename><surname>Clark</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Christopher</forename><surname>Berner</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sam</forename><surname>Mccandlish</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alec</forename><surname>Radford</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ilya</forename><surname>Sutskever</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dario</forename><surname>Amodei</surname></persName>
+		</author>
+		<ptr target="https://proceedings.neurips.cc/paper/2020/file/1457" />
+	</analytic>
+	<monogr>
+		<title level="m">Advances in Neural Information Processing Systems</title>
+		<editor>
+			<persName><forename type="first">H</forename><surname>Larochelle</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">M</forename><surname>Ranzato</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">R</forename><surname>Hadsell</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">M</forename><forename type="middle">F</forename><surname>Balcan</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">H</forename><surname>Lin</surname></persName>
+		</editor>
+		<imprint>
+			<publisher>Curran Associates, Inc</publisher>
+			<date type="published" when="2020">2020</date>
+			<biblScope unit="volume">33</biblScope>
+			<biblScope unit="page" from="1877" to="1901" />
+		</imprint>
+	</monogr>
+	<note>c0d6bfcb4967418bfb8ac142f64a-Paper.pdf</note>
+</biblStruct>
+
+<biblStruct xml:id="b6">
+	<monogr>
+		<title level="m" type="main">Earlybert: Efficient bert training via early-bird lottery tickets</title>
+		<author>
+			<persName><forename type="first">Xiaohan</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yu</forename><surname>Cheng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shuohang</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhe</forename><surname>Gan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhangyang</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jingjing</forename><surname>Liu</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2021">2021</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b7">
+	<monogr>
+		<title level="m" type="main">Unsupervised cross-lingual representation learning at scale</title>
+		<author>
+			<persName><forename type="first">Alexis</forename><surname>Conneau</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kartikay</forename><surname>Khandelwal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Naman</forename><surname>Goyal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Vishrav</forename><surname>Chaudhary</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Guillaume</forename><surname>Wenzek</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Francisco</forename><surname>Guzmán</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Edouard</forename><surname>Grave</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Myle</forename><surname>Ott</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Luke</forename><surname>Zettlemoyer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Veselin</forename><surname>Stoyanov</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2020">2020</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b8">
+	<monogr>
+		<title level="m" type="main">Cogview: Mastering text-to-image generation via transformers</title>
+		<author>
+			<persName><forename type="first">Ming</forename><surname>Ding</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhuoyi</forename><surname>Yang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wenyi</forename><surname>Hong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wendi</forename><surname>Zheng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chang</forename><surname>Zhou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Da</forename><surname>Yin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Junyang</forename><surname>Lin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xu</forename><surname>Zou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhou</forename><surname>Shao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hongxia</forename><surname>Yang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jie</forename><surname>Tang</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2021">2021</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b9">
+	<monogr>
+		<author>
+			<persName><forename type="first">Dan</forename><surname>Hendrycks</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kevin</forename><surname>Gimpel</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:1606.08415</idno>
+		<title level="m">Gaussian error linear units (gelus)</title>
+		<imprint>
+			<date type="published" when="2016">2016</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b10">
+	<analytic>
+		<title level="a" type="main">Improving transformer optimization through better initialization</title>
+		<author>
+			<persName><forename type="first">Xiao</forename><surname>Shi Huang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Felipe</forename><surname>Perez</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jimmy</forename><surname>Ba</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Maksims</forename><surname>Volkovs</surname></persName>
+		</author>
+		<idno>PMLR</idno>
+	</analytic>
+	<monogr>
+		<title level="m">International Conference on Machine Learning</title>
+		<imprint>
+			<date type="published" when="2020">2020</date>
+			<biblScope unit="page" from="4475" to="4483" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b11">
+	<monogr>
+		<title level="m" type="main">Jurassic-1: Technical details and evaluation</title>
+		<author>
+			<persName><forename type="first">Opher</forename><surname>Lieber</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Or</forename><surname>Sharir</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Barak</forename><surname>Lenz</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yoav</forename><surname>Shoham</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2021-08">August 2021</date>
+		</imprint>
+		<respStmt>
+			<orgName>AI21 Labs</orgName>
+		</respStmt>
+	</monogr>
+	<note type="report_type">Technical report</note>
+</biblStruct>
+
+<biblStruct xml:id="b12">
+	<monogr>
+		<title level="m" type="main">Understanding the difficulty of training transformers</title>
+		<author>
+			<persName><forename type="first">Liyuan</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xiaodong</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jianfeng</forename><surname>Gao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Weizhu</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jiawei</forename><surname>Han</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2004.08249</idno>
+		<imprint>
+			<date type="published" when="2020">2020</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b13">
+	<monogr>
+		<author>
+			<persName><forename type="first">Yinhan</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Myle</forename><surname>Ott</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Naman</forename><surname>Goyal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jingfei</forename><surname>Du</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mandar</forename><surname>Joshi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Danqi</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Omer</forename><surname>Levy</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mike</forename><surname>Lewis</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Luke</forename><surname>Zettlemoyer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Veselin</forename><surname>Stoyanov</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Roberta</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:1907.11692</idno>
+		<title level="m">A robustly optimized bert pretraining approach</title>
+		<imprint>
+			<date type="published" when="2019">2019</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b14">
+	<analytic>
+		<title level="a" type="main">Mixed precision training</title>
+		<author>
+			<persName><forename type="first">Paulius</forename><surname>Micikevicius</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sharan</forename><surname>Narang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jonah</forename><surname>Alben</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Gregory</forename><surname>Diamos</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Erich</forename><surname>Elsen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">David</forename><surname>Garcia</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Boris</forename><surname>Ginsburg</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Michael</forename><surname>Houston</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Oleksii</forename><surname>Kuchaiev</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ganesh</forename><surname>Venkatesh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hao</forename><surname>Wu</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">International Conference on Learning Representations</title>
+		<imprint>
+			<date type="published" when="2018">2018</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b15">
+	<analytic>
+		<title level="a" type="main">Can a suit of armor conduct electricity? a new dataset for open book question answering</title>
+		<author>
+			<persName><forename type="first">Todor</forename><surname>Mihaylov</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Peter</forename><surname>Clark</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tushar</forename><surname>Khot</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ashish</forename><surname>Sabharwal</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/D18-1260</idno>
+		<ptr target="https://www.aclweb.org/anthology/D18-1260" />
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing</title>
+		<meeting>the 2018 Conference on Empirical Methods in Natural Language Processing<address><addrLine>Brussels, Belgium</addrLine></address></meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<date type="published" when="2018-11">October-November 2018</date>
+			<biblScope unit="page" from="2381" to="2391" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b16">
+	<analytic>
+		<title level="a" type="main">A corpus and cloze evaluation for deeper understanding of commonsense stories</title>
+		<author>
+			<persName><forename type="first">Nasrin</forename><surname>Mostafazadeh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Nathanael</forename><surname>Chambers</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xiaodong</forename><surname>He</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Devi</forename><surname>Parikh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dhruv</forename><surname>Batra</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Lucy</forename><surname>Vanderwende</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Pushmeet</forename><surname>Kohli</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">James</forename><surname>Allen</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/N16-1098</idno>
+		<ptr target="https://www.aclweb.org/anthology/N16-1098" />
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 2016 Conference of the North American Chapter</title>
+		<meeting>the 2016 Conference of the North American Chapter<address><addrLine>San Diego, California</addrLine></address></meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<date type="published" when="2016-06">June 2016</date>
+			<biblScope unit="page" from="839" to="849" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b17">
+	<monogr>
+		<title level="m" type="main">FAIRSEQ: A fast, extensible toolkit for sequence modeling</title>
+		<author>
+			<persName><forename type="first">Myle</forename><surname>Ott</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sergey</forename><surname>Edunov</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alexei</forename><surname>Baevski</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Angela</forename><surname>Fan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sam</forename><surname>Gross</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Nathan</forename><surname>Ng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">David</forename><surname>Grangier</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Michael</forename><surname>Auli</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2019">2019</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b18">
+	<monogr>
+		<title level="m" type="main">Pytorch: An imperative style, high-performance deep learning library</title>
+		<author>
+			<persName><forename type="first">Adam</forename><surname>Paszke</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sam</forename><surname>Gross</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Francisco</forename><surname>Massa</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Adam</forename><surname>Lerer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">James</forename><surname>Bradbury</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Gregory</forename><surname>Chanan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Trevor</forename><surname>Killeen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zeming</forename><surname>Lin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Natalia</forename><surname>Gimelshein</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Luca</forename><surname>Antiga</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alban</forename><surname>Desmaison</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Andreas</forename><surname>Kopf</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Edward</forename><surname>Yang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zachary</forename><surname>Devito</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Martin</forename><surname>Raison</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alykhan</forename><surname>Tejani</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sasank</forename><surname>Chilamkurthy</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Benoit</forename><surname>Steiner</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Lu</forename><surname>Fang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Junjie</forename><surname>Bai</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Soumith</forename><surname>Chintala</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2019">2019</date>
+			<biblScope unit="page" from="8024" to="8035" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b19">
+	<monogr>
+		<title level="m" type="main">Improving transformer models by reordering their sublayers</title>
+		<author>
+			<persName><forename type="first">Ofir</forename><surname>Press</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Noah</forename><forename type="middle">A</forename><surname>Smith</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Omer</forename><surname>Levy</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2020">2020</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b20">
+	<monogr>
+		<author>
+			<persName><forename type="first">Ofir</forename><surname>Press</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Noah</forename><forename type="middle">A</forename><surname>Smith</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mike</forename><surname>Lewis</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Shortformer</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2012.15832</idno>
+		<title level="m">Better language modeling using shorter inputs</title>
+		<imprint>
+			<date type="published" when="2020">2020</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b21">
+	<monogr>
+		<title level="m" type="main">Language models are unsupervised multitask learners</title>
+		<author>
+			<persName><forename type="first">Alec</forename><surname>Radford</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jeffrey</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Rewon</forename><surname>Child</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">David</forename><surname>Luan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dario</forename><surname>Amodei</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ilya</forename><surname>Sutskever</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2019">2019</date>
+			<pubPlace>OpenAI</pubPlace>
+		</imprint>
+	</monogr>
+	<note type="report_type">Technical report</note>
+</biblStruct>
+
+<biblStruct xml:id="b22">
+	<monogr>
+		<title level="m" type="main">Exploring the limits of transfer learning with a unified text-to-text transformer</title>
+		<author>
+			<persName><forename type="first">Colin</forename><surname>Raffel</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Noam</forename><surname>Shazeer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Adam</forename><surname>Roberts</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Katherine</forename><surname>Lee</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sharan</forename><surname>Narang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Michael</forename><surname>Matena</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yanqi</forename><surname>Zhou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wei</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Peter</forename><forename type="middle">J</forename><surname>Liu</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2020">2020</date>
+			<biblScope unit="volume">21</biblScope>
+			<biblScope unit="page" from="1" to="67" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b23">
+	<monogr>
+		<title level="m" type="main">Zero-shot text-to-image generation</title>
+		<author>
+			<persName><forename type="first">Aditya</forename><surname>Ramesh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mikhail</forename><surname>Pavlov</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Gabriel</forename><surname>Goh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Scott</forename><surname>Gray</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chelsea</forename><surname>Voss</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alec</forename><surname>Radford</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mark</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ilya</forename><surname>Sutskever</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2102.12092</idno>
+		<imprint>
+			<date type="published" when="2021">2021</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b24">
+	<analytic>
+		<title level="a" type="main">Winogrande: An adversarial winograd schema challenge at scale</title>
+		<author>
+			<persName><forename type="first">Keisuke</forename><surname>Sakaguchi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Le</forename><surname>Ronan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chandra</forename><surname>Bras</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yejin</forename><surname>Bhagavatula</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Choi</surname></persName>
+		</author>
+		<idno type="DOI">10.1609/aaai.v34i05.6399</idno>
+		<ptr target="https://ojs.aaai.org/index.php/AAAI/article/view/6399" />
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the AAAI Conference on Artificial Intelligence</title>
+		<meeting>the AAAI Conference on Artificial Intelligence</meeting>
+		<imprint>
+			<date type="published" when="2020-04">Apr. 2020</date>
+			<biblScope unit="volume">34</biblScope>
+			<biblScope unit="page" from="8732" to="8740" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b25">
+	<monogr>
+		<title level="m" type="main">Glu variants improve transformer</title>
+		<author>
+			<persName><forename type="first">Noam</forename><surname>Shazeer</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2020">2020</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b26">
+	<monogr>
+		<title level="m" type="main">Primer: Searching for efficient transformers for language modeling</title>
+		<author>
+			<persName><forename type="first">David</forename><forename type="middle">R</forename><surname>So</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wojciech</forename><surname>Mańke</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hanxiao</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zihang</forename><surname>Dai</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Noam</forename><surname>Shazeer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">V</forename><surname>Quoc</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Le</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2021">2021</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b27">
+	<analytic>
+		<title level="a" type="main">Attention is all you need</title>
+		<author>
+			<persName><forename type="first">Ashish</forename><surname>Vaswani</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Noam</forename><surname>Shazeer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Niki</forename><surname>Parmar</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jakob</forename><surname>Uszkoreit</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Llion</forename><surname>Jones</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Aidan</forename><forename type="middle">N</forename><surname>Gomez</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Łukasz</forename><surname>Kaiser</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Illia</forename><surname>Polosukhin</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Advances in neural information processing systems</title>
+		<imprint>
+			<date type="published" when="2017">2017</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b28">
+	<monogr>
+		<title level="m" type="main">GLUE: A multi-task benchmark and analysis platform for natural language understanding</title>
+		<author>
+			<persName><forename type="first">Alex</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Amanpreet</forename><surname>Singh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Julian</forename><surname>Michael</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Felix</forename><surname>Hill</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Omer</forename><surname>Levy</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Samuel</forename><forename type="middle">R</forename><surname>Bowman</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2019">2019</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b29">
+	<monogr>
+		<title/>
+		<author>
+			<persName><forename type="first">Ruibin</forename><surname>Xiong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yunchang</forename><surname>Yang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Di</forename><surname>He</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kai</forename><surname>Zheng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shuxin</forename><surname>Zheng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chen</forename><surname>Xing</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Huishuai</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yanyan</forename><surname>Lan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Liwei</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tie-Yan</forename><surname>Liu</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2020">2020</date>
+		</imprint>
+	</monogr>
+	<note>On layer normalization in the transformer architecture</note>
+</biblStruct>
+
+<biblStruct xml:id="b30">
+	<analytic>
+		<title level="a" type="main">HellaSwag: Can a machine really finish your sentence?</title>
+		<author>
+			<persName><forename type="first">Rowan</forename><surname>Zellers</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ari</forename><surname>Holtzman</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yonatan</forename><surname>Bisk</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ali</forename><surname>Farhadi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yejin</forename><surname>Choi</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/P19-1472</idno>
+		<ptr target="https://www.aclweb.org/anthology/P19-1472" />
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics</title>
+		<meeting>the 57th Annual Meeting of the Association for Computational Linguistics<address><addrLine>Florence, Italy</addrLine></address></meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<date type="published" when="2019-07">July 2019</date>
+			<biblScope unit="page" from="4791" to="4800" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b31">
+	<monogr>
+		<author>
+			<persName><forename type="first">Chen</forename><surname>Zhu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Renkun</forename><surname>Ni</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zheng</forename><surname>Xu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kezhi</forename><surname>Kong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ronny</forename><surname>Huang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tom</forename><surname>Goldstein</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2102.08098</idno>
+		<title level="m">Gradinit: Learning to initialize neural networks for stable and efficient training</title>
+		<imprint>
+			<date type="published" when="2021">2021</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b32">
+	<monogr>
+		<title level="m" type="main">Aligning books and movies: Towards story-like visual explanations by watching movies and reading books</title>
+		<author>
+			<persName><forename type="first">Yukun</forename><surname>Zhu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ryan</forename><surname>Kiros</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Richard</forename><surname>Zemel</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ruslan</forename><surname>Salakhutdinov</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Raquel</forename><surname>Urtasun</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Antonio</forename><surname>Torralba</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sanja</forename><surname>Fidler</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:1506.06724</idno>
+		<imprint>
+			<date type="published" when="2019">2019</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+				</listBibl>
+			</div>
+		</back>
+	</text>
+</TEI>
