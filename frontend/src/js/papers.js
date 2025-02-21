@@ -47,44 +47,38 @@ const setActivePaper = (paperId) => {
     updatePaperDetails(paperId);
 };
 
-// Load collapsed sections state
-const loadCollapsedSections = () => {
-    const defaultState = {
-        metadata: false,
-        features: false
-    };
+// Load collapsed items state
+const loadCollapsedState = () => {
     try {
-        return JSON.parse(localStorage.getItem('collapsedSections')) || defaultState;
+        return JSON.parse(localStorage.getItem('collapsedItems')) || {};
     } catch (e) {
-        return defaultState;
+        return {};
     }
 };
 
-// Save collapsed sections state
-const saveCollapsedSections = (state) => {
-    localStorage.setItem('collapsedSections', JSON.stringify(state));
+// Save collapsed items state
+const saveCollapsedState = (state) => {
+    localStorage.setItem('collapsedItems', JSON.stringify(state));
 };
 
-// Initialize section collapse handlers
-const initializeSectionHandlers = () => {
-    const collapsedState = loadCollapsedSections();
+// Create a collapsible item
+const createCollapsibleItem = (id, title, content, isHtml = false) => {
+    const collapsedState = loadCollapsedState();
+    const isCollapsed = collapsedState[id] || false;
     
-    document.querySelectorAll('.details-section').forEach(section => {
-        const header = section.querySelector('.details-section-header');
-        const sectionType = section.classList.contains('metadata-section') ? 'metadata' : 'features';
-        
-        // Set initial state
-        if (collapsedState[sectionType]) {
-            section.classList.add('collapsed');
-        }
-        
-        // Add click handler
-        header.addEventListener('click', () => {
-            section.classList.toggle('collapsed');
-            collapsedState[sectionType] = section.classList.contains('collapsed');
-            saveCollapsedSections(collapsedState);
-        });
-    });
+    return `
+        <div class="collapsible-item ${isCollapsed ? 'collapsed' : ''}" data-item-id="${id}">
+            <div class="collapsible-header">
+                <h4 class="collapsible-title">${title}</h4>
+                <span class="collapsible-toggle">▼</span>
+            </div>
+            <div class="collapsible-content">
+                <div class="collapsible-inner">
+                    ${isHtml ? content : `<p class="metadata-value">${content}</p>`}
+                </div>
+            </div>
+        </div>
+    `;
 };
 
 const updatePaperDetails = async (paperId) => {
@@ -96,60 +90,101 @@ const updatePaperDetails = async (paperId) => {
         return;
     }
 
-    // Update details panel content
-    const titleEl = detailsPanel.querySelector('.paper-details-title');
-    const metadataEl = detailsPanel.querySelector('.metadata-content');
-    const featuresEl = detailsPanel.querySelector('.features-content');
-
     // Update title
+    const titleEl = detailsPanel.querySelector('.paper-details-title');
     titleEl.textContent = paper.title;
 
-    // Update metadata
+    // Update metadata section
+    const metadataEl = detailsPanel.querySelector('.metadata-content');
+    const metadataItems = [
+        {
+            id: `${paperId}-authors`,
+            title: 'Authors',
+            content: paper.authors
+        },
+        {
+            id: `${paperId}-published`,
+            title: 'Published',
+            content: new Date(paper.published_date).toLocaleDateString()
+        },
+        {
+            id: `${paperId}-arxiv`,
+            title: 'arXiv ID',
+            content: `<a href="${paper.url}" target="_blank">${paper.arxivId}</a>`,
+            isHtml: true
+        },
+        {
+            id: `${paperId}-categories`,
+            title: 'Categories',
+            content: paper.arxiv_tags.join(', ')
+        },
+        {
+            id: `${paperId}-abstract`,
+            title: 'Abstract',
+            content: paper.abstract
+        }
+    ];
+
     metadataEl.innerHTML = `
-        <dl class="metadata-list">
-            <dt>Authors</dt>
-            <dd>${paper.authors}</dd>
-            <dt>Published</dt>
-            <dd>${new Date(paper.published_date).toLocaleDateString()}</dd>
-            <dt>arXiv ID</dt>
-            <dd><a href="${paper.url}" target="_blank">${paper.arxivId}</a></dd>
-            <dt>Categories</dt>
-            <dd>${paper.arxiv_tags.join(', ')}</dd>
-            <dt>Abstract</dt>
-            <dd>${paper.abstract}</dd>
-        </dl>
+        <div class="details-section">
+            <div class="details-section-header">Paper Information</div>
+            ${metadataItems.map(item => 
+                createCollapsibleItem(item.id, item.title, item.content, item.isHtml)
+            ).join('')}
+        </div>
     `;
 
-    // Update features
+    // Update features section
+    const featuresEl = detailsPanel.querySelector('.features-content');
     if (paper.features_path) {
-        const featuresList = await Promise.all(
+        const features = await Promise.all(
             Object.entries(paper.features_path).map(async ([type, path]) => {
                 try {
                     const response = await fetch(path);
                     if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
                     const content = await response.text();
-                    return `
-                        <div class="feature-section">
-                            <h4>${formatFeatureName(type)}</h4>
-                            <div class="feature-content markdown-body">${marked.parse(content)}</div>
-                        </div>
-                    `;
+                    return {
+                        id: `${paperId}-feature-${type}`,
+                        title: formatFeatureName(type),
+                        content: `<div class="feature-content markdown-body">${marked.parse(content)}</div>`,
+                        isHtml: true
+                    };
                 } catch (error) {
                     console.error(`Error loading feature ${type}:`, error);
-                    return `
-                        <div class="feature-section">
-                            <h4>${formatFeatureName(type)}</h4>
-                            <div class="feature-content error">Error loading feature content</div>
-                        </div>
-                    `;
+                    return {
+                        id: `${paperId}-feature-${type}`,
+                        title: formatFeatureName(type),
+                        content: `<div class="feature-content error">Error loading feature content</div>`,
+                        isHtml: true
+                    };
                 }
             })
         );
-        
-        featuresEl.innerHTML = featuresList.join('');
+
+        featuresEl.innerHTML = `
+            <div class="details-section">
+                <div class="details-section-header">Features</div>
+                ${features.map(feature => 
+                    createCollapsibleItem(feature.id, feature.title, feature.content, feature.isHtml)
+                ).join('')}
+            </div>
+        `;
     } else {
         featuresEl.innerHTML = '<p class="no-features">No features available for this paper</p>';
     }
+
+    // Add event listeners for collapsible items
+    detailsPanel.querySelectorAll('.collapsible-header').forEach(header => {
+        header.addEventListener('click', () => {
+            const item = header.closest('.collapsible-item');
+            const itemId = item.dataset.itemId;
+            const collapsedState = loadCollapsedState();
+            
+            item.classList.toggle('collapsed');
+            collapsedState[itemId] = item.classList.contains('collapsed');
+            saveCollapsedState(collapsedState);
+        });
+    });
 
     // Show panel
     detailsPanel.classList.add('visible');
