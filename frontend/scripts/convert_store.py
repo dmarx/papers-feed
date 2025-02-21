@@ -36,8 +36,11 @@ def scan_features(paper_id: str, features_base: Path) -> dict[str, str]:
         Dictionary mapping feature types to their content paths
     """
     paper_dir = features_base / paper_id
-    # Ensure paper directory exists
+    # Ensure paper directory exists and has a .gitkeep file
     paper_dir.mkdir(parents=True, exist_ok=True)
+    gitkeep_path = paper_dir / ".gitkeep"
+    if not gitkeep_path.exists():
+        gitkeep_path.touch()
     
     features_dir = paper_dir / "features"
     
