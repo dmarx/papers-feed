@@ -1,0 +1,1229 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<TEI xml:space="preserve" xmlns="http://www.tei-c.org/ns/1.0" 
+xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" 
+xsi:schemaLocation="http://www.tei-c.org/ns/1.0 https://raw.githubusercontent.com/kermitt2/grobid/master/grobid-home/schemas/xsd/Grobid.xsd"
+ xmlns:xlink="http://www.w3.org/1999/xlink">
+	<teiHeader xml:lang="en">
+		<fileDesc>
+			<titleStmt>
+				<title level="a" type="main">Disentangling CLIP Features for Enhanced Localized Understanding</title>
+			</titleStmt>
+			<publicationStmt>
+				<publisher/>
+				<availability  status="unknown">
+					<licence/>
+				</availability>
+				<date type="published" when="2025-02-08">8 Feb 2025</date>
+			</publicationStmt>
+			<sourceDesc>
+				<biblStruct>
+					<analytic>
+						<author>
+							<persName><forename type="first">Samyak</forename><surname>Rawlekar</surname></persName>
+						</author>
+						<author>
+							<persName><forename type="first">Yujun</forename><surname>Cai</surname></persName>
+						</author>
+						<author>
+							<persName><forename type="first">Yiwei</forename><surname>Wang</surname></persName>
+						</author>
+						<author>
+							<persName><forename type="first">Ming-Hsuan</forename><surname>Yang</surname></persName>
+						</author>
+						<author>
+							<persName><forename type="first">Narendra</forename><surname>Ahuja</surname></persName>
+						</author>
+						<title level="a" type="main">Disentangling CLIP Features for Enhanced Localized Understanding</title>
+					</analytic>
+					<monogr>
+						<imprint>
+							<date type="published" when="2025-02-08">8 Feb 2025</date>
+						</imprint>
+					</monogr>
+					<idno type="MD5">8442A1000D2419077063DBC7EA0A35EF</idno>
+					<idno type="arXiv">arXiv:2502.02977v2[cs.CV]</idno>
+				</biblStruct>
+			</sourceDesc>
+		</fileDesc>
+		<encodingDesc>
+			<appInfo>
+				<application version="0.8.2-SNAPSHOT" ident="GROBID" when="2025-02-21T16:22+0000">
+					<desc>GROBID - A machine learning software for extracting information from scholarly documents</desc>
+					<ref target="https://github.com/kermitt2/grobid"/>
+				</application>
+			</appInfo>
+		</encodingDesc>
+		<profileDesc>
+			<abstract>
+<div xmlns="http://www.tei-c.org/ns/1.0"><p>Vision-language models (VLMs) demonstrate impressive capabilities in coarse-grained tasks like image classification and retrieval. However, they struggle with fine-grained tasks that require localized understanding. To investigate this weakness, we comprehensively analyze CLIP features and identify an important issue: semantic features are highly correlated. Specifically, the features of a class encode information about other classes, which we call mutual feature information (MFI). This mutual information becomes evident when we query a specific class and unrelated objects are activated along with the target class. To address this issue, we propose Unmix-CLIP, a novel framework designed to reduce MFI and improve feature disentanglement. We introduce MFI loss, which explicitly separates text features by projecting them into a space where inter-class similarity is minimized. To ensure a corresponding separation in image features, we use multi-label recognition (MLR) to align the image features with the separated text features. This ensures that both image and text features are disentangled and aligned across modalities, improving feature separation for downstream tasks. For the COCO-14 dataset, Unmix-CLIP reduces feature similarity by 24.9%. We demonstrate its effectiveness through extensive evaluations of MLR and zeroshot semantic segmentation (ZS3). In MLR, our method performs competitively on the VOC2007 and surpasses SOTA approaches on the COCO-14 dataset, using fewer training parameters. Additionally, Unmix-CLIP consistently outperforms existing ZS3 methods on COCO and VOC. Input Image Query: Person Class Similarity CLIP Ours Figure 1: Comparison of Activated Regions. When queried for the 'person' class (middle column, highlighted in red), CLIP shows activation in unqueried regions (dogs and horses), while our method maintains focus on the person. The rightmost column displays cosine similarities between class features, showing that reducing the inter-class similarity (person-dog: 0.84 → 0.42, person-horse: 0.80 → 0.28) results in features that are suitable for fine-grained tasks.</p></div>
+			</abstract>
+		</profileDesc>
+	</teiHeader>
+	<text xml:lang="en">
+		<body>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="1.">Introduction</head><p>Vision-language models (VLMs) have emerged as powerful tools for understanding visual content through natural language supervision. CLIP <ref type="bibr" target="#b27">(Radford et al., 2021)</ref>, trained on 400 million image-text pairs (WIT-400M), achieves remarkable performance in coarse-grained visual understanding tasks such as image classification <ref type="bibr">(Zhou et al., 2022b)</ref>, image retrieval <ref type="bibr" target="#b0">(Baldrati et al., 2022)</ref>, and visual question answering <ref type="bibr" target="#b35">(Yu et al., 2022)</ref>. However, these models struggle with fine-grained tasks that require localized understanding, leading to significant performance degradation in multi-label recognition (MLR) <ref type="bibr" target="#b39">(Zhu &amp; Wu, 2021;</ref><ref type="bibr" target="#b17">Huang et al., 2024)</ref> and semantic segmentation <ref type="bibr" target="#b24">(Lüddecke &amp; Ecker, 2022)</ref>. While previous work has attributed these limitations to architectural choices <ref type="bibr" target="#b8">(Darcet et al., 2023;</ref><ref type="bibr">Zhou et al., 2022a;</ref><ref type="bibr" target="#b20">Li et al., 2023)</ref> or training objectives <ref type="bibr" target="#b23">(Lin et al., 2024;</ref><ref type="bibr" target="#b11">Dong et al., 2023)</ref>, our analysis reveals a more fundamental issue: the entanglement of semantic features in CLIP's feature space.</p><p>We systematically analyze CLIP's features and identify two key factors contributing to this issue. First, the spatial pooling operation in the final layer, although effective for global tasks, discards essential localized information necessary for fine-grained understanding. Second, and more importantly, we discover significant interference between class features in the joint vision-language space, which we term mutual feature information (MFI). The mutual information becomes apparent during class-specific queries: regions corresponding to unrelated objects are consistently activated alongside the target class. For example, as illustrated in Figure <ref type="figure">1</ref>, regions containing 'dog' and 'horse' also activate when we query the class 'person.' This activation pattern strongly correlates with the high similarity scores between class text features (0.84 for person-dog and 0.80 for person-horse), indicating substantial feature entanglement in CLIP's representation space.</p><p>To address this fundamental limitation, we introduce Unmix-CLIP, a novel framework that disentangles class features in vision-language models. Drawing inspiration from the redundancy reduction principle <ref type="bibr" target="#b2">(Barlow et al., 1961)</ref> in neuroscience, we extend this concept to the vision-language domain. While previous approaches have focused on architectural modifications <ref type="bibr">(Zhou et al., 2022a;</ref><ref type="bibr" target="#b20">Li et al., 2023;</ref><ref type="bibr" target="#b3">Bousselham et al., 2024)</ref> or prompt engineering <ref type="bibr" target="#b32">(Sun et al., 2022;</ref><ref type="bibr">Rawlekar et al., 2024a)</ref> to adapt VLMs for fine-grained tasks, Unmix-CLIP directly targets the root cause by minimizing MFI between class representations while preserving task-relevant information. We achieve this through a carefully designed MFI loss function that explicitly disentangles text features by projecting them to minimize inter-class similarity. To achieve a similar separation in image features, we align them with the projected text features using a multilabel recognition framework. The joint training using MFI loss (separates text features) and MLR loss (aligns text and image features) results in disentangled features that align across the image and text domains, leading to improved separation in semantic features.</p><p>We train Unmix-CLIP on 80 classes from the COCO-14 <ref type="bibr" target="#b21">(Lin et al., 2014)</ref> dataset and evaluate its performance on two fine-grained tasks: multi-label recognition (MLR) and zero-shot semantic segmentation (ZS3). For MLR evaluation, we use the COCO-14 and VOC2007 <ref type="bibr" target="#b12">(Everingham et al., 2010)</ref> datasets. For ZS3, we use VOC2012 <ref type="bibr" target="#b12">(Everingham et al., 2010)</ref> and COCO-17 <ref type="bibr" target="#b21">(Lin et al., 2014)</ref> for seen classes, and VOC Context <ref type="bibr" target="#b25">(Mottaghi et al., 2014)</ref> provides 59 classes, 30 of which are unseen during pre-training. Our experimental results demonstrate that Unmix-CLIP achieves competitive performance on VOC and outperforms stateof-the-art (SOTA) methods on the challenging COCO-14 dataset, using only one-third of their training parameters. For ZS3, Unmix-CLIP surpasses SOTA VLMs on datasets with seen classes, demonstrating that reducing mutual feature information (MFI) is crucial for fine-grained tasks. To further assess its segmentation capabilities, we apply Unmix-CLIP to segment objects in the images, recasting the task as single-label recognition, a task more suitable for CLIP. We combine the segment-level and whole-image results to obtain zero-shot MLR predictions. Segmenting objects provides complementary information on top of global image features. The main contributions of this work are:</p><p>• We identify a critical challenge in adapting VLMs for fine-grained tasks: mutual information between class features (MFI) degrades fine-grained task performance</p><p>• To address this challenge, we propose Unmix-CLIP, a framework that adapts CLIP features for fine-grained tasks by reducing MFI. At its core lies our proposed MFI loss, which explicitly disentangles text features and guides the disentanglement of image features • We show that Unmix-CLIP outperforms SOTA multilabel recognition methods in challenging settings using significantly fewer training parameters. Additionally, it outperforms zero-shot semantic segmentation methods. Moreover, as an object segmenter, Unmix-CLIP enhances CLIP's zero-shot MLR performance.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="2.">Related Work</head><p>Recoding information. Shannon proposed that optimal information transmission involves designing codes with minimum entropy <ref type="bibr" target="#b31">(Shannon, 1948)</ref>. The redundancy reduction principle extended this idea to neuroscience, suggesting that sensory systems recode information to reduce redundancy with minimal loss <ref type="bibr" target="#b2">(Barlow et al., 1961)</ref>. This principle has since been applied to many recent works, including image compression <ref type="bibr" target="#b1">(Ballé et al., 2016)</ref> and more popularly in representation learning <ref type="bibr" target="#b26">(Oord et al., 2018;</ref><ref type="bibr" target="#b5">Chen et al., 2020;</ref><ref type="bibr" target="#b36">Zbontar et al., 2021;</ref><ref type="bibr" target="#b15">Henaff, 2020;</ref><ref type="bibr" target="#b14">He et al., 2020;</ref><ref type="bibr" target="#b6">Chen &amp; He, 2021)</ref>. While our loss function shares structural similarities with representation learning methods (a similarity and contrastive term), our method differs as follows: (1) Instead of learning features from scratch, we refine learned features (reducing MFI).</p><p>(2) We do not rely on augmentation-based learning or batch processing. (3) Unlike contrastive methods that require paired embeddings, our approach operates on a fixed set of text embeddings. Most importantly, our objective is not generic feature learning but targeted feature modification to enhance task-specific utility. Vision-Language Models for Fine-grained Tasks. Visionlanguage models (VLMs) trained with contrastive losses <ref type="bibr" target="#b27">(Radford et al., 2021;</ref><ref type="bibr" target="#b18">Jia et al., 2021)</ref> are challenging to adapt for fine-grained tasks due to two reasons: (1) their reliance on global feature aggregation, which ignores local information.</p><p>(2) Using the softmax operation in their training loss biases them toward single-object settings.</p><p>Recognition. Early efforts to adapt VLMs for recognition centered on learning prompts as classifiers for visual features <ref type="bibr">(Zhou et al., 2022b)</ref>. These methods were extended to multi-label settings by learning multiple prompts for each class <ref type="bibr" target="#b32">(Sun et al., 2022;</ref><ref type="bibr" target="#b16">Hu et al., 2023;</ref><ref type="bibr">Rawlekar et al., 2024a)</ref>. Subsequent works incorporated co-occurrence information to make predictions interdependent <ref type="bibr" target="#b10">(Ding et al., 2023;</ref><ref type="bibr">Rawlekar et al., 2024b)</ref>. In contrast, our approach does not rely on prompt learning or co-occurrence modeling during pre-training. Furthermore, our features are adaptable to tasks beyond multi-label recognition.</p><p>Localization. Early approaches addressed localization by training image segmentation models and using VLMs to label the segmented regions <ref type="bibr" target="#b19">(Kirillov et al., 2023)</ref>. Later methods introduced pre-training setups that combined visionlanguage alignment with mask distillation to enhance localization <ref type="bibr" target="#b11">(Dong et al., 2023)</ref>. Recent works adapted features for localization without additional training by leveraging the spatial properties preserved in the value projection of CLIP's transformer-style aggregation <ref type="bibr">(Zhou et al., 2022a)</ref>. CLIP Surgery <ref type="bibr" target="#b20">(Li et al., 2023)</ref> identified consistent noisy activations across classes and reduced them by subtracting average features from class-specific features <ref type="bibr" target="#b20">(Li et al., 2023)</ref>, though the cause of these activations remains unclear. GEM generalized this concept to vision transformers <ref type="bibr" target="#b3">(Bousselham et al., 2024)</ref>. We use the finding that value projection preserves spatial information. We further improve value projection by disentangling class features.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.">Unmix-CLIP</head><p>Given a multi-label dataset D, where D = {x i } |D| i=1 consists of images x i and N class labels {C j } N j=1 , each image x i can contain objects belonging to one or more of these N classes. Additionally, we use CLIP ( f θ ), parameterized by weights θ , consisting of an image encoder ( f θ ,img ) and a text encoder ( f θ ,text ) for feature extraction. Throughout all experiments, we keep the parameters of CLIP ( f θ ) frozen, including both the image and text encoders.</p><p>Since the mutual information among class features present in CLIP is detrimental to fine-grained task performance, we analyze CLIP's features from this perspective. Specifically, we focus on two key aspects: (1) spatial preservation in the visual feature maps and (2) the relationship between class To reduce mutual feature information (MFI) between class features, we propose MFI loss that enforces the self-similarity matrix of projected text features to approximate an identity matrix, effectively reducing inter-class feature dependencies (Section 3.2). We propagate the separation in the text features to image space by aligning the image and separated text features using a multi-label recognition setup (Section 3.3). Following <ref type="bibr" target="#b32">(Sun et al., 2022)</ref> and as detailed in Section 3.3, we aggregate the projected image and text features to obtain predicted logits. The predicted logits are trained with ground truth labels using the widely used asymmetric loss (ASL) <ref type="bibr" target="#b30">(Ridnik et al., 2021)</ref>. Our training loss combines the ASL and MFI loss; the only trainable components are the projectors. We freeze both CLIP encoders and projectors during inference for multi-label recognition and downstream tasks such as zero-shot semantic segmentation.</p><p>features in the joint vision-language space.</p><p>Towards (1), we remove CLIP's final spatial pooling layer to preserve local information in feature maps. We then evaluate class-wise activations by computing the similarity between local visual and text features. For (2), we find that querying an image for a specific class consistently activates unrelated regions. Figure <ref type="figure">1</ref> shows that querying for 'person' highlights the person regions and activates areas containing dogs and horses. This suggests that CLIP's features for different classes share substantial information.</p><p>To quantify this feature entanglement, we analyze the similarity between class text features across multiple datasets (VOC <ref type="bibr" target="#b12">(Everingham et al., 2010)</ref>, COCO <ref type="bibr" target="#b21">(Lin et al., 2014)</ref>, and Context <ref type="bibr" target="#b25">(Mottaghi et al., 2014)</ref>). Since CLIP learns a joint embedding space, text feature similarities directly reflect the model's ability to distinguish between classes. As illustrated in Figure <ref type="figure" target="#fig_0">2</ref> (top-row), we consistently observe high similarity values between different classes. Specifically, the similarity reaches 0.84 for person-dog pairs and 0.80 for person-horse pairs, far exceeding what one would expect from their semantic relationships. Extending this analysis across various datasets (Table <ref type="table" target="#tab_4">4</ref>), We observe high average feature similarities of 0.77 in VOC, 0.69 in COCO, and 0.75 in Context, indicating that this is a universal limitation of CLIP's features space. This feature entanglement fundamentally affects CLIP's ability to perform fine-grained tasks. When features intended to represent one class encode significant information about other classes, the model struggles to make precise discrimination necessary for tasks like multi-label recognition and semantic segmentation.</p><p>To address this limitation, we propose a framework that reduces mutual information between class features while preserving task-essential semantics. Our approach consists of three components: (1) Feature extraction and Projection, where we extract CLIP features and project them into a disentangled space (Section 3.1), (2) Defining novel MFI Loss for disentangling text features (Section 3.2), and (3) Performing MLR to align image features to the disentangled text features (Section 3.3).</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.1.">Feature Extraction and Projection</head><p>We use CLIP as our feature extractor. Its image encoder ( f θ ,img ) performs spatial pooling in the final layer, aggregating features from local regions into a d-dimensional vector for the input image x i . However, this pooling step removes spatial details, making it unsuitable for fine-grained tasks where localization is essential. We remove the final pooling layer to preserve class-specific information across local regions. Then the encoder output for input (</p><formula xml:id="formula_0">x i ) is f θ ,img (x i ) = z i ∈ R H×W ×d</formula><p>, where H and W are the spatial dimensions. The text encoder remains unchanged. We use a fixed pair of positive and negative (txt j,+ , txt j,-) prompts for each class j as input to the text encoder. The positive prompt indicates the presence of the class in a local region, while the negative prompt indicates its absence. Passing these prompts through the text encoder produces f θ ,text</p><formula xml:id="formula_1">(txt i ) = t i ∈ R d .</formula><p>The extracted features (image (z i ), text (t i )) lie in CLIP's original feature space and are not suitable for fine-grained tasks as discussed in Section 1. To address this, we introduce learnable projectors (h φ : h φ ,img and h φ ,text ), parameterized by weights φ . These projectors map the image (z i ) and text (t i ) features from their original space (d-dim) to a new disentangled space (d ′ -dim), making them suitable for fine-grained tasks. The image projector transforms z i → z ′ i (R H×W ×d → R H×W ×d ′ ) while preserving the spatial dimensions (H,W ). The text projector maps</p><formula xml:id="formula_2">t i → t ′ i (R d → R d ′ ).</formula></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.2.">MFI Loss</head><p>We design the projected feature space to reduce mutual feature information (MFI) between class features. Reducing MFI requires obtaining individual class features, as MFI represents the shared information between these individual features. Separating image features into individual class features is non-trivial because multiple classes often co-occur in an image. This leads to mixed features that make classwise feature isolation difficult. Object segmentation models could assist by extracting features from segmented regions, but these models add significant complexity. In contrast, text class features are inherently independent because they are derived from separate class names or prompts inputted to the text encoder. This independence directly gives us individual text class features. We leverage this property of text features and apply MFI reduction to them.</p><p>We propose the MFI reduction loss to minimize the mutual information between class text features. This loss is applied to the projected text features (t ′ ) as follows:</p><formula xml:id="formula_3">L MFI = ∑ i=1 (S ii -1) 2 Collapse Prevention +λ ∑ i=1 ∑ j=1 j̸ =i S 2 i j MFI Reduction (<label>1</label></formula><formula xml:id="formula_4">)</formula><p>where S is the self-similarity matrix obtained from t ′ . Here, S is defined by</p><formula xml:id="formula_5">S i j = t ′ i t ′ ⊤ j ∥t ′ i ∥∥t ′ j ∥ , ∀i, j</formula><p>where t ′ i , t ′ j are the i-th and j-th column vectors of t ′ (i.e.,</p><formula xml:id="formula_6">t ′ i , t ′ j ∈ R d ′ ) and ∥t ′ i ∥ is the L 2 -norm of t i .</formula><p>In this formulation, λ is the hyperparameter that addresses the imbalance in the loss arising from the larger number of MFI reduction terms in S compared to the collapse prevention terms.</p><p>The MFI loss minimizes the inter-class similarity S i j (i ̸ = j) while simultaneously preserving high intra-class S ii to prevent feature collapse. We provide detailed proof of the loss function's connection to the Information Bottleneck principle in supplementary material Appendix A.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.3.">Image-Text Alignment with MLR</head><p>MLR Formulation. MLR task involves identifying the subset of classes C i ⊆ {C 1 ,C 2 , . . . ,C N } associated with the image x i . The goal is to learn a mapping function g : x i → {-1, 1} N , that maps input images to 1 if the class is present and -1 if the class is absent in the image.</p><p>We train our model to recognize multiple objects in images by learning to align projected image features and text features. For each location (h, w) in the projected image features (z ′ i ), we detect the presence or absence of a class j, by computing the cosine similarity with positive text features (t ′ j,+ ) and negative text features (t ′ j,-). A higher similarity with the positive text features indicates the presence of the class, while a higher similarity with the negative text features indicates its absence. We aggregate these similarity scores from local regions to produce logits p i for the image, following <ref type="bibr" target="#b32">(Sun et al., 2022;</ref><ref type="bibr">Rawlekar et al., 2024b;</ref><ref type="bibr">a)</ref>. We train the setup with the widely used Asymmetric Loss function (ASL) <ref type="bibr" target="#b30">(Ridnik et al., 2021)</ref>, which addresses the significant imbalance between negative and positive examples in a multi-label recognition dataset. The ASL loss is given by:</p><formula xml:id="formula_7">L ASL (p j i ) =    1 -p j i γ + log p j i , if y j i = 1, p j i,δ γ - log 1 -p j i,δ , else<label>(2)</label></formula><p>where p j i represents the corresponding prediction associated with label y j i , i represents the image and j represents the class. p j i,δ = max( ŷδ , 0), with δ representing the shifting parameter defined in ASL.</p><p>Training. Our training objective is composed of two components: (1) mutual feature information loss that enforces the separation between class text features and (2) Asymmetric loss function <ref type="bibr" target="#b30">(Ridnik et al., 2021)</ref>, designed for MLR that aligns the image features and text features to obtain predictions for an image.</p><formula xml:id="formula_8">L Unmix-CLIP = L ASL + αL MFI (3)</formula><p>where α controls the relative importance of the two objectives.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4.">Experiments</head><p>Here we describe the datasets, evaluation metrics, implementation details, and performance analysis for multi-label recognition and zero-shot semantic segmentation. 2) Zero-Shot Semantic Segmentation (ZS3): We use image and text projectors trained on the COCO-14 dataset and evaluate ZS3 using the mIoU metric on the following datasets: PASCAL VOC 2012 <ref type="bibr" target="#b12">(Everingham et al., 2010)</ref> includes segmentation masks for the 20 classes in VOC2007. Following works <ref type="bibr" target="#b20">(Li et al., 2023;</ref><ref type="bibr" target="#b3">Bousselham et al., 2024)</ref>, we evaluate on the validation set. PASCAL Context <ref type="bibr" target="#b25">(Mottaghi et al., 2014)</ref> extends Pas-calVOC to 59 classes, 30 of which were unseen during our pre-training. These additional classes provide dense annotations for the whole scene. We evaluate the test set, comprising 5,104 images. COCO-2017 <ref type="bibr" target="#b21">(Lin et al., 2014)</ref> includes segmentation masks for the 80 classes in COCO-14. Following <ref type="bibr" target="#b20">(Li et al., 2023;</ref><ref type="bibr" target="#b3">Bousselham et al., 2024)</ref>, we evaluate the validation set.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4.2.">Implementation Details</head><p>We use CLIP's <ref type="bibr" target="#b27">(Radford et al., 2021)</ref> original pre-trained encoder weights for all our experiments and keep them frozen. Consistent with popular MLR and ZS3 literature, we use a ResNets-based visual encoder (RN-101) and the standard transformer for text encoding <ref type="bibr" target="#b32">(Sun et al., 2022;</ref><ref type="bibr" target="#b10">Ding et al., 2023;</ref><ref type="bibr" target="#b16">Hu et al., 2023;</ref><ref type="bibr">Rawlekar et al., 2024a;</ref><ref type="bibr" target="#b2">b;</ref><ref type="bibr" target="#b13">Guo et al., 2023;</ref><ref type="bibr" target="#b20">Li et al., 2023;</ref><ref type="bibr" target="#b22">Lin et al., 2023)</ref>. We conduct all experiments on a single RTX A4000 GPU.</p><p>During the pre-training stage with the MLR setup (Section 3.3), we follow the settings and hyperparameters from recent works <ref type="bibr" target="#b32">(Sun et al., 2022;</ref><ref type="bibr">Rawlekar et al., 2024b;</ref><ref type="bibr">a)</ref>. This includes resizing images to 448, applying Cutout (De-Vries &amp; Taylor, 2017) and RandAugment <ref type="bibr" target="#b7">(Cubuk et al., 2020)</ref> for augmentation. Our projectors (h φ ) are implemented as multi-layer perceptrons (MLPs). Specifically, the image projector follows a [512 → 256] architecture, while the text projector is designed as [512 → 384 → 256] with batch normalization and ReLU. We train both projectors with stochastic gradient descent (SGD) using an initial learning rate of 0.002, which is reduced by cosine annealing. We train the Unmix-CLIP setup (ASL + MFI loss) for 50 epochs with a batch size of 32. We follow <ref type="bibr" target="#b32">(Sun et al., 2022;</ref><ref type="bibr">Rawlekar et al., 2024b;</ref><ref type="bibr">a)</ref>, and use ASL hyperparameters in Equation ( <ref type="formula" target="#formula_7">2</ref>) as γ -= 2, γ + = 1 and δ = 0.05. We set λ = 0.2 and α = 7e-5 when pre-trained with COCO-14 in Equation ( <ref type="formula" target="#formula_3">1</ref>).</p><p>For Zero-Shot Semantic Segmentation, we adopt the v-v attention described in <ref type="bibr" target="#b20">(Li et al., 2023)</ref> that prevents inversion of activation commonly observed in CLIP. We then add our pre-trained projectors to CLIP. To obtain the segmentation mask, we compute the cosine similarity between locally projected image features (z ′ ) and projected text features for all classes in the dataset. We use the text template "A photo of a {classname}." Lastly, we use bilinear interpolation to upsample the segmentation mask to the input image size.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4.3.">Results</head><p>Multi-Label Recognition. We primarily compare Unmix-CLIP with other SOTA VLM-based MLR approaches. In Table 1, we present a detailed comparison of the performance (mAP) and the number of training parameters required by each method on the VOC2007 <ref type="bibr" target="#b12">(Everingham et al., 2010)</ref>  and COCO-14 <ref type="bibr" target="#b21">(Lin et al., 2014)</ref> datasets. For VOC 2007, we observe that our performance is competitive with Du-alCoOp++ <ref type="bibr" target="#b16">(Hu et al., 2023)</ref> and requires the same number of parameters. However, on the more challenging COCO-14 dataset, Unmix-CLIP outperforms DualCoOp++ while requiring only one-third of the training parameters.</p><p>Zero-Shot Semantic Segmentation. We categorize our comparisons into two main groups. The first group includes approaches that use local annotations (segmentation masks, etc.) to fine-tune the network <ref type="bibr" target="#b34">(Xian et al., 2019;</ref><ref type="bibr" target="#b4">Bucher et al., 2019;</ref><ref type="bibr" target="#b22">Lin et al., 2023)</ref>. The second comparison is with training-free approaches <ref type="bibr" target="#b27">(Radford et al., 2021;</ref><ref type="bibr" target="#b20">Li et al., 2023)</ref>. Our approach is closer to the training-free methods, as it does not use any form of local annotations.</p><p>Our results are summarized in Table <ref type="table" target="#tab_2">2</ref>. Following prior works <ref type="bibr" target="#b34">(Xian et al., 2019;</ref><ref type="bibr" target="#b4">Bucher et al., 2019;</ref><ref type="bibr" target="#b22">Lin et al., 2023;</ref><ref type="bibr" target="#b20">Li et al., 2023)</ref>, we report mIoU values for VOC 2012 by including the background as a class. We use a threshold of 0.85 to identify the background, as suggested in <ref type="bibr" target="#b3">(Bousselham et al., 2024)</ref>. Our approach outperforms CLIP Surgery by 18.5 mIoU and CLIP-VV by 3.4 mIoU on VOC 2012.</p><p>For COCO-14, we report results both with and without the background class. When including the background, our method surpasses CLIP Surgery and CLIP-VV by 9.7 mIoU and 2.8 mIoU, respectively. Without the background, we achieve gains of 14.9 mIoU and 2.3 mIoU. Additionally, we evaluate the VOC Context dataset, which contains 30 unseen classes not used during our pre-training. Although our model is not explicitly trained to reduce MFI between these classes (it is designed to minimize MFI among COCO's 80 classes), our approach still outperforms CLIP Surgery. These results demonstrate that our projectors preserve some of the open-vocabulary capabilities of CLIP. We show qualitative results for open-vocabulary tasks in Supplementary Figure <ref type="figure">7</ref>. Segmentation-driven Zero-Shot Multi-Label Recognition (ZS-MLR). We leverage the segmentation capabilities of Unmix-CLIP to reformulate the multi-label recognition problem into a single-label recognition problem, a domain more suitable for CLIP. Specifically, we use two predictions: global and local. We pass the input image directly through CLIP to obtain its global predictions. However, as discussed in Section 1, these predictions are often dominated by more prominent objects in the image, ignoring smaller objects, which leads to poor zero-shot MLR performance.</p><p>To address this limitation, we introduce local predictions. We segment the image into multiple regions (ideally corresponding to individual objects) using Unmix-CLIP. Each segment is then processed independently through CLIP, and the predictions from all segments are aggregated. Finally, we combine the global and local predictions to obtain the zero-shot scores for the image. We evaluate the ZS-MLR performance on the VOC2007 and COCO-14 datasets, with results presented in Table <ref type="table" target="#tab_3">3</ref>. The results demonstrate that our method provides meaningful information (segments) to improve CLIP zero-shot capabilities.     <ref type="table" target="#tab_4">4</ref> quantifies the MFI reduction through the difference in average inter-class similarity between CLIP and Unmix-CLIP. Our framework effectively disentangles representations for both seen and unseen classes, leading to performance gains.</p><p>Feature Disentanglement Impact. Figure <ref type="figure" target="#fig_3">5</ref> shows how MFI reduction improves performance in multi-label recognition on COCO-14 dataset and zero-shot semantic segmentation on the COCO-2017 dataset. We observe that as MFI decreases, the performance of both tasks improves.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="6.">Conclusions</head><p>In conclusion, this work advances our understanding of CLIP features by identifying and addressing a fundamental challenge in their localized understanding. We first show that reducing mutual information is critical for fine-grained recognition tasks. Motivated by this, we introduce Unmix-CLIP, a novel approach to project CLIP features into a disentangled space by combining our proposed MFI loss and the asymmetric loss for MLR. Our experimental results demonstrate that reducing feature entanglement through Unmix-CLIP significantly enhances the model's ability to perform fine-grained tasks. This improvement is particularly evident in two challenging tasks: multi-label recognition (MLR) and zero-shot semantic segmentation (ZS3). These findings highlight the importance of feature disentanglement in vision-language models and provide a promising direction for future research in improving the localized understanding capabilities of CLIP-based architectures. A limitation of our approach is its reduced capability in zeroshot open-vocabulary segmentation. We constrain some of CLIP's broader semantic capabilities by optimizing feature disentanglement for COCO dataset classes. Training on substantially larger datasets could help mitigate this limitation while preserving the benefits of our feature disentanglement approach.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>A. Objective Function: MFI Loss</head><p>This section establishes a connection between MFI loss and the Information Bottleneck (IB) principle <ref type="bibr" target="#b33">(Tishby &amp; Zaslavsky, 2015)</ref>. As described in Section 3.2, MFI loss explicitly reduces the mutual information between text features to obtain disentangled features.</p><p>A.1. Information Bottleneck (IB) Objective Formulation. Let, T i represent the input text (i.e., the prompt with the class label), and let Z i be the extracted features from the CLIP text encoder <ref type="bibr" target="#b27">(Radford et al., 2021)</ref>. The output is represented by Y i , indicating the class associated with Z i .</p><p>As we show in Section 3, mutual information exists between text (class) features Z i , i.e., each class feature contains information about multiple classes rather than only its corresponding class Y i . Our goal is to enforce a one-to-one mapping where Z i retains information only about Y i while discarding information about all other classes Y j ( j ̸ = i).</p><p>This aligns naturally with the IB principle, which formulates an optimal trade-off between minimizing the information Z i retains from T i and maximizing the information it preserves for the target class Y i . We extend the IB principle to reduce explicit information about all other classes. We express this formally as:</p><formula xml:id="formula_9">IB = I(Z i , T i ) + β I(Z i ,Y i ) -∑ j̸ =i I(Z i ,Y j )<label>(4)</label></formula><p>where I represents mutual information. Here, 1. I(Z i ; T i ) ensures that Z i take only the information form T i that is needed to map to Y i . 2. I(Z i ;Y i ) preserves discriminative class information.</p><p>3. ∑ j̸ =i I(Z i ;Y j ) reduces information in Z i that map to Y j where j ̸ = i</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>A.2. Connection to MFI Loss</head><p>To minimize IB, we first express mutual information in terms of entropy:</p><formula xml:id="formula_10">I(A; B) = H(A) -H(A|B),<label>(5)</label></formula><p>where H(A) is the marginal entropy of A, and H(A|B) is the conditional entropy of A given B.</p><p>Substituting this into the IB objective Equation (4): </p><formula xml:id="formula_11">IB = (1 + β -∑ j̸ =i β )H(Z i ) -β H(Z i |Y i ) -∑ j̸ =i H(Z i |Y j ) -H(Z i |T i )<label>(6)</label></formula></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>Input Text Text Features</head></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>Classes</head><p>Figure <ref type="figure">6</ref>: The Information Bottleneck principle is applied for feature disentanglement. Given an input text T i , the text encoder of CLIP <ref type="bibr" target="#b27">(Radford et al., 2021)</ref> generates features Z i , which encode information about the output classes Y i . Our objective is to ensure that Z i retains only the information necessary to map to its corresponding class Y i while minimizing its information about other classes Y j ( j ̸ = i) Since the CLIP text encoder is deterministic, the entropy term H(Z i |T i ) = 0. Also, given that text inputs are predefined (i.e., class names in the dataset), Z i is deterministic, implying H(Z i ) = 0. This simplifies the IB objective to:</p><formula xml:id="formula_12">IB ∝ -H(Z i |Y i ) + ∑ j̸ =i H(Z i |Y j ).<label>(7)</label></formula><p>Assuming Z follows a Gaussian distribution, its entropy is given by:</p><formula xml:id="formula_13">H(Z) = 1 2 log |C| + const, (<label>8</label></formula><formula xml:id="formula_14">)</formula><p>where C is the covariance matrix of Z i . Since the constant term does not affect the optimization, we optimize the determinant of the covariance matrix C. In practice, we optimize the covariance matrix. Thus, minimizing IB reduces the covariance between class features, ensuring they are independent.</p><p>The IB objective in Equation ( <ref type="formula" target="#formula_12">7</ref>) becomes:</p><formula xml:id="formula_15">IB ∝ -C Z i |Y i + ∑ j̸ =i C Z i |Y j ,<label>(9)</label></formula><p>Minimizing the IB objective is equivalent to minimizing the MFI Loss. Specifically, maximizing C Z i |Y i is equivalent to collapse prevention term and minimizing ∑ j̸ =i C Z i |Y j is our MFI reduction term in the following equation: </p><formula xml:id="formula_16">L MFI = ∑ i=1 (S ii</formula></div><figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_0"><head>VOCFigure 2 :</head><label>2</label><figDesc>Figure 2: Class Feature Similarity Analysis. Comparison of class-text feature similarities between CLIP (top row) and our method (bottom row) across four datasets: VOC, COCO, Context, and Context (unseen). The heatmaps show cosine similarity between class text features, where darker blue indicates higher similarity. As the reduced off-diagonal similarity values show, our method achieves higher class feature separation. This improved class separation suggests better discrimination capabilities.</figDesc><graphic coords="3,61.78,193.19,109.35,107.97" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_1"><head>Figure 3 :</head><label>3</label><figDesc>Figure3: Unmix-CLIP Overview. Given image and label names in the dataset, CLIP extracts image and text features, which are further processed by respective projectors to embed into a disentangled space while preserving local image information. To reduce mutual feature information (MFI) between class features, we propose MFI loss that enforces the self-similarity matrix of projected text features to approximate an identity matrix, effectively reducing inter-class feature dependencies (Section 3.2). We propagate the separation in the text features to image space by aligning the image and separated text features using a multi-label recognition setup (Section 3.3). Following<ref type="bibr" target="#b32">(Sun et al., 2022)</ref> and as detailed in Section 3.3, we aggregate the projected image and text features to obtain predicted logits. The predicted logits are trained with ground truth labels using the widely used asymmetric loss (ASL)<ref type="bibr" target="#b30">(Ridnik et al., 2021)</ref>. Our training loss combines the ASL and MFI loss; the only trainable components are the projectors. We freeze both CLIP encoders and projectors during inference for multi-label recognition and downstream tasks such as zero-shot semantic segmentation.</figDesc><graphic coords="4,58.76,165.92,66.04,50.08" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_2"><head>Figure 4 :</head><label>4</label><figDesc>Figure 4: Qualitative Comparison on ZS3. Visualization of zero-shot semantic segmentation (ZS3) results for CLIP<ref type="bibr" target="#b27">(Radford et al., 2021)</ref>, CLIP Surgery (CS)<ref type="bibr" target="#b20">(Li et al., 2023)</ref>, CLIP-VV<ref type="bibr" target="#b20">(Li et al., 2023)</ref>, and our approach across multiple categories. The heatmaps show activation regions for each queried class, where darker red indicates strongly activated regions. Our method produces more separated activations, demonstrating improved class localization.</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_3"><head>Figure 5 :</head><label>5</label><figDesc>Figure 5: Performance vs. MFI Reduction. Performance of Multi-Label Recognition (MLR, measured by mAP) and Zero-Shot Semantic Segmentation (ZS3, measured by mIoU) on COCO as a function of MFI reduction. As class feature separation increases (i.e., MFI decreases), the model performs better on both tasks.</figDesc><graphic coords="8,55.44,450.53,234.00,174.20" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_4"><head>Feature</head><figDesc>Disentanglement. We pre-train Unmix-CLIP on COCO-14, which contains 80 classes. As shown in Section 4.3, our approach improves performance even on datasets with previously unseen classes, such as VOC Context. We analyze this improvement by comparing MFI reduction across four datasets: VOC2012 (20 seen classes), COCO-2017 (80 seen classes), Context (59 partially seen classes), and a Context subset (30 unseen classes from COCO-2017). Figure2shows the self-similarity matrices of class text features from CLIP and Unmix-CLIP, demonstrating the class feature disentanglement. Table</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_6"><head>Figure 8 :</head><label>8</label><figDesc>Figure 8: mAP vs mIoU. Performance comparison of zero-shot semantic segmentation (mIoU) for VOC2012, COCO 2017 with and without the background, and VOC Context as a function of multi-label recognition (mAP) performance on the COCO-14 dataset. A general trend: higher MLR performance positively correlates with segmentation results.</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0"><graphic coords="13,55.44,174.03,486.02,388.22" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_1"><head>Table 1 :</head><label>1</label><figDesc>Comparison on multi-label recognition (MLR). We compare the performance (mAP) and training efficiency (number of parameters) of our approach with SOTA VLM-based MLR methods on VOC2007 and COCO-14 datasets. Our approach is competitive with SOTA on VOC2007, and on the challenging COCO dataset, it outperforms SOTA while requiring only one-third of the parameters. red and blue indicate the best and the second best performance.</figDesc><table><row><cell>Methods</cell><cell>VOC2007</cell><cell></cell><cell>COCO-14</cell><cell></cell></row><row><cell></cell><cell cols="4"># Params(↓) mAP(↑) # Params (↓) mAP(↑)</cell></row><row><cell>DualCoOp (Sun et al., 2022)</cell><cell>0.3M</cell><cell>94.2</cell><cell>1.3M</cell><cell>83.6</cell></row><row><cell>SCPNet (Ding et al., 2023)</cell><cell>-</cell><cell>94.3</cell><cell>3.4M</cell><cell>84.4</cell></row><row><cell>TAI-DPT (Guo et al., 2023)</cell><cell>&gt; 0.3M</cell><cell>-</cell><cell>&gt;1.3M</cell><cell>84.5</cell></row><row><cell>DualCoOp++ (Hu et al., 2023)</cell><cell>0.4M</cell><cell>94.9</cell><cell>1.5M</cell><cell>85.1</cell></row><row><cell>MLR-GCN (Rawlekar et al., 2024b)</cell><cell>0.3M</cell><cell>94.4</cell><cell>1.3M</cell><cell>-</cell></row><row><cell>PositiveCoOp (Rawlekar et al., 2024a)</cell><cell>0.2M</cell><cell>94.4</cell><cell>0.8M</cell><cell>84.7</cell></row><row><cell>Ours</cell><cell>0.4M</cell><cell>94.8</cell><cell>0.4M</cell><cell>85.3</cell></row><row><cell>4.1. Datasets and Metrics</cell><cell></cell><cell></cell><cell></cell><cell></cell></row><row><cell cols="2">1) Pre-training with MLR: We evaluate the MLR perfor-</cell><cell></cell><cell></cell><cell></cell></row><row><cell cols="2">mance using mean-Average Precision (mAP) on the follow-</cell><cell></cell><cell></cell><cell></cell></row><row><cell>ing datasets:</cell><cell></cell><cell></cell><cell></cell><cell></cell></row><row><cell cols="2">COCO-14 (Lin et al., 2014) contains 80 classes across di-</cell><cell></cell><cell></cell><cell></cell></row><row><cell cols="2">verse categories with 82,081 training and 40,504 validation</cell><cell></cell><cell></cell><cell></cell></row></table><note><p>images. Following recent works<ref type="bibr" target="#b32">(Sun et al., 2022;</ref> Rawlekar  et al., 2024b;a)</p><p>, we train on the training set and evaluate on the validation set. VOC2007<ref type="bibr" target="#b12">(Everingham et al., 2010)</ref> </p><p>is another widely used MLR dataset containing 20 classes with 9,963 images. Following<ref type="bibr" target="#b32">(Sun et al., 2022;</ref> Rawlekar et al., 2024b;a)</p><p>, we use the train-val set for training and the test set for evaluation.</p></note></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_2"><head>Table 2 :</head><label>2</label><figDesc>Comparison on zero-shot semantic segmentation (ZS3). We compare Unmix-CLIP with other SOTA baselines across three semantic segmentation datasets using the mIoU metric. The "Dataset" column details the pre-training dataset and the type of annotations used. The abbreviations are as follows: Loc Ann. + FT: local annotations and fine-tuning, SM: segmentation mask, IT: image-text, IC: image classes, Bkgd: include background class, No Bkgd: ignore background class, MR: MFI Reduction(%), red and blue indicate the best and the second best performance</figDesc><table><row><cell>Method</cell><cell>Loc Ann.</cell><cell>Dataset</cell><cell></cell><cell>VOC12</cell><cell cols="2">COCO-17</cell><cell>Context</cell></row><row><cell>Arch: RN-101</cell><cell>+ FT</cell><cell>Pre-training</cell><cell>Ann</cell><cell>Bkgd</cell><cell cols="2">Bkgd No Bkgd</cell><cell></cell></row><row><cell>SPNet(Xian et al., 2019)</cell><cell>✓</cell><cell>COCO, VOC, Context</cell><cell>SM</cell><cell>15.6</cell><cell>-</cell><cell>-</cell><cell>4</cell></row><row><cell>ZS3Net(Bucher et al., 2019)</cell><cell>✓</cell><cell>VOC, Context</cell><cell>SM</cell><cell>17.7</cell><cell>-</cell><cell>-</cell><cell>7</cell></row><row><cell>CLIP-ES(Lin et al., 2023)</cell><cell>✓</cell><cell>WIT, COCO-Stuff</cell><cell>IT,IC</cell><cell>75</cell><cell>-</cell><cell>-</cell><cell>-</cell></row><row><cell>CLIP(Radford et al., 2021)</cell><cell>✗</cell><cell>WIT-400M</cell><cell>IT</cell><cell>14.1</cell><cell>3.9</cell><cell>5.6</cell><cell>4.1</cell></row><row><cell>CLIPSurgery(Li et al., 2023)</cell><cell>✗</cell><cell>WIT-400M</cell><cell>IT</cell><cell>17.5</cell><cell>13.0</cell><cell>22.9</cell><cell>11</cell></row><row><cell>CLIP-VV(Li et al., 2023)</cell><cell>✗</cell><cell>WIT-400M</cell><cell>IT</cell><cell>32.6</cell><cell>19.9</cell><cell>35.5</cell><cell>15.5</cell></row><row><cell>Ours (MR = 24.9)</cell><cell>✗</cell><cell>WIT-400M, COCO</cell><cell>IT,IC</cell><cell>36</cell><cell>22.7</cell><cell>37.8</cell><cell>12.9</cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_3"><head>Table 3 :</head><label>3</label><figDesc>Comparison on Zero-shot Multi-Label Recognition (ZS-MLR). We segment objects from images using Unmix-CLIP and improve CLIP's zero-shot multi-label recognition capabilities by integrating predictions from segmented objects and the entire image.</figDesc><table><row><cell>Dataset</cell><cell cols="3">Backbone CLIP (mAP) Ours (mAP)</cell></row><row><cell>VOC2007</cell><cell>RN 101 RN 50</cell><cell>78.73 76.20</cell><cell>80.71 79.87</cell></row><row><cell>COCO-14</cell><cell>RN 101 RN 50</cell><cell>50.10 47.30</cell><cell>52.00 50.15</cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_4"><head>Table 4 :</head><label>4</label><figDesc>Quantitative MFI Reduction. MFI values are reported across different dataset datasets with seen (VOC, COCO), partial (Context), and unseen (Context) classes. Our method significantly reduces MFI for all datasets.</figDesc><table><row><cell cols="3">Method VOC COCO</cell><cell cols="2">Context</cell></row><row><cell></cell><cell>Seen</cell><cell>Seen</cell><cell cols="2">Partial Unseen</cell></row><row><cell>CLIP</cell><cell>0.77</cell><cell>0.69</cell><cell>0.75</cell><cell>0.75</cell></row><row><cell>Ours</cell><cell>0.50</cell><cell>0.52</cell><cell>0.53</cell><cell>0.52</cell></row><row><cell>∆ (%)</cell><cell>34.8</cell><cell>24.9</cell><cell>29.8</cell><cell>30.4</cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_5"><head>Table 5 :</head><label>5</label><figDesc>MFI Loss Ablation Study. Adding MFI Loss to our method improves multi-label recognition (MLR) performance by 0.5 mAP on the COCO-14 dataset, demonstrating its effectiveness for fine-grained tasks.</figDesc><table><row><cell cols="4">Method ASL Loss MFI Loss mAP</cell></row><row><cell>Ours</cell><cell>✓ ✓</cell><cell>✗ ✓</cell><cell>84.8 85.3</cell></row><row><cell>5. Analysis</cell><cell></cell><cell></cell><cell></cell></row></table></figure>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="1" xml:id="foot_0"><p>Department of Electrical and Computer Engineering, University of Illinois Urbana-Champaign, USA</p></note>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="2" xml:id="foot_1"><p>University ofQueensland, Brisbane, Australia</p></note>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="3" xml:id="foot_2"><p>UC Merced, USA</p></note>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="4" xml:id="foot_3"><p>Yonsei University, South Korea. Correspondence to: Samyak Rawlekar &lt;samyakr2@illinois.edu&gt;.</p></note>
+		</body>
+		<back>
+			<div type="annex">
+<div xmlns="http://www.tei-c.org/ns/1.0" />			</div>
+			<div type="references">
+
+				<listBibl>
+
+<biblStruct xml:id="b0">
+	<analytic>
+		<title level="a" type="main">Effective conditioned and composed image retrieval combining clip-based features</title>
+		<author>
+			<persName><forename type="first">A</forename><surname>Baldrati</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Bertini</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Uricchio</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Del Bimbo</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition</title>
+		<meeting>the IEEE/CVF Conference on Computer Vision and Pattern Recognition</meeting>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+			<biblScope unit="page" from="21466" to="21474" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b1">
+	<monogr>
+		<author>
+			<persName><forename type="first">J</forename><surname>Ballé</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">V</forename><surname>Laparra</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">E</forename><forename type="middle">P</forename><surname>Simoncelli</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:1611.01704</idno>
+		<title level="m">End-toend optimized image compression</title>
+		<imprint>
+			<date type="published" when="2016">2016</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b2">
+	<analytic>
+		<title level="a" type="main">Possible principles underlying the transformation of sensory messages</title>
+		<author>
+			<persName><forename type="first">H</forename><forename type="middle">B</forename><surname>Barlow</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Sensory Communication</title>
+		<imprint>
+			<biblScope unit="volume">1</biblScope>
+			<biblScope unit="issue">01</biblScope>
+			<biblScope unit="page" from="217" to="233" />
+			<date type="published" when="1961">1961</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b3">
+	<analytic>
+		<title level="a" type="main">Grounding everything: Emerging localization properties in vision-language transformers</title>
+		<author>
+			<persName><forename type="first">W</forename><surname>Bousselham</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">F</forename><surname>Petersen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">V</forename><surname>Ferrari</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Kuehne</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition</title>
+		<meeting>the IEEE/CVF Conference on Computer Vision and Pattern Recognition</meeting>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+			<biblScope unit="page" from="3828" to="3837" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b4">
+	<analytic>
+		<title level="a" type="main">Zero-shot semantic segmentation</title>
+		<author>
+			<persName><forename type="first">M</forename><surname>Bucher</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T.-H</forename><surname>Vu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Cord</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">P</forename><surname>Pérez</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Advances in Neural Information Processing Systems</title>
+		<imprint>
+			<biblScope unit="volume">32</biblScope>
+			<date type="published" when="2019">2019</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b5">
+	<analytic>
+		<title level="a" type="main">A simple framework for contrastive learning of visual representations</title>
+		<author>
+			<persName><forename type="first">T</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Kornblith</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Norouzi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">G</forename><surname>Hinton</surname></persName>
+		</author>
+		<idno>PMLR</idno>
+	</analytic>
+	<monogr>
+		<title level="m">International Conference on Machine Learning</title>
+		<imprint>
+			<date type="published" when="2020">2020</date>
+			<biblScope unit="page" from="1597" to="1607" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b6">
+	<analytic>
+		<title level="a" type="main">Exploring simple siamese representation learning</title>
+		<author>
+			<persName><forename type="first">X</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">K</forename><surname>He</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition</title>
+		<meeting>the IEEE/CVF Conference on Computer Vision and Pattern Recognition</meeting>
+		<imprint>
+			<date type="published" when="2021">2021</date>
+			<biblScope unit="page" from="15750" to="15758" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b7">
+	<analytic>
+		<title level="a" type="main">Randaugment: Practical automated data augmentation with a reduced search space</title>
+		<author>
+			<persName><forename type="first">E</forename><forename type="middle">D</forename><surname>Cubuk</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">B</forename><surname>Zoph</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Shlens</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Q</forename><forename type="middle">V</forename><surname>Le</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition Workshops</title>
+		<meeting>the IEEE/CVF Conference on Computer Vision and Pattern Recognition Workshops</meeting>
+		<imprint>
+			<date type="published" when="2020">2020</date>
+			<biblScope unit="page" from="702" to="703" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b8">
+	<monogr>
+		<title level="m" type="main">Vision transformers need registers</title>
+		<author>
+			<persName><forename type="first">T</forename><surname>Darcet</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Oquab</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Mairal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">P</forename><surname>Bojanowski</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2309.16588</idno>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b9">
+	<monogr>
+		<title level="m" type="main">Improved regularization of convolutional neural networks with cutout</title>
+		<author>
+			<persName><forename type="first">T</forename><surname>Devries</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">G</forename><forename type="middle">W</forename><surname>Taylor</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:1708.04552</idno>
+		<imprint>
+			<date type="published" when="2017">2017</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b10">
+	<analytic>
+		<title level="a" type="main">Exploring structured semantic prior for multi label recognition with incomplete labels</title>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Ding</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Q</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">P</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Bao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">W</forename><surname>Yan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Han</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition</title>
+		<meeting>the IEEE/CVF Conference on Computer Vision and Pattern Recognition</meeting>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+			<biblScope unit="page" from="3398" to="3407" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b11">
+	<analytic>
+		<title level="a" type="main">Maskclip: Masked self-distillation advances contrastive languageimage pretraining</title>
+		<author>
+			<persName><forename type="first">X</forename><surname>Dong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Bao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Zheng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Yang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Zeng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">W</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Yuan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>Chen</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition</title>
+		<meeting>the IEEE/CVF Conference on Computer Vision and Pattern Recognition</meeting>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+			<biblScope unit="page" from="10995" to="11005" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b12">
+	<analytic>
+		<title level="a" type="main">The pascal visual object classes (voc) challenge</title>
+		<author>
+			<persName><forename type="first">M</forename><surname>Everingham</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Van Gool</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><forename type="middle">K</forename><surname>Williams</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Winn</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Zisserman</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">International Journal of Computer Vision</title>
+		<imprint>
+			<biblScope unit="volume">88</biblScope>
+			<biblScope unit="page" from="303" to="338" />
+			<date type="published" when="2010">2010</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b13">
+	<analytic>
+		<title level="a" type="main">Texts as images in prompt tuning for multi-label image recognition</title>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Guo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">B</forename><surname>Dong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Ji</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Bai</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Guo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">W</forename><surname>Zuo</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition</title>
+		<meeting>the IEEE/CVF Conference on Computer Vision and Pattern Recognition</meeting>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+			<biblScope unit="page" from="2808" to="2817" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b14">
+	<analytic>
+		<title level="a" type="main">Momentum contrast for unsupervised visual representation learning</title>
+		<author>
+			<persName><forename type="first">K</forename><surname>He</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Fan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Xie</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><surname>Girshick</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition</title>
+		<meeting>the IEEE/CVF Conference on Computer Vision and Pattern Recognition</meeting>
+		<imprint>
+			<date type="published" when="2020">2020</date>
+			<biblScope unit="page" from="9729" to="9738" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b15">
+	<analytic>
+		<title level="a" type="main">Data-efficient image recognition with contrastive predictive coding</title>
+		<author>
+			<persName><forename type="first">O</forename><surname>Henaff</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">International Conference on Machine Learning</title>
+		<imprint>
+			<date type="published" when="2020">2020</date>
+			<biblScope unit="page" from="4182" to="4192" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b16">
+	<analytic>
+		<title level="a" type="main">Dualcoop++: Fast and effective adaptation to multi-label recognition with limited annotations</title>
+		<author>
+			<persName><forename type="first">P</forename><surname>Hu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">X</forename><surname>Sun</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Sclaroff</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">K</forename><surname>Saenko</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">IEEE Transactions on Pattern Analysis and Machine Intelligence</title>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b17">
+	<analytic>
+		<title level="a" type="main">Radiology reports improve visual representations learned from radiographs</title>
+		<author>
+			<persName><forename type="first">H</forename><surname>Huang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Rawlekar</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Chopra</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><forename type="middle">M</forename><surname>Deniz</surname></persName>
+		</author>
+		<idno>PMLR</idno>
+	</analytic>
+	<monogr>
+		<title level="m">Medical Imaging with Deep Learning</title>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+			<biblScope unit="page" from="1385" to="1405" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b18">
+	<analytic>
+		<title level="a" type="main">Scaling up visual and vision-language representation learning with noisy text supervision</title>
+		<author>
+			<persName><forename type="first">C</forename><surname>Jia</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Yang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Xia</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y.-T</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Parekh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Pham</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Q</forename><surname>Le</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y.-H</forename><surname>Sung</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Duerig</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">International Conference on Machine Learning</title>
+		<imprint>
+			<publisher>PMLR</publisher>
+			<date type="published" when="2021">2021</date>
+			<biblScope unit="page" from="4904" to="4916" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b19">
+	<analytic>
+		<title level="a" type="main">Segment anything</title>
+		<author>
+			<persName><forename type="first">A</forename><surname>Kirillov</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">E</forename><surname>Mintun</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">N</forename><surname>Ravi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Mao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><surname>Rolland</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Gustafson</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Xiao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Whitehead</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><forename type="middle">C</forename><surname>Berg</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">W.-Y</forename><surname>Lo</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the IEEE/CVF International Conference on Computer Vision</title>
+		<meeting>the IEEE/CVF International Conference on Computer Vision</meeting>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+			<biblScope unit="page" from="4015" to="4026" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b20">
+	<monogr>
+		<title level="m" type="main">Clip surgery for better explainability with enhancement in open-vocabulary tasks</title>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Duan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">X</forename><surname>Li</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2304.05653</idno>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b21">
+	<analytic>
+		<title level="a" type="main">Microsoft coco: Common objects in context</title>
+		<author>
+			<persName><forename type="first">T.-Y</forename><surname>Lin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Maire</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Belongie</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Hays</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">P</forename><surname>Perona</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>Ramanan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">P</forename><surname>Dollár</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><forename type="middle">L</forename><surname>Zitnick</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Computer Vision-ECCV 2014: 13th European Conference</title>
+		<meeting><address><addrLine>Zurich, Switzerland</addrLine></address></meeting>
+		<imprint>
+			<publisher>Springer</publisher>
+			<date type="published" when="2014">September 6-12, 2014. 2014</date>
+			<biblScope unit="page" from="740" to="755" />
+		</imprint>
+	</monogr>
+	<note>Proceedings, Part V 13</note>
+</biblStruct>
+
+<biblStruct xml:id="b22">
+	<analytic>
+		<title level="a" type="main">Clip is also an efficient segmenter: A text-driven approach for weakly supervised semantic segmentation</title>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Lin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">W</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">B</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">K</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">B</forename><surname>Lin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">X</forename><surname>He</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition</title>
+		<meeting>the IEEE/CVF Conference on Computer Vision and Pattern Recognition</meeting>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+			<biblScope unit="page" from="15305" to="15314" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b23">
+	<analytic>
+		<title level="a" type="main">Tagclip: A local-to-global framework to enhance open-vocabulary multi-label classification of clip without training</title>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Lin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">K</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Yang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>Lv</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">B</forename><surname>Lin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>Cai</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the AAAI Conference on Artificial Intelligence</title>
+		<meeting>the AAAI Conference on Artificial Intelligence</meeting>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+			<biblScope unit="volume">38</biblScope>
+			<biblScope unit="page" from="3513" to="3521" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b24">
+	<analytic>
+		<title level="a" type="main">Image segmentation using text and image prompts</title>
+		<author>
+			<persName><forename type="first">T</forename><surname>Lüddecke</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Ecker</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition</title>
+		<meeting>the IEEE/CVF Conference on Computer Vision and Pattern Recognition</meeting>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+			<biblScope unit="page" from="7086" to="7096" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b25">
+	<analytic>
+		<title level="a" type="main">The role of context for object detection and semantic segmentation in the wild</title>
+		<author>
+			<persName><forename type="first">R</forename><surname>Mottaghi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">X</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">X</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">N.-G</forename><surname>Cho</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S.-W</forename><surname>Lee</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Fidler</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><surname>Urtasun</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Yuille</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition</title>
+		<meeting>the IEEE/CVF Conference on Computer Vision and Pattern Recognition</meeting>
+		<imprint>
+			<date type="published" when="2014">2014</date>
+			<biblScope unit="page" from="891" to="898" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b26">
+	<monogr>
+		<author>
+			<persName><forename type="first">A</forename><forename type="middle">V D</forename><surname>Oord</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">O</forename><surname>Vinyals</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:1807.03748</idno>
+		<title level="m">Representation learning with contrastive predictive coding</title>
+		<imprint>
+			<date type="published" when="2018">2018</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b27">
+	<analytic>
+		<title level="a" type="main">Learning transferable visual models from natural language supervision</title>
+		<author>
+			<persName><forename type="first">A</forename><surname>Radford</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><forename type="middle">W</forename><surname>Kim</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><surname>Hallacy</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Ramesh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">G</forename><surname>Goh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Agarwal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">G</forename><surname>Sastry</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Askell</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">P</forename><surname>Mishkin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Clark</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">International Conference on Machine Learning</title>
+		<imprint>
+			<publisher>PMLR</publisher>
+			<date type="published" when="2021">2021</date>
+			<biblScope unit="page" from="8748" to="8763" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b28">
+	<monogr>
+		<title level="m" type="main">Rethinking prompting strategies for multi-label recognition with partial annotations</title>
+		<author>
+			<persName><forename type="first">S</forename><surname>Rawlekar</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Bhatnagar</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">N</forename><surname>Ahuja</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2409.08381</idno>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b29">
+	<analytic>
+		<title level="a" type="main">Improving multi-label recognition using class cooccurrence probabilities</title>
+		<author>
+			<persName><forename type="first">S</forename><surname>Rawlekar</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Bhatnagar</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">V</forename><forename type="middle">P</forename><surname>Srinivasulu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">N</forename><surname>Ahuja</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">International Conference on Pattern Recognition</title>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b30">
+	<analytic>
+		<title level="a" type="main">Asymmetric loss for multi-label classification</title>
+		<author>
+			<persName><forename type="first">T</forename><surname>Ridnik</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">E</forename><surname>Ben-Baruch</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">N</forename><surname>Zamir</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Noy</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">I</forename><surname>Friedman</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Protter</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Zelnik-Manor</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the IEEE/CVF International Conference on Computer Vision</title>
+		<meeting>the IEEE/CVF International Conference on Computer Vision</meeting>
+		<imprint>
+			<date type="published" when="2021">2021</date>
+			<biblScope unit="page" from="82" to="91" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b31">
+	<analytic>
+		<title level="a" type="main">A mathematical theory of communication</title>
+		<author>
+			<persName><forename type="first">C</forename><forename type="middle">E</forename><surname>Shannon</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">The Bell system technical journal</title>
+		<imprint>
+			<biblScope unit="volume">27</biblScope>
+			<biblScope unit="issue">3</biblScope>
+			<biblScope unit="page" from="379" to="423" />
+			<date type="published" when="1948">1948</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b32">
+	<analytic>
+		<title level="a" type="main">Fast adaptation to multi-label recognition with limited annotations</title>
+		<author>
+			<persName><forename type="first">X</forename><surname>Sun</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">P</forename><surname>Hu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">K</forename><surname>Saenko</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Dualcoop</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Advances in Neural Information Processing Systems</title>
+		<imprint>
+			<biblScope unit="volume">35</biblScope>
+			<biblScope unit="page" from="30569" to="30582" />
+			<date type="published" when="2022">2022</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b33">
+	<analytic>
+		<title level="a" type="main">Deep learning and the information bottleneck principle</title>
+		<author>
+			<persName><forename type="first">N</forename><surname>Tishby</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">N</forename><surname>Zaslavsky</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">2015 IEEE Information Theory Workshop (ITW)</title>
+		<imprint>
+			<publisher>IEEE</publisher>
+			<date type="published" when="2015">2015</date>
+			<biblScope unit="page" from="1" to="5" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b34">
+	<analytic>
+		<title level="a" type="main">Semantic projection network for zero-and few-label semantic segmentation</title>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Xian</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Choudhury</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>He</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">B</forename><surname>Schiele</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Akata</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition</title>
+		<meeting>the IEEE/CVF Conference on Computer Vision and Pattern Recognition</meeting>
+		<imprint>
+			<date type="published" when="2019">2019</date>
+			<biblScope unit="page" from="8256" to="8265" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b35">
+	<monogr>
+		<author>
+			<persName><forename type="first">J</forename><surname>Yu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">V</forename><surname>Vasudevan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Yeung</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Seyedhosseini</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Coca</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2205.01917</idno>
+		<title level="m">Contrastive captioners are imagetext foundation models</title>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b36">
+	<analytic>
+		<title level="a" type="main">Barlow twins: Self-supervised learning via redundancy reduction</title>
+		<author>
+			<persName><forename type="first">J</forename><surname>Zbontar</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Jing</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">I</forename><surname>Misra</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Lecun</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Deny</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">International Conference on Machine Learning</title>
+		<imprint>
+			<publisher>PMLR</publisher>
+			<date type="published" when="2021">2021</date>
+			<biblScope unit="page" from="12310" to="12320" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b37">
+	<analytic>
+		<title level="a" type="main">Extract free dense labels from clip</title>
+		<author>
+			<persName><forename type="first">C</forename><surname>Zhou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><forename type="middle">C</forename><surname>Loy</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">B</forename><surname>Dai</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">European Conference on Computer Vision</title>
+		<imprint>
+			<publisher>Springer</publisher>
+			<date type="published" when="2022">2022</date>
+			<biblScope unit="page" from="696" to="712" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b38">
+	<analytic>
+		<title level="a" type="main">Learning to prompt for vision-language models</title>
+		<author>
+			<persName><forename type="first">K</forename><surname>Zhou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Yang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><forename type="middle">C</forename><surname>Loy</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Liu</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">International Journal of Computer Vision</title>
+		<imprint>
+			<biblScope unit="volume">130</biblScope>
+			<biblScope unit="issue">9</biblScope>
+			<biblScope unit="page" from="2337" to="2348" />
+			<date type="published" when="2022">2022</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b39">
+	<analytic>
+		<title level="a" type="main">Residual attention: A simple but effective method for multi-label recognition</title>
+		<author>
+			<persName><forename type="first">K</forename><surname>Zhu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Wu</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the IEEE/CVF International Conference on Computer Vision</title>
+		<meeting>the IEEE/CVF International Conference on Computer Vision</meeting>
+		<imprint>
+			<date type="published" when="2021">2021</date>
+			<biblScope unit="page" from="184" to="193" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+				</listBibl>
+			</div>
+		</back>
+	</text>
+</TEI>

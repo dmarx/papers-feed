@@ -1,0 +1,1193 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<TEI xml:space="preserve" xmlns="http://www.tei-c.org/ns/1.0" 
+xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" 
+xsi:schemaLocation="http://www.tei-c.org/ns/1.0 https://raw.githubusercontent.com/kermitt2/grobid/master/grobid-home/schemas/xsd/Grobid.xsd"
+ xmlns:xlink="http://www.w3.org/1999/xlink">
+	<teiHeader xml:lang="en">
+		<fileDesc>
+			<titleStmt>
+				<title level="a" type="main">Efficient AlphaFold2 Training using Parallel Evoformer and Branch Parallelism</title>
+			</titleStmt>
+			<publicationStmt>
+				<publisher/>
+				<availability  status="unknown">
+					<licence/>
+				</availability>
+				<date type="published" when="2022-11-01">1 Nov 2022</date>
+			</publicationStmt>
+			<sourceDesc>
+				<biblStruct>
+					<analytic>
+						<author>
+							<persName><forename type="first">Guoxia</forename><surname>Wang</surname></persName>
+							<affiliation key="aff0">
+								<orgName type="institution">Baidu Inc</orgName>
+							</affiliation>
+						</author>
+						<author>
+							<persName><forename type="first">Zhihua</forename><surname>Wu</surname></persName>
+							<email>wuzhihua02@baidu.com</email>
+							<affiliation key="aff0">
+								<orgName type="institution">Baidu Inc</orgName>
+							</affiliation>
+						</author>
+						<author>
+							<persName><forename type="first">Xiaomin</forename><surname>Fang</surname></persName>
+							<email>fangxiaomin01@baidu.com</email>
+							<affiliation key="aff0">
+								<orgName type="institution">Baidu Inc</orgName>
+							</affiliation>
+						</author>
+						<author>
+							<persName><forename type="first">Yingfei</forename><surname>Xiang</surname></persName>
+							<email>xiangyingfei01@baidu.com</email>
+							<affiliation key="aff0">
+								<orgName type="institution">Baidu Inc</orgName>
+							</affiliation>
+						</author>
+						<author>
+							<persName><forename type="first">Yiqun</forename><surname>Liu</surname></persName>
+							<email>liuyiqun01@baidu.com</email>
+							<affiliation key="aff0">
+								<orgName type="institution">Baidu Inc</orgName>
+							</affiliation>
+						</author>
+						<author>
+							<persName><forename type="first">Dianhai</forename><surname>Yu</surname></persName>
+							<email>yudianhai@baidu.com</email>
+							<affiliation key="aff0">
+								<orgName type="institution">Baidu Inc</orgName>
+							</affiliation>
+						</author>
+						<author>
+							<persName><forename type="first">Yanjun</forename><surname>Ma</surname></persName>
+							<email>mayanjun02@baidu.com</email>
+							<affiliation key="aff0">
+								<orgName type="institution">Baidu Inc</orgName>
+							</affiliation>
+						</author>
+						<title level="a" type="main">Efficient AlphaFold2 Training using Parallel Evoformer and Branch Parallelism</title>
+					</analytic>
+					<monogr>
+						<imprint>
+							<date type="published" when="2022-11-01">1 Nov 2022</date>
+						</imprint>
+					</monogr>
+					<idno type="MD5">C70AB04256D9886626106171399E2838</idno>
+					<idno type="arXiv">arXiv:2211.00235v1[cs.DC]</idno>
+				</biblStruct>
+			</sourceDesc>
+		</fileDesc>
+		<encodingDesc>
+			<appInfo>
+				<application version="0.8.2-SNAPSHOT" ident="GROBID" when="2025-02-21T16:30+0000">
+					<desc>GROBID - A machine learning software for extracting information from scholarly documents</desc>
+					<ref target="https://github.com/kermitt2/grobid"/>
+				</application>
+			</appInfo>
+		</encodingDesc>
+		<profileDesc>
+			<abstract>
+<div xmlns="http://www.tei-c.org/ns/1.0"><p>The accuracy of AlphaFold2, a frontier end-to-end structure prediction system, is already close to that of the experimental determination techniques. Due to the complex model architecture and large memory consumption, it requires lots of computational resources and time to train AlphaFold2 from scratch. Efficient AlphaFold2 training could accelerate the development of life science. In this paper, we propose a Parallel Evoformer and Branch Parallelism to speed up the training of AlphaFold2. We conduct sufficient experiments on UniFold implemented in PyTorch and HelixFold implemented in PaddlePaddle, and Branch Parallelism can improve the training performance by 38.67% and 36.93%, respectively. We also demonstrate that the accuracy of Parallel Evoformer could be on par with AlphaFold2 on the CASP14 and CAMEO datasets. The source code is available on <ref type="url" target="https://github.com/PaddlePaddle/PaddleFleetX">https://github.com/PaddlePaddle/PaddleFleetX</ref>.</p></div>
+			</abstract>
+		</profileDesc>
+	</teiHeader>
+	<text xml:lang="en">
+		<body>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="1">Introduction</head><p>Proteins are exceptionally critical for life science, as it plays a wide range of functions in organisms. A protein comprises a chain of amino acid residues and folds into a 3D structure to play its functions. Since the 3D structure determines the protein's functions, studying the 3D structure helps to understand the mechanism of the protein's activities. However, it is time-consuming and complex to study protein structure determination through experimental technologies, e.g., Xray crystallography and nuclear magnetic resonance (NMR). Until now, the experimental methods have determined about two hundred thousand protein structures <ref type="bibr" target="#b19">(Sussman et al. 1998;</ref><ref type="bibr" target="#b3">Burley et al. 2020)</ref>, only a fairly small portion of hundreds of millions of publicly available amino acid sequences (The UniProt Consortium 2016). Therefore, efficient protein structure estimation methods are in great demand.</p><p>Many institutions <ref type="bibr" target="#b8">(Jumper et al. 2021;</ref><ref type="bibr" target="#b22">Yang et al. 2015;</ref><ref type="bibr" target="#b5">Du et al. 2021;</ref><ref type="bibr" target="#b1">Baek et al. 2021;</ref><ref type="bibr" target="#b16">Peng and Xu 2011)</ref> made their efforts to develop AI-based protein structure prediction systems due to the efficiency and the capacity of the deep neural networks. In particular, thanks to the fantastic performance in the challenging 14th Critical Assessment of Protein Structure Prediction (CASP14) <ref type="bibr">(Kryshtafovych et</ref>   2021a), AlphaFold2 <ref type="bibr" target="#b8">(Jumper et al. 2021</ref>) from DeepMind has attracted lots of public attention. The accuracy of Al-phaFold2 approaches that of the experimental determination technologies. AlphaFold2 is an end-to-end protein estimation pipeline that directly estimates the 3D coordinates of all the atoms in the proteins. A novel and well-designed architecture is proposed to promote the estimation accuracy, which jointly models multiple sequence alignments (MSAs) for evolutionary relationships and pairwise relations between the amino acids to learn the spatial relations.</p><p>Although the accuracy of AlphaFold2 is satisfactory for protein structure prediction, it also takes 11 days to train To this end, this paper proposes two optimization techniques for two of the above three problems to achieve efficient AlphaFold2 training under the premise of fully aligning hyperparameters (network model configuration and total batchsize of 128 with 1 protein sample per device). First, inspired by AlphaFold-mutimer <ref type="bibr" target="#b6">(Evans et al. 2021)</ref>, we modify the two serial computing branches in the Evoformer block into a parallel computing structure, named Parallel Evoformer, as shown in Figure <ref type="figure" target="#fig_1">1</ref>. Second, we propose a novel Branch Parallelism (BP) for Parallel Evoformer, which can break the barrier of parallel acceleration that cannot be scaled to more devices through data parallelism due to a batch size of 1 on each device.</p><p>The method proposed in this paper to efficiently train Al-phaFold2 models is general and not limited to deep learning frameworks and the version of re-implemented AlphaFold2. We perform extensive experimental verification on Uni-Fold implemented in PyTorch and HelixFold implemented in PaddlePaddle. Extensive experimental results show that Branch Parallelism can achieve similar training performance improvements on both UniFold and HelixFold, which are 38.67% and 36.93% higher, respectively. We also demonstrate that the accuracy of Parallel Evoformer could be on par with AlphaFold2 on the CASP14 and CAMEO datasets.</p><p>The main contributions of this paper can be summarized as follows:</p><p>• We improve the Evoformer in AlphaFold2 to Parallel Evoformer, which breaks the computational dependency of MSA and pair representation, and experiments show that this does not affect the accuracy. • We propose Branch Parallelism for Parallel Evoformer, which splits different computing branches across more devices in parallel to speed up training efficiency. This breaks the limitation of data parallelism in the official implementation of AlphaFold2. • We reduce the end-to-end training time of AlphaFold2 to 4.18 days on UniFold and 4.88 days on HelixFold, improving the training performance by 38.67% and 36.93%, respectively. It achieves efficient AlphaFold2 training, saving R&amp;D economic costs for biocomputing research.</p><p>2 Background</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="2.1">Overview of AlphaFold2</head><p>Comparing to the traditional protein structure prediction model which usually consists of multiple steps, AlphaFold2 processes the input protein sequence and predicts the 3D protein structure through an end-to-end procedure. In general, AlphaFold2 takes the amino acid sequence as input and then search against protein databases to obtain MSAs and similar templates. By using MSA information, we can detect correlations between the parts of similar sequences that are more likely to mutate. The templates with regards to the input sequence, on the other hand, provide structural information for the model to predict the final structure.</p><p>The overall framework of AlphaFold2 can be divided into five parts: Preprocess, Embedding, Encoder, Decoder, and Recycle, which is shown in Figure <ref type="figure" target="#fig_2">2</ref>. The Preprocess part mainly parses the input raw sequence and generates MSArelated and template-related features via genetic database search and structure database search. The features are then embedded into MSA representation, pair representation and extra MSA representation during Embedding part. These representations contain sufficient co-evolutionary information among similar sequences and geometric information of residue pairs within the sequence. The third part consists of 48-layer Evoformer blocks that iteratively refine and exchange information between the MSA representation and the pair representation. After obtaining the refined representations, the 8-block Structure Module acts as a decoder to directly generate the final structure. Moreover, AlphaFold2 adopts Recycling technique to improve the accuracy of prediction by passing the representations through Evoformer and Structure Module repeatedly.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="2.2">Evoformer</head><p>Evoformer is the core module of AlphaFold2, which includes two tracks that handle MSA representation and pair representation, as well as the communication scheme between them. As shown in Figure <ref type="figure" target="#fig_1">1</ref>(a), MSA representation is processed with Row-wise gated self-attention with pair bias, Column-wise gated self-attention and Transition, while pair representation is further processed with Triangle update, Triangle self-attention and Transition. The outer product mean is used to pass the information between the two tracks.</p><p>3 Related Work</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.1">Evoformer Improvment for AlphaFold2</head><p>Although many biological or pharmaceutical studies are based on AlphaFold2 after its open source in July 2021, few works focused on improving the main modules of Al-phaFold2. ParaFold <ref type="bibr" target="#b23">(Zhong et al. 2022</ref>) aims to accelerate the inference pipeline of AlphaFold2 by performing MSA searches with multiprocessing and distributing different procedures within Evoformer and Structure Module to CPUs or GPUs, instead of optimizing the network structure of Al-phaFold2. In order to predict larger proteins, AlphaFold-Multimer <ref type="bibr" target="#b6">(Evans et al. 2021</ref>) makes minor architectural modifications of AlphaFold2, including swapping the attention and triangular multiplicative update layers in the template stack which aligns the order in the Evoformer stack, and moving the outer product mean to the start of the Evoformer block which ensures MSA stack and pair stack can be processed in parallel. Recently, several works proposed new training schemes and improved main structures of Al-phaFold2 which enable the prediction of proteins accurately from single primary sequence alone. Meta's ESMFold <ref type="bibr" target="#b12">(Lin et al. 2022</ref>) replaces the axial attention with a standard attention in order to adapt to Evoformer block. OmegaFold from HeliXon <ref type="bibr" target="#b21">(Wu et al. 2022)</ref> optimizes Evoformer with simplified node attention and edge attention to capture complex interaction patterns among amino acids. HelixFold-Single <ref type="bibr" target="#b7">(Fang et al. 2022</ref>) designs an adaptor to align the output of pretrained protein language model to Evoformer and the column-wise gated self-attention is removed due to no necessity of exchanging the messages within the MSAs.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.2">Distributed Parallel Strategy</head><p>To improve training speed, data parallelism (DP) <ref type="bibr" target="#b11">(Li et al. 2020)</ref> is the most popular and efficient method in deep learning distributed training. Each worker has a copy of the model parameters, and parallelism operates in the data dimension. Each device accepts mini-batch samples while scaling to more devices at the expense of increasing the total batch size. DeepSpeed's ZeRO <ref type="bibr" target="#b17">(Rajbhandari et al. 2020)</ref> and FairScale's Fully Sharded Data Parallel (Baines et al. 2021) reduce redundant storage of tensors through communication costs. Model parallelism (MP) (Narayanan et al. 2021) uses more accelerators to train large-scale models, which can be divided into pipeline model parallelism (PP) and tensor model parallelism (TP). PP splits the whole model to multiple devices at layer dimension and will introduce the idle time named pipeline bubble, and TP distributes the parameter in individual layers to multiple devices at the tensor dimension. Dynamic axial parallelism (DAP) (Cheng et al. 2022) is proposed to solve the inefficient problem of training the AlphaFold2 model with a small parameter shape and a large activation memory consumption. Our proposed branch parallelism is different from other parallel computing methods. For the feature of two computing branches in Evoformer block, BP splits the two computing branches of MSA stack and pair stack into different devices for parallel computing. The difference between the parallel methods is shown in Figure 3.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4">Implementation</head></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4.1">Parallel Evoformer</head><p>Evoformer of AlphaFold2 has two computational branches with axial self-attention in the MSA stack; triangular multiplicative updates and triangular self-attention in the pair stack; and an information exchange mechanism that outer product mean and attention biasing to allow communication between the stacks, as shown in Figure <ref type="figure" target="#fig_1">1</ref> to evolve independently within a given with cross happening at the of the overall process across the Evoformer block is learnable, the position the outer product mean affect the of final prediction as the number the Evoformer blocks increases, which is further proved by our experiments shown in Figure <ref type="figure" target="#fig_5">5</ref>.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4.2">Branch Parallelism</head><p>In order for the two computing branches in Parallel Evoformer to be computed in parallel, we propose Branch Parallelism (BP), and Figures 4 shows the details. BP is a novel parallel technique, which can be applied not only to the Al-phaFold2 Evoformer model structure, but also to a model structure with multiple parallel computing branches and an approximate amount of computation. BP splits the calculation branch across multiple devices. One device calculates the MSA stack and the other calculates the pair stack. To preserve strict calculation semantics, BP inserts Broadcast to and AllReduce communication.</p><p>Specifically, in the forward stage, we do not need to split the input in each Evoformer block as the first device uses the MSA and pair representation to calculate the MSA stack and outer product mean branch then the outputs are broadcasted to the second device. The second device uses the pair representation to calculate the pair stack branch, adds the outer product mean broadcasted from the first device, and then broadcasts the output to the first device. In the backward stage, we insert Broadcast to synchronize the gradient of the outer product mean from the second device and AllReduce to accumulate the sum of the gradient of the input pair representation in each Evoformer block. At the end of backward propagation of the whole Evoformer module, we need an extra broadcast of the gradient of MSA representation. Finally, we adopt the AllReduce or Broadcast communication to synchronize the gradients of Evoformer model parameters.</p><p>BP does not split the intermediate activation for the Evoformer block dominated by small kernels, as a result, the same computational intensity is retained. At the same time, BP can compute the two branches of Evoformer completely in parallel. However, BP also has its limitations: it can be scaled up to as many devices as the number of computational branches and requires a similar amount of computation from each branch.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4.3">Hybrid Parallelism</head><p>DAP <ref type="bibr" target="#b4">(Cheng et al. 2022)</ref> splits the activation to reduce the memory footprint. In addition, DAP also has high parallel efficiency with a large shape of input, e.g. in the fine-tuning stage. Therefore, we can combine BP and DAP to train the AlphaFold2 model when CPU launch overheads are not the performance bottleneck. Since BP and DAP just split the computing branches and the activation across multiple devices respectively, the same protein is processed on each device. To improve communication efficiency, BP and DAP work within a single node where the inter-GPU communication bandwidth is high. With data parallelism, we can scale the total mini-batch to 128. We call this technique BP-DAP-DP hybrid parallelism.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="5">Experiments</head></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="5.1">Experimental Setup</head><p>Third-party implementation of AlphaFold2 Since the original AlphaFold2 only open sourced the inference code but not the training code, multiple teams have reimplemented and optimized AlphaFold2 training on different deep learning frameworks. We perform experimental verification on UniFold <ref type="bibr" target="#b11">(Li et al. 2022)</ref> implemented in Py-Torch <ref type="bibr" target="#b15">(Paszke et al. 2019)</ref> and HelixFold <ref type="bibr" target="#b20">(Wang et al. 2022)</ref> implemented in PaddlePaddle <ref type="bibr" target="#b13">(Ma et al. 2019)</ref>.</p><p>Datasets For training, we follow the settings reported in the paper of AlphaFold2 to collect the training data, including 25% of samples from RCSB PDB (<ref type="url" target="https://www.rcsb.org/">https://www. rcsb.org/</ref>) <ref type="bibr" target="#b3">(Berman et al. 2000;</ref><ref type="bibr" target="#b3">Burley et al. 2020</ref>) and 75% of self-distillation samples. For evaluation, we collect two datasets: CASP14 and CAMEO. We collect 87 domain targets from CASP14 (<ref type="url" target="https://predictioncenter.org/casp14/index.cgi">https://predictioncenter.org/ casp14/index.cgi</ref>) <ref type="bibr" target="#b8">(Jumper et al. 2021;</ref><ref type="bibr">Kinch et al. 2021;</ref><ref type="bibr">Kryshtafovych et al. 2021b</ref>). We also collect 371 protein targets from CAMEO (<ref type="url" target="https://www.cameo3d.org/">https://www.cameo3d.org/</ref>) <ref type="bibr" target="#b18">(Robin et al. 2021)</ref>, ranging from 2021-09-04 to 2022-02-19.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>Settings of Model Architectures</head><p>We use two model settings to assess the AlphaFold2 model training speed improved by this paper. The model settings are shown in Table <ref type="table" target="#tab_2">1</ref>, with initial training setting corresponding to model 1 and fine-tuning setting corresponding to model 1.1.1 reported in the supplementary information of paper AlphaFold2.</p><p>Hyperparameter setting All our experiments are run on NVIDIA A100 (40G) and the mini-batch size is 1 on each device. We strictly follow the settings in AlphaFold2. As a feature in AlphaFold2, recycling iteration is to randomize a number from 1 to 4 in each step, performs the forward pass multiple times, and then performs the backward pass. To compare performance quickly and fairly, we firstly fix the random seed, then run 105 training steps, discard the first 5 steps, and finally calculate the average speed for the last  100 steps. After our extensive experimental verification, the average speed of 100 steps can get a similar global speed. We fix random seed = 32, then the random seed for each step is calculated by random seed + cur step. Unless otherwise specified, we use AMP for training, using the Float32 parameter and BFloat16 intermediate activation.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="5.2">Effectiveness of Parallel Evoformer</head><p>To demonstrate the effectiveness of the Evoformer block modification, we test 3 different Evoformer blocks shown in Figure <ref type="figure" target="#fig_1">1</ref>. We train it from scratch on a single node with 8 A100 GPUs and the batch size is 1 per GPU. The training dataset consists of 120,000 proteins from the RCSB PDB, the learning rate is 5e-5, the global gradient clipping value is 0.1, the number of warm-up steps is 1000 and total training step is 40,000. Figure <ref type="figure" target="#fig_5">5</ref> shows the training loss, TM-score and lDDT-C α metrics on the CASP14 and CAMEO test sets. The results show that Parallel Evoformer can achieve competitive accuracy with Evoformer in AlphaFold2 and AlphaFold-Mutimer. The training speed of the 3 different Evoformer blocks is the same. We also report the computational overhead ratio for 52 (48+4) Evoformer blocks, as shown in Table <ref type="table" target="#tab_4">2</ref>. It means that the position of the outer product mean does not affect the accuracy and training speed of AlphaFold2.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="5.3">Training Performance</head><p>Performance Comparison of BP and DAP The author of FastFold (Cheng et al. 2022) has open-sourced DAP. To Training Process Evoformer s/step Evoformer Other Total (%) Initial training AlphaFold2 3.12 1.88 5.00 62.40% AlphaFold-Multimer 3.09 1.89 4.98 62.04% Parallel Evoformer 3.11 1.89 5.00 62.20% Fine-tuning AlphaFold2 12.81 3.69 16.50 77.63% AlphaFold-Multimer 12.86 3.65 16.51 77.89% Parallel Evoformer 12.83 3.67 16.50 77.75% Table 3: Performance improvements for Branch Parallelism on HelixFold and UniFold. The total batch size of the test is 128, with 1 protein sample per GPU. Fine-tuning performance is not reported because fine-tuning of Float32 data type can cause OOM on A100 40G. Table <ref type="table" target="#tab_8">5</ref> shows the performance comparison of FastFold and PPFold. As can be seen in the table, DAP=2 uses 2 GPUs compared to DAP=1, but there is a performance drop in both FastFold and PPFold as the last two dimensions of the inputs are relatively small with a low computational intensity. DAP splits the input into smaller tensors, and the computational intensity is not improved. In addition, a lot of additional communication overhead is introduced, resulting in a decrease in performance. BP splits the computing branches across different GPUs, which can be calculated in parallel while maintaining computational intensity, and only introducing a small amount of communication overhead. Thus, the performance is improved by 67.45%. Similar performance is also observed in end-to-end training, see Table <ref type="table">6</ref>.</p><p>These require an extra declaration. This paper does not compare BP with other distributed parallelisms such as TP and PP. There are two reasons for this. First, FastFold has compared DAP, TP and PP on AlphaFold2. The experimental results show that the acceleration efficiency of DAP is higher than that of TP and PP. Second, implementing TP and PP on AlphaFold2 requires a lot of work.</p><p>Implementation Training Process Hardware Step Time (s) Protein/s Training Time (days) Total (days) (%) AlphaFold2-DP Initial training 128 × TPUv3 7.513 17.037 6.793 10.961 Fine-tuning 30.729 4.165 4.167 OpenFold-DP Initial training 128 × A100(40G) 8.9 14.382 8.047 10.849 Fine-tuning 20.657 6.196 2.801 UniFold-DP Initial training 128 × A100(40G) 4.16 30.76 3.761 5.798 -Fine-tuning 15.02 8.52 2.037 UniFold-BP Initial training 256 × A100(40G) 3.02 42.38 2.730 4.181 +38.67% Fine-tuning 256 × A100(40G) 10.70 11.96 1.451 HelixFold-DP † Initial training 128 × A100(40G) 4.925 25.989 4.453 6.685 -Fine-tuning 16.458 7.777 2.232 HelixFold-BP Initial training 256 × A100(40G) 3.555 36.005 3.214 4.882 +36.93% Fine-tuning 256 × A100(40G) 12.298 10.407 1.668  Table 6: Performance on HelixFold with hybrid parallelism. The total batch size is 128, with 1 protein sample per GPU.</p><p>Performance of Hybrid Parallelism To illustrate the effectiveness of BP combined with other parallel strategies, we conduct experiments with different configurations using hybrid parallelism on HelixFold. As shown in Table <ref type="table">6</ref>, in the initial training, where the dimensions involved in the computation are relatively small, the performance of DAP=2 drops compared to that of unused, showing a negative gain. When BP=2, the performance is improved by 38.51%, indicating a positive benefit. Conversely, in the fine-tuning, where the dimensions of MSA depth and the length of amino acid sequences increase, DAP achieves a higher performance improvement than BP by splitting larger activations across multiple GPUs for parallel computing. However, the hybrid parallelism of DAP=2 and BP=2 has the approximate throughput of DAP=4 and BP=1 while DAP=4 and BP=2 have higher throughput than DAP=8 and BP=1, demonstrating that when the activation is divided to a certain size, the parallelism efficiency of BP is higher than that of DAP.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>End-to-end training Training Performance</head><p>We make a comparison among AlphaFold2 <ref type="bibr" target="#b8">(Jumper et al. 2021)</ref>, Open-Fold <ref type="bibr" target="#b0">(Ahdritz et al. 2021)</ref>, HelixFold <ref type="bibr" target="#b20">(Wang et al. 2022)</ref> and UniFold <ref type="bibr" target="#b11">(Li et al. 2022)</ref>, in terms of hardware, time cost of each step, training throughput and total training time as</p><p>shown in Table <ref type="table" target="#tab_7">4</ref>. We also report training performance using Branch Parallelism on UniFold and HelixFold. The *-DP method uses 128 accelerator cards only with data parallelism, such as TPUv3 core or A100, while the *-BP method uses 256 accelerator cards in combination with data parallelism and branch parallelism.</p><p>Compared with the original AphaFold2-DP, UniFold-DP has been optimized, and the training time has been reduced from 10.961 days to 5.798 days, with an increase of 89%. We add Branch Parallelism to UniFold to obtain UniFold-BP, which further shortens the training time to 4.181 days, and improves the training performance by 38.67%.</p><p>Similarly, HelixFold has been optimized by operator fusion and tensor fusion to improve the throughput to obtain the HelixFold-DP performance and the training time has been reduced from 10.961 days to 6.685 days. We use Branch Parallelism to further improve training throughput. The total training time was shortened from 6.685 days to 4.882 days, with an increase of 36.93%.</p><p>Sufficient experimental results show that Branch Parallelism has similar performance improvements in different deep learning frameworks and optimized AlphaFold2 implementations, which is enough to illustrate the effectiveness and generalization of Branch Parallelism.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="6">Conclusion</head><p>As the end-to-end training of AlphaFold2 takes lots of computational resources, it is a great burden for the individuals and institutions who are interested in applying AlphaFold2. This paper improves the Evoformer block of AlphaFold2 into Parallel Evoformer, which can be extended to more accelerators by the proposed Branch Parallelism to speed up training. After optimization, the training time was shortened to 4.18 days on UniFold and 4.88 days on HelixFold. We believe that the efficient AlphaFold2 training proposed in this paper can help accelerate research progress in the field of protein structure prediction.</p></div><figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_0"><figDesc>al.</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_1"><head>Figure 1 :</head><label>1</label><figDesc>Figure 1: Various Evoformer block. (a) The original Evoformer block in AlphaFold2. (b) Modified Evoformer block in AlphaFold-Multimer. (c) The Parallel Evoformer block proposed in this paper. The main difference is that the outer product mean cross-communication happens at different position within the block.</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_2"><head>Figure 2 :</head><label>2</label><figDesc>Figure 2: Overall framework of AlphaFold2. Dimension names: b: mini-batchs, s: clustered MSA sequences, s e : extra MSA sequences, r: residues, c: channels. The Extra MSA stack is composed of Evoformer, so AlphaFold2 has 52 Evoformer blocks.</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_3"><head>Figure 3 :</head><label>3</label><figDesc>Figure 3: Various distributed parallel strategies.</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_4"><head>Figure 4 :</head><label>4</label><figDesc>Figure 4: Branch parallelism implementation of Parallel Evoformer. Branch parallelism splits Parallel Evoformer's two computing branches across two devices. The two branches are calculated in parallel and the results are synchronized through the broadcast communication operator.</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_5"><head>Figure 5 :</head><label>5</label><figDesc>Figure 5: Accuracy comparison of various Evoformer block on HelixFold.</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_6"><figDesc>compare with the performance of DAP, we firstly use Pad-dlePaddle to reproduce the open-source code of FastFold, called PPFold. Then we add the implementation of BP on PPFold to compare the performance of DAP and BP.</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_2"><head>Table 1 :</head><label>1</label><figDesc>Training Process Model setting N templ N res N seq N extra seq Model settings for performance comparison.</figDesc><table><row><cell></cell><cell></cell><cell cols="3">Initial training</cell><cell>Model 1</cell><cell></cell><cell>4</cell><cell>256</cell><cell>128</cell><cell>1024</cell></row><row><cell></cell><cell></cell><cell></cell><cell cols="2">Fine-tuning</cell><cell>Model 1.1.1</cell><cell></cell><cell>4</cell><cell>384</cell><cell>512</cell><cell>5120</cell></row><row><cell></cell><cell></cell><cell></cell><cell></cell><cell cols="2">Initial Training on RCSB PDB</cell><cell></cell><cell></cell><cell>Test on CASP14 including 87 Proteins</cell></row><row><cell></cell><cell></cell><cell>6</cell><cell></cell><cell></cell><cell>Evoformer in AlphaFold-multimer Evoformer in AlphaFold2 Parallel Evoformer in Ours</cell><cell></cell><cell>0.4 0.5</cell></row><row><cell cols="2">Train Avg Loss</cell><cell>5 4</cell><cell>0</cell><cell cols="2">10000 20000 30000 40000 Step</cell><cell>lDDT-C</cell><cell>0.2 0.3 0.0 0.1</cell><cell>0</cell><cell>Step 10000 20000 30000 40000 Evoformer in AlphaFold-multimer Evoformer in AlphaFold2 Parallel Evoformer in Ours</cell></row><row><cell></cell><cell cols="2">0.5</cell><cell></cell><cell cols="2">Test on CASP14 including 87 Proteins</cell><cell></cell><cell>0.8</cell><cell>Test on CAMEO including 371 Proteins</cell></row><row><cell>TM-score</cell><cell cols="2">0.3 0.4</cell><cell></cell><cell></cell><cell></cell><cell>TM-score</cell><cell>0.6 0.4</cell></row><row><cell></cell><cell cols="2">0.1 0.2</cell><cell>0</cell><cell cols="2">10000 20000 30000 40000 Step Evoformer in AlphaFold-multimer Evoformer in AlphaFold2 Parallel</cell><cell></cell><cell>0.2</cell><cell>0</cell><cell>Step 10000 20000 30000 40000 Evoformer in AlphaFold-multimer Evoformer in AlphaFold2 Parallel Evoformer in Ours</cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_4"><head>Table 2 :</head><label>2</label><figDesc>The effect of modification of the Evoformer block on training performance on HelixFold. The ratio of Evoformer block computation time to total time cost can help to understand the performance improvement of Branch Parallelism. The experiments are performed on 8 A100 GPUs, and CUDA synchronization operations are added.</figDesc><table><row><cell cols="6">Implementation Training Process Dtype BP s/step protein/s</cell><cell>(%)</cell></row><row><cell>UniFold</cell><cell>Initial training</cell><cell>FP32 FP32</cell><cell>1 2</cell><cell>7.04 5.41</cell><cell>18.18 23.65</cell><cell>-+30.12%</cell></row><row><cell>HelixFold</cell><cell>Initial training</cell><cell>FP32 FP32</cell><cell>1 2</cell><cell>6.48 4.55</cell><cell>19.75 28.13</cell><cell>-+42.41%</cell></row><row><cell>UniFold</cell><cell>Initial training</cell><cell>BF16 BF16</cell><cell>1 2</cell><cell>4.16 3.02</cell><cell>30.76 42.38</cell><cell>-+37.74%</cell></row><row><cell></cell><cell>Fine-tuning</cell><cell>BF16 BF16</cell><cell>1 2</cell><cell>15.02 10.70</cell><cell>8.52 11.96</cell><cell>-+40.37%</cell></row><row><cell>HelixFold</cell><cell>Initial training</cell><cell>BF16 BF16</cell><cell>1 2</cell><cell>4.92 3.55</cell><cell>26.01 36.05</cell><cell>-+38.59%</cell></row><row><cell></cell><cell>Fine-tuning</cell><cell>BF16 BF16</cell><cell>1 2</cell><cell>16.45 12.29</cell><cell>7.78 10.41</cell><cell>-+33.84%</cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_7"><head>Table 4 :</head><label>4</label><figDesc>Complete end-to-end training performance. In the initial training stage, we train 10×10 6 samples (78125 steps), and in the fine-tuning stage, we continue to train 1.5 × 10 6 samples (11718 steps). *-DP and *-BP refer to using only data parallelism and a hybrid of data parallelism and branch parallelism, respectively. UniFold results are based on its GitHub commit 726480e.</figDesc><table><row><cell cols="4">Method DAP BP Fwd + Bwd Time / Layer (ms)</cell><cell></cell></row><row><cell>FastFold</cell><cell>1 2</cell><cell>1 1</cell><cell>30.98 32.25</cell><cell>--3.94%</cell></row><row><cell></cell><cell>1</cell><cell>1</cell><cell>32.47</cell><cell>-</cell></row><row><cell>PPFold</cell><cell>2</cell><cell>1</cell><cell>33.21</cell><cell>-2.22%</cell></row><row><cell></cell><cell>1</cell><cell>2</cell><cell>19.39</cell><cell>+67.45%</cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_8"><head>Table 5 :</head><label>5</label><figDesc>FastFold VS PPFold performance comparison. Compare the total time of forward computation and backward computation for each layer. 12-layer Evoformer, data type is Float16, head = 8, B = 1, N seq = 128, N res = 256, C m = 256, C z = 128, the settings are the same as Fast-Fold open source code. PPFold does not use asynchronous communication in DAP.The main reason is that the main module of the AlphaFold2 model is the Evoformer block, but there are other module computing overheads, as shown in Table2. Branch Parallelism is only calculated in parallel in the two branches of the Evoformer block.</figDesc><table><row><cell>Performance of Branch Parallelism Branch Parallelism is a general distributed parallelism strategy that can be ap-plied to AlphaFold2 models implemented by different deep learning frameworks, such as UniFold implemented in Py-Torch and HelixFold implemented in PaddlePaddle. We con-duct extensive experiments Float32 and BFloat16 data types, in the mode of initial training and fine-tuning, on Uni-Fold and HelixFold, respectively. As shown in Table 3, the performance improvement of BP on Float32 is lower than that on BFloat16, but both still have more than 30% per-formance speedups. In general, on UniFold and HelixFold, two different AlphaFold2 implementations both have sim-ilar performance speedups. With the default BFloat16 data type, UniFold improves by 37.74% and 40.37% in the initial training and fine-tuning training stages, respectively. Simi-larly, HelixFold also achieved 38.59% and 33.84% perfor-mance speedup respectively. The performance improvement is lower than about 40%. Training Process DAP BP s/step protein/s Initial training 1 1 4.925 25.989 2 1 5.170 24.758 1 2 3.555 36.005 Fine-tuning 1 1 16.458 7.777 2 1 11.110 11.521 1 2 12.298 10.408 2 2 7.887 16.229 4 1 7.883 16.237 8 1 7.315 17.498 4 2 5.700 22.456</cell><cell>(%) --4.73% +38.51% -+48.13% +33.82% +108.66% +108.77% +124.97% +188.71%</cell></row></table></figure>
+		</body>
+		<back>
+			<div type="references">
+
+				<listBibl>
+
+<biblStruct xml:id="b0">
+	<monogr>
+		<title/>
+		<author>
+			<persName><forename type="first">G</forename><surname>Ahdritz</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">N</forename><surname>Bouatta</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Kadyan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Q</forename><surname>Xia</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">W</forename><surname>Gerecke</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Alquraishi</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2021">2021</date>
+		</imprint>
+	</monogr>
+	<note>OpenFold</note>
+</biblStruct>
+
+<biblStruct xml:id="b1">
+	<analytic>
+		<title level="a" type="main">Accurate prediction of protein structures and interactions using a three-track neural network</title>
+		<author>
+			<persName><forename type="first">M</forename><surname>Baek</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">F</forename><surname>Dimaio</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">I</forename><surname>Anishchenko</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Dauparas</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Ovchinnikov</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">G</forename><forename type="middle">R</forename><surname>Lee</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Q</forename><surname>Cong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><forename type="middle">N</forename><surname>Kinch</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><forename type="middle">D</forename><surname>Schaeffer</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Science</title>
+		<imprint>
+			<biblScope unit="volume">373</biblScope>
+			<biblScope unit="issue">6557</biblScope>
+			<biblScope unit="page" from="871" to="876" />
+			<date type="published" when="2021">2021</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b2">
+	<monogr>
+		<title level="m" type="main">FairScale: A general purpose modular PyTorch library for high performance and large scale training</title>
+		<author>
+			<persName><forename type="first">M</forename><surname>Baines</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Bhosale</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">V</forename><surname>Caggiano</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">N</forename><surname>Goyal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Goyal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Ott</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">B</forename><surname>Lefaudeux</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">V</forename><surname>Liptchinsky</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Rabbat</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Sheiffer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Sridhar</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Xu</surname></persName>
+		</author>
+		<ptr target="https://github.com/facebookresearch/fairscale" />
+		<imprint>
+			<date type="published" when="2021">2021</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b3">
+	<analytic>
+		<title level="a" type="main">RCSB Protein Data Bank: powerful new tools for exploring 3D structures of biological macromolecules for basic and applied research and education in fundamental biology</title>
+		<author>
+			<persName><forename type="first">H</forename><forename type="middle">M</forename><surname>Berman</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Westbrook</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Feng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">G</forename><surname>Gilliland</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><forename type="middle">N</forename><surname>Bhat</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Weissig</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">I</forename><forename type="middle">N</forename><surname>Shindyalov</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">P</forename><forename type="middle">E</forename><surname>Bourne</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><forename type="middle">K</forename><surname>Burley</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><surname>Bhikadiya</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><surname>Bi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Bittrich</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">G</forename><forename type="middle">V</forename><surname>Crichlow</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><forename type="middle">H</forename><surname>Christie</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">K</forename><surname>Dalenberg</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Di Costanzo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><forename type="middle">M</forename><surname>Duarte</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Dutta</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Feng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Ganesan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><forename type="middle">S</forename><surname>Goodsell</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Ghosh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><forename type="middle">K</forename><surname>Green</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">V</forename><surname>Guranović</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>Guzenko</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">B</forename><forename type="middle">P</forename><surname>Hudson</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><surname>Lawson</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Liang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><surname>Lowe</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Namkoong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">E</forename><surname>Peisach</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">I</forename><surname>Persikova</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><surname>Randle</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Rose</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Rose</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Sali</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Segura</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Sekharan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><surname>Shao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y.-P</forename><surname>Tao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Voigt</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Westbrook</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><forename type="middle">Y</forename><surname>Young</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><surname>Zardecki</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Zhuravleva</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Nucleic Acids Research</title>
+		<imprint>
+			<biblScope unit="volume">28</biblScope>
+			<biblScope unit="issue">1</biblScope>
+			<biblScope unit="page" from="437" to="D451" />
+			<date type="published" when="2000">2000. 2020</date>
+		</imprint>
+	</monogr>
+	<note>The Protein Data Bank biomedicine, biotechnology, bioengineering and energy sciences Nucleic Acids Research</note>
+</biblStruct>
+
+<biblStruct xml:id="b4">
+	<monogr>
+		<author>
+			<persName><forename type="first">S</forename><surname>Cheng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Yu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">B</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">X</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Peng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>You</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2203.00854</idno>
+		<title level="m">FastFold: Reducing AlphaFold Training Time from 11 Days to 67 Hours</title>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b5">
+	<analytic>
+		<title level="a" type="main">The trRosetta server for fast and accurate protein structure prediction</title>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Du</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Su</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">W</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Ye</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Wei</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Peng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">I</forename><surname>Anishchenko</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>Baker</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Yang</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Nature protocols</title>
+		<imprint>
+			<biblScope unit="volume">16</biblScope>
+			<biblScope unit="issue">12</biblScope>
+			<biblScope unit="page" from="5634" to="5651" />
+			<date type="published" when="2021">2021</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b6">
+	<monogr>
+		<title/>
+		<author>
+			<persName><forename type="first">R</forename><surname>Evans</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>O'neill</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Pritzel</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">N</forename><surname>Antropova</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Senior</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Green</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Žídek</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><surname>Bates</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Blackwell</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Yim</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">O</forename><surname>Ronneberger</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Bodenstein</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Zielinski</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Bridgland</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Potapenko</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Cowie</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">K</forename><surname>Tunyasuvunakool</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><surname>Jain</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">E</forename><surname>Clancy</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">P</forename><surname>Kohli</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Jumper</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>Hassabis</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2021">2021</date>
+		</imprint>
+	</monogr>
+	<note>Protein complex prediction with AlphaFold-Multimer. bioRxiv</note>
+</biblStruct>
+
+<biblStruct xml:id="b7">
+	<monogr>
+		<author>
+			<persName><forename type="first">X</forename><surname>Fang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">F</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>He</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>Lin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Xiang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">X</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Song</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2207.13921</idno>
+		<title level="m">HelixFold-Single: MSA-free Protein Structure Prediction by Using Protein Language Model as an Alternative</title>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b8">
+	<analytic>
+		<title level="a" type="main">Target classification in the 14th round of the critical assessment of protein structure prediction</title>
+		<author>
+			<persName><forename type="first">J</forename><surname>Jumper</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><surname>Evans</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Pritzel</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Green</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Figurnov</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">O</forename><surname>Ronneberger</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">K</forename><surname>Tunyasuvunakool</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><surname>Bates</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Žídek</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Potapenko</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proteins: Structure, Function, and Bioinformatics</title>
+		<imprint>
+			<date type="published" when="2021">2021. 2021</date>
+			<biblScope unit="volume">596</biblScope>
+			<biblScope unit="page" from="1618" to="1632" />
+		</imprint>
+	</monogr>
+	<note>Highly accurate protein structure prediction with AlphaFold CASP</note>
+</biblStruct>
+
+<biblStruct xml:id="b9">
+	<monogr>
+		<author>
+			<persName><forename type="first">A</forename><surname>Kryshtafovych</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Schwede</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Topf</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">K</forename><surname>Fidelis</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Moult</surname></persName>
+		</author>
+		<title level="m">Critical assessment of methods of protein structure prediction (CASP)-Round XIV. Proteins: Structure, Function, and Bioinformatics</title>
+		<imprint>
+			<date type="published" when="2021">2021</date>
+			<biblScope unit="volume">89</biblScope>
+			<biblScope unit="page" from="1607" to="1617" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b10">
+	<monogr>
+		<author>
+			<persName><forename type="first">A</forename><surname>Kryshtafovych</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Schwede</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Topf</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">K</forename><surname>Fidelis</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Moult</surname></persName>
+		</author>
+		<title level="m">Critical assessment of methods of protein structure prediction (CASP)-Round XIV. Proteins: Structure, Function, and Bioinformatics</title>
+		<imprint>
+			<date type="published" when="2021">2021</date>
+			<biblScope unit="volume">89</biblScope>
+			<biblScope unit="page" from="1607" to="1617" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b11">
+	<monogr>
+		<author>
+			<persName><forename type="first">S</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Zhao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><surname>Varma</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">O</forename><surname>Salpekar</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">P</forename><surname>Noordhuis</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Paszke</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Smith</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">B</forename><surname>Vaughan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">P</forename><surname>Damania</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2006.15704</idno>
+		<title level="m">Uni-Fold: An Open-Source Platform for Developing Protein Folding Models beyond AlphaFold</title>
+		<imprint>
+			<date type="published" when="2020">2020. 2022</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+	<note>Pytorch distributed: Experiences on accelerating data parallel training bioRxiv</note>
+</biblStruct>
+
+<biblStruct xml:id="b12">
+	<monogr>
+		<title level="m" type="main">Language models of protein sequences at the scale of evolution enable accurate structure prediction</title>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Lin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Akin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><surname>Rao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">B</forename><surname>Hie</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Zhu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">W</forename><surname>Lu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><forename type="middle">D</forename><surname>Santos Costa</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Fazel-Zarandi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Sercu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Candido</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Rives</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+		</imprint>
+	</monogr>
+	<note>bioRxiv</note>
+</biblStruct>
+
+<biblStruct xml:id="b13">
+	<analytic>
+		<title level="a" type="main">PaddlePaddle: An open-source deep learning platform from industrial practice</title>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Ma</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>Yu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Wang</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Frontiers of Data and Domputing</title>
+		<imprint>
+			<biblScope unit="volume">1</biblScope>
+			<biblScope unit="issue">1</biblScope>
+			<biblScope unit="page" from="105" to="115" />
+			<date type="published" when="2019">2019</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b14">
+	<monogr>
+		<author>
+			<persName><forename type="first">D</forename><surname>Narayanan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Shoeybi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Casper</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">P</forename><surname>Legresley</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Patwary</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">V</forename><forename type="middle">A</forename><surname>Korthikanti</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>Vainbrand</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">P</forename><surname>Kashinkunti</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Bernauer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">B</forename><surname>Catanzaro</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2104.04473</idno>
+		<title level="m">Efficient large-scale language model training on gpu clusters</title>
+		<imprint>
+			<date type="published" when="2021">2021</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b15">
+	<analytic>
+		<title level="a" type="main">PyTorch: An Imperative Style, High-Performance Deep Learning Library</title>
+		<author>
+			<persName><forename type="first">A</forename><surname>Paszke</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Gross</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">F</forename><surname>Massa</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Lerer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Bradbury</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">G</forename><surname>Chanan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Killeen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Lin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">N</forename><surname>Gimelshein</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Antiga</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Desmaison</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Kopf</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">E</forename><surname>Yang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Devito</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Raison</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Tejani</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Chilamkurthy</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">B</forename><surname>Steiner</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Fang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Bai</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Chintala</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Advances in Neural Information Processing Systems</title>
+		<imprint>
+			<publisher>Curran Associates, Inc</publisher>
+			<date type="published" when="2019">2019</date>
+			<biblScope unit="volume">32</biblScope>
+			<biblScope unit="page" from="8024" to="8035" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b16">
+	<analytic>
+		<title level="a" type="main">RaptorX: exploiting structure information for protein alignment by statistical inference</title>
+		<author>
+			<persName><forename type="first">J</forename><surname>Peng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Xu</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Proteins: Structure, Function, and Bioinformatics</title>
+		<imprint>
+			<biblScope unit="volume">79</biblScope>
+			<biblScope unit="issue">S10</biblScope>
+			<biblScope unit="page" from="161" to="171" />
+			<date type="published" when="2011">2011</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b17">
+	<analytic>
+		<title level="a" type="main">Zero: Memory optimizations toward training trillion parameter models</title>
+		<author>
+			<persName><forename type="first">S</forename><surname>Rajbhandari</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Rasley</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">O</forename><surname>Ruwase</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>He</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">SC20: International Conference for High Performance Computing, Networking, Storage and Analysis</title>
+		<imprint>
+			<publisher>IEEE</publisher>
+			<date type="published" when="2020">2020</date>
+			<biblScope unit="page" from="1" to="16" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b18">
+	<analytic>
+		<title level="a" type="main">Continuous Automated Model EvaluatiOn (CAMEO)-Perspectives on the future of fully automated evaluation of structure prediction methods</title>
+		<author>
+			<persName><forename type="first">X</forename><surname>Robin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Haas</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><surname>Gumienny</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Smolinski</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">G</forename><surname>Tauriello</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Schwede</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Proteins: Structure, Function, and Bioinformatics</title>
+		<imprint>
+			<biblScope unit="volume">89</biblScope>
+			<biblScope unit="issue">12</biblScope>
+			<biblScope unit="page" from="1977" to="1986" />
+			<date type="published" when="2021">2021</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b19">
+	<analytic>
+		<title level="a" type="main">Protein Data Bank (PDB): database of three-dimensional structural information of biological macromolecules</title>
+		<author>
+			<persName><forename type="first">J</forename><forename type="middle">L</forename><surname>Sussman</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>Lin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Jiang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">N</forename><forename type="middle">O</forename><surname>Manning</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Prilusky</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">O</forename><surname>Ritter</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">E</forename><forename type="middle">E</forename><surname>Abola</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Acta Crystallographica Section D: Biological Crystallography</title>
+		<imprint>
+			<biblScope unit="volume">54</biblScope>
+			<biblScope unit="issue">6</biblScope>
+			<biblScope unit="page" from="158" to="D169" />
+			<date type="published" when="1998">1998. 2016</date>
+			<publisher>The UniProt Consortium</publisher>
+		</imprint>
+	</monogr>
+	<note>UniProt: the universal protein knowledgebase Nucleic Acids Research</note>
+</biblStruct>
+
+<biblStruct xml:id="b20">
+	<monogr>
+		<author>
+			<persName><forename type="first">G</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">X</forename><surname>Fang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Xue</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Xiang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>Yu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">F</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Ma</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2207.05477</idno>
+		<title level="m">HelixFold: An Efficient Implementation of AlphaFold2 using PaddlePaddle</title>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b21">
+	<monogr>
+		<title/>
+		<author>
+			<persName><forename type="first">R</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">F</forename><surname>Ding</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><surname>Shen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">X</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Luo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><surname>Su</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Q</forename><surname>Xie</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">B</forename><surname>Berger</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Ma</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Peng</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+		</imprint>
+	</monogr>
+	<note>resolution de novo structure prediction from primary sequence. bioRxiv</note>
+</biblStruct>
+
+<biblStruct xml:id="b22">
+	<analytic>
+		<title level="a" type="main">The I-TASSER Suite: protein structure and function prediction</title>
+		<author>
+			<persName><forename type="first">J</forename><surname>Yang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><surname>Yan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Roy</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>Xu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Poisson</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Zhang</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Nature methods</title>
+		<imprint>
+			<biblScope unit="volume">12</biblScope>
+			<biblScope unit="issue">1</biblScope>
+			<biblScope unit="page" from="7" to="8" />
+			<date type="published" when="2015">2015</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b23">
+	<analytic>
+		<title level="a" type="main">ParaFold: Paralleling AlphaFold for Large-Scale Predictions</title>
+		<author>
+			<persName><forename type="first">B</forename><surname>Zhong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">X</forename><surname>Su</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Wen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Zuo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Hong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Lin</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">International Conference on High Performance Computing in Asia-Pacific Region Workshops, HP-CAsia 2022 Workshop</title>
+		<meeting><address><addrLine>New York, NY, USA</addrLine></address></meeting>
+		<imprint>
+			<publisher>Association for Computing Machinery</publisher>
+			<date type="published" when="2022">2022</date>
+			<biblScope unit="page" from="1" to="9" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+				</listBibl>
+			</div>
+		</back>
+	</text>
+</TEI>

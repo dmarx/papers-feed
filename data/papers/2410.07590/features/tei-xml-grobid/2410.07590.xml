@@ -1,0 +1,1081 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<TEI xml:space="preserve" xmlns="http://www.tei-c.org/ns/1.0" 
+xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" 
+xsi:schemaLocation="http://www.tei-c.org/ns/1.0 https://raw.githubusercontent.com/kermitt2/grobid/master/grobid-home/schemas/xsd/Grobid.xsd"
+ xmlns:xlink="http://www.w3.org/1999/xlink">
+	<teiHeader xml:lang="en">
+		<fileDesc>
+			<titleStmt>
+				<title level="a" type="main">ACCELERATING RETRIEVAL-AUGMENTED GENERATION WITH PRECOMPUTED KV CACHES FOR CHUNKED TEXT</title>
+			</titleStmt>
+			<publicationStmt>
+				<publisher/>
+				<availability  status="unknown">
+					<licence/>
+				</availability>
+				<date type="published" when="2024-10-10">10 Oct 2024</date>
+			</publicationStmt>
+			<sourceDesc>
+				<biblStruct>
+					<analytic>
+						<author>
+							<persName><forename type="first">Songshuo</forename><surname>Lu</surname></persName>
+							<affiliation key="aff0">
+								<address>
+									<settlement>Moore Threads AI</settlement>
+								</address>
+							</affiliation>
+						</author>
+						<author>
+							<persName><forename type="first">Hua</forename><surname>Wang</surname></persName>
+							<affiliation key="aff0">
+								<address>
+									<settlement>Moore Threads AI</settlement>
+								</address>
+							</affiliation>
+						</author>
+						<author>
+							<persName><forename type="first">Yutian</forename><surname>Rong</surname></persName>
+							<affiliation key="aff0">
+								<address>
+									<settlement>Moore Threads AI</settlement>
+								</address>
+							</affiliation>
+						</author>
+						<author>
+							<persName><forename type="first">Zhi</forename><surname>Chen</surname></persName>
+							<email>zhic@mthreads.com</email>
+							<affiliation key="aff0">
+								<address>
+									<settlement>Moore Threads AI</settlement>
+								</address>
+							</affiliation>
+						</author>
+						<author>
+							<persName><forename type="first">Yaohua</forename><surname>Tang</surname></persName>
+							<email>tangyaohua28@gmail.com</email>
+							<affiliation key="aff0">
+								<address>
+									<settlement>Moore Threads AI</settlement>
+								</address>
+							</affiliation>
+						</author>
+						<title level="a" type="main">ACCELERATING RETRIEVAL-AUGMENTED GENERATION WITH PRECOMPUTED KV CACHES FOR CHUNKED TEXT</title>
+					</analytic>
+					<monogr>
+						<imprint>
+							<date type="published" when="2024-10-10">10 Oct 2024</date>
+						</imprint>
+					</monogr>
+					<idno type="MD5">4BB2069153B6BF98C39A2671CDE1A597</idno>
+					<idno type="arXiv">arXiv:2410.07590v1[cs.CV]</idno>
+				</biblStruct>
+			</sourceDesc>
+		</fileDesc>
+		<encodingDesc>
+			<appInfo>
+				<application version="0.8.2-SNAPSHOT" ident="GROBID" when="2025-02-21T16:26+0000">
+					<desc>GROBID - A machine learning software for extracting information from scholarly documents</desc>
+					<ref target="https://github.com/kermitt2/grobid"/>
+				</application>
+			</appInfo>
+		</encodingDesc>
+		<profileDesc>
+			<abstract>
+<div xmlns="http://www.tei-c.org/ns/1.0"><p>Current Retrieval-Augmented Generation (RAG) systems concatenate and process numerous retrieved document chunks for prefill which requires a large volume of computation, therefore leading to significant latency in time-to-first-token (TTFT). To reduce the computation overhead as well as TTFT, we introduce TurboRAG, a novel RAG system that redesigns the inference paradigm of the current RAG system by first pre-computing and storing the key-value (KV) caches of documents offline, and then directly retrieving the saved KV cache for prefill. Hence, online computation of KV caches is eliminated during inference. In addition, we provide a number of insights into the mask matrix and positional embedding mechanisms, plus fine-tune a pretrained language model to maintain model accuracy of TurboRAG. Our approach is applicable to most existing large language models and their applications without any requirement in modification of models and inference systems. Experimental results across a suite of RAG benchmarks demonstrate that TurboRAG reduces TTFT by up to 9.4x compared to the conventional RAG systems (on an average of 8.6x), but reserving comparable performance to the standard RAG systems.</p></div>
+			</abstract>
+		</profileDesc>
+	</teiHeader>
+	<text xml:lang="en">
+		<body>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="1">INTRODUCTION</head><p>Retrieval-augmented generation (RAG) systems have been emerged as a promising direction to alleviate some challenges faced by large models (LMs), e.g., hallucinations <ref type="bibr" target="#b19">(Mallen et al., 2023;</ref><ref type="bibr" target="#b12">Khandelwal et al., 2020;</ref><ref type="bibr" target="#b8">Izacard et al., 2022)</ref>. As shown in Figure <ref type="figure" target="#fig_1">1a</ref> that large-scale documents in these systems are typically segmented into a myriad of short document chunks that can be embedded for retrieval. Upon the arrival of a user-input query, the most relevant chunks are then retrieved and prepended to the input as an augmented query fed to an LM for prefill, followed by decoding in an autoregressive (AR) manner to generate responses. RAG system effectively utilizes factual documents as supplementary data to enhance model's ability to generate more accurate and contextually rich responses, hence widely adopted by various applications, such as question answering <ref type="bibr" target="#b22">(Siriwardhana et al., 2023;</ref><ref type="bibr" target="#b7">Han et al., 2024)</ref> and content creation <ref type="bibr" target="#b13">(Khattab et al., 2022)</ref>, etc. However, existing RAG systems come with several limitations from the system perspective.</p><p>First, repeatedly recalled document chunks require recomputation of the key-value (KV) caches, leading to redundant computation. Second, the augmented document contains substantially more tokens for prefill which contributes to considerably more computational overhead since the computation cost of KV caches is quadratic to the input sequence length. It, hence, significantly increases TTFT, making RAG systems possibly unsuitable for applications that have stringent constraints on response time. Third, as a side effect of the requirement in substantial computation resources for concatenated document prefill, the batch size on a single device might be limited.</p><p>The fundamental reason for these issues lies in prefill paradigm of the current RAG system, which involves online computation of the concatenated long documents, i.e. it collects the most relevant documents and then performs prefill for them together. A natural question arises: can we alter this paradigm to remarkably reduce the computation overhead of prefill? If we were able to precompute the KV caches of the retrieved documents offline and let the prefill stage directly uses these saved KV caches to rebuild the complete KV cache for a request online, a large body of online computation can then be completely eliminated, thus significantly reducing system's TTFT and improving inference efficiency. This essentially transforms the RAG's prefill stage into a hybrid paradigm combining both offline and online processing. Compared to the conventional RAG system, the only issue is that the transformation may result in inconsistent attention mask matrix and position IDs. Resolving these inconsistencies would yield an efficient RAG solution.</p><p>In this paper, we propose TurboRAG, which is grounded in two observations. First, as illustrated in Figure <ref type="figure" target="#fig_3">2a</ref>, cross-attention among different documents is exceedingly sparse in RAG models and the text contents between most documents are actually independent. Second, for relative position embedding techniques, such as RoPE <ref type="bibr" target="#b23">(Su et al., 2024)</ref>, only the relative distance between two positions matters. Consequently, the relative positional embeddings of a document are equivalent no matter the KV cache is computed using the individual document or the entire concatenated documents. Inspired from these observations, TurboRAG first pre-computes and stores the KV caches for each document offline. It then injects the relevant KV caches of the retrieved documents into a user request to construct the complete KV caches for prefill using the independent attention mask matrix from the Figure <ref type="figure" target="#fig_3">2c</ref> and the standard RoPE.</p><p>Compared to the conventional RAG system, experimental results across the LongBench multidocument QA benchmarks demonstrate that TurboRAG reduces TTFT by up to 9.4x and on an average of 8.6x, with comparable accuracy to the baseline. Simultaneously, during online inference, TurboRAG reduces computational resource utilization by 98.46% compared to standard RAG, which significantly increases the maximum supported batch size and enhances throughput. Additionally, regression experiments indicate that TurboRAG does not exhibit any significant degradation in other general capabilities compared to standard RAG.</p><p>In summary, we make three major contributions. First, we design a novel pipeline that decomposes the prefill stage of conventional RAG systems into offline and online phases to notably reduce the overhead of KV cache computation. Second, we propose simple yet effective techniques to handle attention mask and position IDs so that model accuracy is maintained. Third, we achieve a substantial improvement of 9.4x in TTFT over the state-of-the-art multi-document QA benchmarks without compromising accuracy.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="2">RELATED WORK</head><p>Retrieval-Augmented Generation (RAG) <ref type="bibr" target="#b14">(Lewis et al., 2020)</ref> has achieved significant progress in natural language processing by integrating large language models (LLMs) with external knowledge databases. This integration enhances the ability of generative models to produce accurate, relevant, and context-rich responses. Recent studies <ref type="bibr" target="#b1">(Borgeaud et al., 2022;</ref><ref type="bibr" target="#b9">Jiang et al., 2024;</ref><ref type="bibr" target="#b25">Trivedi et al., 2022;</ref><ref type="bibr" target="#b21">Ram et al., 2023)</ref> have demonstrated that RAG significantly outperforms pure generative models across various benchmarks, thereby gathering considerable amounts of research interests in various domains such as question answering <ref type="bibr" target="#b22">(Siriwardhana et al., 2023;</ref><ref type="bibr" target="#b7">Han et al., 2024)</ref>, code generation <ref type="bibr" target="#b18">(Lu et al., 2022)</ref>, and content creation <ref type="bibr" target="#b13">(Khattab et al., 2022)</ref>, etc. However, as a relative new research topic, the current RAG systems still suffer from some drawbacks, among which low performance and long latency are the most prominent ones. Addressing these problems would effectively make RAG more applicable to latency-sensitive LLM tasks.</p><p>As illustrated in Figure <ref type="figure" target="#fig_1">1a</ref>, the workflow of a naive RAG system comprises two steps: retrieval and generation, combining offline preparation with online processing to enhance performance. In the offline phase, RAG utilizes embedding models such as BGE <ref type="bibr">(Chen et al., 2024a)</ref>) and GTE <ref type="bibr" target="#b15">(Li et al., 2023)</ref> to convert external knowledge sources (e.g., document chunks) into high-dimensional vectors, which are then indexed into a specialized vector database. Upon receiving a user request, RAG first accesses this vector database to perform a similarity search, retrieving documents that best match the request based on semantic content. Subsequently, RAG integrates the content of these retrieved documents with the original user request to form an augmented query, which is input into the LLM to generate a more informative and contextually relevant response <ref type="bibr" target="#b24">(Topsakal &amp; Akinci, 2023)</ref>.  Researchers have proposed various methods to optimize the performance of RAG systems. Some approaches modify the attention computation mechanism to reduce computational complexity <ref type="bibr" target="#b26">(Wang et al., 2020;</ref><ref type="bibr" target="#b4">Choromanski et al., 2020;</ref><ref type="bibr" target="#b20">Monteiro et al., 2024)</ref>. Others focus on compressing and merging the KV cache, then dynamically utilizing cached KV states to optimize inference efficiency and reduce the computational load of processing long sequences <ref type="bibr" target="#b27">(Wang et al., 2024;</ref><ref type="bibr" target="#b16">Liu et al., 2024;</ref><ref type="bibr" target="#b29">Zhang et al., 2024)</ref>. A few previous work concentrated on distributed deployment of large-scale language models, mainly targeting large-scale distributed inference <ref type="bibr">(Jin et al., 2024b)</ref>.</p><p>However, existing methods primarily address general long-text generation. In RAG systems, since the retrieved document fragments are dynamic each time, directly concatenating precomputed KV caches might notably drop model accuracy. Moreover, RAG systems still face challenges unique to multi-document concatenation and redundant computation. For instance, <ref type="bibr">Jin et al. (2024a)</ref> proposed a multi-level caching system that effectively caches and reuses intermediate states of documents retrieved based on different user queries. It reportedly reduces redundant computation, but this work only focuses on the intermediate results and does not analyze model accuracy.</p><p>To address the performance issues, we propose TurboRAG, a novel RAG optimization scheme by precomputing and storing the key-value (KV) caches of document fragments offline. During online generation, the model directly utilizes these precomputed KV caches, avoiding redundant computation of the retrieved document fragments. To be best of our knowledge, this is the first work in the literature that attempts to redesign inference paradigm of the current RAG system by transforming the online computation of KV caches for the retrieved documents into offline processing. This approach significantly reduces the computational complexity of the RAG systems and could become a powerful enabler for LLM applications that have restricted latency constraints.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3">METHODOLOGY</head><p>This section presents TurboRAG, a novel approach to improve the performance of conventional RAG systems without sacrificing accuracy. We formalize the problem in Section 3.1 and discuss the differences in the attention mask matrix and position IDs between TurboRAG and existing RAG  In the standard setting shown in the first column of second row, it can be observed that the attention scores between different chunks are quite sparse; each document primarily focuses on its internal information. Furthermore, in the third row, the distribution of attention scores from the query to the context chunks indicates that even when the attention between documents is fully masked, the distribution of attention scores from the query to the documents does not exhibit significant variation, remaining concentrated in the documents that contain relevant information.</p><p>systems in Section 3.2. Section 3.3 explains how we trained the model to adapt to the new attention mask matrix and position IDs. We introduce the TurboRAG inference pipeline in Section 3.4.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.1">PROBLEM FORMALIZATION</head><p>Conventionally, given a user query q, we retrieve top k document chunks, [c 1 , . . . , c k ], and send them to a LLM that sequentially generates the textual outputs. We denote the number of tokens in x as len(x) and we assume len(c i ) = l. In existing RAG, we first compute the prefill using q and the concatenated c, denoted as a concatenated context sequence [c 1 , . . . , c k , q], to obtain the corresponding hidden states X c . At each decoding step t, the model computes attention scores based on X c . Let X = [X 1 , X 2 , . . . , X t ] be the hidden states of the tokens generated so far, where X t is the hidden state for the current token being generated. The model computes the query Q t , key K i , and value V i matrices for context at position i:</p><formula xml:id="formula_0">Q t = X t W Q , K i = X c i W K , V i = X c i W V (1)</formula><p>Here, W Q , W K , and W V are the learned weight matrices. The attention score is computed using the dot product of the query and the key, scaled by the square root of the dimension of the key vectors d:</p><formula xml:id="formula_1">Attention scores = Q t K T i √ d (2)</formula><p>For RoPE, it is necessary to multiply Q t and K i by their corresponding position embedding separately as shown in Equation <ref type="formula" target="#formula_3">3</ref>:</p><formula xml:id="formula_2">Q ′ t =           q 0 q 1 q 2 q 3 . . . q d-2 q d-1           ⊕           cos tθ 0 cos tθ 0 cos tθ 1 cos tθ 1 . . . cos tθ d/2-1 cos tθ d/2-1           +           -q 1 q 0 -q 3 q 2 . . . -q d-1 q d-2           ⊕          </formula><p>sin tθ 0 sin tθ 0 sin tθ 1 sin tθ 1 . . .</p><formula xml:id="formula_3">sin tθ d/2-1 sin tθ d/2-1          <label>(3)</label></formula><p>where θ m = 10000 -2m/d . A benefit of this equation is that the position embedding for Q and K can be computed independently. Furthermore, the final result of the multiplication of the two position embeddings is solely dependent on the positional difference between them. Since this is an autoregressive model, we need to apply a causal mask to ensure that the model does not attend to future tokens. This is typically achieved by multiplying with a lower triangular masking matrix:</p><formula xml:id="formula_4">Attention scores = Attention scores * M (4)</formula><p>where M is the masking matrix. K ′ and V are generally referred to as KV cache, which is stored for the subsequent computation of attention scores in the later regressive decoding. The attention scores are then normalized using the softmax function to obtain attention weights. Finally, the output for the current token is computed as a weighted sum of the value vectors.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.2">POSITION ID REARRANGEMENT</head><p>This section presents the technique we developed to ensure that the concatenated KV cache computed offline for each document is as effective as the KV cache computed using the whole originally retrieved documents. Figure <ref type="figure" target="#fig_3">2</ref> illustrates the differences in the attention mask matrix and position IDs between the two methods.</p><p>The online concatenation of the KV cache requires that there is no cross-attention between multiple document chunks during inference, which is a significant distinction from the lower triangular mask matrix employed by the current RAG system. We denote this new attention modality in Figure <ref type="figure" target="#fig_3">2c</ref> as Independent Attention, which effectively simulates the scenario of retrieving the KV caches and concatenating them. As illustrated in Figure <ref type="figure" target="#fig_3">2c</ref>, cross-attention between documents are all set to zero, and when decoding the answer, attention scores are computed among query, answer and all documents.</p><p>Another issue arising from TurboRAG is the computation of position embeddings. The key cache computed for each c i are denoted as K ci . If the KV caches are simply concatenated, all K ci will consist of position IDs ranging from 0 to l. Consequently, the finally combined IDs will be represented as [0, . . . , l, 0, . . . , l, 0, . . . , l], which we refer to as composite positions. This presents a problem: when decoding at step t, the positional difference between an element in K ci and t does not correspond to the actual token index difference. For instance, the third element in X c2 at this point has a positional difference of t-3, while the actual token index difference should be t-(l+3).</p><p>To resolve this issue, we rearrange the positions of all key cache to obtain [0, . . . , l, l+1, . . . , 2l, 2l+ 1, . . . , k • l]. We refer to this new positions arrangement as reordered positions. Equation 3 demonstrates that RoPE can effectively support reordered positions; it suffices to retain the K and V from Equation 1 when saving the KV cache. After concatenating KV caches, we can compute the key cache K ′ using Equation 3 with the new position IDs, which is quite straightforward. For Q, we can leverage Equation 3 to get Q ′ using its position ID, which is the same as the standard RAG system.</p><p>However, the new attention mask matrix and position embedding could lead to a significant accuracy drop in question-answering tasks. To mitigate this issue, we need to specifically train the model to make the LLM be able to handle this new setting. To compare the effects of different positional indices, we will conduct experiments on both reordered positions and composite positions in Section 4. Next, we will introduce the training details.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.3">ADAPTING LLMS FOR PRECOMPUTED CACHE CONCATENATION</head><p>In order to enable a pretrained LM to execute diverse instructions, it is a common practice to finetune the LM using a pile of specifically created instruction learning data that encompasses various instruction tasks. For example, we usually need specialized data to enhance the reading comprehension capability used in a RAG model. Instruction learning data is generally constructed in the following format to train the model.</p><p>You are an accurate and reliable AI assistant capable of answering questions by referencing external documents. Please note that the external documents may not always be related to the question. The documents are as follows: &lt;|doc start|&gt;{chunk 1}&lt;|doc end|&gt; &lt;|doc start|&gt;{chunk 2}&lt;|doc end|&gt; &lt;|doc start|&gt;{chunk 3}&lt;|doc end|&gt; ... If the information in the documents contain the correct answer, you will provide an accurate response. If the documents do not contain the answer, you will refuse to answer.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>Question: {que}</head><p>Standard supervised fine-tuning (SFT) typically employs the attention mask matrix and position embeddings shown in Figure <ref type="figure" target="#fig_3">2a</ref> to fine-tune the LM using the data with the above format. However, to make sure that the pretrained LM can accommodate to new patterns exhibited in the mask matrix and position embedding during inference, TurboRAG used the mask matrix and position embedding in Figure <ref type="figure" target="#fig_3">2b</ref> and Figure <ref type="figure" target="#fig_3">2c</ref> to fine-tune the LM. After the fine-tuning, the LM would be able to see the same context KV cache produced from training while conducting inference. Therefore, it would not experience the accuracy regression in question-answering tasks.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.4">THE TURBORAG PIPELINE</head><p>With the fine-tuned LLM, the inference pipeline of TurboRAG is enumerated as follows (Figure <ref type="figure" target="#fig_1">1b</ref>):</p><p>1. Document Encoding (offline): The documents are encoded into embedding vectors using a transformer-based model like Bert <ref type="bibr" target="#b6">(Devlin et al., 2019)</ref>. These document embeddings are stored in a vector index to facilitate efficient similarity search.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="2.">Document Prefill (offline):</head><p>Use an LLM to perform prefill offline. It computes the KV caches for each document and saves them in the database.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.">Query Encoding:</head><p>The input query is encoded into a vector using the same Bert model.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4.">Retrieval:</head><p>The encoded query is used to perform a similarity search in the vector database to retrieve the most relevant documents.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="5.">Contextual KV cache Formation (online):</head><p>Retrieve the stored KV cache corresponding to the documents and concatenate them in the way demonstrated in Figure <ref type="figure" target="#fig_3">2</ref>. The combined KV cache forms a comprehensive context for the query.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="6.">KV Cache Prefill (online):</head><p>The LLM processes prefill using the combined KV caches for the input query.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="7.">Response Generation (online):</head><p>After the prefill phase is accomplished, the LLM starts to generate the response and return to the user.</p><p>It is evident that the usage process of TurboRAG is fundamentally consistent with that of standard RAG, making it highly convenient to use. The modified implementation code and model have been made available at: <ref type="url" target="https://github.com/MooreThreads/TurboRAG">https://github.com/MooreThreads/TurboRAG</ref> This section evaluates performance and accuracy of a number of TurboRAG model variants against the conventional RAG models. Specifically, we seek to answer the questions below in this section:</p><p>• How does TurboRAG perform on document question-answering (QA)?</p><p>• What is the overall TTFT performance of TurboRAG compared against the Näive RAG system on popular benchmarks?</p><p>• How large is the regression in the general capabilities of TurboRAG models?</p><p>• How efficient is TurboRAG in scaling inference batch sizes?</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4.1">EXPERIMENT SETUP</head><p>We selected gpt-4o-2024-08-06 as the baseline due to its excellence in many benchmark suites. For brevity, we refer the conventional RAG system as "Naïve RAG". We also fine-tuned two models for TurboRAG, namely TurboRAG-composite and TurboRAG-reordered corresponding to composite positions and reordered positions, respectively. All three models are fine-tuned on a dataset composed of 50% document QA data and 50% general tasks (e.g., code, dialogue, reasoning). All data are publicly accessible. For a detailed composition of the dataset, please refer to Appendix B.</p><p>Training Setup We base our training on Qwen2-7B <ref type="bibr" target="#b28">(Yang et al., 2024)</ref>, performing SFT on the aforementioned dataset. The fine-tuning was conducted on 32 NVIDIA A100 80GB GPUs with a batch size of 256 sequences, using a learning rate of 1e-5 and the AdamW optimizer <ref type="bibr" target="#b17">(Loshchilov, 2017)</ref>. Both Naïve RAG and TurboRAG models were trained using the same data proportions to ensure comparability.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4.2">DOCUMENT QA ACCURACY</head><p>Let's first evaluate the accuracy of document QA via intensive study on RGB Benchmark <ref type="bibr">(Chen et al., 2024b)</ref>, a bilingual benchmark designed to test a model's ability to answer questions on retrieved documents. We followed the testing methodology provided by the official guidelines and let each query extract five documents during the evaluation. In addition, we also measured the accuracy with varying noise levels from 0.2 to 0.8 (e.g., Noise Ratio = 0.6 means 3 out of 5 retrieved documents are irrelevant or noisy). In order reveal the effectiveness of fine-tuning, we gauged accuracy of each TurboRAG configuration with and without fine-tuning.</p><p>As shown in Table <ref type="table" target="#tab_0">1</ref>, without fine-tuning, the accuracy drops significantly. Particularly, as the task difficulty increases (i.e., with a higher noise ratio), the accuracy can decline by nearly 20%. This is because the RAG models never learned the behavior of the new independent attention and composite positions employed in inference. Nonetheless, simply fine-tuning the model with the small dataset enables the TurboRAG models to attain impressive accuracy. Compared to the Näive RAG, even without fine-tuning, independent attention and reordered positions only decrease the average accuracy by 5.8% (96.8 vs 91.0) and 4.2% (96.8 vs 92.6). After fine-tuning, TurboRAG-reordered and TurboRAG-composite can effectively maintain the benchmark accuracy gap within 1% compared to the Naïve RAG. They also demonstrated comparable performance to GPT-4o across both Chinese and English datasets even under high-noise conditions. This highlights the effectiveness of the proposed modifications in preserving high accuracy when leveraging KV cache in document QA tasks.</p><p>To validate that our method proposed techniques are also directly applicable to long text input cases, we inspected TurboRAG's accuracy on an additional long-text RAG benchmark dataset, Long-Bench <ref type="bibr" target="#b0">(Bai et al., 2023)</ref>. As shown in Table <ref type="table" target="#tab_1">2</ref>, TurboRAG also exhibits comparable answer accuracy to that of Naïve RAG in such use scenarios.</p><p>In all experiments, the performance of TurboRAG-composite was consistently inferior to that of TurboRAG-reordered, particularly in more challenging contexts such as LongBench. This observation further validates the necessity of maintaining the accuracy of relative positional differences in positional encoding. </p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4.3">GENERAL CAPABILITY REGRESSION</head><p>To ensure that the non-standard attention masks and position IDs usded in fine-tuning does not negatively affect the models' general capabilities, we accomplished regression tests using the Open-Compass<ref type="foot" target="#foot_0">foot_0</ref> benchmark on various mainstream tasks. As summarized in Table <ref type="table" target="#tab_2">3</ref>, the modifications had minimal impact on the base capabilities of the models. TurboRAG-reordered showed strong generalization across tasks, with no significant performance degradation compared to Naïve RAG. Now we assess the impact of TurboRAG on inference speed. All models are evaluated on the LongBench dataset, with specific focus on its multi-document QA tasks. The experiments were conducted on the Huggingface transformers<ref type="foot" target="#foot_1">foot_1</ref> using FlashAttention2 <ref type="bibr" target="#b5">(Dao, 2023)</ref> and an NVIDIA A100 80GB GPU. As shown in Table <ref type="table" target="#tab_1">2</ref>, TurboRAG-reordered improves the performance of TTFT by 8.6x on average, with a peak speedup of 9.4x, compared to Naïve RAG for processing. This reduction substantiates that TurboRAG can significantly reduce TTFT, thereby enhancing user experience, and consequently enables the expansion of RAG applications to cases with stringent latency requirement. The main reason of reduction in the TTFT is that the online computation overhead of KV caches for long text is largely alleviated as TurboRAG shifts the KV cache computation for each document to offline processing.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4.5">BATCH SCALING</head><p>Compared to Naïve RAG, TurboRAG requires to transfer KV cache from CPU to GPU, which may introduce extra communication overhead that degrades performance measured by TTFT. To evaluate the magnitude of the communication cost, we carried out experiments under a fixed total recall text length of 8192 and a query length of 128. We gathered a series of TTFT numbers with batch size ranging from 1 to 8 in two settings. One transferred the KV cache from CPU to GPU using PCIE Gen4, while the other assumed that the KV cache was prefetched to the GPU memory thereby excluding the impact of communication. Additionally, we measured the computational load for both Naïve RAG and TurboRAG under different settings. The method for calculating computational load is detailed in Appendix C. From Table <ref type="table" target="#tab_3">4</ref>, it is evident that as the batch size increases, the speedup ratio (decrease in TTFT) also increases without any degradation in performance. When the batch size is small, the pressure on computational resources is insufficient, resulting in a TTFT speedup value of only 16.1x between Naïve RAG and TurboRAG. As the batch size increases, GPU becomes over-utilized for naive RAG, thus leading to substantially higher latency in TTFT compared to TurboRAG. Table <ref type="table" target="#tab_3">4</ref> also illustrates that, even in scenarios requiring the transfer of the KV cache from host to device (h2d), TurboRAG still achieves a fourfold speed improvement compared to Naïve RAG. In addition, we collected the TFLOPs consumed by both the näive RAG and TurboRAG for each batch size, as shown in the Metric column of Table <ref type="table" target="#tab_3">4</ref>. It can be seen that TurboRAG achieves astonishingly less TFLOPs, i.e. approximately 98.46% reduction compared to Naïve RAG.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="5">CONCLUSION AND DISCUSSION</head><p>This paper presented a novel approach to training and utilizing RAG that significantly reduces the time required for prefill computations when concatenating retrieved text fragments. Other techniques such as KV cache compression are orthogonal to our method, hence can be directly used to reduce latency and ease storage pressure. Our work raises a interesting question in whether cross-attention between different fragments is truly necessary. If three individuals have a piece of information, and I (Q) interact with each person (K) to obtain their information (V), and then integrate these three pieces into a complete response, would this be sufficient? The three individuals might not need to communicate with each other. Furthermore, in the inference process for long texts, many computation of cross-attention might also be redundant.</p><p>Another intriguing point is the role of positional embedding. In experiments that extend context window of LLM via position interpolation, LLMs initially are pretrained with a short context length and then continued training with a small amount of data using a longer context length. This enables the model to interpolate positions and learn two sets of position embeddings. In our work, we also exposed the model to two different sets of positional embeddings, demonstrating LLM's strong adaptability to various positional embeddings.</p><p>A DOCUMENT Q&amp;A EXAMPLE </p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>C COMPUTATIONAL LOAD CALCULATION</head><p>Here, we present the method for calculating FLOPS, while omitting the computation of lm head due to its relatively small proportion. Let the number of input tokens be denoted as n input and the context length as n context . For a LLM utilizing the Swiglu activation function, the relevant parameters include layer num, head num, kv head num, head size, hidden size, and intermediate size. For each token:</p><p>• The computational cost of the QKV transformation for each layer, denoted as C qkv , is given by: C qkv = 2 × hidden size × (head num + 2 × kv head num) × head size</p><p>• The computational cost of the attention mechanism for each layer, denoted as C attn , is expressed as:</p><formula xml:id="formula_5">C attn = 2 × head num × head size × n context</formula><p>• The computational cost of the projection following the attention mechanism for each layer, denoted as C o , is given by:</p><formula xml:id="formula_6">C o = 2 × hidden size 2</formula><p>• The computational cost of the multilayer perceptron (MLP) for each layer, denoted as C mlp , can be represented as:</p><p>C mlp = 2 × 3 × hidden size × intermediate size Therefore, the total computational cost can thus be expressed as:</p><formula xml:id="formula_7">FLOPS = n input × layer num × (C qkv + C attn + C o + C mlp )</formula></div><figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_1"><head>Figure 1 :</head><label>1</label><figDesc>Figure 1: Pipeline of Standard RAG and TurboRAG. TurboRAG pre-compute the KV cache for each chunk of text and reuse during RAG inference.</figDesc><graphic coords="3,306.00,81.86,198.00,250.34" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_3"><head>Figure 2 :</head><label>2</label><figDesc>Figure 2: The first row presents three distinct setting of attention mask matrices and position IDs. (a) Lower triangular casual attention, where the entire context is attended to. (b) Independent Attention and Composite Positions, which use the original position IDs for each chunk. (c) Independent Attention and Reordered Positions, where each document can only attend to itself and rearrange the position IDs for tokens in chunk to standard monotone increasing numbers.In the second and third rows, we present an instance of RAG to visualize and analyze the distribution of the attention matrices under different settings, as well as the distribution of attention scores from the query to the context chunks. This instance consists of four text chunks and a user query, as detailed in Appendix A. In the standard setting shown in the first column of second row, it can be observed that the attention scores between different chunks are quite sparse; each document primarily focuses on its internal information. Furthermore, in the third row, the distribution of attention scores from the query to the context chunks indicates that even when the attention between documents is fully masked, the distribution of attention scores from the query to the documents does not exhibit significant variation, remaining concentrated in the documents that contain relevant information.</figDesc><graphic coords="4,113.43,81.86,126.73,250.39" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_0"><head>Table 1 :</head><label>1</label><figDesc>Performance comparison of different models under various noise ratios in English and Chinese in RGB.</figDesc><table><row><cell></cell><cell>Chinese</cell><cell></cell><cell></cell></row><row><cell>Model</cell><cell></cell><cell></cell><cell cols="2">Noise Ratio</cell></row><row><cell></cell><cell>0.2</cell><cell>0.4</cell><cell>0.6</cell><cell>0.8 Avg.</cell></row><row><cell>gpt-4o-2024-08-06</cell><cell cols="4">98.3 98.0 96.6 87.7 95.2</cell></row><row><cell>Naïve RAG</cell><cell cols="4">99.0 98.0 96.7 87.3 95.3</cell></row><row><cell cols="5">TurboRAG-composite w/o fine-tuning 98.3 96.3 93.7 79.0 91.8</cell></row><row><cell cols="5">TurboRAG-reordered w/o fine-tuning 98.0 96.7 93.3 81.3 92.3</cell></row><row><cell>TurboRAG-composite</cell><cell cols="4">99.0 97.3 96.0 86.7 94.8</cell></row><row><cell>TurboRAG-reordered</cell><cell cols="4">98.7 97.3 96.0 90.7 95.7</cell></row><row><cell></cell><cell>English</cell><cell></cell><cell></cell></row><row><cell>Model</cell><cell></cell><cell></cell><cell cols="2">Noise Ratio</cell></row><row><cell></cell><cell>0.2</cell><cell>0.4</cell><cell>0.6</cell><cell>0.8 Avg.</cell></row><row><cell>gpt-4o-2024-08-06</cell><cell cols="4">99.0 99.3 98.3 96.3 98.2</cell></row><row><cell>Naïve RAG</cell><cell cols="4">99.7 99.3 99.3 94.3 98.2</cell></row><row><cell cols="5">TurboRAG-composite w/o fine-tuning 98.0 96.3 91.3 75.0 90.2</cell></row><row><cell cols="5">TurboRAG-reordered w/o fine-tuning 98.0 97.3 90.7 85.7 92.9</cell></row><row><cell>TurboRAG-composite</cell><cell cols="4">99.3 98.0 96.7 92.7 96.7</cell></row><row><cell>TurboRAG-reordered</cell><cell cols="4">99.0 98.3 96.0 93.7 96.8</cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_1"><head>Table 2 :</head><label>2</label><figDesc>Performance of Naive RAG and TurboRAG on LongBench multi-document QA (subcategories).</figDesc><table><row><cell>Subcategory</cell><cell>Context Token</cell><cell>Query Token</cell><cell>Naïve</cell><cell>Score Turbo composite</cell><cell>Turbo reordered</cell><cell>Naïve</cell><cell cols="2">TTFT (ms) Turbo reordered Speedup</cell></row><row><cell>musique</cell><cell>16349</cell><cell cols="2">18.8 22.12</cell><cell>23.64</cell><cell>27.37</cell><cell>1610</cell><cell>171</cell><cell>9.4x</cell></row><row><cell>2wikimqa</cell><cell>7553</cell><cell cols="2">17.0 35.02</cell><cell>34.28</cell><cell>39.51</cell><cell>709</cell><cell>101</cell><cell>7.0x</cell></row><row><cell cols="2">dureader(zh) 10642</cell><cell cols="2">6.0 34.57</cell><cell>33.37</cell><cell>33.03</cell><cell>1007</cell><cell>116</cell><cell>8.7x</cell></row><row><cell>hotpotqa</cell><cell>13453</cell><cell cols="2">20.1 40.21</cell><cell>35.78</cell><cell>45.28</cell><cell>1333</cell><cell>147</cell><cell>9.1x</cell></row><row><cell>Avg.</cell><cell>11999</cell><cell cols="2">15.5 32.99</cell><cell>31.76</cell><cell>36.29</cell><cell>1165</cell><cell>134</cell><cell>8.6x</cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_2"><head>Table 3 :</head><label>3</label><figDesc>Regression experiments of Naïve RAG and TurboRAG. Evaluated by OpenCompass.</figDesc><table><row><cell>Model</cell><cell cols="4">MMLU TriviaQA GSM-8K MATH</cell></row><row><cell>Naïve RAG</cell><cell>69.57</cell><cell>56.90</cell><cell>79.12</cell><cell>39.54</cell></row><row><cell>TurboRAG-reordered</cell><cell>70.73</cell><cell>56.47</cell><cell>79.45</cell><cell>40.58</cell></row><row><cell>sub</cell><cell>+1.16</cell><cell>-0.43</cell><cell>+0.33</cell><cell>+1.04</cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_3"><head>Table 4 :</head><label>4</label><figDesc>Generation throughput and latency on an A100 GPU.</figDesc><table><row><cell>Batch size</cell><cell>Metric</cell><cell>Naive</cell><cell cols="2">Turbo Speedup</cell><cell>Turbo w/o h2d</cell><cell>Speedup w/o h2d</cell></row><row><cell>1</cell><cell>TTFT (ms) TFLOPs</cell><cell>711 136.36</cell><cell>175 2.09</cell><cell>4.1x</cell><cell>44 2.09</cell><cell>16.1x</cell></row><row><cell>2</cell><cell>TTFT (ms) TFLOPs</cell><cell>1408 272.72</cell><cell>325 4.19</cell><cell>4.3x</cell><cell>56 4.19</cell><cell>25.1x</cell></row><row><cell>4</cell><cell>TTFT (ms) TFLOPs</cell><cell>2842 545.46</cell><cell>666 8.39</cell><cell>4.3x</cell><cell>97 8.39</cell><cell>29.3x</cell></row><row><cell>6</cell><cell>TTFT (ms) TFLOPs</cell><cell>4373 818.20</cell><cell>928 12.58</cell><cell>4.7x</cell><cell>134 12.58</cell><cell>32.6x</cell></row><row><cell>8</cell><cell>TTFT (ms) TFLOPs</cell><cell cols="2">5812 1090.93 16.78 1429</cell><cell>4.1x</cell><cell>177 16.78</cell><cell>32.8x</cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_4"><head>Table 5 :</head><label>5</label><figDesc>Duke capped off a remarkable season by beating UCF 30-13 on Wednesday in the Military Bowl -the program's first bowl win since 2018. With the win, Duke got to nine wins for the first time since 2014. Mike Elko has done one of the best coaching jobs in the country in his first season with the Blue Devils. The program was barely competitive in David Cutcliffe's final seasons on the job, going a combined 5-18 (1-17 ACC) in his final two years. With Wednesday's win, Duke finished the season 9-4 overall with a 5-3 mark in ACC play. It was just the third season in school history that the Blue Devils had finished with a winning conference record and won a bowl game. Washington: After going 4-8 in 2021, Washington capped off a tremendous turnaround by beating Texas 27-20 in the Alamo Bowl. With the win, Washington finished the season with 11 wins -the most it has had in a season since 2016. That's the year the Huskies reached the College Football Playoff... Document 2 Personal Preference Personal Preference is a 1987 board game created by Donal Carlston that involves guessing the order in which a player prefers foods, activities, people, and other items compared to one another. The game was published by Broderbund in the United States, Playtoy Industries in Canada, and Parker Brothers International in Britain. An updated version by the original creator was launched on Kickstarter on May 1, 2023. The new version contains updated cultural references and new categories. Original 1987 Version The game contains cards in four categories: Food &amp; Drink, Activities, People, and Potpourri (miscellaneous). Each card has a photo or drawing on each side and text indicating what that side represents (e.g., chocolate éclairs, climbing a mountain, Harrison Ford, spy novels). Each round, one player draws four cards from one category, or one from each category, depending on the player's position on the board. Each card is placed in a colored quadrant of the board... Document 3 However, the concert tour took place in honor of the 40th anniversary. The two might have aged since they first performed together but neither Carole King nor James Taylor have lost a beat in all these years!The concert film includes the following songs:(You Make Me Feel Like) A Natural WomanSomething in the Way She MovesSo Far AwayCarolina in My MindCountry RoadSmackwater JackWhere You Lead (lyrics changed up as the city they're playing in replaces New York)Your Smiling FaceBeautifulShower The PeopleWay Over YonderSweet Baby James (this kicks off the second half of the film)Up on the RoofIt's Too LateFire and RainI Feel the Earth MoveYou've Got a Friend-How Sweet It Is (To Be Loved by You)You Can Close Your EyesMexico (end credits)DIRECTOR: Frank MarshallFEATURING: Carole King, James Taylor, Danny Kortchmar, Peter Asher, Russ Kunkel, Leland SklarADDITIONAL MUSICIANS: Andrea Zonn, Arnold McCuller, Kate Markowitz, Robbie Kon-dorCarole King &amp; James Taylor: Just Call Out My Name premiered January 2, 2022, at 9:00pm ET/PT on CNN. The film will be available on demand via cable/satellite systems, CNNgo platforms, and CNN mobile apps, beginning Monday, January 3, through Sunday, January 16. Document 4 I was also raised to see the correlation between life and the game of football and how the process of preparation leads to success in both." Jason earned a bachelors in history, government and philosophy at Adams State in 2005, and a masters in criminal justice administration from the University of Phoenix in 2007. He added a second master's in educational methods from the University of Tulsa in 2012. He was a defensive coordinator at the University of Montana, a co-defensive coordinator at Adams State, a defensive coordinator at Valdosta State and the Colorado School of Mines, a defensive advisor at Temple University, served as a defensive assistant at Oklahoma State for two years -after a two-season stay with fellow FBS program Tulsa as outside linebackers coach... Sampling Ratios of Different Data Types during Model Fine-tuning</figDesc><table><row><cell>Query</cell><cell>When is the premiere of 'Carole King &amp; James Taylor: Just Call Out My</cell></row><row><cell></cell><cell>Name'?</cell></row><row><cell>Document 1</cell><cell></cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_5"><head>Table 6 :</head><label>6</label><figDesc>Specific Data and Quantities of Document Q&amp;A</figDesc><table><row><cell cols="3">Data Name Language Quantity</cell></row><row><cell>glave-rag-v1</cell><cell>English</cell><cell>51,153</cell></row><row><cell>CovidQA</cell><cell>English</cell><cell>1,519</cell></row><row><cell>E-Manual</cell><cell>English</cell><cell>1,186</cell></row><row><cell>PubMedQA</cell><cell>English</cell><cell>22,050</cell></row><row><cell>MS Marco</cell><cell>English</cell><cell>2,267</cell></row><row><cell>FinQA</cell><cell>English</cell><cell>14,268</cell></row><row><cell>ExpertQA</cell><cell>English</cell><cell>1,824</cell></row><row><cell>HotpotQA</cell><cell>English</cell><cell>17,796</cell></row><row><cell>TechQA</cell><cell>English</cell><cell>1,496</cell></row><row><cell>HAGRID</cell><cell>English</cell><cell>3,214</cell></row><row><cell>DelusionQA</cell><cell>English</cell><cell>1,642</cell></row><row><cell>BioASQ</cell><cell>English</cell><cell>4,619</cell></row><row><cell>CUAD</cell><cell>English</cell><cell>2,040</cell></row><row><cell>TAT-QA</cell><cell>English</cell><cell>29,766</cell></row><row><cell>BaiduSTI</cell><cell>Chinese</cell><cell>4,032</cell></row><row><cell>DuReader</cell><cell>Chinese</cell><cell>10,000</cell></row><row><cell>BaiduBaike</cell><cell>Chinese</cell><cell>13,615</cell></row><row><cell>Wiki</cell><cell>Chinese</cell><cell>9,265</cell></row></table></figure>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="1" xml:id="foot_0"><p>https://github.com/open-compass/opencompass</p></note>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="2" xml:id="foot_1"><p>https://huggingface.co/</p></note>
+		</body>
+		<back>
+			<div type="references">
+
+				<listBibl>
+
+<biblStruct xml:id="b0">
+	<monogr>
+		<title level="m" type="main">Longbench: A bilingual, multitask benchmark for long context understanding</title>
+		<author>
+			<persName><forename type="first">Yushi</forename><surname>Bai</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xin</forename><surname>Lv</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jiajie</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hongchang</forename><surname>Lyu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jiankai</forename><surname>Tang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhidian</forename><surname>Huang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhengxiao</forename><surname>Du</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xiao</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Aohan</forename><surname>Zeng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Lei</forename><surname>Hou</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2308.14508</idno>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b1">
+	<analytic>
+		<title level="a" type="main">Improving language models by retrieving from trillions of tokens</title>
+		<author>
+			<persName><forename type="first">Sebastian</forename><surname>Borgeaud</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Arthur</forename><surname>Mensch</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jordan</forename><surname>Hoffmann</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Trevor</forename><surname>Cai</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Eliza</forename><surname>Rutherford</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Katie</forename><surname>Millican</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">George</forename><forename type="middle">Bm</forename><surname>Van Den Driessche</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jean-Baptiste</forename><surname>Lespiau</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Bogdan</forename><surname>Damoc</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Aidan</forename><surname>Clark</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">International conference on machine learning</title>
+		<imprint>
+			<publisher>PMLR</publisher>
+			<date type="published" when="2022">2022</date>
+			<biblScope unit="page" from="2206" to="2240" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b2">
+	<monogr>
+		<title level="m" type="main">Bge m3-embedding: Multi-lingual, multi-functionality, multi-granularity text embeddings through self-knowledge distillation</title>
+		<author>
+			<persName><forename type="first">Jianlv</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shitao</forename><surname>Xiao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Peitian</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kun</forename><surname>Luo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Defu</forename><surname>Lian</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zheng</forename><surname>Liu</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2402.03216</idno>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b3">
+	<analytic>
+		<title level="a" type="main">Benchmarking large language models in retrieval-augmented generation</title>
+		<author>
+			<persName><forename type="first">Jiawei</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hongyu</forename><surname>Lin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xianpei</forename><surname>Han</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Le</forename><surname>Sun</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the AAAI Conference on Artificial Intelligence</title>
+		<meeting>the AAAI Conference on Artificial Intelligence</meeting>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+			<biblScope unit="volume">38</biblScope>
+			<biblScope unit="page" from="17754" to="17762" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b4">
+	<monogr>
+		<title level="m" type="main">Rethinking attention with performers</title>
+		<author>
+			<persName><forename type="first">Krzysztof</forename><surname>Choromanski</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Valerii</forename><surname>Likhosherstov</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">David</forename><surname>Dohan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xingyou</forename><surname>Song</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Andreea</forename><surname>Gane</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tamas</forename><surname>Sarlos</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Peter</forename><surname>Hawkins</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jared</forename><surname>Davis</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Afroz</forename><surname>Mohiuddin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Lukasz</forename><surname>Kaiser</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2009.14794</idno>
+		<imprint>
+			<date type="published" when="2020">2020</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b5">
+	<monogr>
+		<title level="m" type="main">Flashattention-2: Faster attention with better parallelism and work partitioning</title>
+		<author>
+			<persName><forename type="first">Tri</forename><surname>Dao</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2307.08691</idno>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b6">
+	<monogr>
+		<title level="m" type="main">Pre-training of deep bidirectional transformers for language understanding</title>
+		<author>
+			<persName><forename type="first">Jacob</forename><surname>Devlin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ming-Wei</forename><surname>Chang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kenton</forename><surname>Lee</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kristina</forename><surname>Toutanova</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Bert</surname></persName>
+		</author>
+		<ptr target="https://arxiv.org/abs/1810.04805" />
+		<imprint>
+			<date type="published" when="2019">2019</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b7">
+	<monogr>
+		<title level="m" type="main">Rag-qa arena: Evaluating domain robustness for long-form retrieval augmented question answering</title>
+		<author>
+			<persName><forename type="first">Rujun</forename><surname>Han</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yuhao</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Peng</forename><surname>Qi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yumo</forename><surname>Xu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jenyuan</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Lan</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">William</forename><forename type="middle">Yang</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Bonan</forename><surname>Min</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Vittorio</forename><surname>Castelli</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2407.13998</idno>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b8">
+	<monogr>
+		<title level="m" type="main">Atlas: Few-shot learning with retrieval augmented language models</title>
+		<author>
+			<persName><forename type="first">Gautier</forename><surname>Izacard</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Patrick</forename><surname>Lewis</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Maria</forename><surname>Lomeli</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Lucas</forename><surname>Hosseini</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Fabio</forename><surname>Petroni</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Timo</forename><surname>Schick</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jane</forename><surname>Dwivedi-Yu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Armand</forename><surname>Joulin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sebastian</forename><surname>Riedel</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Edouard</forename><surname>Grave</surname></persName>
+		</author>
+		<ptr target="https://arxiv.org/abs/2208.03299" />
+		<imprint>
+			<date type="published" when="2022">2022</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b9">
+	<monogr>
+		<author>
+			<persName><forename type="first">Wenqi</forename><surname>Jiang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shuai</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Boran</forename><surname>Han</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jie</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Bernie</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tim</forename><surname>Kraska</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Piperag</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2403.05676</idno>
+		<title level="m">Fast retrieval-augmented generation via algorithm-system co-design</title>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b10">
+	<monogr>
+		<title level="m" type="main">Ragcache: Efficient knowledge caching for retrieval-augmented generation</title>
+		<author>
+			<persName><forename type="first">Jin</forename><surname>Chao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zili</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xuanlin</forename><surname>Jiang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Fangyue</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xin</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xuanzhe</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xin</forename><surname>Jin</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2404.12457</idno>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b11">
+	<monogr>
+		<author>
+			<persName><forename type="first">Yibo</forename><surname>Jin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tao</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Huimin</forename><surname>Lin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mingyang</forename><surname>Song</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Peiyang</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yipeng</forename><surname>Ma</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yicheng</forename><surname>Shan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhengfan</forename><surname>Yuan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Cailong</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yajing</forename><surname>Sun</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2408.08147</idno>
+		<title level="m">P/d-serve: Serving disaggregated large language model at scale</title>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b12">
+	<monogr>
+		<title level="m" type="main">Generalization through memorization: Nearest neighbor language models</title>
+		<author>
+			<persName><forename type="first">Urvashi</forename><surname>Khandelwal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Omer</forename><surname>Levy</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dan</forename><surname>Jurafsky</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Luke</forename><surname>Zettlemoyer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mike</forename><surname>Lewis</surname></persName>
+		</author>
+		<ptr target="https://arxiv.org/abs/1911.00172" />
+		<imprint>
+			<date type="published" when="2020">2020</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b13">
+	<monogr>
+		<title level="m" type="main">Demonstrate-search-predict: Composing retrieval and language models for knowledge-intensive nlp</title>
+		<author>
+			<persName><forename type="first">Omar</forename><surname>Khattab</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Keshav</forename><surname>Santhanam</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Lisa</forename><surname>Xiang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">David</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Percy</forename><surname>Hall</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Christopher</forename><surname>Liang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Matei</forename><surname>Potts</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Zaharia</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2212.14024</idno>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b14">
+	<analytic>
+		<title level="a" type="main">Retrieval-augmented generation for knowledge-intensive nlp tasks</title>
+		<author>
+			<persName><forename type="first">Patrick</forename><surname>Lewis</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ethan</forename><surname>Perez</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Aleksandra</forename><surname>Piktus</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Fabio</forename><surname>Petroni</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Vladimir</forename><surname>Karpukhin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Naman</forename><surname>Goyal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Heinrich</forename><surname>Küttler</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mike</forename><surname>Lewis</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wen-Tau</forename><surname>Yih</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tim</forename><surname>Rocktäschel</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Advances in Neural Information Processing Systems</title>
+		<imprint>
+			<biblScope unit="volume">33</biblScope>
+			<biblScope unit="page" from="9459" to="9474" />
+			<date type="published" when="2020">2020</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b15">
+	<monogr>
+		<author>
+			<persName><forename type="first">Zehan</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xin</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yanzhao</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dingkun</forename><surname>Long</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Pengjun</forename><surname>Xie</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Meishan</forename><surname>Zhang</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2308.03281</idno>
+		<title level="m">Towards general text embeddings with multi-stage contrastive learning</title>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b16">
+	<analytic>
+		<title level="a" type="main">Cachegen: Kv cache compression and streaming for fast large language model serving</title>
+		<author>
+			<persName><forename type="first">Yuhan</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hanchen</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yihua</forename><surname>Cheng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Siddhant</forename><surname>Ray</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yuyang</forename><surname>Huang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Qizheng</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kuntai</forename><surname>Du</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jiayi</forename><surname>Yao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shan</forename><surname>Lu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ganesh</forename><surname>Ananthanarayanan</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the ACM SIGCOMM 2024 Conference</title>
+		<meeting>the ACM SIGCOMM 2024 Conference</meeting>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+			<biblScope unit="page" from="38" to="56" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b17">
+	<monogr>
+		<author>
+			<persName><surname>Loshchilov</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:1711.05101</idno>
+		<title level="m">Decoupled weight decay regularization</title>
+		<imprint>
+			<date type="published" when="2017">2017</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b18">
+	<monogr>
+		<author>
+			<persName><forename type="first">Shuai</forename><surname>Lu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Nan</forename><surname>Duan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hojae</forename><surname>Han</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Daya</forename><surname>Guo</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2203.07722</idno>
+		<title level="m">Seung-won Hwang, and Alexey Svyatkovskiy. Reacc: A retrieval-augmented code completion framework</title>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b19">
+	<monogr>
+		<title level="m" type="main">When not to trust language models: Investigating effectiveness of parametric and non-parametric memories</title>
+		<author>
+			<persName><forename type="first">Alex</forename><surname>Mallen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Akari</forename><surname>Asai</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Victor</forename><surname>Zhong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Rajarshi</forename><surname>Das</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Daniel</forename><surname>Khashabi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hannaneh</forename><surname>Hajishirzi</surname></persName>
+		</author>
+		<ptr target="https://arxiv.org/abs/2212.10511" />
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b20">
+	<monogr>
+		<title level="m" type="main">Xc-cache: Cross-attending to cached context for efficient llm inference</title>
+		<author>
+			<persName><forename type="first">João</forename><surname>Monteiro</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Étienne</forename><surname>Marcotte</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Pierre-André</forename><surname>Noël</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Valentina</forename><surname>Zantedeschi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">David</forename><surname>Vázquez</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Nicolas</forename><surname>Chapados</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Christopher</forename><surname>Pal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Perouz</forename><surname>Taslakian</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2404.15420</idno>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b21">
+	<analytic>
+		<title level="a" type="main">In-context retrieval-augmented language models</title>
+		<author>
+			<persName><forename type="first">Ori</forename><surname>Ram</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yoav</forename><surname>Levine</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Itay</forename><surname>Dalmedigos</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dor</forename><surname>Muhlgay</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Amnon</forename><surname>Shashua</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kevin</forename><surname>Leyton-Brown</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yoav</forename><surname>Shoham</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Transactions of the Association for Computational Linguistics</title>
+		<imprint>
+			<biblScope unit="volume">11</biblScope>
+			<biblScope unit="page" from="1316" to="1331" />
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b22">
+	<analytic>
+		<title level="a" type="main">Improving the domain adaptation of retrieval augmented generation (rag) models for open domain question answering</title>
+		<author>
+			<persName><forename type="first">Shamane</forename><surname>Siriwardhana</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Rivindu</forename><surname>Weerasekera</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Elliott</forename><surname>Wen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tharindu</forename><surname>Kaluarachchi</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Transactions of the Association for Computational Linguistics</title>
+		<imprint>
+			<biblScope unit="volume">11</biblScope>
+			<biblScope unit="page" from="1" to="17" />
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+	<note>Rajib Rana, and Suranga Nanayakkara</note>
+</biblStruct>
+
+<biblStruct xml:id="b23">
+	<analytic>
+		<title level="a" type="main">Roformer: Enhanced transformer with rotary position embedding</title>
+		<author>
+			<persName><forename type="first">Jianlin</forename><surname>Su</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Murtadha</forename><surname>Ahmed</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yu</forename><surname>Lu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shengfeng</forename><surname>Pan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wen</forename><surname>Bo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yunfeng</forename><surname>Liu</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Neurocomputing</title>
+		<imprint>
+			<biblScope unit="volume">568</biblScope>
+			<biblScope unit="page">127063</biblScope>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b24">
+	<analytic>
+		<title level="a" type="main">Creating large language model applications utilizing langchain: A primer on developing llm apps fast</title>
+		<author>
+			<persName><forename type="first">Oguzhan</forename><surname>Topsakal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Akinci</forename><surname>Tahir Cetin</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">International Conference on Applied Engineering and Natural Sciences</title>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+			<biblScope unit="volume">1</biblScope>
+			<biblScope unit="page" from="1050" to="1056" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b25">
+	<monogr>
+		<title level="m" type="main">Interleaving retrieval with chain-of-thought reasoning for knowledge-intensive multi-step questions</title>
+		<author>
+			<persName><forename type="first">Harsh</forename><surname>Trivedi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Niranjan</forename><surname>Balasubramanian</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tushar</forename><surname>Khot</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ashish</forename><surname>Sabharwal</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2212.10509</idno>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b26">
+	<monogr>
+		<title level="m" type="main">Linformer: Self-attention with linear complexity</title>
+		<author>
+			<persName><forename type="first">Sinong</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Belinda</forename><forename type="middle">Z</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Madian</forename><surname>Khabsa</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Han</forename><surname>Fang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hao</forename><surname>Ma</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2006.04768</idno>
+		<imprint>
+			<date type="published" when="2020">2020</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b27">
+	<monogr>
+		<title level="m" type="main">Model tells you where to merge: Adaptive kv cache merging for llms on long-context tasks</title>
+		<author>
+			<persName><forename type="first">Zheng</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Boxiao</forename><surname>Jin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhongzhi</forename><surname>Yu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Minjia</forename><surname>Zhang</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2407.08454</idno>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b28">
+	<monogr>
+		<author>
+			<persName><forename type="first">An</forename><surname>Yang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Baosong</forename><surname>Yang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Binyuan</forename><surname>Hui</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Bo</forename><surname>Zheng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Bowen</forename><surname>Yu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chang</forename><surname>Zhou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chengpeng</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chengyuan</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dayiheng</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Fei</forename><surname>Huang</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2407.10671</idno>
+		<title level="m">Qwen2 technical report</title>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b29">
+	<analytic>
+		<title level="a" type="main">H2o: Heavy-hitter oracle for efficient generative inference of large language models</title>
+		<author>
+			<persName><forename type="first">Zhenyu</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ying</forename><surname>Sheng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tianyi</forename><surname>Zhou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tianlong</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Lianmin</forename><surname>Zheng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ruisi</forename><surname>Cai</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhao</forename><surname>Song</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yuandong</forename><surname>Tian</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Christopher</forename><surname>Ré</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Clark</forename><surname>Barrett</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Advances in Neural Information Processing Systems</title>
+		<imprint>
+			<biblScope unit="volume">36</biblScope>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+				</listBibl>
+			</div>
+		</back>
+	</text>
+</TEI>

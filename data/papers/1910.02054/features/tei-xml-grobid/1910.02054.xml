@@ -1,0 +1,828 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<TEI xml:space="preserve" xmlns="http://www.tei-c.org/ns/1.0" 
+xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" 
+xsi:schemaLocation="http://www.tei-c.org/ns/1.0 https://raw.githubusercontent.com/kermitt2/grobid/master/grobid-home/schemas/xsd/Grobid.xsd"
+ xmlns:xlink="http://www.w3.org/1999/xlink">
+	<teiHeader xml:lang="en">
+		<fileDesc>
+			<titleStmt>
+				<title level="a" type="main">ZeRO: Memory Optimizations Toward Training Trillion Parameter Models</title>
+				<funder ref="#_rcmhavT #_XUkfRZR">
+					<orgName type="full">unknown</orgName>
+				</funder>
+			</titleStmt>
+			<publicationStmt>
+				<publisher/>
+				<availability  status="unknown">
+					<licence/>
+				</availability>
+				<date type="published" when="2020-05-13">13 May 2020</date>
+			</publicationStmt>
+			<sourceDesc>
+				<biblStruct>
+					<analytic>
+						<author>
+							<persName><forename type="first">Samyam</forename><surname>Rajbhandari</surname></persName>
+							<email>samyamr@microsoft.com</email>
+						</author>
+						<author>
+							<persName><forename type="first">Jeff</forename><surname>Rasley</surname></persName>
+							<email>jerasley@microsoft.com</email>
+						</author>
+						<author>
+							<persName><forename type="first">Olatunji</forename><surname>Ruwase</surname></persName>
+							<email>olruwase@microsoft.com</email>
+						</author>
+						<author>
+							<persName><forename type="first">Yuxiong</forename><surname>He</surname></persName>
+						</author>
+						<title level="a" type="main">ZeRO: Memory Optimizations Toward Training Trillion Parameter Models</title>
+					</analytic>
+					<monogr>
+						<imprint>
+							<date type="published" when="2020-05-13">13 May 2020</date>
+						</imprint>
+					</monogr>
+					<idno type="MD5">53AFFC1B8F3D34D4F3A0A9664456014F</idno>
+					<idno type="arXiv">arXiv:1910.02054v3[cs.LG]</idno>
+				</biblStruct>
+			</sourceDesc>
+		</fileDesc>
+		<encodingDesc>
+			<appInfo>
+				<application version="0.8.2-SNAPSHOT" ident="GROBID" when="2025-02-21T16:29+0000">
+					<desc>GROBID - A machine learning software for extracting information from scholarly documents</desc>
+					<ref target="https://github.com/kermitt2/grobid"/>
+				</application>
+			</appInfo>
+		</encodingDesc>
+		<profileDesc>
+			<abstract>
+<div xmlns="http://www.tei-c.org/ns/1.0"><p>Large deep learning models offer significant accuracy gains, but training billions to trillions of parameters is challenging. Existing solutions such as data and model parallelisms exhibit fundamental limitations to fit these models into limited device memory, while obtaining computation, communication and development efficiency. We develop a novel solution, Zero Redundancy Optimizer (ZeRO), to optimize memory, vastly improving training speed while increasing the model size that can be efficiently trained. ZeRO eliminates memory redundancies in data-and model-parallel training while retaining low communication volume and high computational granularity, allowing us to scale the model size proportional to the number of devices with sustained high efficiency. Our analysis on memory requirements and communication volume demonstrates: ZeRO has the potential to scale beyond 1 Trillion parameters using today's hardware.</p><p>We implement and evaluate ZeRO: it trains large models of over 100B parameter with super-linear speedup on 400 GPUs, achieving throughput of 15 Petaflops. This represents an 8x increase in model size and 10x increase in achievable performance over state-of-the-art. In terms of usability, ZeRO can train large models of up to 13B parameters (e.g., larger than Megatron GPT 8.3B and T5 11B) without requiring model parallelism which is harder for scientists to apply. Last but not the least, researchers have used the system breakthroughs of ZeRO to create the world's largest language model (17B parameters) with record breaking accuracy.</p></div>
+			</abstract>
+		</profileDesc>
+	</teiHeader>
+	<text xml:lang="en">
+		<body>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="1">Extended Introduction</head><p>Deep Learning (DL) models are becoming larger, and the increase in model size offers significant accuracy gain. In the area of Natural Language Processing (NLP), the transformers have paved way for large models like Bert-large (0.3B) <ref type="bibr" target="#b0">[1]</ref>, GPT-2 (1.5B) <ref type="bibr" target="#b1">[2]</ref>, Megatron-LM (8.3B) <ref type="bibr" target="#b2">[3]</ref>, T5 (11B) <ref type="bibr" target="#b3">[4]</ref>. To enable the continuation of model size growth from 10s of billions to trillions of parameters, we experience the challenges of training them -they clearly do not fit within the memory of a single device, e.g., GPU or TPU, and simply adding more devices will not help scale the training.</p><p>Basic data parallelism (DP) does not reduce memory per device, and runs out of memory for models with more than 1.4B parameters on current generation of GPUs with 32 GB memory. Other existing solutions such as Pipeline Parallelism (PP), Model Parallelism (MP), CPU-Offloading, etc, make trade-offs between functionality, usability, as well as memory and compute/communication efficiency, but all of which are crucial to training with speed and scale.</p><p>Among different existing solution for training large models, MP is perhaps the most promising. The largest models in the current literature, the 11B T5 model <ref type="bibr" target="#b3">[4]</ref>, and Megatron-LM 8.3B <ref type="bibr" target="#b2">[3]</ref>, were both powered by model parallelism, implemented in Mesh-Tensorflow <ref type="bibr" target="#b4">[5]</ref> and Megatron-LM <ref type="bibr" target="#b2">[3]</ref>, respectively. However, MP cannot scale much further beyond these models sizes. MP splits the model vertically, partitioning the computation and parameters in each layer across multiple devices, requiring significant communication between each layer. As a result, they work well within a single node where the inter-GPU communication bandwidth is high, but the efficiency degrades quickly beyond a single node <ref type="bibr" target="#b2">[3]</ref>. We tested a 40B parameter model using Megatron-LM across two DGX-2 nodes and observe about 5 T f lops per V100 GPU (less than 5% of hardware peak).</p><p>So, how can we overcome the limitations of existing solutions and train large models more efficiently? To answer this question, we first analyze the full spectrum of memory consumption of the existing systems on model training and classify it into two parts: 1) For large models, the majority of the memory is occupied by model states which include the optimizer states (such as momentum and variances in Adam <ref type="bibr" target="#b5">[6]</ref>), gradients, and parameters. 2) The remaining memory is consumed by activation, temporary buffers and unusable fragmented memory, which we refer to collectively as residual states. We develop ZeRO-Zero Redundancy Optimizer -to optimize memory efficiency on both while obtaining high compute and communication efficiency. As these two parts face different challenges, we develop and discuss their solutions correspondingly.</p><p>Optimizing Model State Memory Model states often consume the largest amount of memory during training, but existing approaches such as DP and MP do not offer satisfying solution. DP has good compute/communication efficiency but poor memory efficiency while MP can have poor compute/communication efficiency. More specifically, DP replicates the entire model states across all data parallel process resulting in redundant memory consumption; while MP partition these states to obtain high memory efficiency, but often result in too finegrained computation and expensive communication that is less scaling efficient. Furthermore, all of these approaches maintain all the model states required over the entire training process statically, even though not all model states are required all the time during the training. Based on these observations, we develop ZeRO-DP, ZeRO-powered data parallelism, that achieves the computation/communication efficiency of DP while achieving memory efficiency of MP. ZeRO-DP removes the memory state redundancies across data-parallel processes by partitioning the model states instead of replicating them, and it retains the compute/communication efficiency by retaining the computational granularity and communication volume of DP using a dynamic communication schedule during training.</p><p>ZeRO-DP has three main optimization stages (as depicted in Figure <ref type="figure" target="#fig_0">1</ref>), which correspond to the partitioning of optimizer states, gradients, and parameters. When enabled cumulatively:</p><p>1) Optimizer State Partitioning (P os ): 4x memory reduction, same communication volume as DP;</p><p>2) Add Gradient Partitioning (P os+g ): 8x memory reduction, same communication volume as DP;</p><p>3) Add Parameter Partitioning (P os+g+p ): Memory reduction is linear with DP degree N d . For example, splitting across 64 GPUs (N d = 64) will yield a 64x memory reduction. There is a modest 50% increase in communication volume.</p><p>ZeRO-DP eliminates memory redundancies and makes the full aggregate memory capacity of a cluster available. With all three stages enabled, ZeRO can train a trillion-parameter model on just 1024 NVIDIA GPUs. A trillion-parameter model with an optimizer like Adam <ref type="bibr" target="#b5">[6]</ref> in 16- bit precision requires approximately 16 terabytes (TB) of memory to hold the optimizer states, gradients, and parameters. 16TB divided by 1024 is 16GB, which is well within a reasonable bound for a GPU (e.g., with 32GB of on-device memory).</p><p>Optimizing Residual State Memory After ZeRO-DP boosts memory efficiency for model states, the rest of the memory consumed by activations, temporary buffers, and unusable memory fragments could become a secondary memory bottleneck. We develop ZeRO-R to optimize the residual memory consumed by these three factors respectively.</p><p>1) For activations (stored from forward pass in order to perform backward pass), we noticed checkpointing <ref type="bibr" target="#b6">[7]</ref> helps but not sufficient for large models. Thus ZeRO-R optimizes activation memory by identifying and removing activation replication in existing MP approaches through activation partitioning. It also offloads activations to CPU when appropriate.</p><p>2) ZeRO-R defines appropriate size for temporary buffers to strike for a balance of memory and computation efficiency.</p><p>3) We observe fragmented memory during training due to variations in the lifetime of different tensors. Lack of contiguous memory due to fragmentation can cause memory allocation failure, even when enough free memory is available. ZeRO-R proactively manages memory based on the different lifetime of tensors, preventing memory fragmentation.</p><p>ZeRO-DP and ZeRO-R combined together forms a powerful system of memory optimizations for DL training that we collectively refer to as ZeRO.</p><p>ZeRO and MP: Since ZeRO eliminates the memory inefficiency in DP, it is natural to ask: Do we still need MP, and when? How does ZeRO work with MP? With ZeRO, MP becomes a less attractive option for the purpose of fitting large models alone. ZeRO-DP is at least as effective on reducing per-device memory footprint as MP, or more effective sometimes when MP cannot divide the model evenly. It also has comparable or better scaling efficiency. Furthermore, data parallelism is so easy to use that it is widely applicable across different workloads, while For ZeRO, the MP always fit in a node, while for baseline, models larger than 40B require MP across nodes.</p><p>MP approaches today often need some work from model developers to revise their model, system developers to work out distributed operators, and existing work like Megatron-LM only supports a limited set of operators and models.</p><p>That being said, there are still cases where we want to leverage MP: i) When used with ZeRO-R, MP can reduce activation memory footprint for very large models. ii) For smaller models where activation memory is not an issue, MP can also have benefits when aggregated batch size using DP alone is too big to have good convergence. <ref type="foot" target="#foot_0">1</ref> In those case, one can combine ZeRO with MP to fit the model with an acceptable aggregated batch size.</p><p>We show that ZeRO can be combined with MP, resulting in a max theoretical memory reduction of N d × N m times on each device with a DP degree of N d and MP degree of N m . This could allow us to fit a trillion parameter model on 1024 GPUs with 16-way model parallelism (within each DGX2 node) and 64-way data parallelism across nodes, and run it efficiently using a modest batch size!</p><p>Implementation &amp; Evaluation The complete set of optimizations in ZeRO could allow us to run models with trillion parameters on the high-end hardware cluster today (e.g., with 1K V100 GPUs), however, the hardware compute capacity is still too limited and training time can be impractically long (&gt;1 year). Therefore, our focus for this implementation is to efficiently support models with 10x parameters (∼100B parameters) than state-of-the-art (SOTA) while still being within reach of the compute capabilities of current hardware. We implement and evaluate a subset of optimizations in ZeRO called ZeRO-100B -P os+g of ZeRO-DP plus ZeRO-R -that allow us to achieve this goal. The results show:</p><p>Model Size Combined with MP, ZeRO-100B runs 170B parameter models efficiently, while the existing system like using Megatron alone cannot scale efficiently beyond 40B parameters, as shown in Figure <ref type="figure" target="#fig_1">2</ref>. This is an over 8x increase in model size compared to SOTA. Speed Improved memory efficiency powers higher throughput and faster training. As shown in Figure <ref type="figure" target="#fig_1">2</ref>, ZeRO runs 100B parameter models on a 400 Nvidia V100 GPU cluster with over 38 TFlops per GPU, and aggregate performance over 15 Petaflops. This is more than 10x improvement in training speed compared to SOTA for the same model size.</p><p>Scalability We observe super linear speedup in the regime of 64-400 GPUs, where the performance more than doubles when we double the number of GPUs. This is a property of ZeRO-DP which reduces the memory footprint of the model states as we increase the DP degree allowing us to fit larger batch sizes per GPU resulting in better performance. We expect this behaviour to continue further as we increase the number of GPUs beyond 400.</p><p>Democratization of Large Model Training ZeRO-100B powers data scientist to train models with up to 13B parameters without any MP or PP that requires model refactoring, where 13B is more parameters than the largest model in literature (T5 with 11B parameters). Data scientists can thus experiment freely with large models without worrying about parallelism. In comparison, exist systems (e.g., PyTorch Distributed Data Parallel) runs out of memory with 1.4B parameter models.</p><p>New SOTA Model ZeRO powers the largest language model with 17B parameters and record-breaking accuracy, Turing-NLG <ref type="bibr" target="#b8">[9]</ref>.</p><p>We share ZeRO as a part of our open source DL training optimization library called Deep-Speed<ref type="foot" target="#foot_1">foot_1</ref> . We plan to release all implementations described in this paper by end of May 2020 and extend it further to support 1 trillion parameters by enabling ZeRO-DP stage 3 partitioning parameters (P os+g+p ). We plan to make ZeRO fully accessible to the DL community to catalyze the evolution and democratization of large model training at scale.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="2">Related Work</head></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="2.1">Data, Model and Pipeline Parallelism</head><p>Parallelization is a key strategy on training large models at scale. For a model that fits in the device memory for training, data parallelism (DP) is used to scale training to multiple devices. In DP, model parameters are replicated on each device. At each step, a mini-batch is divided evenly across all the data parallel processes, such that each process executes the forward and backward propagation on a different subset of data samples, and uses averaged gradients across processes to update the model locally.</p><p>When a model does not fit in the device memory, model parallelism (MP) <ref type="bibr" target="#b4">[5,</ref><ref type="bibr" target="#b2">3]</ref> and pipeline parallelism (PP) <ref type="bibr" target="#b9">[10,</ref><ref type="bibr" target="#b10">11]</ref> split the model among processes, in vertical and horizontal way respectively. Sec. 1 discussed how ZeRO relates to DP and MP. We now discuss PP and how it relates to reducing memory consumption.</p><p>PP splits a model horizontally across layers running each partition on a different device and use micro-batching to hide the pipeline bubble <ref type="bibr" target="#b9">[10,</ref><ref type="bibr" target="#b10">11]</ref>. Model functionalities such as tied-weights and batch-normalization are difficult to implement due to horizontal splitting and micro-batching, respectively. Popular PP implementation such as G-pipe <ref type="bibr" target="#b9">[10]</ref> partitions both model parameters and total activations but requires a batch size proportional to number of pipeline partitions to hide the pipeline bubble. The large batch size can affect the convergence rate, while also requiring significant memory to store activations. A different implementation of PP in PipeDream <ref type="bibr" target="#b11">[12]</ref> keeps multiple copies of stale parameters to hide the pipeline bubble without increasing the batch size significantly, making it less memory efficient. Additionally, the implementation is not equivalent to the standard DL training and has implications on training convergence. In contrast, ZeRO obtains the same or better memory efficiency than PP without incurring functionality, performance and convergence related restrictions of PP.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="2.2">Non-parallelism based approach to reduce memory</head><p>In addition to MP and PP, there are multiple lines of work that target reducing memory overheads of DL training.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="2.2.1">Reducing Activation Memory</head><p>Multiple efforts have focused on reducing the memory footprint of activations through compression <ref type="bibr" target="#b12">[13]</ref>, activation checkpointing <ref type="bibr" target="#b6">[7,</ref><ref type="bibr" target="#b13">14]</ref>, or live analysis <ref type="bibr" target="#b14">[15]</ref>. These efforts are complimentary and can work together with ZeRO. In fact, activation memory reduction in ZeRO-R works in parallel with activation checkpointing. <ref type="bibr" target="#b15">[16,</ref><ref type="bibr" target="#b16">17]</ref> exploit heterogeneous nature of today's compute nodes, offloading model states to CPU memory through algorithmic design or virtualized memory, respectively. Up to 50% of training time can be spent on GPU-CPU-GPU transfers <ref type="bibr" target="#b15">[16]</ref>. ZeRO differs in that it reduces the memory consumption significantly without storing the model states to CPU memory whose bandwidth is severely constrained due to PCI-E. On rare cases, ZeRO-R may offload just the activation checkpoints for very large models to improve performance (see Sec. 6.1 for details). <ref type="bibr" target="#b17">[18,</ref><ref type="bibr" target="#b18">19]</ref> focus on reducing memory consumption of adaptive optimization methods by maintaining coarser-grained statistics of model parameters and gradients, with potential impact on model convergence guarantees. ZeRO is orthogonal to these efforts, and its optimizations do not change the model optimization method or affect model convergence, but effectively reduce memory footprint of optimizer states and gradients per device.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="2.2.2">CPU Offload</head></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="2.2.3">Memory Efficient Optimizer</head></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="2.3">Training Optimizers</head><p>Adaptive optimization methods <ref type="bibr" target="#b19">[20,</ref><ref type="bibr" target="#b5">6,</ref><ref type="bibr" target="#b20">21,</ref><ref type="bibr" target="#b21">22]</ref> are crucial to achieving SOTA performance and accuracy for effective model training of large models. Compared to SGD, by maintaining finegrained first-order and second-order statistics for each model parameter and gradient at the cost of significant memory footprint. ZeRO can reduce the memory footprint of these optimizers by orders of magnitude, making these sophisticated optimization methods practical for training large models on hardware with modest device memory. It also makes it possible to develop and use even more complex and memory hungry optimizers that may have better convergence.</p><p>3 Where Did All the Memory Go?</p><p>Let's take a step back to examine the memory consumption of the current training system. For example, a 1.5B parameter GPT-2 model requires 3GB of memory for its weights (or parameters) in 16-bit precision, yet, it cannot be trained on a single GPU with 32GB memory using Tensorflow or PyTorch. One may wonder where all the memory goes. During model training, most of the memory is consumed by model states, i.e., tensors comprising of pptimizer states, gradients, and parameters. Besides these model states, the rest of the memory is consumed by activations, temporary buffers and fragmented memory which we call residual states. We look at the memory consumption from both in details.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.1">Model States: Optimizer States, Gradients and Parameters</head><p>Majority of the device memory is consumed by model states during training. Consider for instance, Adam <ref type="bibr" target="#b5">[6]</ref>, one of the most popular optimizers for DL training. Adam requires storing two optimizer states, i) the time averaged momentum and ii) variance of the gradients to compute the updates. Therefore, to train a model with ADAM, there has to be enough memory to hold a copy of both the momentum and variance of the gradients. In addition, there needs to be enough memory to store the gradients and the weights themselves. Of these three types of the parameter-related tensors, the optimizer states usually consume the most memory, specially when mixed-precision training is applied.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>Mixed-Precision Training</head><p>The state-of-the-art approach to train large models on the current generation of NVIDIA GPUs is via mixed precision (fp16/32) training <ref type="bibr" target="#b22">[23]</ref>, where parameters and activations are stored as fp16, enabling the use of the high throughput tensor core units <ref type="bibr" target="#b23">[24]</ref> on these GPUs. During mixed-precision training, both the forward and backward propagation are performed using fp16 weights and activations. However, to effectively compute and apply the updates at the end of the backward propagation, the mixed-precision optimizer keeps an fp32 copy of the parameters as well as an fp32 copy of all the other optimizer states.</p><p>Let's take Adam as a concrete example. Mixed precision training of a model with Ψ parameters using Adam requires enough memory to hold an f p16 copy of the parameters and the gradients, with memory requirements of 2Ψ and 2Ψ bytes respectively. In addition, it needs to hold the optimizer states: an f p32 copy of the parameters, momentum and variance, with memory requirements of 4Ψ, 4Ψ, and 4Ψ bytes, respectively. Let's use K to denote the memory multiplier of the optimizer states, i.e., the additional memory required to store them is KΨ bytes. Mixed-precision Adam has K = 12. In total, this results in 2Ψ + 2Ψ + KΨ = 16Ψ bytes of memory requirement. For a model such as GPT-2 with 1.5 Billion parameters, this leads to a memory requirement of at least 24 GB, which is significantly higher than the meager 3 GB of memory required to hold the f p16 parameters alone.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.2">Residual Memory Consumption</head><p>Activations can take up a significant amount of memory <ref type="bibr" target="#b6">[7]</ref> during training. As a concrete example, the 1.5B parameter GPT-2 model trained with sequence length of 1K and batch size of 32 requires about 60 GB of memory <ref type="foot" target="#foot_2">3</ref> . Activation checkpointing (or activation recomputation) is a common approach to reduce the activation memory by approximately the square root of the total activations at the expense of 33% re-computation overhead <ref type="bibr" target="#b6">[7]</ref>. This would reduce the activation memory consumption of this model to about 8 GB.</p><p>Despite the significant reduction, the activation memory can grow quite large for bigger models even with activation checkpointing. For example, a GPT-like model with 100 billion parameters requires around 60 GB of memory for batch size 32, even when using activation checkpointing.</p><p>Temporary buffers used for storing intermediate results consumes non-trivial amount of memory for large models. Operations such as gradient all-reduce, or gradient norm computation tend to fuse all the gradients into a single flattened buffer before applying the operation in an effort to improve throughput. For example, the bandwidth of all-reduce across devices improves with large message sizes. While the gradient themselves are usually stored as fp16 tensors, the fused buffer can be an fp32 tensor depending on the operation. When the size of the model is large, these temporary buffer sizes are non-trivial. For example, for a model with 1.5B parameters, a flattened fp32 buffer would required 6 GB of memory.</p><p>Memory Fragmentation: So far we have discussed the actual memory consumption during training. Additionally, it is possible to run out of usable memory even when there is plenty of available memory. This can happen with memory fragmentation. A request for a memory will fail if there isn't enough contiguous memory to satisfy it, even if the total available memory is larger than requested. We observe significant memory fragmentation when training very large models, resulting in out of memory issue with over 30% of memory still available in some extreme cases.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4">ZeRO: Insights and Overview</head><p>ZeRO has two sets of optimizations: i) ZeRO-DP aimed at reducing the memory footprint of the model states, and ii) ZeRO-R targeted towards reducing the residual memory consumption. We present an overview of the optimizations and the insights behind, which allows ZeRO to reduce memory footprint while remaining efficient. Please note efficiency is a key here: without this constraint, trivial solutions like moving all the parameter states to the CPU memory, or increasing the MP degree arbitrarily can reduce memory footprint.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4.1">Insights and Overview: ZeRO-DP</head><p>ZeRO powered DP is based on three key insights: a) DP has better scaling efficiency than MP because MP reduces the granularity of the computation while also increasing the communication overhead. Beyond a certain point, lower computational granularity reduces the efficiency per GPU, while the increased communication overhead, hiders the scalability across GPUs, especially when crossing node boundaries. On the contrary, DP has both higher computational granularity and lower communication volume, allowing for much higher efficiency.</p><p>b) DP is memory inefficient as model states are stored redundantly across all data-parallel processes. On the contrary, MP partitions the model states to obtain memory efficiency.</p><p>c) Both DP and MP keep all the model states needed over the entire training process, but not everything is required all the time. For example, parameters corresponding to each layer is only needed during the forward propagation and backward propagation of the layer.</p><p>Based on these insights, ZeRO-DP retains the training efficiency of DP while achieving the memory efficiency of MP. ZeRO-DP partitions the model states instead of replicating them (Section 5) and uses a dynamic communication schedule that exploits the intrinsically temporal nature of the model states while minimizing the communication volume (Section 7). By doing so, ZeRO-DP reduces per-device memory footprint of a model linearly with the increased DP degree while maintaining the communication volume close to that of the default DP, retaining the efficiency.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4.2">Insights and Overview</head><formula xml:id="formula_0">: ZeRO-R 4.2.</formula></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="1">Reducing Activation Memory</head><p>Two key insights are: a) MP partitions the model states but often requires replication of the activation memory. For example, if we split the parameters of a linear layer vertically and compute them in parallel across two GPUs, each GPU requires the entire activation to compute its partition b) For models such as GPT-2 or larger, the arithmetic intensity (ratio of the amount of computation per iteration to amount of activation checkpoints per iteration) is very large (≥ 10K) and increases linearly with hidden dimension making it possible to hide the data-movement cost for the activation checkpoints, even when the bandwidth is low.</p><p>ZeRO removes the memory redundancies in MP by partitioning the activations checkpoints across GPUs, and uses allgather to reconstruct them on demand. The activation memory footprint is reduced proportional to the MP degree. For very large models, ZeRO can even choose to move the activation partitions to the CPU memory, while still achieving good efficiency due to large arithmetic intensity in these models.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4.2.2">Managing Temporary buffers</head><p>ZeRO-R uses constant size buffers to avoid temporary buffers from blowing up as the model size increases, while making them large enough to remain efficient.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4.2.3">Managing fragmented Memory</head><p>Memory fragmentation is a result of interleaving between short lived and long lived memory objects. During the forward propagation activation checkpoints are long lived but the activations that recomputed are short lived. Similarly, the backward computation, the activation gradients are short lived while the parameter gradients are long lived. Based on this insight, ZeRO performs on-the-fly memory defragmentation by moving activation checkpoints and gradients to pre-allocated contiguous memory buffers. This not only increases memory availability but also improves efficiency by reducing the time it takes for the memory allocator to find free contiguous memory.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="5">Deep Dive into ZeRO-DP</head><p>While the existing DP approach replicates the model states at each device and introduces significant memory overhead, ZeRO-DP eliminates this memory redundancy by partitioning them -optimizer states, gradients and parameters -across data parallel processes. Figure <ref type="figure" target="#fig_0">1</ref> quantifies and visualizes the memory requirement with and without ZeRO-DP. The figure shows the memory footprint after partitioning (1) optimizer state, (2) gradient and (3) parameter redundancies accumulatively. We refer to them as the three optimization phases of ZeRO-DP: P os , P g , and P p , which we elaborate below.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="5.1">P os : Optimizer State Partitioning</head><p>For a DP degree of N d , we group the optimizer states into N d equal partitions, such that the i th data parallel process only updates the optimizer states corresponding to the i th partition. Thus, each data parallel process only needs to store and update 1 N d of the total optimizer states and then only update 1 N d of the parameters. We perform an all-gather across the data parallel process at the end of each training step to get the fully updated parameters across all data parallel process.</p><p>Memory Savings: As shown in Figure <ref type="figure" target="#fig_0">1</ref>, the memory consumption after optimizing state partition reduces from 4Ψ + KΨ to 4Ψ + KΨ N d . As the concrete example depicted in Figure <ref type="figure" target="#fig_0">1</ref>, a 7.5 B parameter model requires 31.4GB of memory using P os with 64-way DP (N d = 64), while requiring 120 GB with standard DP. Furthermore, when N d is large, the memory requirement on model states reduces from 4Ψ + 12Ψ = 16Ψ bytes to 4Ψ + 12Ψ N d ≈ 4Ψ bytes, leading to a 4x reduction.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="5.2">P g : Gradient Partitioning</head><p>As each data parallel process only updates its corresponding parameter partition, it only needs the reduced gradients for the corresponding parameters. Therefore, as each gradient of each layer becomes available during the backward propagation, we only reduce them on the data parallel process responsible for updating the corresponding parameters. After the reduction we no longer need the gradients and their memory can be released. This reduces the memory footprint required to hold the gradients from 2Ψ bytes to 2Ψ N d . Effectively this is a Reduce-Scatter operation, where gradients corresponding to different parameters are reduced to different process. To make this more efficient in practice, we use a bucketization strategy, where we bucketize all the gradients corresponding to a particular partition, and perform reduction on the entire bucket at once. This is similar in spirit to how NVIDIA's AMP <ref type="bibr" target="#b24">[25]</ref> optimizer bucketizes the all-reduce gradient computation to overlap communication and computation. In our case we perform a reduction instead of an all-reduce at the partition boundaries to reduce memory footprint and overlap computation and communication.</p><p>Memory Savings: By removing both gradient and optimizer state redundancy, we reduce the memory footprint further down to 2Ψ + 14Ψ N d ≈ 2Ψ. As the example in Figure <ref type="figure" target="#fig_0">1</ref> </p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="5.3">P p : Parameter Partitioning</head><p>Just as with the optimizer states, and the gradients, each process only stores the parameters corresponding to its partition. When the parameters outside of its partition are required for forward and backward propagation, they are received from the appropriate data parallel process through broadcast. While this may seem to incur significant communication overhead at first glance, we show that this approach only increases the total communication volume of a baseline DP system to 1.5x, while enabling memory reduction proportional to N d . Memory Savings: With parameter partitioning, we reduce the memory consumption of an Ψ parameter model from 16Ψ to 16Ψ N d . As the example in Figure <ref type="figure" target="#fig_0">1</ref>, a 7.5 B parameter model requires 1.9 GB of model-state memory using P os+p+g with 64-way DP (N d = 64), while requiring 120 GB with standard DP. This has a profound implication: ZeRO powers DP to fit models with arbitrary size as long as there are sufficient number of devices to share the model states.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="5.4">Implication on Model Size</head><p>The three phases of partitioning P os , P os+g , and P os+g+p reduces the memory consumption of each data parallel process on model states by up to 4x, 8x, and N d respectively. Table <ref type="table" target="#tab_0">1</ref> analyzes model-state memory consumption of a few example models under the 3 stages of ZeRO-DP optimizations for varying DP degree. Without ZeRO, the memory consumption is equal to the first row in the table, regardless of the DP degree. Note that, with N d = 64, ZeRO can train models with up to 7.5B, 14B, and 128B parameters using P os , P os+g , and P os+g+p , respectively. When N d = 1024, ZeRO with all of its optimizations enabled (P os+g+p ) could train models with 1 Trillion parameters! Or potentially, models with Arbitrary size! Without ZeRO, the largest model DP alone can run has less than 1.5 Billion parameters.</p><p>6 Deep Dive into ZeRO-R</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="6.1">P a : Partitioned Activation Checkpointing</head><p>As discussed in 4.2, MP by design requires a replication of the activations, resulting in redundant copies of the activations across model parallel GPUs. ZeRO eliminates this redundancy by partitioning the activations, and only materializes them in a replicated form one activation layer at a time, right before the activation is used in computation. More specifically, once the forward propagation for a layer of a model is computed, the input activations are partitioned across all the model parallel process, until it is needed again during the backprogation. At this point, ZeRO uses an all-gather operation to re-materialize a replicated copy of the activations. We refer to this optimization as P a . It works in conjunction with activation checkpointing <ref type="bibr" target="#b6">[7]</ref>, storing partitioned activation checkpoints only instead of replicated copies. Furthermore, in the case of very large models and very limited device memory, these partitioned activation checkpoints can also be offloaded to the CPU reducing the activation memory overhead to nearly zero at an additional communication cost, which we will discuss in 7. We refer to this as P a+cpu .</p><p>Memory Saving With partitioned activation checkpointing, ZeRO reduces the activation footprint by a factor proportional to the degree. Consider training a 100B model shown in Table <ref type="table" target="#tab_3">4</ref> with a batch size of 32, sequence length of 1024 and a MP degree of 16. If we checkpoint a single activation for each transformer layer, it would require about 33 GB of memory per GPU just to store the activation checkpoints. But with P a in ZeRO, it can be reduced to about 2 GB per GPU. Furthermore, this 2GB can be offloaded to the CPU reducing the memory footprint for activations to nearly zero.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="6.2">C B : Constant Size Buffers</head><p>ZeRO carefully selects the sizes of the temporal-data buffers to balance memory and compute efficiency. During training, the computational efficiency of some operations can be highly dependent on the input size, with larger inputs achieving higher efficiency. For example, a large all-reduce operation achieves much higher bandwidth than a smaller one. Hence, to get better efficiency, high performance libraries such as NVIDIA Apex or Megatron fuses all the parameters into a single buffer before applying these operations. However, the memory overhead of the fused buffers is proportional to the model size, and can become inhibiting. For example, for a 3B parameter model, a 32-bit fused buffer will require 12 GB of memory. To address this issue, we simply use a performance-efficient constant-size fused buffer when the model becomes too large. By doing so, the buffer size does not depend on the model size, and by keeping the buffer size large enough, we can still achieve good efficiency.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="6.3">M D : Memory Defragmentation</head><p>Memory fragmentation in model training occurs as a result of activation checkpointing and gradient computation. During the forward propagation with activation checkpointing, only selected activations are stored for back propagation while most activations are discarded as they can be recomputed again during the back propagation. This creates an interleaving of short lived memory (discarded activations) and long lived memory (checkpointed activation), leading to memory fragmentation. Similarly, during the backward propagation, the parameter gradients are long lived, while activation gradients and any other buffers required to compute the parameter gradients are short lived. Once again, this interleaving of short term and long term memory causes memory fragmentation. Limited memory fragmentation is generally not an issue, when there is plenty of memory to spare, but for large model training running with limited memory, memory fragmentation leads to two issues, i) OOM due to lack of contiguous memory even when there is enough available memory, ii) poor efficiency as a result of the memory allocator spending significant time to search for a contiguous piece of memory to satisfy a memory request.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>MP GPUs</head></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>Max</head><p>ZeRO does memory defragmentation on-the-fly by pre-allocating contiguous memory chunks for activation checkpoints and gradients, and copying them over to the pre-allocated memory as they are produced. M D not only enables ZeRO to train larger models with larger batch sizes, but also improves efficiency when training with limited memory.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="7">Communication Analysis of ZeRO-DP</head><p>As ZeRO boosts model size by removing memory redundancy, it is only natural to ask if we are trading communication volume for memory efficiency. In other words, what is the communication volume of ZeRO-powered DP approach compared to a baseline DP approach? The answer is in two parts: i) ZeRO-DP incurs no additional communication using P os and P g , while enabling up to 8x memory reduction, ii) ZeRO-DP incurs a maximum of 1.5x communication when using P p in addition to P os and P g , while further reducing the memory footprint by N d times. We present the analysis in this section. We begin by first presenting a brief overview of the communication volume for standard DP.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="7.1">Data Parallel Communication Volume</head><p>During data parallel training, gradients across all data parallel processes are averaged at the end of the backward propagation before computing the updates for the next step. The averaging is performed using an all-reduce communication collective. For a large model size, the allreduce communication is entirely communication bandwidth bound, and therefore, we limit our analysis to the total communication volume send to and from each data parallel process.</p><p>State-of-art implementation of all-reduce uses a two-step approach, where the first step is a reduce-scatter operation, which reduces different part of the data on different process. The next step is an all-gather operation where each process gathers the reduced data on all the process. The result of these two steps is an all-reduce. Both reduce-scatter and all-gather are implemented using a pipelined approach, that results in a total data movement of Ψ elements (for a data with Ψ elements) for each. Therefore, the standard DP incurs 2Ψ data movement during each training step.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="7.2">ZeRO-DP Communication Volume</head></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="7.2.1">Communication Volume with P os+g</head><p>With gradient partitioning, each process only stores the portion of the gradients, that is required to update its corresponding parameter partition. As such, instead of an all-reduce, ZeRO only requires a scatter-reduce operation on the gradients, incurring communication volume of Ψ. After each process updates the partition of the parameters that it is responsible for, an allgather is performed to collect all the updated parameters from all the data parallel process. This also incurs a communication volume of Ψ. So the total communication volume per training step is Ψ + Ψ = 2Ψ, exactly the same as the baseline DP.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="7.2.2">Communication Volume with P os+g+p</head><p>After parameter partitioning, each data parallel process only stores the parameters that it updates. Therefore, during the forward propagation it needs to receives the parameters for all the other partitions. However, this can be pipelined to avoid the memory overhead. Before computing the forward propagation on the part of the model corresponding to a particular partition, the data parallel process responsible for that partition can broadcast the weights to all the data parallel processes. Once the forward propagation for that partition is done, the parameters can be discarded. The total communication volume is thus</p><formula xml:id="formula_1">Ψ×N d N d = Ψ.</formula><p>In other words, we reschedule the parameter all-gather by spreading it across the entire forward propagation, and discarding the parameters once they have been used. Note however that this all-gather needs to happen once again for the backward propagation in the reverse order.</p><p>The total communication volume is therefore the sum of the communication volumes incurred by these all-gathers in addition to the communication volume incurred by the reducescatter of the gradients. The total volume is therefore 3Ψ which is 1.5x compared to the baseline. Both gradient and parameter partitioning leverage the insight that -not all states of gradients and parameters are needed all the time -to optimize memory by communicating the states judiciously.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="8">Communication Analysis of ZeRO-R</head><p>We compare the communication volume of partitioned activation checkpointing (P a ) in ZeRO-R with baseline MP, and show that P a incurs a communication volume increase that is in general less than one tenth of the baseline MP. Furthermore, we analyze the communication overhead of P a in relation to DP communication volume to identify scenarios when P a improves efficiency by allowing for a larger batch size and reducing DP communication. We leverage such analysis to decide if and when to apply P a as well as P a+cpu .</p><p>Communication volume trade-off of partitioning activation checkpoints depends on the model size, checkpointing strategy and the MP strategy. To share concrete insights, we perform the analysis in the context of transformer based models implemented using SOTA MP approach, Megatron-LM.</p><p>In Megatron-LM with activation checkpointing, each transformer block performs two allreduce operations of size batch × seq length × hidden dim in the forward propagation, two all-reduce for forward re-computation and two more in the backward propagation. The total communication per block is 12 × seq length × hidden dim since communication volume of an all-reduce is 2 × message size.</p><p>When ZeRO-R partitions activation checkpoints, it requires an additional all-gather operation before the forward recomputation of the back-propagation on each activation checkpoint. In general, we checkpoint the input activation for each transformer block, requiring one all-gather per transformer block. The communication overhead P a is therefore seq length * hidden dim, since the communication volume of an all-gather is message size. Therefore, the total communication overhead of P a is less than 10% of the original communication volume for model parallelism.</p><p>When MP is used in conjunction with DP, P a can be used to reduce the data-parallel communication volume by an order of magnitude at the expense of a 10% increase in model-parallel communication volume, and significantly boost efficiency when data-parallel communication is a performance bottleneck. Notice that P a reduces the activation memory consumption by the MP degree allowing for a proportional increase in batch size. For large models, MP can be as large as 16 (#GPUs on a DGX-2 node), allowing for up to 16x increase in the batch size. The communication volume of a data-parallel training is inversely proportional to the batch size. Therefore, an order of magnitude increase in batch size due to P a could result in an order-of-magnitude decrease in data-parallel communication volume.</p><p>Finally if P a+cpu is applied, partitioned activation checkpoints are offloaded to CPU, reducing the activation memory requirement to nearly zero at the expense of 2x added data movement to and from CPU memory compared to P a . In extreme cases where DP communication volume is the major bottleneck due to a small batch size even with P a , P a+cpu can improve efficiency by increasing the batch size as long as the CPU data transfer overhead is less than the DP communication volume overhead, which is generally true for small batch sizes.</p><p>Given model and hardware characteristics, we leverage the above analysis to decide if and when to apply P a and P a+cpu .</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="9">Step Towards 1 Trillion Parameters</head><p>The largest published models today are in the range of 10 billion parameters, which are already challenging to train. Getting to a trillion parameters, 3-orders of magnitude larger, will inevitably happen, but the road will be full of hurdles, surprises and innovations. While we do not claim knowing or addressing all of them, ZeRO addresses one of the most fundamental challenges from a system perspective: the ability to fit a model of this scale on current hardware while allowing it to train with good system scalability.</p><p>A Leap from State-of-Art The largest model that the state-of-art framework, Megatron, can train with acceptable throughput is a 16 -20B parameter model in a DGX-2 system. Scaling further by having model parallelism across multiple DGX nodes results in significant efficiency drop due to limited internode bandwidth.</p><p>ZeRO vastly increase the efficiently-runnable model size. It enables the current generation of hardware to run significantly larger models without requiring fine-grained model parallelism to go across the node boundaries. As demonstrated in Table <ref type="table" target="#tab_0">1</ref>, ZeRO, with all optimizations turned on (P os+g+p ), could fit more than 1 Trillion parameters on 1024 GPUs using DP only. Alternatively, when combined with model parallelism (as shown in Table <ref type="table" target="#tab_1">2</ref>), ZeRO could fit more than 1 Trillion parameters on 1024 GPUs with 16-way model parallelism (within each DGX2 node) and 64-way data parallelism across nodes. Running a model with a trillion parameters efficiently is no longer impossible! Compute Power Gap Training a trillion parameter model end-to-end within an acceptable time range, however, could still require significant amount of compute power, which is lacking in today's AI clusters.</p><p>To understand the resource requirement, we present a brief comparison with Bert-Large. Bert-Large can be trained in 67 minutes on a 1024 GPU DGX-2H cluster <ref type="bibr" target="#b25">[26]</ref>. A 1 Trillion Parameter model can easily contain 3000x (1 trillion / 330 million) more computation than     a Bert-Large model for a data sample. Even if we assume the same sequence length and the total number of samples required to train the model, training a 1T model would take 140 days, assuming the same hardware and similar computational efficiency. In practice, both data samples and sequence length are likely to increase with the increased model size requiring over a year to train. It would require an exa-flop system to train a 1T parameter model in a reasonable time. But when such compute capacity becomes available, we hope ZeRO will provide the system technology to run the 1T models efficiently.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="10.1">Implementation and Methodology</head><p>Implementation We implemented ZeRO-100B in PyTorch including the full set of optimizations in P os+g and ZeRO-R. Its interface is compatible with any model implemented as an torch.nn.module. Users can simply wrap their models using this interface and leverage ZeROpowered DP as they use classic DP. Users do not need to modify their model. ZeRO-powered DP can be combined with any form of MP including Megatron-LM.</p><p>Hardware We conducted our experiments on a cluster of 400 V100 GPUs (25 DGX-2 nodes) with 800 Gbps internode communication bandwidth.</p><p>Baseline For experiments without MP, we use torch's distributed data parallel (DDP) as baseline. For experiments with MP, we use Megatron-LM because it is, to our knowledge, the state-of-art. We use the open-source version of Megatron-LM from NVIDIA<ref type="foot" target="#foot_3">foot_3</ref> with a date of September 2019. The most recent Megatron-LM results report the ability to scale up to 16B parameter models using 32 DGX-2 nodes (total of 512 32GB V100 GPUs) <ref type="bibr" target="#b2">[3]</ref>.</p><p>ZeRO Experiments without MP, use the ZeRO-powered DP implementation in ZeRO-100B. Experiments with MP, combine ZeRO-powered DP with MP of Megatron-LM.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>Model Configurations</head><p>The models presented in this section are GPT-2 <ref type="bibr" target="#b1">[2]</ref> like transformer based models. We vary the hidden dimension and the number of layers to obtain models with different number of parameters. Table <ref type="table" target="#tab_3">4</ref> shows the configuration parameters used in our experiments with additional details in AE Appendix.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="10.2">Speed and Model Size</head><p>ZeRO-100B efficiently run models with up to 170B parameters on 400 GPUs, more than 8x bigger than Megatron-LM. Figure <ref type="figure" target="#fig_1">2</ref> shows throughput per GPU for varying model sizes using ZeRO-100B with MP versus using Megatron MP alone. ZeRO-100B achieves a sustained throughput of 15 PetaFlops (over 30% of the peak) on average for models with 8B to 100B parameters. In comparison, the baseline MP performance degrades quickly with the increase in model size: MP incurs high communication volume between GPUs, and going beyond a single node to fit larger models causes a communication bandwidth drop from 300GB/sec per link (NVSwitch) to 12.5 GB/sec per link (Infiniband EDR), resulting in a significant performance drop. ZeRO-100B achieves up to 10x speedup over baseline, significantly outperforming on large models.</p><p>For ZeRO-100B, the slight reduction in performance beyond 100B is due to lack of enough memory to run larger batch sizes. We expect the performance to improve as we increase the number of GPUs due to super-linear speedup of ZeRO-100B as we discuss next.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="10.3">Super-Linear Scalability</head><p>ZeRO-100B demonstrates super-linear scalability for very large model sizes. Figure <ref type="figure" target="#fig_2">3</ref> shows scalability results for a 60B parameter model going from 64 to 400 GPUs and we expect this trend to continue further for more GPUs. P os+g reduces per GPU memory consumption of </p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="10.4">Democratizing Large Model Training</head><p>Using MP and PP is challenging for many data scientists, which is a well-known hurdle to train large models. ZeRO does not require any changes to the model itself and it can be used as simple as baseline DP while delivering significantly boosted model size and speed. Fig. <ref type="figure" target="#fig_3">4</ref> shows that ZeRO-100B can train models with up to 13B parameters without MP on 128 GPUs, achieving throughput over 40 TFlops per GPU on average. In comparison, without ZeRO, the largest trainable model with DP alone has 1.4B parameters with throughput less than 20 TFlops per GPU. Furthermore, in the absence of the communication overhead from MP, these models can be trained with lower-end compute nodes without very fast intra-node interconnect such as NVLINK or NVSwitch, which is required to achieve good efficiency with MP.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="10.5">Memory and Performance Analysis</head><p>We look into the benefits and impact of different optimizations on maximum model size, memory consumption and performance. These optimizations are referred to as Config 1 to 5 (C1-C5) in Table . 3.</p><p>Maximum Model Size Figure <ref type="figure" target="#fig_5">6</ref> shows the largest trainable model by enabling different ZeRO optimizations for a fixed batch size and MP of 16. The model size increase from 40B to 60B when trained with C1 vs C2 due to a 16x (MP degree) reduction in activation memory from using P a , while the jump to 140B using C4 is from enabling P os+g which halves the memory requirement by the model states compared to P os in C2. The increase to 150B using C5 is solely due to further reduction in activation memory from offloading the partitioned activation checkpoints to the CPU memory.</p><p>Max Cached Memory Figure <ref type="figure" target="#fig_6">7</ref> shows the maximum memory cached by PyTorch during each training iteration for a 40B and a 100B parameter model. The decrease of the cached memory size is as expected from C1 to C2. The difference in memory consumption between C2 and C3 depends on the size of the model states in comparison to the activation memory, and can increase when activation memory is larger, or decrease when the model states are larger. It is note worthy that the cached memory does not decrease from C4 to C5 for 40B but it does for 100B. This is simply because the activation memory for 100B is much larger for the decrease to be noticeable. This makes P a+cpu a valuable tool to fit a larger batch size when we get to very large models. In Figure <ref type="figure" target="#fig_7">8</ref>, P a+cpu is needed for 170B model to execute without running out of memory.</p><p>Max Achievable Performance Figure <ref type="figure" target="#fig_7">8</ref> shows the best achievable performance for different set of optimizations. Notice that performance improvement corresponds to decrease in memory consumption between the optimizations. As mentioned earlier, lower memory consumption allows for larger batch size which improves performance. The only caveat is the performance drop between C4 and C5 for 60B parameter model. Despite lower memory consumption, C5 incurs activation movement to and from the CPU, this will result in worse performance in most cases, except for a few where the model is so large that the model simply cannot run without C5 or the batch size that can run without C5 is very small (such as model with 170B parameters in Figure <ref type="figure" target="#fig_7">8</ref>). During training, P a+cpu is turned on only when it is beneficial.</p><p>10.6 Turing-NLG, the SOTA language model with 17B parameters</p><p>As of May 12th, 2020, Turing-NLG is the largest model in the world with over 17B parameters. It achieved the new SOTA for language models with Webtext-103 perplexity of 10.21. Turing-NLG was trained end-to-end using ZeRO-100B and Fig. <ref type="figure" target="#fig_4">5</ref> shows the validation perplexity over 300K iterations compared to previous SOTA, Megatron-LM 8.3B parameter model. ZeRO-100B achieves a sustained throughput of 41.4 TFlops/GPU for this model.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="11">Concluding Remarks</head><p>From a HPC and system perspective, we believe that ZeRO represents a revolutionary transformation in the large model training landscape. While our implementation, ZeRO-100B, enables 8x increase in model sizes, over 10x in throughput improvement, achieves super-linear speedups on modern GPU clusters, and trains the largest model in the world, it is still just a tip of the iceberg. ZeRO in its entirety has the potential to increase the model size by yet another order of magnitude, enabling the training of trillion parameter models of the future.</p><p>Perhaps, what we feel most optimistic about ZeRO is that it imposes no hurdles on the data scientists. Unlike existing approaches such as MP and PP, no model refactoring is necessary, and it is as easy to use as standard DP, making ZeRO a prime candidate for future investigations on large model training. Through open sourcing and community feedback, we plan to make ZeRO fully accessible to the DL community to catalyze the evolution and democratization of large model training at scale.  Table 8: Model configurations for Figure 5 related to memory allocated with different ZeRO configurations.</p><p>.</p></div><figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_0"><head>Figure 1 :</head><label>1</label><figDesc>Figure 1: Comparing the per-device memory consumption of model states, with three stages of ZeRO-DP optimizations. Ψ denotes model size (number of parameters), K denotes the memory multiplier of optimizer states, and N d denotes DP degree. In the example, we assume a model size of Ψ = 7.5B and DP of N d = 64 with K = 12 based on mixed-precision training with Adam optimizer.</figDesc><graphic coords="3,100.80,100.80,410.39,190.20" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_1"><head>Figure 2 :</head><label>2</label><figDesc>Figure 2: ZeRO training throughput and speedup w.r.t SOTA baseline for varying model sizes.For ZeRO, the MP always fit in a node, while for baseline, models larger than 40B require MP across nodes.</figDesc><graphic coords="4,100.80,100.80,410.40,165.60" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_2"><head>Figure 3 :</head><label>3</label><figDesc>Figure 3: Superlinear scalability and per GPU training throughput of a 60B parameter model using ZeRO-100B.</figDesc><graphic coords="5,100.80,100.80,410.39,188.82" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_3"><head>Figure 4 :</head><label>4</label><figDesc>Figure 4: Max model throughput with ZeRO-DP.</figDesc><graphic coords="16,100.80,107.32,225.72,131.99" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_4"><head>Figure 5 :</head><label>5</label><figDesc>Figure 5: SOTA Turing-NLG enabled by ZeRO.</figDesc><graphic coords="16,339.81,100.80,164.16,123.67" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_5"><head>Figure 6 :</head><label>6</label><figDesc>Figure 6: Max model size</figDesc><graphic coords="16,108.03,276.06,123.12,93.70" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_6"><head>Figure 7 :</head><label>7</label><figDesc>Figure 7: Max cache allocated.</figDesc><graphic coords="16,244.44,277.37,123.12,94.39" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_7"><head>Figure 8 :</head><label>8</label><figDesc>Figure 8: Throughput per GPU.</figDesc><graphic coords="16,380.84,279.83,123.11,93.23" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_8"><head>Figure</head><figDesc>Figure 2 Model size ZeRO/Baseline Number of GPUs MP Layers Hidden size Attention head Batch size Total batch size 1.5B ZeRO 400 1 48 1600 16 24 9600 1.5B Baseline 400 2 48 1600 16 16 3200 8B ZeRO 400 4 72 3072 24 64 6400 8B Baseline 400 8 72 3072 24 8 400 40B ZeRO 400 4 88 6144 32 12 1200 40B Baseline 384 32 88 6144 64 4 48 60B ZeRO 400 16 132 6144 32 64 1600 60B Baseline 384 64 132 6144 64 4 24 80B ZeRO 400 16 100 8192 64 32 800 80B Baseline 384 128 100 8192 128 4 12 100B ZeRO 400 16 125 8192 64 32 800 100B Baseline 384 128 125 8192 128 2 6 120B ZeRO 400 16 150 8192 64 24 600 120B Baseline 384 128 150 8192 128 2 6 140B ZeRO 400 16 175 8192 64 16 400 140B Baseline 384 128 175 8192 128 2 6 170B ZeRO 400 16 212 8192 64 12 300 170B Baseline 256 256 212 8192 256 2 2</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_0"><head>Table 1 :</head><label>1</label><figDesc>, a 7.5 B parameter model requires only 16.6 GB of memory using P os+g with 64-way DP (N d = 64), Per-device memory consumption of different optimizations in ZeRO-DP as a function of DP degree . Bold-faced text are the combinations for which the model can fit into a cluster of 32GB V100 GPUs.</figDesc><table><row><cell>DP</cell><cell cols="3">7.5B Model (GB) P os P os+g P os+g+p</cell><cell cols="3">128B Model (GB) P os P os+g P os+g+p</cell><cell cols="3">1T Model (GB) P os P os+g P os+g+p</cell></row><row><cell>1</cell><cell>120</cell><cell>120</cell><cell>120</cell><cell cols="2">2048 2048</cell><cell>2048</cell><cell cols="2">16000 16000</cell><cell>16000</cell></row><row><cell>4</cell><cell>52.5</cell><cell>41.3</cell><cell>30</cell><cell>896</cell><cell>704</cell><cell>512</cell><cell>7000</cell><cell>5500</cell><cell>4000</cell></row><row><cell>16</cell><cell>35.6</cell><cell>21.6</cell><cell>7.5</cell><cell>608</cell><cell>368</cell><cell>128</cell><cell>4750</cell><cell>2875</cell><cell>1000</cell></row><row><cell>64</cell><cell>31.4</cell><cell>16.6</cell><cell>1.88</cell><cell>536</cell><cell>284</cell><cell>32</cell><cell>4187</cell><cell>2218</cell><cell>250</cell></row><row><cell>256</cell><cell>30.4</cell><cell>15.4</cell><cell>0.47</cell><cell>518</cell><cell>263</cell><cell>8</cell><cell>4046</cell><cell>2054</cell><cell>62.5</cell></row><row><cell>1024</cell><cell>30.1</cell><cell>15.1</cell><cell>0.12</cell><cell>513</cell><cell>257</cell><cell>2</cell><cell>4011</cell><cell>2013</cell><cell>15.6</cell></row></table><note><p>while requiring 120 GB with standard DP. When N d is large, the memory requirement of model states reduces from 2Ψ + 14Ψ = 16Ψ bytes to 2Ψ + 14Ψ N d ≈ 2Ψ bytes, leading to a 8x reduction.</p></note></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_1"><head>Table 2 :</head><label>2</label><figDesc>Maximum model size through memory analysis (left) and the measured model size when running with ZeRO-OS (right). The measured model size with P os matches the theoretical maximum, demonstrating that our memory analysis provides realistic upper bounds on model sizes.</figDesc><table><row><cell></cell><cell></cell><cell></cell><cell cols="3">Theoretical Model Size</cell><cell cols="2">Measured Model Size</cell></row><row><cell></cell><cell></cell><cell>Baseline</cell><cell>P os</cell><cell>P os+g</cell><cell cols="3">P os+g+p Baseline ZeRO-DP (P os )</cell></row><row><cell>1</cell><cell>64</cell><cell>2B</cell><cell>7.6B</cell><cell>14.4B</cell><cell>128B</cell><cell>1.3B</cell><cell>6.2B</cell></row><row><cell>2</cell><cell>128</cell><cell>4B</cell><cell>15.2B</cell><cell>28.8B</cell><cell>256B</cell><cell>2.5B</cell><cell>12.5B</cell></row><row><cell>4</cell><cell>256</cell><cell>8B</cell><cell>30.4B</cell><cell>57.6B</cell><cell>0.5T</cell><cell>5B</cell><cell>25B</cell></row><row><cell>8</cell><cell>512</cell><cell>16B</cell><cell cols="2">60.8B 115.2B</cell><cell>1T</cell><cell>10B</cell><cell>50B</cell></row><row><cell>16</cell><cell>1024</cell><cell>32B</cell><cell cols="2">121.6B 230.4B</cell><cell>2T</cell><cell>20B</cell><cell>100B</cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_2"><head>Table 3 :</head><label>3</label><figDesc>ZeRO configurationsZeRO-100B with increase in DP degree, allowing ZeRO-100B to fit larger batch sizes per GPU5 , which in turn improves throughput as a result of increasing arithmetic intensity.</figDesc><table><row><cell></cell><cell>ZeRO-DP</cell><cell>ZeRO-R</cell></row><row><cell>1</cell><cell>P os</cell><cell>C B +M D</cell></row><row><cell>2</cell><cell>P os</cell><cell>C B +M D +P a</cell></row><row><cell>3</cell><cell>P os+g</cell><cell>C B +M D</cell></row><row><cell>4</cell><cell>P os+g</cell><cell>C B +M D +P a</cell></row><row><cell>5</cell><cell>P os+g</cell><cell>C B +M D +P a+cpu</cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_3"><head>Table 4 :</head><label>4</label><figDesc>Configurations for different model sizes, number of layers, and hidden dimensions (HD) acrossFigures 2,<ref type="bibr" target="#b2">3,</ref><ref type="bibr" target="#b3">4.</ref> </figDesc><table><row><cell></cell><cell>Figure 2</cell><cell></cell><cell>Figures 3, 4</cell><cell></cell></row><row><cell></cell><cell>Layers</cell><cell>HD</cell><cell>Layers</cell><cell>HD</cell></row><row><cell>1.5B</cell><cell>48</cell><cell cols="2">1600 1.16B-2.5B 24,34,54</cell><cell>1920</cell></row><row><cell>8B</cell><cell>72</cell><cell>3072 4B</cell><cell>64</cell><cell>2304</cell></row><row><cell>40B-60B</cell><cell>88,132</cell><cell>4096 6B-8B</cell><cell>52,72</cell><cell>3072</cell></row><row><cell>80B-170B</cell><cell cols="2">100,125,150 8192 10B-13B</cell><cell cols="2">50,54,58,62 4096</cell></row><row><cell cols="2">140B-170B 175,212</cell><cell>8192 60B</cell><cell>75</cell><cell>8192</cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_4"><head>Table 5 :</head><label>5</label><figDesc>Model configurations for Figure2related to ZeRO throughput compared with baseline.</figDesc><table><row><cell>2</cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_5"><head>Table 6 :</head><label>6</label><figDesc>Model configurations for Figure3related to superlinear scalability.</figDesc><table><row><cell>Figure 4</cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_6"><head>Table 7 :</head><label>7</label><figDesc>Model configurations forFigure 4 related to max model size with different ZeRO configurations.</figDesc><table><row><cell>Figure 5</cell></row></table></figure>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="1" xml:id="foot_0"><p>Prior work<ref type="bibr" target="#b7">[8]</ref> shows, very large batch size could slow down convergence. For given model and data, there is a measure of critical-batch size, where increasing batch size further slows down convergence. The detailed discussion of this topic is beyond the scope of the paper.</p></note>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="2" xml:id="foot_1"><p>https://github.com/microsoft/deepspeed</p></note>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="3" xml:id="foot_2"><p>The activation memory of a transformer-based model is proportional to the number of transformer layers × hidden dimensions × sequence length × batch size. For a GPT-2 like architecture the total activations is about 12 × hidden dim × batch × seq length × transf ormer layers.</p></note>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="4" xml:id="foot_3"><p>https://github.com/nvidia/Megatron-LM</p></note>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="5" xml:id="foot_4"><p>Increasing batch size too much can lead to poor convergence, but for these large models, we are still in a regime where batch size is small enough even with 1K GPU and it does not affect convergence rate</p></note>
+		</body>
+		<back>
+
+			<div type="acknowledgement">
+<div><head n="10">Implementation and Evaluation</head><p>We focus our implementation on supporting efficient training of models with ∼100B parameters, which are an order-of-magnitude larger than the largest published models today (e.g., T5-11B <ref type="bibr" target="#b3">[4]</ref>) while trainable within a reasonable time frame on current hardware (e.g., with <rs type="grantNumber">1K V100</rs> GPUs). We implement and evaluate a subset of optimizations in ZeRO-P os+g in ZeRO-DP plus ZeRO-R -that allows us to achieve this goal. We will refer to this implementation as ZeRO-100B. Our results show that ZeRO-100B can efficiently train models with up to 170B parameters, 8x bigger than SOTA, up to 10x faster and with improved usability. ZeRO-100B powers Turing-NLG, the largest published model in the world with new SOTA accuracy.</p></div>
+<div><head>Acknowledgement</head><p>We thank <rs type="person">Junhua Wang</rs> for his valuable support and advice. We thank <rs type="person">Minjia Zhang</rs>, <rs type="person">Elton Zheng</rs>, <rs type="person">Shaden Smith</rs>, <rs type="person">Reza Yazdani Aminabadi</rs>, <rs type="person">Arash Ashari</rs>, and <rs type="person">Niranjan Uma Naresh</rs> for their great feedback and help on evaluating the work. We thank <rs type="person">Brandon Norick</rs>, <rs type="person">Corby Rossett</rs>, <rs type="person">Gopi Kumar</rs>, <rs type="person">Jack Zhang</rs>, <rs type="person">Jing Zhao</rs>, <rs type="person">Payal Bajaj</rs>, <rs type="person">Rangan Majumder</rs>, <rs type="person">Saksham Singhal</rs>, <rs type="person">Saurabh Tiwary</rs>, and <rs type="person">Xia Song</rs> for many helpful discussions and suggestions.</p></div>
+			</div>
+			<listOrg type="funding">
+				<org type="funding" xml:id="_rcmhavT">
+					<idno type="grant-number">T5-11B [4</idno>
+				</org>
+				<org type="funding" xml:id="_XUkfRZR">
+					<idno type="grant-number">1K V100</idno>
+				</org>
+			</listOrg>
+			<div type="annex">
+<div xmlns="http://www.tei-c.org/ns/1.0"><p>Table <ref type="table">10</ref>: Model configurations for Figure <ref type="figure">7</ref> related to evaluating maximum model sizes vs throughput while using only data-parallelism.</p><p>These tables contain all the model configurations and batch sizes used for the experiments presented in the paper. In Figure <ref type="figure">2</ref>, notice that the total number of GPUs for some baseline experiment is 384 or 256 compared to 400 for ZeRO. This is because the total number of GPUs must be a product of the number of MP, and we only had access to a total of 400 GPUs. There exist a handful of additional constraints in model configuration values, such as hidden size must be divisible by attention heads, hidden size divisible by MP, and attention heads divisible by MP. For baseline we used the lowest number of GPUs that was a power of 2 that would fit the model. So for example, for 170B parameter model this was 256 for the baseline. Since we only had 400 GPUs, we could only run baseline with 256 GPUs.</p><p>We do want to point out that this gives the baseline an advantage over ZeRO because fewer GPUs means better communication throughput for the baseline. For example, in case of the 170B parameter model, DP=1 for the baseline so it in fact incurs no communication for DP. The results presented in this paper are despite this advantage for the baseline.</p><p>Also, we want to point out that we are comparing the performance per GPU, not the aggregate performance, and therefore the results are still apples-to-apples while giving a slight advantage to the baseline.</p></div>			</div>
+			<div type="references">
+
+				<listBibl>
+
+<biblStruct xml:id="b0">
+	<monogr>
+		<title level="m" type="main">BERT: pre-training of deep bidirectional transformers for language understanding</title>
+		<author>
+			<persName><forename type="first">Jacob</forename><surname>Devlin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ming-Wei</forename><surname>Chang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kenton</forename><surname>Lee</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kristina</forename><surname>Toutanova</surname></persName>
+		</author>
+		<idno>CoRR, abs/1810.04805</idno>
+		<imprint>
+			<date type="published" when="2018">2018</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b1">
+	<monogr>
+		<title level="m" type="main">Language models are unsupervised multitask learners</title>
+		<author>
+			<persName><forename type="first">Alec</forename><surname>Radford</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jeff</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Rewon</forename><surname>Child</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">David</forename><surname>Luan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dario</forename><surname>Amodei</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ilya</forename><surname>Sutskever</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2019">2019</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b2">
+	<monogr>
+		<title level="m" type="main">Megatron-lm: Training multi-billion parameter language models using model parallelism</title>
+		<author>
+			<persName><forename type="first">Mohammad</forename><surname>Shoeybi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mostofa</forename><surname>Patwary</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Raul</forename><surname>Puri</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Patrick</forename><surname>Legresley</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jared</forename><surname>Casper</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Bryan</forename><surname>Catanzaro</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2019">2019</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b3">
+	<monogr>
+		<title level="m" type="main">Exploring the limits of transfer learning with a unified text-to-text transformer</title>
+		<author>
+			<persName><forename type="first">Colin</forename><surname>Raffel</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Noam</forename><surname>Shazeer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Adam</forename><surname>Roberts</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Katherine</forename><surname>Lee</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sharan</forename><surname>Narang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Michael</forename><surname>Matena</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yanqi</forename><surname>Zhou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wei</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Peter</forename><forename type="middle">J</forename><surname>Liu</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2019">2019</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b4">
+	<monogr>
+		<title level="m" type="main">Mesh-tensorflow: Deep learning for supercomputers</title>
+		<author>
+			<persName><forename type="first">Noam</forename><surname>Shazeer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Youlong</forename><surname>Cheng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Niki</forename><surname>Parmar</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dustin</forename><surname>Tran</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ashish</forename><surname>Vaswani</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Penporn</forename><surname>Koanantakool</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Peter</forename><surname>Hawkins</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hyoukjoong</forename><surname>Lee</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mingsheng</forename><surname>Hong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Cliff</forename><surname>Young</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ryan</forename><surname>Sepassi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Blake</forename><forename type="middle">A</forename><surname>Hechtman</surname></persName>
+		</author>
+		<idno>CoRR, abs/1811.02084</idno>
+		<imprint>
+			<date type="published" when="2018">2018</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b5">
+	<analytic>
+		<title level="a" type="main">Adam: A method for stochastic optimization</title>
+		<author>
+			<persName><forename type="first">P</forename><surname>Diederik</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jimmy</forename><surname>Kingma</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Ba</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">3rd International Conference on Learning Representations, ICLR 2015</title>
+		<meeting><address><addrLine>San Diego, CA, USA</addrLine></address></meeting>
+		<imprint>
+			<publisher>Conference Track Proceedings</publisher>
+			<date type="published" when="2015">May 7-9, 2015. 2015</date>
+		</imprint>
+	</monogr>
+	<note>Yoshua Bengio and Yann LeCun</note>
+</biblStruct>
+
+<biblStruct xml:id="b6">
+	<monogr>
+		<title level="m" type="main">Training deep nets with sublinear memory cost</title>
+		<author>
+			<persName><forename type="first">Tianqi</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Bing</forename><surname>Xu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chiyuan</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Carlos</forename><surname>Guestrin</surname></persName>
+		</author>
+		<idno>CoRR, abs/1604.06174</idno>
+		<imprint>
+			<date type="published" when="2016">2016</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b7">
+	<monogr>
+		<title level="m" type="main">An empirical model of large-batch training</title>
+		<author>
+			<persName><forename type="first">Sam</forename><surname>Mccandlish</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jared</forename><surname>Kaplan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dario</forename><surname>Amodei</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Openai</forename><surname>Dota</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Team</forename></persName>
+		</author>
+		<idno>CoRR, abs/1812.06162</idno>
+		<imprint>
+			<date type="published" when="2018">2018</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b8">
+	<monogr>
+		<title level="m" type="main">Turing-nlg: A 17-billion-parameter language model by microsoft</title>
+		<ptr target="https://www.microsoft.com/en-us/research/blog/turing-nlg-a-17-billion-parameter-language-model-by-microsoft/" />
+		<imprint>
+			<date type="published" when="2020">2020</date>
+			<publisher>Microsoft</publisher>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b9">
+	<monogr>
+		<title level="m" type="main">Gpipe: Efficient training of giant neural networks using pipeline parallelism</title>
+		<author>
+			<persName><forename type="first">Yanping</forename><surname>Huang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yonglong</forename><surname>Cheng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dehao</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hyoukjoong</forename><surname>Lee</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jiquan</forename><surname>Ngiam</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Quoc</forename><forename type="middle">V</forename><surname>Le</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhifeng</forename><surname>Chen</surname></persName>
+		</author>
+		<idno>ArXiv, abs/1811.06965</idno>
+		<imprint>
+			<date type="published" when="2018">2018</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b10">
+	<monogr>
+		<title level="m" type="main">Pipedream: Fast and efficient pipeline parallel DNN training</title>
+		<author>
+			<persName><forename type="first">Aaron</forename><surname>Harlap</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Deepak</forename><surname>Narayanan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Amar</forename><surname>Phanishayee</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Vivek</forename><surname>Seshadri</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Nikhil</forename><forename type="middle">R</forename><surname>Devanur</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Gregory</forename><forename type="middle">R</forename><surname>Ganger</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Phillip</forename><forename type="middle">B</forename><surname>Gibbons</surname></persName>
+		</author>
+		<idno>CoRR, abs/1806.03377</idno>
+		<imprint>
+			<date type="published" when="2018">2018</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b11">
+	<analytic>
+		<title level="a" type="main">Pipedream: Generalized pipeline parallelism for dnn training</title>
+		<author>
+			<persName><forename type="first">Deepak</forename><surname>Narayanan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Aaron</forename><surname>Harlap</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Amar</forename><surname>Phanishayee</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Vivek</forename><surname>Seshadri</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Nikhil</forename><surname>Devanur</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Greg</forename><surname>Granger</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Phil</forename><surname>Gibbons</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Matei</forename><surname>Zaharia</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">ACM Symposium on Operating Systems Principles (SOSP 2019)</title>
+		<imprint>
+			<date type="published" when="2019-10">October 2019</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b12">
+	<analytic>
+		<title level="a" type="main">Gist: Efficient data encoding for deep neural network training</title>
+		<author>
+			<persName><forename type="first">Animesh</forename><surname>Jain</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Amar</forename><surname>Phanishayee</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jason</forename><surname>Mars</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Lingjia</forename><surname>Tang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Gennady</forename><surname>Pekhimenko</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">International Symposium on Computer Architecture (ISCA 2018)</title>
+		<imprint>
+			<date type="published" when="2018">2018</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b13">
+	<monogr>
+		<title level="m" type="main">Checkmate: Breaking the memory wall with optimal tensor rematerialization</title>
+		<author>
+			<persName><forename type="first">Paras</forename><surname>Jain</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ajay</forename><surname>Jain</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Aniruddha</forename><surname>Nrusimha</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Amir</forename><surname>Gholami</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Pieter</forename><surname>Abbeel</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kurt</forename><surname>Keutzer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ion</forename><surname>Stoica</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Joseph</forename><forename type="middle">E</forename><surname>Gonzalez</surname></persName>
+		</author>
+		<idno>ArXiv, abs/1910.02653</idno>
+		<imprint>
+			<date type="published" when="2019">2019</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b14">
+	<monogr>
+		<title level="m" type="main">Superneurons: Dynamic GPU memory management for training deep neural networks</title>
+		<author>
+			<persName><forename type="first">Linnan</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jinmian</forename><surname>Ye</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yiyang</forename><surname>Zhao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wei</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ang</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shuaiwen</forename></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Leon</forename><surname>Song</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zenglin</forename><surname>Xu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tim</forename><surname>Kraska</surname></persName>
+		</author>
+		<idno>CoRR, abs/1801.04380</idno>
+		<imprint>
+			<date type="published" when="2018">2018</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b15">
+	<monogr>
+		<title level="m" type="main">Training large neural networks with constant memory using a new execution algorithm</title>
+		<author>
+			<persName><forename type="first">Bharadwaj</forename><surname>Pudipeddi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Maral</forename><surname>Mesmakhosroshahi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jinwen</forename><surname>Xi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sujeeth</forename><surname>Bharadwaj</surname></persName>
+		</author>
+		<idno>ArXiv, abs/2002.05645</idno>
+		<imprint>
+			<date type="published" when="2020">2020</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b16">
+	<analytic>
+		<title level="a" type="main">vdnn: Virtualized deep neural networks for scalable, memory-efficient neural network design</title>
+		<author>
+			<persName><forename type="first">M</forename><surname>Rhu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">N</forename><surname>Gimelshein</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Clemons</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Zulfiqar</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><forename type="middle">W</forename><surname>Keckler</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">2016 49th Annual IEEE/ACM International Symposium on Microarchitecture (MICRO)</title>
+		<imprint>
+			<date type="published" when="2016">2016</date>
+			<biblScope unit="page" from="1" to="13" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b17">
+	<monogr>
+		<title level="m" type="main">Adafactor: Adaptive learning rates with sublinear memory cost</title>
+		<author>
+			<persName><forename type="first">Noam</forename><surname>Shazeer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mitchell</forename><surname>Stern</surname></persName>
+		</author>
+		<idno>CoRR, abs/1804.04235</idno>
+		<imprint>
+			<date type="published" when="2018">2018</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b18">
+	<monogr>
+		<title level="m" type="main">Memory-efficient adaptive optimization for large-scale learning</title>
+		<author>
+			<persName><forename type="first">Rohan</forename><surname>Anil</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Vineet</forename><surname>Gupta</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tomer</forename><surname>Koren</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yoram</forename><surname>Singer</surname></persName>
+		</author>
+		<idno>ArXiv, abs/1901.11150</idno>
+		<imprint>
+			<date type="published" when="2019">2019</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b19">
+	<analytic>
+		<title level="a" type="main">Adaptive subgradient methods for online learning and stochastic optimization</title>
+		<author>
+			<persName><forename type="first">John</forename><surname>Duchi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Elad</forename><surname>Hazan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yoram</forename><surname>Singer</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">J. Mach. Learn. Res</title>
+		<imprint>
+			<biblScope unit="volume">12</biblScope>
+			<biblScope unit="page">21212159</biblScope>
+			<date type="published" when="2011-07">July 2011</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b20">
+	<monogr>
+		<title level="m" type="main">Scaling SGD batch size to 32k for imagenet training</title>
+		<author>
+			<persName><forename type="first">Yang</forename><surname>You</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Igor</forename><surname>Gitman</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Boris</forename><surname>Ginsburg</surname></persName>
+		</author>
+		<idno>CoRR, abs/1708.03888</idno>
+		<imprint>
+			<date type="published" when="2017">2017</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b21">
+	<monogr>
+		<title level="m" type="main">Reducing BERT pre-training time from 3 days to 76 minutes</title>
+		<author>
+			<persName><forename type="first">Yang</forename><surname>You</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jing</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jonathan</forename><surname>Hseu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xiaodan</forename><surname>Song</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">James</forename><surname>Demmel</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Cho-Jui</forename><surname>Hsieh</surname></persName>
+		</author>
+		<idno>CoRR, abs/1904.00962</idno>
+		<imprint>
+			<date type="published" when="2019">2019</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b22">
+	<monogr>
+		<title/>
+		<author>
+			<persName><forename type="first">Paulius</forename><surname>Micikevicius</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sharan</forename><surname>Narang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jonah</forename><surname>Alben</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Gregory</forename><surname>Diamos</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Erich</forename><surname>Elsen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">David</forename><surname>Garcia</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Boris</forename><surname>Ginsburg</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Michael</forename><surname>Houston</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Oleksii</forename><surname>Kuchaiev</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ganesh</forename><surname>Venkatesh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hao</forename><surname>Wu</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2017">2017</date>
+		</imprint>
+	</monogr>
+	<note>Mixed precision training</note>
+</biblStruct>
+
+<biblStruct xml:id="b23">
+	<monogr>
+		<ptr target="http://images.nvidia.com/content/volta-architecture/pdf/volta-architecture-whitepaper.pdf" />
+		<title level="m">NVIDIA Tesla V100 GPU architecture</title>
+		<imprint>
+			<date type="published" when="2017-04">2017. April-2020</date>
+			<biblScope unit="volume">22</biblScope>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b24">
+	<monogr>
+		<title level="m" type="main">Automatic mixed-precision</title>
+		<author>
+			<persName><surname>Nvidia</surname></persName>
+		</author>
+		<ptr target="https://developer.nvidia.com/automatic-mixed-precision" />
+		<imprint>
+			<date type="published" when="2019">2019</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b25">
+	<monogr>
+		<title level="m" type="main">NVIDIA Clocks Worlds Fastest BERT Training Time</title>
+		<author>
+			<persName><forename type="first">Shar</forename><surname>Narasimhan</surname></persName>
+		</author>
+		<ptr target="https://devblogs.nvidia.com/training-bert-with-gpus/" />
+		<imprint>
+			<date type="published" when="2019-09">2019. September-2019</date>
+			<biblScope unit="volume">25</biblScope>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+				</listBibl>
+			</div>
+		</back>
+	</text>
+</TEI>
