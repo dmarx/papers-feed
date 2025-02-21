@@ -1,0 +1,1681 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<TEI xml:space="preserve" xmlns="http://www.tei-c.org/ns/1.0" 
+xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" 
+xsi:schemaLocation="http://www.tei-c.org/ns/1.0 https://raw.githubusercontent.com/kermitt2/grobid/master/grobid-home/schemas/xsd/Grobid.xsd"
+ xmlns:xlink="http://www.w3.org/1999/xlink">
+	<teiHeader xml:lang="en">
+		<fileDesc>
+			<titleStmt>
+				<title level="a" type="main">MEDUSA: Simple LLM Inference Acceleration Framework with Multiple Decoding Heads</title>
+			</titleStmt>
+			<publicationStmt>
+				<publisher/>
+				<availability  status="unknown">
+					<licence/>
+				</availability>
+				<date type="published" when="2024-06-14">14 Jun 2024</date>
+			</publicationStmt>
+			<sourceDesc>
+				<biblStruct>
+					<analytic>
+						<author role="corresp">
+							<persName><forename type="first">Tianle</forename><surname>Cai</surname></persName>
+							<email>&lt;tianle.cai@princeton.edu&gt;</email>
+							<affiliation key="aff0">
+								<orgName type="institution">Princeton University</orgName>
+							</affiliation>
+							<affiliation key="aff1">
+								<orgName type="department">Together AI</orgName>
+							</affiliation>
+						</author>
+						<author>
+							<persName><forename type="first">Yuhong</forename><surname>Li</surname></persName>
+							<affiliation key="aff2">
+								<orgName type="institution">University of Illinois Urbana-Champaign</orgName>
+							</affiliation>
+						</author>
+						<author>
+							<persName><forename type="first">Zhengyang</forename><surname>Geng</surname></persName>
+							<affiliation key="aff3">
+								<orgName type="institution">Carnegie Mellon Uni- versity</orgName>
+							</affiliation>
+						</author>
+						<author>
+							<persName><forename type="first">Hongwu</forename><surname>Peng</surname></persName>
+							<affiliation key="aff4">
+								<orgName type="institution">University of Connecticut</orgName>
+							</affiliation>
+						</author>
+						<author>
+							<persName><forename type="first">Jason</forename><forename type="middle">D</forename><surname>Lee</surname></persName>
+							<affiliation key="aff0">
+								<orgName type="institution">Princeton University</orgName>
+							</affiliation>
+						</author>
+						<author>
+							<persName><forename type="first">Deming</forename><surname>Chen</surname></persName>
+							<affiliation key="aff2">
+								<orgName type="institution">University of Illinois Urbana-Champaign</orgName>
+							</affiliation>
+						</author>
+						<author>
+							<persName><forename type="first">Tri</forename><surname>Dao</surname></persName>
+							<affiliation key="aff0">
+								<orgName type="institution">Princeton University</orgName>
+							</affiliation>
+							<affiliation key="aff1">
+								<orgName type="department">Together AI</orgName>
+							</affiliation>
+						</author>
+						<title level="a" type="main">MEDUSA: Simple LLM Inference Acceleration Framework with Multiple Decoding Heads</title>
+					</analytic>
+					<monogr>
+						<imprint>
+							<date type="published" when="2024-06-14">14 Jun 2024</date>
+						</imprint>
+					</monogr>
+					<idno type="MD5">690B3B197DC082C4669DCA3916137797</idno>
+					<idno type="arXiv">arXiv:2401.10774v3[cs.LG]</idno>
+				</biblStruct>
+			</sourceDesc>
+		</fileDesc>
+		<encodingDesc>
+			<appInfo>
+				<application version="0.8.2-SNAPSHOT" ident="GROBID" when="2025-02-21T07:03+0000">
+					<desc>GROBID - A machine learning software for extracting information from scholarly documents</desc>
+					<ref target="https://github.com/kermitt2/grobid"/>
+				</application>
+			</appInfo>
+		</encodingDesc>
+		<profileDesc>
+			<abstract>
+<div xmlns="http://www.tei-c.org/ns/1.0"><p>Large Language Models (LLMs) employ autoregressive decoding that requires sequential computation, with each step reliant on the previous one's output. This creates a bottleneck as each step necessitates moving the full model parameters from High-Bandwidth Memory (HBM) to the accelerator's cache. While methods such as speculative decoding have been suggested to address this issue, their implementation is impeded by the challenges associated with acquiring and maintaining a separate draft model. In this paper, we present MEDUSA, an efficient method that augments LLM inference by adding extra decoding heads to predict multiple subsequent tokens in parallel. Using a tree-based attention mechanism, MEDUSA constructs multiple candidate continuations and verifies them simultaneously in each decoding step. By leveraging parallel processing, MEDUSA substantially reduces the number of decoding steps required. We present two levels of fine-tuning procedures for MEDUSA to meet the needs of different use cases: MEDUSA-1: MEDUSA is directly fine-tuned on top of a frozen backbone LLM, enabling lossless inference acceleration. MEDUSA-2: MEDUSA is fine-tuned together with the backbone LLM, enabling better prediction accuracy of MEDUSA heads and higher speedup but needing a special training recipe that preserves the model's capabilities. Moreover, we propose several extensions that improve or expand the utility of MEDUSA, including a self-distillation to handle situations where no training data is available and a typical acceptance scheme to boost the acceptance rate while maintaining generation quality. We evaluate * Equal contribution</p></div>
+			</abstract>
+		</profileDesc>
+	</teiHeader>
+	<text xml:lang="en">
+		<body>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="1.">Introduction</head><p>The recent advancements in Large Language Models (LLMs) have demonstrated that the quality of language generation significantly improves with an increase in model size, reaching billions of parameters <ref type="bibr" target="#b3">(Brown et al., 2020;</ref><ref type="bibr" target="#b7">Chowdhery et al., 2022;</ref><ref type="bibr" target="#b47">Zhang et al., 2022;</ref><ref type="bibr" target="#b17">Hoffmann et al., 2022;</ref><ref type="bibr">OpenAI, 2023;</ref><ref type="bibr">Google, 2023;</ref><ref type="bibr" target="#b40">Touvron et al., 2023)</ref>. However, this growth has led to an increase in inference latency, which poses a significant challenge in practical applications. From a system perspective, LLM inference is predominantly memory-bandwidth-bound <ref type="bibr" target="#b37">(Shazeer, 2019;</ref><ref type="bibr" target="#b21">Kim et al., 2023)</ref>, with the main latency bottleneck stemming from accelerators' memory bandwidth rather than arithmetic computations. This bottleneck is inherent to the sequential nature of auto-regressive decoding, where each forward pass requires transferring the complete model parameters from High-Bandwidth Memory (HBM) to the accelerator's cache. This process, which generates only a single token, underutilizes the arithmetic computation potential of modern accelerators, leading to inefficiency.</p><p>To address this, one approach to speed up LLM inference involves increasing the arithmetic intensity (the ratio of total floating-point operations (FLOPs) to total data movement) of the decoding process and reducing the number of decoding steps. In line with this idea, speculative decoding has been proposed <ref type="bibr" target="#b25">(Leviathan et al., 2022;</ref><ref type="bibr" target="#b4">Chen et al., 2023;</ref><ref type="bibr" target="#b42">Xia et al., 2023;</ref><ref type="bibr" target="#b30">Miao et al., 2023)</ref>. This method uses a smaller draft model to generate a token sequence, which is then refined by the original, larger model for acceptable continuation. However, obtaining an appropriate draft model remains challenging, and it's even harder to integrate the draft model into a distributed system <ref type="bibr" target="#b4">(Chen et al., 2023)</ref>.</p><p>Instead of using a separate draft model to sequentially generate candidate outputs, in this paper, we revisit and re-fine the concept of using multiple decoding heads on top of the backbone model to expedite inference <ref type="bibr" target="#b39">(Stern et al., 2018)</ref>. We find that when applied effectively, this technique can overcome the challenges of speculative decoding, allowing for seamless integration into existing LLM systems. Specifically, we introduce MEDUSA, a method that enhances LLM inference by integrating additional decoding heads to concurrently predict multiple tokens. These heads are fine-tuned in a parameter-efficient manner and can be added to any existing model. With no requirement for a draft model, MEDUSA offers easy integration into current LLM systems, including those in distributed environments, ensuring a user-friendly experience.</p><p>We further enhance MEDUSA with two key insights. Firstly, the current approach of generating a single candidate continuation at each decoding step leads to inefficient use of computational resources. To address this, we propose generating multiple candidate continuations using the MEDUSA heads and verifying them concurrently through a simple adjustment to the attention mask. Secondly, we can reuse the rejection sampling scheme as used in speculative decoding <ref type="bibr" target="#b25">(Leviathan et al., 2022;</ref><ref type="bibr" target="#b4">Chen et al., 2023)</ref> to generate consistent responses with the same distribution as the original model. However, it cannot further enhance the acceleration rate. Alternatively, we introduce a typical acceptance scheme that selects reasonable candidates from the MEDUSA head outputs. We use temperature as a threshold to manage deviation from the original model's predictions, providing an efficient alternative to the rejection sampling method. Our results suggest that the proposed typical acceptance scheme can accelerate the decoding speed further while maintaining a similar generation quality.</p><p>To equip LLMs with predictive MEDUSA heads, we propose two distinct fine-tuning procedures tailored to various scenarios. For situations with limited computational resources or when the objective is to incorporate MEDUSA into an existing model without affecting its performance, we recommend MEDUSA-1. This method requires minimal memory and can be further optimized with quantization techniques akin to those in QLoRA <ref type="bibr" target="#b10">(Dettmers et al., 2023)</ref>, without compromising the generation quality due to the fixed backbone model. However, in MEDUSA-1, the full potential of the backbone model is not utilized. We can further fine-tune it to enhance the prediction accuracy of MEDUSA heads, which can directly lead to a greater speedup. Therefore, we introduce MEDUSA-2, which is suitable for scenarios with ample computational resources or for direct Supervised Fine-Tuning (SFT) from a base model. The key to MEDUSA-2 is a training protocol that enables joint training of the MEDUSA heads and the backbone model without compromising the model's next-token prediction capability and output quality. We propose different strategies for obtaining the training datasets depending on the model's training recipe and dataset availability. When the model is fine-tuned on a public dataset, it can be directly used for MEDUSA. If the dataset is unavailable or the model underwent a Reinforcement Learning with Human Feedback (RLHF) <ref type="bibr" target="#b32">(Ouyang et al., 2022)</ref> process, we suggest a selfdistillation approach to generate a training dataset for the MEDUSA heads.</p><p>Our experiments primarily focus on scenarios with a batch size of one, which is representative of the use case where LLMs are locally hosted for personal use. We test MEDUSA on models of varying sizes and training settings, including Vicuna-7B, 13B (trained with a public dataset), Vicuna-33B <ref type="bibr" target="#b6">(Chiang et al., 2023)</ref> (trained with a private dataset<ref type="foot" target="#foot_0">foot_0</ref> ), and Zephyr-7B (trained with both supervised fine-tuning and alignment). MEDUSA can achieve a speedup of 2.3 to 2.8 times across different prompt types without compromising on the quality of generation. . MEDUSA introduces multiple heads on top of the last hidden states of the LLM, enabling the prediction of several subsequent tokens in parallel (Section 2.1.1). During inference, each head generates multiple top predictions for its designated position. These predictions are assembled into candidates, which are processed in parallel using a tree-based attention mechanism (Section 2.1.2). The final step is to verify the candidates and accept a continuation. Besides the standard rejection sampling scheme, a typical acceptance scheme (Section 2.3.1) can also be used here to select reasonable continuations, and the longest accepted candidate prefix will be used for the next decoding phase.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>It is difficult</head><formula xml:id="formula_0">It is difficult not ✅ It' difficult a ❌ It is' not ❌ ...</formula></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="2.">Methodology</head><p>MEDUSA follows the same framework as speculative decoding, where each decoding step primarily consists of three substeps: (1) generating candidates, (2) processing candidates, and (3) accepting candidates. For MEDUSA, (1) is achieved by MEDUSA heads, (2) is realized by tree attention, and since MEDUSA heads are on top of the original model, the logits calculated in (2) can be used for substep (1) for the next decoding step. The final step (3) can be realized by either rejection sampling <ref type="bibr" target="#b25">(Leviathan et al., 2022;</ref><ref type="bibr" target="#b4">Chen et al., 2023)</ref> or typical acceptance (Section 2.3.1). The overall pipeline is illustrated in Figure <ref type="figure">1</ref>.</p><p>In this section, we first introduce the key components of MEDUSA, including MEDUSA heads, and tree attention. Then, we present two levels of fine-tuning procedures for MEDUSA to meet the needs of different use cases. Finally, we propose two extensions to MEDUSA, including self-distillation and typical acceptance, to handle situations where no training data is available for MEDUSA and to improve the efficiency of the decoding process, respectively.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="2.1.">Key Components</head></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="2.1.1.">MEDUSA HEADS</head><p>In speculative decoding, subsequent tokens are predicted by an auxiliary draft model. This draft model must be small yet effective enough to generate continuations that the original model will accept. Fulfilling these requirements is a challenging task, and existing approaches <ref type="bibr" target="#b38">(Spector &amp; Re, 2023;</ref><ref type="bibr" target="#b30">Miao et al., 2023)</ref> often resort to separately pre-training a smaller model. This pre-training process demands substantial additional computational resources. For example, in <ref type="bibr" target="#b30">(Miao et al., 2023)</ref>, a reported 275 NVIDIA A100 GPU hours were used. Additionally, separate pre-training can potentially create a distribution shift between the draft model and the original model, leading to continuations that the original model may not favor. <ref type="bibr" target="#b4">Chen et al. (2023)</ref> have also highlighted the complexities of serving multiple models in a distributed environment.</p><p>To streamline and democratize the acceleration of LLM inference, we take inspiration from <ref type="bibr" target="#b39">Stern et al. (2018)</ref>, which utilizes parallel decoding for tasks such as machine translation and image super-resolution. MEDUSA heads are additional decoding heads appended to the last hidden states of the original model. Specifically, given the original model's last hidden states h t at position t, we add K decoding heads to h t . The k-th head is used to predict the token in the (t + k + 1)-th position of the next tokens (the original language model head is used to predict the (t + 1)-th position).</p><p>The prediction of the k-th head is denoted as p (k)</p><p>t , representing a distribution over the vocabulary, while the prediction of the original model is denoted as p (0) t . Following the approach of <ref type="bibr" target="#b39">Stern et al. (2018)</ref>, we utilize a single layer of feed-forward network with a residual connection for each head. We find that this simple design is sufficient to achieve satisfactory performance. The definition of the k-th head is outlined as:</p><formula xml:id="formula_1">p (k) t = softmax W (k) 2 • SiLU(W (k) 1 • h t ) + h t , where W (k) 2 ∈ R d×V , W (k) 1 ∈ R d×d .</formula><p>d is the output dimension of the LLM's last hidden layer and V is the vocabulary size. We initialize W (k) 2 identically to the original language model head, and W to zero. This aligns the initial prediction of MEDUSA heads with that of the original model. The SiLU activation function <ref type="bibr" target="#b13">(Elfwing et al., 2017)</ref> is employed following the Llama models <ref type="bibr" target="#b40">(Touvron et al., 2023)</ref>.</p><p>Unlike a draft model, MEDUSA heads are trained in conjunction with the original backbone model, which can remain frozen during training (MEDUSA-1) or be trained together (MEDUSA-2). This method allows for fine-tuning large models even on a single GPU, taking advantage of the powerful base model's learned representations. Furthermore, it ensures that the distribution of the MEDUSA heads aligns with that of the original model, thereby mitigating the distribution shift problem. Additionally, since the new heads consist of just a single layer akin to the original language model head, MEDUSA does not add complexity to the serving system design and is friendly to distributed settings. We will discuss the training recipe for MEDUSA heads in Section 2.2.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="2.1.2.">TREE ATTENTION</head><p>Through MEDUSA heads, we obtain probability predictions for the subsequent K+1 tokens. These predictions enable us to create length-K + 1 continuations as candidates. While the speculative decoding studies <ref type="bibr" target="#b25">(Leviathan et al., 2022;</ref><ref type="bibr" target="#b4">Chen et al., 2023)</ref> suggest sampling a single continuation as the candidate, leveraging multiple candidates during decoding can enhance the expected acceptance length within a decoding step. Nevertheless, more candidates can also raise computational demands. To strike a balance, we employ a tree-structured attention mechanism to process multiple candidates concurrently. This attention mechanism diverges from the traditional causal attention paradigm. Within this framework, only tokens from the same continuation are regarded as historical data. Drawing inspiration from the concept of embedding graph structures into attention as proposed in the graph neural network domain <ref type="bibr" target="#b45">(Ying et al., 2021)</ref>, we incorporate the tree structure into our attention mask, visualized in Figure <ref type="figure">2</ref>. Remarkably, similar ideas have also been explored in independent works like <ref type="bibr" target="#b30">Miao et al. (2023)</ref>; <ref type="bibr" target="#b38">Spector &amp; Re (2023)</ref>, where they follow a bottom-up approach and construct the tree by merging multiple candidates generated by a draft model. In our method, we instead take a top-down approach to build the tree thanks to the structure of candidates generated by MEDUSA heads. For a given k-th head, its top-s k predictions serve as the Figure <ref type="figure">2</ref>. We demonstrates the use of tree attention to process multiple candidates concurrently. As exemplified, the top-2 predictions from the first MEDUSA head and the top-3 from the second result in a total of 2 × 3 = 6 candidates. Each of these candidates corresponds to a distinct branch within the tree structure. To guarantee that each token only accesses its predecessors, we devise an attention mask that exclusively permits attention flow from the current token back to its antecedent tokens. The positional indices for positional encoding are adjusted in line with this structure. basis for candidate formation, where s k is a designated hyperparameter. These candidates are established by determining the Cartesian product of the top-s k predictions from each head. For instance, in Figure <ref type="figure">2</ref>, with s 1 = 2 and s 2 = 3, each first head prediction can be succeeded by any prediction from the second head. This leads to a tree structure where s k branches exist at the k-th level (considering a virtual root as the 0-level, in practice, this 0-level is for the prediction of the language model head of the original model, which can be sampled independently). Within this tree, only a token's predecessors are seen as historical context, and our attention mask ensures that the attention is only applied on a token's predecessors. By employing this mask and properly setting the positional indices for positional encoding, we can process numerous candidates simultaneously without the need to expand the batch size. The cumulative number of new tokens is calculated as</p><formula xml:id="formula_2">K k=1 k i=1 s i .</formula><p>In this section, we demonstrate the most simple and regular way to construct the tree structure by taking the Cartesian product. However, it is possible to construct the tree structure in a more sophisticated way and exploit the unbalanced accuracy of different top predictions of different heads. We will discuss this in Section 2.3.3.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="2.2.">Training Strategies</head><p>At the most basic level, we can train MEDUSA heads by freezing the backbone model and fine-tuning MEDUSA heads. However, training the backbone in conjunction with the MEDUSA heads can significantly enhance the accuracy of the MEDUSA heads. Depending on the computational resources and the specific reqirements of the use case, we propose two levels of training strategies for MEDUSA heads.</p><p>In this section, we assume the availability of a training dataset that aligns with the target model's output distribution. This could be the dataset used for Supervised Fine-Tuning (SFT) of the target model. We will discuss eliminating the need for such a dataset using a self-distillation approach in Section 2.3.2.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="2.2.1.">MEDUSA-1: FROZEN BACKBONE</head><p>To train MEDUSA heads with a frozen backbone model, we can use the cross-entropy loss between the prediction of MEDUSA heads and the ground truth. Specifically, given the ground truth token y t+k+1 at position t + k + 1, the loss for the k-th head is</p><formula xml:id="formula_3">L k = -log p (k)</formula><p>t (y t+k+1 ) where p (k) t (y) denotes the probability of token y predicted by the k-th head. We also observe that L k is larger when k is larger, which is reasonable since the prediction of the k-th head is more uncertain when k is larger. Therefore, we can add a weight λ k to L k to balance the loss of different heads. And the total MEDUSA loss is:</p><formula xml:id="formula_4">L MEDUSA-1 = K k=1 -λ k log p (k) t (y t+k+1 ).<label>(1)</label></formula><p>In practice, we set λ k as the k-th power of a constant like 0.8. Since we only use the backbone model for providing the hidden states, we can use a quantized version of the backbone model to reduce the memory consumption. This introduces a more democratized way to accelerate LLM inference, as with the quantization, MEDUSA can be trained for a large model on a single consumer GPU similar to QLoRA <ref type="bibr" target="#b10">(Dettmers et al., 2023)</ref>. The training only takes a few hours (e.g., 5 hours for MEDUSA-1 on Vicuna 7B model with a single NVIDIA A100 PCIE GPU to train on 60k ShareGPT samples).</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="2.2.2.">MEDUSA-2: JOINT TRAINING</head><p>To further improve the accuracy of MEDUSA heads, we can train MEDUSA heads together with the backbone model. However, this requires a special training recipe to preserve the backbone model's next-token prediction capability and output quality. To achieve this, we propose three strategies:</p><p>• Combined loss: To keep the backbone model's next-token prediction capability, we need to add the cross-entropy loss of the backbone model</p><formula xml:id="formula_5">L LM = -log p (0)</formula><p>t (y t+1 ) to the MEDUSA loss. We also add a weight λ 0 to balance the loss of the backbone model and the MEDUSA heads. Therefore, the total loss is:</p><formula xml:id="formula_6">L MEDUSA-2 = L LM + λ 0 L MEDUSA-1 .</formula><p>(2)</p><p>• Differential learning rates: Since the backbone model is already well-trained and the MEDUSA heads need more training, we can use separate learning rates for them to enable faster convergence of MEDUSA heads while preserving the backbone model's capability.</p><p>• Heads warmup: Noticing that at the beginning of training, the MEDUSA heads have a large loss, which leads to a large gradient and may distort the backbone model's parameters. Following the idea from <ref type="bibr" target="#b23">Kumar et al. (2022)</ref>, we can employ a two-stage training process. In the first stage, we only train the MEDUSA heads as MEDUSA-1. In the second stage, we train the backbone model and MEDUSA heads together with a warmup strategy. Specifically, we first train the backbone model for a few epochs, then train the MEDUSA heads together with the backbone model. Besides this simple strategy, we can also use a more sophisticated warmup strategy by gradually increasing the weight λ 0 of the backbone model's loss. We find both strategies work well in practice.</p><p>Putting these strategies together, we can train MEDUSA heads together with the backbone model without hurting the backbone model's capability. Moreover, this recipe can be applied together with Supervised Fine-Tuning (SFT), enabling us to get a model with native MEDUSA support.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="2.2.3.">HOW TO SELECT THE NUMBER OF HEADS</head><p>Empirically, we found that five heads are sufficient at most. Therefore, we recommend training with five heads and referring to the strategy described in Section 2.3.3 to determine the optimal configuration of the tree attention. With optimized tree attention, sometimes three or four heads may be enough for inference. In this case, we can ignore the redundant heads without overhead.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="2.3.">Extensions</head></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="2.3.1.">TYPICAL ACCEPTANCE</head><p>In speculative decoding papers <ref type="bibr" target="#b25">(Leviathan et al., 2022;</ref><ref type="bibr" target="#b4">Chen et al., 2023)</ref>, authors employ rejection sampling to yield diverse outputs that align with the distribution of the original model. However, subsequent implementations (Joao <ref type="bibr" target="#b20">Gante, 2023;</ref><ref type="bibr" target="#b38">Spector &amp; Re, 2023)</ref> reveal that this sampling strategy results in diminished efficiency as the sampling temperature increases. Intuitively, this can be comprehended in the extreme instance where the draft model is the same as the original one: Using greedy decoding, all output of the draft model will be accepted, therefore maximizing the efficiency.</p><p>Conversely, rejection sampling introduces extra overhead, as the draft model and the original model are sampled independently. Even if their distributions align perfectly, the output of the draft model may still be rejected.</p><p>However, in real-world scenarios, sampling from language models is often employed to generate diverse responses, and the temperature parameter is used merely to modulate the "creativity" of the response. Therefore, higher temperatures should result in more opportunities for the original model to accept the draft model's output. We ascertain that it is typically unnecessary to match the distribution of the original model. Thus, we propose employing a typical acceptance scheme to select plausible candidates rather than using rejection sampling. This approach draws inspiration from truncation sampling studies <ref type="bibr" target="#b16">(Hewitt et al., 2022)</ref> (refer to Appendix A for an in-depth explanation). Our objective is to choose candidates that are typical, meaning they are not exceedingly improbable to be produced by the original model. We use the prediction probability from the original model as a natural gauge for this and establish a threshold based on the prediction distribution to determine acceptance. Specifically, given</p><formula xml:id="formula_7">x 1 , x 2 , • • • , x n as context, when eval- uating the candidate sequence (x n+1 , x n+2 , • • • , x n+K+1 )</formula><p>(composed by top predictions of the original language model head and MEDUSA heads), we consider the condition</p><formula xml:id="formula_8">p original (x n+k |x 1 , x 2 , • • • , x n+k-1 ) &gt; min (ϵ, δ exp (-H(p original (•|x 1 , x 2 , • • • , x n+k-1 )))) ,</formula><p>where H(•) denotes the entropy function, and ϵ, δ are the hard threshold and the entropy-dependent threshold respectively. This criterion is adapted from <ref type="bibr" target="#b16">Hewitt et al. (2022)</ref> and rests on two observations: (1) tokens with relatively high probability are meaningful, and (2) when the distribution's entropy is high, various continuations may be deemed reasonable. During decoding, every candidate is evaluated using this criterion, and a prefix of the candidate is accepted if it satisfies the condition. To guarantee the generation of at least one token at each step, we apply greedy decoding for the first token and unconditionally accept it while employing typical acceptance for subsequent tokens. The final prediction for the current step is determined by the longest accepted prefix among all candidates.</p><p>Examining this scheme leads to several insights. Firstly, when the temperature is set to 0, it reverts to greedy decoding, as only the most probable token possesses non-zero probability. As the temperature surpasses 0, the outcome of greedy decoding will consistently be accepted with appropriate ϵ, δ, since those tokens have the maximum probability, yielding maximal speedup. Likewise, in general scenarios, an increased temperature will correspondingly result in longer accepted sequences, as corroborated by our experimental findings.</p><p>Empirically, we verify that typical acceptance can achieve a better speedup while maintaining a similar generation quality as shown in Figure <ref type="figure" target="#fig_4">5</ref>.</p><p>2.3.2. SELF-DISTILLATION In Section 2.2, we assume the existence of a training dataset that matches the target model's output distribution. However, this is not always the case. For example, the model owners may only release the model without the training data, or the model may have gone through a Reinforcement Learning with Human Feedback (RLHF) procedure, which makes the output distribution of the model different from the training dataset. To tackle this issue, we propose an automated selfdistillation pipeline to use the model itself to generate the training dataset for MEDUSA heads, which matches the output distribution of the model.</p><p>The dataset generation process is straightforward. We first take a public seed dataset from a domain similar to the target model; for example, using the ShareGPT (ShareGPT, 2023) dataset for chat models. Then, we simply take the prompts from the dataset and ask the model to reply to the prompts.</p><p>In order to obtain multi-turn conversation samples, we can sequentially feed the prompts from the seed dataset to the model. Or, for models like Zephyr 7B <ref type="bibr" target="#b41">(Tunstall et al., 2023)</ref>, which are trained on both roles of the conversation, they have the ability to self-talk, and we can simply feed the first prompt and let the model generate multiple rounds of conversation.</p><p>For MEDUSA-1, this dataset is sufficient for training MEDUSA heads. However, for MEDUSA-2, we observe that solely using this dataset for training the backbone and MEDUSA heads usually leads to a lower generation quality.</p><p>In fact, even without training MEDUSA heads, training the backbone model with this dataset will lead to performance degradation. This suggests that we also need to use the original model's probability prediction instead of using the ground truth token as the label for the backbone model, similar to classic knowledge distillation works <ref type="bibr" target="#b22">(Kim &amp; Rush, 2016)</ref>. Concretely, the loss for the backbone model is:</p><formula xml:id="formula_9">L LM-distill = KL(p (0) original,t ||p (0) t ),</formula><p>where p</p><formula xml:id="formula_10">(0)</formula><p>original,t denotes the probability distribution of the original model's prediction at position t.</p><p>However, naively, to obtain the original model's probability prediction, we need to maintain two models during training, increasing the memory requirements. To further alleviate this issue, we propose a simple yet effective way to exploit the self-distillation setup. We can use a parameter-efficient adapter like LoRA <ref type="bibr" target="#b19">(Hu et al., 2021)</ref> for fine-tuning the backbone model. In this way, the original model is simply the model with the adapter turned off. Therefore, the distillation does not require additional memory consumption. Together, this self-distillation pipeline can be used to train MEDUSA-2 without hurting the backbone model's capability and introduce almost no additional memory consumption. Lastly, one tip about using self-distillation is that it is preferable to use LoRA without quantization in this case, otherwise, the teacher model will be the quantized model, which may lead to a lower generation quality.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="2.3.3.">SEARCHING FOR THE OPTIMIZED TREE CONSTRUCTION</head><p>In Section 2.1.2, we present the simplest way to construct the tree structure by taking the Cartesian product. However, with a fixed budget for the number of total nodes in the tree, a regular tree structure may not be the best choice.</p><p>Intuitively, those candidates composed of the top predictions of different heads may have different accuracies. Therefore, we can leverage an estimation of the accuracy to construct the tree structure.</p><p>Specifically, we can use a calibration dataset and calculate the accuracies of the top predictions of different heads. Let a</p><formula xml:id="formula_11">(i)</formula><p>k denote the accuracy of the i-th top prediction of the k-th head<ref type="foot" target="#foot_1">foot_1</ref> . Assuming the accuracies are independent, we can estimate the accuracy of a candidate sequence composed by the top</p><formula xml:id="formula_12">[i 1 , i 2 , • • • , i k ] predictions of different heads as k j=1 a (ij ) j . Let I denote the set of all possible combinations of [i 1 , i 2 , • • • , i k ]</formula><p>and each element of I can be mapped to a node of the tree (not only leaf nodes but all nodes are included). Then, the expectation of the acceptance length of a candidate sequence is:</p><formula xml:id="formula_13">[i1,i2,••• ,i k ]∈I k j=1 a (ij ) j .</formula><p>Thinking about building a tree by adding nodes one by one, the contribution of a new node to the expectation is exactly the accuracy associated with the node. Therefore, we can greedily add nodes to the tree by choosing the node that is connected to the current tree and has the highest accuracy. This process can be repeated until the total number of nodes reaches the desired number. In this way, we can construct a tree that maximizes the expectation of the acceptance length. Further details can be found in Appendix C.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.">Experiments</head><p>In this section, we present experiments to demonstrate the effectiveness of MEDUSA under different settings. First, we evaluate MEDUSA on the Vicuna-7B and 13B models <ref type="bibr" target="#b6">(Chiang et al., 2023)</ref> to show the performance of MEDUSA-1 and MEDUSA-2. Then, we assess our method using the Vicuna-33B and Zephyr-7B models to demonstrate selfdistillation's viability in scenarios where direct access to the fine-tuning recipe is unavailable, as with Vicuna-33B, 2.18x 2.33x 2.83x 2.83x Speedup on different model sizes w/o Medusa Medusa-1 Medusa-2 (a) H u m a n i t i e s R e a s o n i n g R o l e p l a y W r i t i n g S t e m M a t h C o d i n g E x t r a c t i o n 1.0 1.5 2.0 2.5 3.0 3.5 Speedup 2.58x 2.58x 2.7x 2.72x 2.77x 3.01x 3.29x 3.62x Speedup on different categories for Vicuna-7B (b) Figure 3. Left: Speed comparison of baseline, MEDUSA-1 and MEDUSA-2 on Vicuna-7B/13B. MEDUSA-1 achieves more than 2× wall-time speedup compared to the baseline implementation while MEDUSA-2 further improves the speedup by a significant margin. Right: Detailed speedup performance of Vicuna-7B with MEDUSA-2 on 8 categories from MT-Bench. and in models like Zephyr-7B that employ Reinforcement Learning from Human Feedback (RLHF). The evaluation is conducted on MT-Bench (Zheng et al., 2023), a multi-turn, conversational-format benchmark. Detailed settings can be found in Appendix B. 3.1. Case Study: MEDUSA-1 v.s. MEDUSA-2 on Vicuna 7B and 13B Experimental Setup. We use the Vicuna model class (Chiang et al., 2023), which encompasses chat models of varying sizes (7B, 13B, 33B) that are fine-tuned from the Llama model <ref type="bibr" target="#b40">(Touvron et al., 2023)</ref>. Among them, the 7B and 13B models are trained on the ShareGPT (ShareGPT, 2023) dataset, while the 33B model is an experimental model and is trained on a private dataset. In this section, we use the ShareGPT dataset to train the MEDUSA heads on the 7B and 13B models for 2 epochs. We use the v1.5 version of Vicuna models, which are fine-tuned from Llama-2 models with sequence length 4096.</p><p>Results. We collect the results and show them in Fig. <ref type="figure">3</ref>. The baseline is the default Huggingface implementation. In Fig. <ref type="figure">3a</ref>, we can see that for the 7B models, MEDUSA-1 and MEDUSA-2 configurations lead to a significant increase in speed, measuring in tokens processed per second. MEDUSA-1 shows a 2.18× speedup, while MEDUSA-2 further improves this to a 2.83×. When applied to the larger 13B model, MEDUSA-1 results in a 2.33× speed increase, while MEDUSA-2 maintains a similar performance gain of 2.83× over the baseline. We also plot the speedup per category for MEDUSA-2 Vicuna-7B model. We observe that the coding category benefits from a 3.29× speedup, suggesting that MEDUSA is particularly effective for tasks in this domain. This points to a significant potential for optimizing coding LLMs, which are widely used in software develop-ment and other programming-related tasks. The "Extraction" category shows the highest speedup at 3.62×, indicating that this task is highly optimized by the MEDUSA. Overall, the results suggest that the MEDUSA significantly enhances inference speed across different model sizes and tasks.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.2.">Case Study: Training with Self-Distillation on</head><p>Vicuna-33B and Zephyr-7B</p><p>Experimental Setup. In this case study, we focus on the cases where self-distillation is needed. We use the Vicuna-33B model <ref type="bibr" target="#b6">(Chiang et al., 2023)</ref> and the Zephyr-7B model <ref type="bibr" target="#b41">(Tunstall et al., 2023)</ref> as examples. Following the procedure described in Section 2.3.2, we first generate the datasets with some seed prompts. We use ShareGPT (ShareGPT, 2023) and UltraChat <ref type="bibr" target="#b11">(Ding et al., 2023)</ref> as the seed datasets and collect a dataset at about 100k samples for both cases. Interestingly, we find that the Zephyr model can continue to generate multiple rounds of conversation with a single prompt, which makes it easy to collect a large dataset. For Vicuna-33B, we generate the multi-turn conversations by iteratively feeding the prompts from each multi-turn seed conversation using random sampling with temperature 0.3. Both models are trained with sequence length 2048 and batch size 128.</p><p>Results. Table <ref type="table" target="#tab_2">1</ref> complements these findings by comparing various MEDUSA-2 models in terms of their acceleration rate, overhead, and quality on MT-Bench with GPT-4 acting as the evaluator to assign performance scores ranging from 0 to 10. We report the quality differences of MEDUSA compared to the original model. Notably, while the MEDUSA-2 Vicuna-33B model shows a lower acceleration rate, it maintains a comparable quality. We hypothesize that this is due to a mismatch between the hidden training dataset and the dataset we used for self-distillation. Hence, the model's gen- Effectiveness of numbers of candidate tokens for decoding introduced by trees (default number of candidate token for decoding is 1 when using KV cache). Left: The acceleration rate for randomly sampled dense tree settings (blue dots) and optimized sparse tree settings (red stars). Right: The speed (tokens/s) for both settings. The trend lines indicate that while the acceleration rate remains relatively stable for sparse trees, there is a notable decrease in speed as the candidate tokens increases. eration quality can be well aligned by self-distillation while MEDUSA heads learn distribution from the self-distillation that potentially shifts from the training set. In our study, we also applied speculative decoding <ref type="bibr" target="#b4">(Chen et al., 2023;</ref><ref type="bibr" target="#b25">Leviathan et al., 2022)</ref> to the Vicuna lineup using opensource draft models (details can be found in Appendix D).</p><p>These results underscore the complex interplay between speed and performance when scaling up model sizes and applying self-distillation techniques. The findings also highlight the potential of the MEDUSA-2 configuration to boost efficiency in processing while carefully preserving the quality of the model's outputs, suggesting a promising direction for co-optimizing LLMs with MEDUSA heads.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.3.">Ablation Study</head></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.3.1.">CONFIGURATION OF TREE ATTENTION</head><p>The study of tree attention is conducted on the writing and roleplay categories from the MT-Bench dataset using MEDUSA-2 Vicuna-7B. We target to depict tree attention's motivation and its performance. Fig. <ref type="figure">4a</ref> compares the acceleration rate of randomly sampled dense tree configurations (Section. 2.1.2, depicted by blue dots) against optimized sparse tree settings (Section. 2.3.3, shown with red stars). The sparse tree configuration with 64 nodes shows a better acceleration rate than the dense tree settings with 256 nodes. The decline in speed in Fig. <ref type="figure">4b</ref> is attributed to the increased overhead introduced by the compute-bound. While a more complex tree can improve acceleration, it does so at the cost of speed due to intensive matrix multiplications for linear layers and self-attention. The acceleration rate increase follows a logarithmic trend and slows down when the tree size grows as shown in Fig. <ref type="figure">4a</ref>. However, the initial gains are substantial, allowing Medusa to achieve significant speedups. If the acceleration increase is less than the overhead, it will slow down overall performance. For detailed study, please refer to Appendix G. The plot illustrates the acceleration rate and average scores on the writing and roleplay (MT-Bench) with a fixed temperature of 0.7 for 3 different settings: greedy sampling and random sampling (RS) plotted as the star and the dot, and typical sampling curves under different thresholds.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.3.2.">THRESHOLDS OF TYPICAL ACCEPTANCE</head><p>The thresholds of typical acceptance are studied on the writing and roleplay categories from the MT-Bench dataset <ref type="bibr" target="#b49">(Zheng et al., 2023)</ref> using MEDUSA-2 Vicuna 7B.</p><p>Utilizing the Vicuna 7B model, we aligned our methodology with the approach delineated by <ref type="bibr" target="#b16">(Hewitt et al., 2022)</ref> setting the α = √ ϵ. Fig. <ref type="figure" target="#fig_4">5</ref> presents a comparative analysis of our model's performance across various sampling settings. These settings range from a threshold ϵ starting at 0.01 and incrementally increasing to 0.25 in steps of 0.01. Our observations indicate a discernible trade-off: as ϵ increases, there is an elevation in quality at the expense of a reduced acceleration rate. Furthermore, for tasks demanding creativity, it is noted that the default random sampling surpasses greedy sampling in performance, and the proposed typical sampling is comparable with random sampling when ϵ increases.</p><p>Baseline Direct Fine-tuning MEDUSA-1 MEDUSA-2 Quality 6.17 5.925 6.23 6.18 Speedup N/A N/A 2.18 2.83</p><p>Table <ref type="table">2</ref>. Comparison of Different Settings of Vicuna-7B. Quality is obtained by evaluating models on MT-Bench using GPT-4 as the judge (higher the better).</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.3.3.">EFFECTIVENESS OF TWO-STAGE FINE-TUNING</head><p>Table <ref type="table">2</ref> shows the performance differences between various fine-tuning strategies for the Vicuna-7B model. MEDUSA-1, which fine-tunes only the MEDUSA heads, achieves a 2.18x speedup without compromising generation quality. MEDUSA-2, which employs two-stage fine-tuning (Section 2.2.2), maintains generation quality and provides greater speedup (2.83x) compared to MEDUSA-1. In contrast, direct fine-tuning the model with the MEDUSA heads results in degraded generation quality. The findings indicate that implementing our MEDUSA-2 for fine-tuning maintains the model's quality and concurrently improves the speedup versus MEDUSA-1. </p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4.">Discussion</head><p>In conclusion, MEDUSA enhances LLM inference speed by 2.3-2.8 times by equipping models with additional predictive decoding heads, allowing for generating multiple tokens simultaneously and bypassing the sequential decoding limitation. Key advantages of MEDUSA include its simplicity, parameter efficiency, and ease of integration into existing systems. MEDUSA avoids the need for specialized draft models. The typical acceptance scheme removes complications from rejection sampling while providing reasonable outputs. Our approach including two efficient training procedures, ensures high-quality output across various models and prompt types. We summarize the development of each technique and their impact on the speedup in Table <ref type="table" target="#tab_4">3</ref>.</p><p>In the paper, we focus on the setting with batch size 1 for simplicity. Yet, we want to emphasize that the ideas presented in our paper can be generalized to larger batch-size settings, which are now supported by libraries like TensorRT and Huggingface TGI following our paper.</p><p>• Zhuohan Li, for his invaluable insights on LLM serving. If you haven't already, do check out Zhuohan's vLLM project-it's nothing short of impressive.</p><p>• Shaojie Bai, for engaging in crucial discussions that helped shape the early phases of this work.</p><p>• Denny Zhou, for introducing the truncation sampling scheme to Tianle and encouraging Tianle to explore the area of LLM serving.</p><p>• Yanping Huang, for pointing out the memorybandwidth-bound challenges associated with LLM serving to Tianle.</p><p>• Lianmin Zheng, for clarifying the different training recipes used in different sizes of Vicuna models. Jason D. Lee acknowledges the support of the NSF CCF 2002272, NSF IIS 2107304, and NSF CAREER Award 2144994. Deming Chen acknowledges the support from the AMD Center of Excellence at UIUC.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>Impact Statement</head><p>The introduction of MEDUSA, an innovative method to improve the inference speed of Large Language Models (LLMs), presents a range of broader implications for society, technology, and ethics. This section explores these implications in detail.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>Societal and Technological Implications</head><p>• Accessibility and Democratization of AI: By significantly enhancing the efficiency of LLMs, MEDUSA makes advanced AI technologies more accessible to a wider range of users and organizations. Democratization can spur innovation across various sectors, in-cluding education, healthcare, and entertainment, potentially leading to breakthroughs that benefit society at large.</p><p>• Environmental Impact: The acceleration for LLM inference due to MEDUSA could lead to decreased energy consumption and a smaller carbon footprint. This aligns with the growing need for sustainable AI practices, contributing to environmental conservation efforts.</p><p>• Economic Implications: The increased efficiency brought about by MEDUSA may lower the cost barrier to deploying state-of-the-art AI models, enabling small and medium-sized enterprises to leverage advanced AI capabilities. This could stimulate economic growth, foster competition, and drive technological innovation.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>Ethical Considerations</head><p>• Bias and Fairness: While MEDUSA aims to improve LLM efficiency, it inherits the ethical considerations of its backbone models, including issues related to bias and fairness. The method's ability to maintain generation quality necessitates investigation to ensure that the models do not perpetuate or amplify existing biases.</p><p>• Transparency and Accountability: The complexity of MEDUSA, particularly with its tree-based attention mechanism and multiple decoding heads, may pose challenges in terms of model interpretability. Ensuring transparency in how decisions are made and maintaining accountability for those decisions are crucial for building trust in AI systems.</p><p>• Security and Privacy: The accelerated capabilities of LLMs augmented by MEDUSA could potentially be exploited for malicious purposes, such as generating disinformation at scale or automating cyber-attacks. It is imperative to develop and enforce ethical guidelines and security measures to prevent misuse.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>A. Related Work</head></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>A.1. LLM Inference Acceleration</head><p>The inefficiency of Large Language Model (LLM) inference is primarily attributed to the memory-bandwidth-bound nature of the auto-regressive decoding process. Several methods have been proposed to alleviate this issue, improving inference latency and throughput. Traditionally, batch inference has been employed as a straightforward method to enhance arithmetic intensity and escape memory-bandwidth-bound limitations. However, with LLMs, both model parameters and the Key-Value (KV) cache consume substantial accelerator memory, hindering the utilization of large batch sizes. Existing methods to tackle this problem can be conceptually divided into two main categories: (1) Reducing memory consumption, thereby minimizing memory transfer overhead and enabling larger batch sizes, and (2) Minimizing the number of decoding steps to decrease latency directly.</p><p>Reducing KV Cache. Methods such as Multi-query attention <ref type="bibr" target="#b37">(Shazeer, 2019)</ref> and Grouped-query attention <ref type="bibr" target="#b0">(Ainslie et al., 2023)</ref> adopt a direct approach to diminish the KV cache. By utilizing fewer key and value heads in the attention modules relative to query heads, these strategies substantially cut the KV's memory consumption, thereby facilitating larger batch sizes and enhanced accelerator utilization <ref type="bibr" target="#b35">(Pope et al., 2022)</ref>. Additionally, <ref type="bibr" target="#b48">Zhang et al. (2023)</ref> proposes to selectively retain the most critical KV tokens, further reducing the KV cache. From a system perspective, <ref type="bibr" target="#b24">Kwon et al. (2023)</ref> introduces a paged memory management scheme for reducing fragmentation of the KV cache.</p><p>Quantization. Quantization techniques are extensively used to shrink LLMs' memory consumption. <ref type="bibr">Xiao et al. (2023a)</ref> apply rescaling between activations and parameters to eliminate outliers and simplify the quantization process. <ref type="bibr" target="#b9">Dettmers et al. (2022)</ref> breaks down matrix multiplications into predominantly 8-bit and a minority of 16-bit operations. <ref type="bibr" target="#b15">Frantar et al. (2022)</ref> iteratively round weight columns into 3/4 bits, while Lin et al. ( <ref type="formula">2023</ref>) present an activation-aware quantization scheme to protect salient weights and compress LLMs to 3/4 bits. <ref type="bibr" target="#b21">Kim et al. (2023)</ref> introduce a sparse plus low-precision pattern to handle a minor portion of vital weights, among other techniques.</p><p>Speculative Decoding. As an approach orthogonal to the aforementioned methods, speculative decoding <ref type="bibr" target="#b25">(Leviathan et al., 2022;</ref><ref type="bibr" target="#b4">Chen et al., 2023)</ref> aims to execute several decoding steps in parallel, thus reducing the total number of steps required. This parallelization is realized by employing a smaller draft model to conjecture several subsequent words, which the LLMs then collectively evaluate and accept as appropriate. While resonating with non-autoregressive generation literature <ref type="bibr">(Xiao et al., 2023b)</ref>, this method is specifically tailored for LLMs to address the aforementioned inefficiency. Unlike previous works, we propose leveraging the original model to make predictions rather than introducing an additional draft model. This approach is more straightforward and seamlessly integrates into existing systems without the complexities of managing two models. Independently, <ref type="bibr" target="#b30">Miao et al. (2023)</ref>; <ref type="bibr" target="#b38">Spector &amp; Re (2023)</ref> propose the use of tree-structured attention to generate multiple candidates in parallel, where <ref type="bibr" target="#b30">Miao et al. (2023)</ref> suggest employing an ensemble of models to propose candidates, and Spector &amp; Re (2023) advocate adding another hierarchy for the draft model. However, draft models require specialized pretraining and alignment with the target models. While employing multiple draft models can be cumbersome and involves the complexity of managing parallelism, our approach, which relies solely on decoding heads, offers a simpler alternative. <ref type="bibr" target="#b30">Miao et al. (2023)</ref> employ multiple draft models to generate tokens and merge them using tree attention, while Spector &amp; Re (2023) utilize a small draft model to process each level of the tree in batches. In contrast, our method directly uses the top predicted tokens from each of MEDUSA heads to create a static sparse tree without autoregression or adjusting the tree structure. This approach simplifies the process and improves efficiency. Additionally, we demonstrate through a detailed ablation study how the nodes of the tree can affect decoding speed.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>A.2. Sampling Scheme</head><p>The manner in which text is sampled from Large Language Models (LLMs) can significantly influence the quality of the generated output. Recent studies have revealed that direct sampling from a language model may lead to incoherent or nonsensical results <ref type="bibr" target="#b34">(Pillutla et al., 2021;</ref><ref type="bibr" target="#b18">Holtzman et al., 2020)</ref>. In response to this challenge, truncation sampling schemes have been introduced <ref type="bibr" target="#b14">(Fan et al., 2018;</ref><ref type="bibr" target="#b2">Basu et al., 2021;</ref><ref type="bibr" target="#b28">Meister et al., 2022;</ref><ref type="bibr" target="#b16">Hewitt et al., 2022;</ref><ref type="bibr" target="#b29">Meister et al., 2023)</ref>. These approaches aim to produce high-quality and diverse samples by performing sampling on a truncated distribution over a specific allowed set at each decoding step.</p><p>Different strategies define this allowed set in various ways. For example, top-k sampling <ref type="bibr" target="#b14">(Fan et al., 2018)</ref> retains the k most likely words, whereas top-p sampling <ref type="bibr" target="#b18">(Holtzman et al., 2020)</ref> incorporates the minimal set of words that account for p percent of the probability. Another method, known as typical decoding <ref type="bibr" target="#b29">(Meister et al., 2023)</ref>, employs the entropy of the predicted distribution to establish the threshold for inclusion. <ref type="bibr" target="#b16">Hewitt et al. (2022)</ref> offers a unified framework to understand truncation sampling techniques comprehensively.</p><p>Drawing inspiration from these methods, our typical acceptance scheme aligns with the concept of defining an allowed set to exclude improbable candidates from the sampling process. However, we diverge because we do not insist on an exact correspondence between the output and language model distribution. This deviation allows us to facilitate more diverse yet high-quality outputs, achieving greater efficiency without compromising the integrity of the generated text.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>B. Experiment Settings</head></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>B.1. Common Terms</head><p>We clarify three commonly used terms: a) Acceleration rate: This refers to the average number of tokens decoded per decoding step. In a standard auto-regressive model, this rate is 1.0. b) Overhead: This is used to characterize the per decoding step overhead compared to classic decoding, and is calculated by dividing the average per step latency of the MEDUSA models by that of the vanilla model. c) Speedup: This refers to the wall-time acceleration rate. Following these definitions, we have the relation: Speedup = Acceleration rate / Overhead.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>B.2. Shared Settings</head><p>For all the experiments, we use the Axolotl <ref type="bibr" target="#b1">(Axolotl, 2023)</ref> framework for training. We use a cosine learning rate scheduler with warmup and use 8-bit AdamW <ref type="bibr" target="#b8">(Dettmers et al., 2021)</ref> optimizer. We train 5 MEDUSA heads with 1 layer and set λ k in Eq. ( <ref type="formula" target="#formula_4">1</ref>) to be 0.8 k . For MEDUSA-2, we use either LoRA <ref type="bibr" target="#b19">(Hu et al., 2021)</ref> or QLoRA <ref type="bibr" target="#b10">(Dettmers et al., 2023)</ref> for fine-tuning and set the learning rate of MEDUSA heads to be 4 times larger than the backbone model. LoRA is applied to all the linear layers of the backbone model, including the language model head. The rank of LoRA adapter is set to 32, and α is set to 16.</p><p>A dropout of 0.05 is added to the LoRA adapter.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>B.3. MEDUSA-1 v.s. MEDUSA-2 on Vicuna 7B and 13B</head><p>We use a global batch size of 64 and a peak learning rate of 5e -4 for the backbone and 2e -3 for MEDUSA heads and warmup for 40 steps. We use 4-bit quantized backbone models for both models. We first train the models with MEDUSA-1 and use these trained models as initialization to train MEDUSA-2. We employ QLoRA for MEDUSA-2 and the λ 0 in Eq. ( <ref type="formula">2</ref>) is set to be 0.2.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>B.4. Training with Self-Distillation on Vicuna-33B and Zephyr-7B</head><p>We use MEDUSA-2 for both models instead of using a two-stage training procedure. We use a sine schedule for the θ 0 to gradually increase the value to its peak at the end of the training. We find this approach is equally effective. We set the peak learning rate of the backbone LoRA adapter to be 1e -4 and the warmup steps to be 20 since the self-distillation loss is relatively small. We set the λ 0 in Eq. ( <ref type="formula">2</ref>) to be 0.01.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>C. Visualization of optimized tree attention</head><p>Fig. <ref type="figure" target="#fig_5">6</ref> illustrates the structure of a sparsely constructed tree for the MEDUSA-2 Vicuna-7B model. This tree structure extends four levels deep, indicating the engagement of four MEDUSA heads in the computation. The tree is initially formed through a Cartesian product approach and subsequently refined by pruning based on the statistical expectations of the top-k predictions from each MEDUSA head measured on the Alpaca-eval dataset <ref type="bibr" target="#b12">(Dubois et al., 2023)</ref>. The tree's lean towards the left visually represents the algorithm's preference for nodes with higher probabilities on each head.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>D. Results of Speculative Decoding</head><p>In this study, speculative decoding was applied to Vicuna models <ref type="bibr" target="#b6">(Chiang et al., 2023)</ref> with varying sizes, specifically 7B, 13B, and 33B. The preliminary framework utilized open-source models such as Llama-68M and 160M <ref type="bibr" target="#b30">(Miao et al., 2023)</ref>, alongside Tiny-Llama <ref type="bibr" target="#b46">(Zhang et al., 2024)</ref> and Tiny-Vicuna <ref type="bibr" target="#b33">(Pan, 2023)</ref>, fine-tuned from Tiny-Llama with the Vicuna-style instructional tuning strategy. Due to the proprietary nature of speculative decoding methods <ref type="bibr" target="#b4">(Chen et al., 2023</ref>; Leviathan  <ref type="bibr">et al., 2022)</ref>, open-source alternatives<ref type="foot" target="#foot_2">foot_2</ref> were deployed for evaluation. Additionally, we utilize torch.compile() to accelerate the inference speed of draft models.</p><p>Our results shown in Fig. <ref type="figure" target="#fig_6">7</ref>, reveal that the optimal settings of the draft model vary with the Vicuna model sizes. Specifically, the Llama-68M, with a setting of the draft token number γ = 4, yielded the best performance for Vicuna-7B, while the same draft model with γ = 3 was most effective for Vicuna-13B. For the larger Vicuna-33B, the Tiny-Vicuna (Vicuna-1B), with γ = 3, provided the greatest acceleration. These results suggest that the choice and setting of the drafting model should be tailored to the size of the LLMs, presenting an area for further exploration in the field. </p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>E. Additional Results for All Models</head><p>We show speedup on various models in Fig. <ref type="figure">8</ref>.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>F. Additional Results on AlpacalEval Dataset</head><p>We conduct further experiments on the AlpacaEval <ref type="bibr" target="#b26">(Li et al., 2023)</ref>  </p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>G. Exploration and Modeling of Hardware Constraints and MEDUSA</head><p>We explore the hardware constraints, specifically memory-bandwidth bound, and their impact on MEDUSA-style parallel decoding by incorporating a simplified Llama-series model. First, we identify that the operators involving matrix multiplications, such as linear layers and attention matrix multiplications, are the primary sources of overhead. We profile the performance of FLOP/s vs. Operational Intensity which is the ratio of FLOP/s to bandwidth (bytes/s), across various GPUs, including the A100-80GB-PCIe, A40, and A6000. Next, we examine the changes in FLOP/s vs. Operational Intensity when using MEDUSA for different operators. Finally, we apply a straightforward analytical model to calculate acceleration rates and combine it with hardware benchmarks. This provides insights into the effects under different model sizes, sequence lengths, and batch sizes.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>G.1. Roofline Model of Operators</head><p>We present an analysis of the roofline model for various operators in large language models (LLMs), specifically focusing on Llama-7B, Llama-13B, and Llama-33B <ref type="bibr" target="#b40">(Touvron et al., 2023)</ref>. These models were benchmarked on different GPUs, including the A100-80GB-PCIe, A40, and A6000. We looked into the three categories of matrix multiplication operators since they represent the primary sources of computational overhead in these models. Our study follows the report <ref type="bibr">(Chen, 2023)</ref> which investigates the effectiveness of batch size but ours focuses more on decoding and parallel decoding.</p><p>Table <ref type="table">5</ref> details the computation and space complexity for each operator during the prefill, decoding, and MEDUSA decoding phases. The operators include the linear layers for query, key, and value matrices (XW Q , XW K , XW V ), the attention matrix multiplications (QK T , P V ), and the up/gate/down linear layers (XW u , XW g , XW d ). b stands for the batch size, s stands for the sequence length, h stands for the hidden dimension, i stands for the intermediate dimension, n stands for the number of attention heads, d stands for the head dimension and q stands for the candidate length for MEDUSA. For more details of these operators please refer to the articles <ref type="bibr" target="#b40">(Touvron et al., 2023;</ref><ref type="bibr">Chen, 2023)</ref>.</p><p>Figures 9-17 show the benchmark of three categories of operators on different models (7/13/33B) under various settings. To evaluate each operator's performance and throughput, we chose the combination of settings including batch sizes from 1 to qk/pv init Increase bs q k / p v in it</p><p>In c r e a s e s e q _ le n</p><p>Figure <ref type="figure">9</ref>. The figure shows the relationship between FLOP/s and Operational Intensity for all benchmarked datapoints of Llama-7B operators on A100-80GB-PCIe. The dashed lines represent the HBM bandwidth limit (1,935GB/s) and the peak performance limit (312 TFLOP/s) (NVIDIA). 'qkv mlp' stands for the linear layers projecting hidden features to query/key/value features. 'up/gate/down' stands for the linear layers following the attention block. 'qk/pv' stands for the two steps of attention matrix multiplications. 'ar' stands for the decoding (autoregressive) and 'init' stands for the prefill phase. 1,935GB/s 312 TFLOP/s qkv mlp init qkv mlp ar up/gate/down init up/gate/down ar qk/pv init qk/pv ar Figure 10. Llama-13B operators on A100-80GB-PCIe. 1 10 100 1k 10k Operational Intensity (FLOP/Byte) 10G 100G 1T 10T 100T Performance (FLOP/s) Roofline Model (Llama 33B, A100 80GB PCIe) 1,935GB/s 312 TFLOP/s qkv mlp init qkv mlp ar up/gate/down init up/gate/down ar qk/pv init qk/pv ar Figure 11. Llama-33B operators on A100-80GB-PCIe. 1 10 100 1k 10k Operational Intensity (FLOP/Byte) 10G 100G 1T 10T 100T Performance (FLOP/s) Roofline Model (Llama 7B, A40) 696GB/s 149.7 TFLOP/s qkv mlp init qkv mlp ar up/gate/down init up/gate/down ar qk/pv init qk/pv ar Figure 12. Llama-7B operators on A40. 1 10 100 1k 10k Operational Intensity (FLOP/Byte) 10G 100G 1T 10T 100T Performance (FLOP/s) Roofline Model (Llama 13B, A40) 696GB/s 149.7 TFLOP/s qkv mlp init qkv mlp ar up/gate/down init up/gate/down ar qk/pv init qk/pv ar Figure 13. Llama-13B operators on A40. 1 10 100 1k 10k Operational Intensity (FLOP/Byte) 10G 100G 1T 10T 100T Performance (FLOP/s) Roofline Model (Llama 33B, A40) 696GB/s 149.7 TFLOP/s qkv mlp init qkv mlp ar up/gate/down init up/gate/down ar qk/pv init qk/pv ar Figure 14. Llama-33B operators on A40. 1 10 100 1k 10k Operational Intensity (FLOP/Byte) 10G 100G 1T 10T 100T Performance (FLOP/s) Roofline Model (Llama 7B, A6000) 768GB/s 181 TFLOP/s qkv mlp init qkv mlp ar up/gate/down init up/gate/down ar qk/pv init qk/pv ar Figure 15. Llama-7B operators on A6000. 1 10 100 1k 10k Operational Intensity (FLOP/Byte) 10G 100G 1T 10T 100T Performance (FLOP/s) Roofline Model (Llama 13B, A6000) 768GB/s 181 TFLOP/s qkv mlp init qkv mlp ar up/gate/down init up/gate/down ar qk/pv init qk/pv ar Figure 16. Llama-13B operators on A6000. 1 10 100 1k 10k Operational Intensity (FLOP/Byte) 10G 100G 1T 10T 100T Performance (FLOP/s) Roofline Model (Llama 33B, A6000) 768GB/s 181 TFLOP/s qkv mlp init qkv mlp ar up/gate/down init up/gate/down ar qk/pv init qk/pv ar Figure 17. Llama-33B operators on A6000.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>G.2. FLOP/s vs. Operational Intensity Variations in MEDUSA</head><p>We investigate how Medusa can change Operational Intensity and elevate the FLOP/s. We choose Llama 33B on A100-80GB-PCIe as the setting.</p><p>First, we examine the attention matrix multiplication. Fig. <ref type="figure">18</ref> and Table <ref type="table">6</ref> illustrate the effects of MEDUSA while keeping the batch size fixed at 16. We observe increased FLOP/s and Operational Intensity as more candidate tokens are added (original decoding results are plotted as grey dots). This indicates that MEDUSA can leverage additional candidate tokens to improve computational throughput. Compared to regular decoding, MEDUSA achieves 44× FLOP/s and 41× Operational Intensity under the setting of batch size 16 and sequence length 1024 with 64 candidate tokens. Fig. <ref type="figure">19</ref> and Table <ref type="table">7</ref> illustrate the effects of MEDUSA decoding while keeping the sequence length fixed at 1024. Increasing the batch size does not improve Operational Intensity in this scenario.</p><p>Next, we examine the linear layer, focusing on the up/gate/down linear layers. The results are shown in Fig. <ref type="figure" target="#fig_8">20</ref> and Table <ref type="table">8</ref>. Since the linear layers in the decoding phase only process the future tokens while the past tokens are cached, they are independent of the sequence length. We vary the batch size to observe the effects. As MEDUSA increases the number of candidate tokens with the increasing batch size, we observe a shift from a memory-bandwidth-bound region to a computation-bound region. This shift demonstrates how MEDUSA can transition the performance characteristics of the linear layers from being limited by memory bandwidth to being limited by computational capacity.</p><p>1 10 100 1k 10k Operational Intensity (FLOP/Byte) 10G 100G 1T 10T 100T Performance (FLOP/s) Llama 33B, A100 80GB PCIe 1,935GB/s 312 TFLOP/s qk/pv ar qk/pv Medusa (# cand.: 16) qk/pv Medusa (# cand.: 32) qk/pv Medusa (# cand.: 48) qk/pv Medusa (# cand.: 64) qk/pv Medusa (# cand.: 80) qk/pv Medusa (# cand.: 96) qk/pv Medusa (# cand.: 112) Figure 18. FLOP/s vs. Operational Intensity of attention matrix multiplication with batch size 16. 1 10 100 1k 10k Operational Intensity (FLOP/Byte) 10G 100G 1T 10T 100T Performance (FLOP/s) Llama 33B, A100 80GB PCIe 1,935GB/s 312 TFLOP/s qk/pv ar qk/pv Medusa (# cand.: 16) qk/pv Medusa (# cand.: 32) qk/pv Medusa (# cand.: 48) qk/pv Medusa (# cand.: 64) qk/pv Medusa (# cand.: 80) qk/pv Medusa (# cand.: 96) qk/pv Medusa (# cand.: 112) Figure 19. FLOP/s vs. Operational Intensity of attention matrix multiplication with sequence length 1024. 1 10 100 1k 10k Operational Intensity (FLOP/Byte) 10G 100G 1T 10T 100T Performance (FLOP/s) Llama 33B, A100 80GB PCIe 1,935GB/s 312 TFLOP/s up/gate/down ar up/gate/down spec: 16 up/gate/down spec: 32 up/gate/down spec: 48 up/gate/down spec: 64 up/gate/down spec: 80 up/gate/down spec: 96 up/gate/down spec: 112 Table 8. TFLOP/s &amp; Operational Intensity of linear layers (up/gate/down) for Llama 33B on an A100 80GB PCIe.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>G.3. Predicting MEDUSA Performance</head><p>We further employ a straightforward analytical model for the acceleration rate. The ablation study results in Sec. 3.3.1 indicate that the acceleration rate can be approximated by a simple logarithmic function. Using the results from Fig. <ref type="figure">4a</ref>, we model the curve as acc rate = 0.477 log(num candidate). We simulate the latency of one simplified block of the Llama-7B model (sequentially processing XW Q , XW K , XW V , QK T , P V , XW u , XW g , XW d ) by first fixing the batch size at 1 and the sequence length at 1024. The candidate tokens are processed parallelly by constructing the tree attention described in Section 2.1.2. We omit the latency of the post-processing steps including verification and acceptance for MEDUSA since they introduce marginal overhead. Fig. <ref type="figure" target="#fig_9">21</ref> illustrates the simulated acceleration rate and speedup for different numbers of candidate tokens under these settings. As the number of candidate tokens increases, both the acceleration rate and speedup initially show improvements. However, beyond 64, the speedup starts to decline, indicating diminishing returns with further increases in candidate length. This aligns with the experimental results in Fig. <ref type="figure">4b</ref> and suggests that there is an optimal range for the numbers of candidate tokens where MEDUSA provides the most significant performance gains.</p><p>We plot the simulated speedup under different batch size settings with a fixed sequence length of 1024 in Fig. <ref type="figure" target="#fig_10">22</ref>. The results indicate that when the batch size exceeds 32, the speedup decreases and may even have a negative effect. This occurs because the linear layers shift from being memory-bandwidth-bound to computationally bound.</p><p>We conduct another experiment using a batch size of 4 and different sequence lengths. As shown in Fig. <ref type="figure" target="#fig_11">23</ref>, the optimal number of candidate tokens remains relatively consistent across different sequence lengths. However, as the sequence length increases, the overall performance decreases. This performance drop is primarily due to the overhead from attention matrix multiplication, while the linear layer computation remains constant since the computation of linear layers is independent of the sequence length.</p><p>Our simulations show that the optimal number of candidate tokens is key for model scaling with MEDUSA, as benefits decrease beyond a certain range. Initially, increasing batch size improves performance through parallelism, but too large a batch size shifts linear layers from memory-bandwidth-bound to compute-bound, reducing speedup. Longer sequences increase attention matrix multiplication overhead, lowering performance, and emphasizing the need to optimize attention mechanisms. Effective model scaling requires balancing the number of candidate tokens, adjusting batch sizes to avoid compute-bound transitions, and enhancing attention mechanisms for longer sequences. These strategies ensure better resource utilization and higher performance, demonstrating the value of simulations in predicting performance and guiding acceleration strategy design. Llama 7B, Sequence Length: 1024</p><p>Simulated Speedup @ bs 1 Simulated Speedup @ bs 2 Simulated Speedup @ bs 4 Simulated Speedup @ bs 8 Simulated Speedup @ bs 16 Simulated Speedup @ bs 32 Simulated Speedup @ bs 64 Llama 7B, Batch Size: 4</p><p>Simulated Speedup @ seq_len 128 Simulated Speedup @ seq_len 256 Simulated Speedup @ seq_len 512 Simulated Speedup @ seq_len 1024 Simulated Speedup @ seq_len 2048 Simulated Speedup @ seq_len 4096 Simulated Speedup @ seq_len 8192 </p></div><figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_0"><figDesc>Figure1. MEDUSA introduces multiple heads on top of the last hidden states of the LLM, enabling the prediction of several subsequent tokens in parallel (Section 2.1.1). During inference, each head generates multiple top predictions for its designated position. These predictions are assembled into candidates, which are processed in parallel using a tree-based attention mechanism (Section 2.1.2). The final step is to verify the candidates and accept a continuation. Besides the standard rejection sampling scheme, a typical acceptance scheme (Section 2.3.1) can also be used here to select reasonable continuations, and the longest accepted candidate prefix will be used for the next decoding phase.</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_4"><head>Figure 5 .</head><label>5</label><figDesc>Figure 5. Performance comparison of MEDUSA using proposed typical sampling. The model is fully fine-tuned from Vicuna-7B.The plot illustrates the acceleration rate and average scores on the writing and roleplay (MT-Bench) with a fixed temperature of 0.7 for 3 different settings: greedy sampling and random sampling (RS) plotted as the star and the dot, and typical sampling curves under different thresholds.</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_5"><head>Figure 6 .</head><label>6</label><figDesc>Figure6. Visualization of a sparse tree setting for MEDUSA-2 Vicuna-7B. The tree has 64 nodes representing candidate tokens and a depth of 4 which indicates 4 MEDUSA heads involved in calculation. Each node indicates a token from a top-k prediction of a MEDUSA head, and the edges show the connections between them. The red lines highlight the path that correctly predicts the future tokens.</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_6"><head>Figure 7 .</head><label>7</label><figDesc>Figure 7. Inference speed of various models using speculative decoding on MT-Bench. Baseline model speeds are presented by grey dotted lines for comparison. γ denotes the draft token number.</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_8"><head>Figure 20 .</head><label>20</label><figDesc>Figure 20. FLOP/s vs. Operational Intensity of Linear layers.</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_9"><head>Figure 21 .</head><label>21</label><figDesc>Figure21. Simulated acceleration rate, speedup, and normalized latency ablation using different numbers of candidate tokens under the setting of batch size 1 and sequence length 1024 for Llama-7B on an A100 80GB PCIe.</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_10"><head>Figure 22 .</head><label>22</label><figDesc>Figure 22. Simulated speedup with sequence length 1024 for Llama-7B.</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_11"><head>Figure 23 .</head><label>23</label><figDesc>Figure 23. Simulated speedup with batch size 4 for Llama-7B.</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_2"><head>Table 1 .</head><label>1</label><figDesc>Comparison of various MEDUSA-2 models. The first section reports the details of MEDUSA-2, including accelerate rate, overhead, and quality that denoted the average scores on the MT-Bench compared to the original models. The second section lists the speedup (S) of SpecDecoding and MEDUSA, respectively.</figDesc><table><row><cell>Model Name</cell><cell>Vicuna-7B</cell><cell>Zephyr-7B</cell><cell>Vicuna-13B</cell><cell>Vicuna-33B</cell></row><row><cell>Acc. rate</cell><cell>3.47</cell><cell>3.14</cell><cell>3.51</cell><cell>3.01</cell></row><row><cell>Overhead</cell><cell>1.22</cell><cell>1.18</cell><cell>1.23</cell><cell>1.27</cell></row><row><cell>Quality</cell><cell>6.18 (+0.01)</cell><cell>7.25 (-0.07)</cell><cell>6.43 (-0.14)</cell><cell>7.18 (+0.05)</cell></row><row><cell>SSpecDecoding</cell><cell>1.47</cell><cell>-</cell><cell>1.56</cell><cell>1.60</cell></row><row><cell>SMEDUSA</cell><cell>2.83</cell><cell>2.66</cell><cell>2.83</cell><cell>2.35</cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_4"><head>Table 3 .</head><label>3</label><figDesc>Impact of Techniques on Speedup</figDesc><table><row><cell>Technique</cell><cell>Speedup</cell></row><row><cell>Medusa-1 heads without tree attention</cell><cell>∼1.5x</cell></row><row><cell>Adding tree attention</cell><cell>∼1.9x</cell></row><row><cell>Using optimized tree configuration</cell><cell>∼2.2x</cell></row><row><cell>Training heads with Medusa-2</cell><cell>∼2.8x</cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_6"><head>Table 4 .</head><label>4</label><figDesc>dataset. MEDUSA-2 achieves consistent speedup similar to the results on MT-Bench.Speedup results on AlpacaEval<ref type="bibr" target="#b26">(Li et al., 2023)</ref> dataset.</figDesc><table><row><cell></cell><cell>Tokens per Second</cell><cell>20 40 60 80 100 120</cell><cell cols="2">2.83x Speedup on different model sizes 2.83x 2.66x w/o Medusa 2.35x Medusa-2</cell></row><row><cell></cell><cell></cell><cell>0</cell><cell cols="2">Model Size Vicuna-7B Zephyr-7B Vicuna-13B Vicuna-33B</cell></row><row><cell cols="6">Figure 8. Speedup of various models with MEDUSA-2. MEDUSA-2 shows significant speed improvement over all the models, while</cell></row><row><cell cols="6">models trained with self-distillation (Zephyr-7B, Vicuna-13/33B) have weaker speedup due to the trade-off between preserving quality</cell></row><row><cell>and boosting speed.</cell><cell></cell><cell></cell><cell></cell><cell></cell></row><row><cell>Model</cell><cell cols="5">Base speed (tokens/s) MEDUSA speed (tokens/s) Acc. rate Speedup</cell></row><row><cell>Vicuna-7b</cell><cell></cell><cell></cell><cell>37.07</cell><cell>106.76</cell><cell>3.23</cell><cell>2.88</cell></row><row><cell>Vicuna-13b</cell><cell></cell><cell></cell><cell>29.01</cell><cell>91.54</cell><cell>3.28</cell><cell>3.16</cell></row><row><cell>Vicuna-33b</cell><cell></cell><cell></cell><cell>17.87</cell><cell>40.43</cell><cell>2.85</cell><cell>2.26</cell></row><row><cell>Zephyr-7b</cell><cell></cell><cell></cell><cell>34.21</cell><cell>99.50</cell><cell>3.08</cell><cell>2.91</cell></row></table></figure>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="1" xml:id="foot_0"><p>Upon contacting the authors, this version is experimental and used some different data than Vicuna 7B and 13B.</p></note>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="2" xml:id="foot_1"><p>Here, the accuracy is defined for the single top i-th token, i.e., this accuracy is equal to top-i accuracy minus top-(i -1) accuracy.</p></note>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="3" xml:id="foot_2"><p>https://github.com/feifeibear/LLMSpeculativeSampling</p></note>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" xml:id="foot_3"><p>19.95 &amp; 15.95 39.69 &amp; 31.79 58.4 &amp; 47.53 76.57 &amp; 63.17 94.4 &amp; 78.7 111.91 &amp; 94.14 128.64 &amp; 109.47 2 2.51 &amp; 2.0 39.66 &amp; 31.79 76.53 &amp; 63.17 112.05 &amp; 94.14 145.73 &amp; 124.71 130.67 &amp; 154.89 129.1 &amp; 184.69 148.56 &amp; 214.12 4 5.03 &amp; 4.0 76.44 &amp; 63.17 145.8 &amp; 124.71 128.85 &amp; 184.69 167.85 &amp; 243.17 201.19 &amp; 300.21 236.93 &amp; 355.85 195.91 &amp; 410.14 8 10.06 &amp; 7.99 145.72 &amp; 124.71 168.26 &amp; 243.17 236.83 &amp; 355.85 221.11 &amp; 463.14 207.79 &amp; 565.44 236.95 &amp; 663.07 227.8 &amp; 756.36 16 19.96 &amp; 15.95 168.35 &amp; 243.17 221.41 &amp; 463.14 237.5 &amp; 663.07 224.71 &amp; 845.59 232.49 &amp; 1012.87 241.12 &amp; 1166.74 229.25 &amp; 1308.76</p></note>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" xml:id="foot_4"><p>39.69 &amp; 31.79 221.74 &amp; 463.14 224.88 &amp; 845.59 241.33 &amp; 1166.74 239.02 &amp; 1440.25 245.83 &amp; 1675.97 243.55 &amp; 1881.24 240.33 &amp; 2061.59</p></note>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" xml:id="foot_5"><p>76.57 &amp; 63.17 225.19 &amp; 845.59 239.2 &amp; 1440.25 243.26 &amp; 1881.24 246.16 &amp; 2221.31 246.91 &amp; 2491.55 244.52 &amp; 2711.46 246.14 &amp; 2893.91</p></note>
+		</body>
+		<back>
+
+			
+			<div type="acknowledgement">
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>Acknowledgements</head><p>We extend our heartfelt gratitude to several individuals whose contributions were invaluable to this project:</p></div>
+			</div>
+
+			<div type="annex">
+<div xmlns="http://www.tei-c.org/ns/1.0"> <ref type="bibr">(Chen, 2023)</ref><p>.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>Operator Input Shape Output Shape Comp. Complexity Space Complexity</head><p>Prefill</p><p>QK T (b, n, s, d), (b, n, s, d) (b, n, s, s) O(bs 2 nd) O(2bsnd + bs 2 n) P V (b, n, s, s), (b, n, s, d)</p><p>64 in powers of 2 and sequence lengths from 128 to 8192 in powers of 2 (49 settings for each operator). From all the figures, we observe that the datapoints of each operator in the prefill and decoding stages cluster at very similar positions across all GPUs and for various model sizes.</p><p>During the prefill phase, increasing the batch size changes the FLOP/s of the attention matrix multiplications (see 'qk/pv init') but does not affect the Operational Intensity (refer to the vertical dashed arrow in Fig. <ref type="figure">9</ref>). In contrast, increasing the sequence length impacts both FLOP/s and Operational Intensity in the prefill phase (refer to the diagonal dashed arrow in Fig. <ref type="figure">9</ref>). During the decoding phase, the attention matrix multiplications are significantly limited by memory bandwidth. Despite an increase in FLOP/s with changes in batch size and sequence length, the Operational Intensity remains nearly unchanged (see 'qk/pv ar'). This indicates suboptimal resource utilization in the self-attention mechanism.</p><p>The linear layers in the prefill phase are mostly compute-bound (see 'qkv mlp init' and 'up/gate/down init').</p><p>During the decoding phase, the datapoints of the linear layer form a line with the same slope as the GPU's memory bandwidth (see 'qkv mlp ar' and 'up/gate/down ar'). This indicates the linear layers in the decoding stage are also bounded by memory bandwidth. Increasing the batch size improves the achieved FLOP/s and Operational Intensity under memory bandwidth constraints through better parallelism. Note that linear layers only process the new token and are independent of sequence length (See 'Decoding' section in Table <ref type="table">5</ref>). </p></div>			</div>
+			<div type="references">
+
+				<listBibl>
+
+<biblStruct xml:id="b0">
+	<monogr>
+		<title level="m" type="main">Training generalized multi-query transformer models from multi-head checkpoints</title>
+		<author>
+			<persName><forename type="first">J</forename><surname>Ainslie</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Lee-Thorp</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>De Jong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Zemlyanskiy</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">F</forename><surname>Lebrón</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Sanghai</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Gqa</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2305.13245</idno>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b1">
+	<monogr>
+		<title/>
+		<author>
+			<persName><surname>Axolotl</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Axolotl</surname></persName>
+		</author>
+		<ptr target="https://github.com/OpenAccess-AI-Collective/axolotl" />
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b2">
+	<analytic>
+		<title level="a" type="main">{MIROSTAT}: A {neural} {text} {decoding} {algorithm} {that} {directly} {controls} {perplexity}</title>
+		<author>
+			<persName><forename type="first">S</forename><surname>Basu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">G</forename><forename type="middle">S</forename><surname>Ramachandran</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">N</forename><forename type="middle">S</forename><surname>Keskar</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><forename type="middle">R</forename><surname>Varshney</surname></persName>
+		</author>
+		<ptr target="https://openreview.net/forum?id=W1G1JZEIy5_" />
+	</analytic>
+	<monogr>
+		<title level="m">International Conference on Learning Representations</title>
+		<imprint>
+			<date type="published" when="2021">2021</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b3">
+	<analytic>
+		<title level="a" type="main">Language models are few-shot learners</title>
+		<author>
+			<persName><forename type="first">T</forename><surname>Brown</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">B</forename><surname>Mann</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">N</forename><surname>Ryder</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Subbiah</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><forename type="middle">D</forename><surname>Kaplan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">P</forename><surname>Dhariwal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Neelakantan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">P</forename><surname>Shyam</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">G</forename><surname>Sastry</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Askell</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Advances in neural information processing systems</title>
+		<imprint>
+			<biblScope unit="volume">33</biblScope>
+			<biblScope unit="page" from="1877" to="1901" />
+			<date type="published" when="2020">2020</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b4">
+	<monogr>
+		<title level="m" type="main">Accelerating large language model decoding with speculative sampling</title>
+		<author>
+			<persName><forename type="first">C</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Borgeaud</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">G</forename><surname>Irving</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J.-B</forename><surname>Lespiau</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Sifre</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Jumper</surname></persName>
+		</author>
+		<idno type="DOI">10.48550/ARXIV.2302.01318</idno>
+		<imprint>
+			<date type="published" when="2023-02">February 2023</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b5">
+	<monogr>
+		<title level="m" type="main">Dissecting batching effects in gpt inference</title>
+		<author>
+			<persName><forename type="first">L</forename><surname>Chen</surname></persName>
+		</author>
+		<ptr target="https://le.qun.ch/en/blog/2023/05/13/transformer-batching/,2023.Blog" />
+		<imprint/>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b6">
+	<monogr>
+		<title level="m" type="main">An open-source chatbot impressing gpt-4 with 90%* chatgpt quality</title>
+		<author>
+			<persName><forename type="first">W.-L</forename><surname>Chiang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Lin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Sheng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Zheng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Zhuang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Zhuang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><forename type="middle">E</forename><surname>Gonzalez</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">I</forename><surname>Stoica</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">E</forename><forename type="middle">P</forename><surname>Xing</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Vicuna</surname></persName>
+		</author>
+		<ptr target="https://lmsys.org/blog/2023-03-30-vicuna/" />
+		<imprint>
+			<date type="published" when="2023-03">March 2023</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b7">
+	<monogr>
+		<author>
+			<persName><forename type="first">A</forename><surname>Chowdhery</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Narang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Devlin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Bosma</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">G</forename><surname>Mishra</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Roberts</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">P</forename><surname>Barham</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><forename type="middle">W</forename><surname>Chung</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><surname>Sutton</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Gehrmann</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2204.02311</idno>
+		<title level="m">Scaling language modeling with pathways</title>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b8">
+	<analytic>
+		<title level="a" type="main">8bit optimizers via block-wise quantization</title>
+		<author>
+			<persName><forename type="first">T</forename><surname>Dettmers</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Lewis</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Shleifer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Zettlemoyer</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">International Conference on Learning Representations</title>
+		<imprint>
+			<date type="published" when="2021">2021</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b9">
+	<monogr>
+		<author>
+			<persName><forename type="first">T</forename><surname>Dettmers</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Lewis</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Belkada</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Zettlemoyer</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Llm</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2208.07339</idno>
+		<title level="m">-bit matrix multiplication for transformers at scale</title>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+			<biblScope unit="page">8</biblScope>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+	<note>int8 (</note>
+</biblStruct>
+
+<biblStruct xml:id="b10">
+	<monogr>
+		<author>
+			<persName><forename type="first">T</forename><surname>Dettmers</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Pagnoni</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Holtzman</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Zettlemoyer</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Qlora</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2305.14314</idno>
+		<title level="m">Efficient finetuning of quantized llms</title>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b11">
+	<monogr>
+		<title level="m" type="main">Enhancing chat language models by scaling high-quality instructional conversations</title>
+		<author>
+			<persName><forename type="first">N</forename><surname>Ding</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">B</forename><surname>Xu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Qin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Zheng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Hu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Sun</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">B</forename><surname>Zhou</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b12">
+	<monogr>
+		<title level="m" type="main">Alpacafarm: A simulation framework for methods that learn from human feedback</title>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Dubois</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">X</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><surname>Taori</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">I</forename><surname>Gulrajani</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Ba</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><surname>Guestrin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">P</forename><surname>Liang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><forename type="middle">B</forename><surname>Hashimoto</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b13">
+	<analytic>
+		<title level="a" type="main">Sigmoid-weighted linear units for neural network function approximation in reinforcement learning</title>
+		<author>
+			<persName><forename type="first">S</forename><surname>Elfwing</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">E</forename><surname>Uchibe</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">K</forename><surname>Doya</surname></persName>
+		</author>
+		<idno type="DOI">10.1016/j.neunet.2017.12.012</idno>
+	</analytic>
+	<monogr>
+		<title level="j">Neural Networks</title>
+		<imprint>
+			<date type="published" when="2017">2017</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b14">
+	<analytic>
+		<title level="a" type="main">Hierarchical neural story generation</title>
+		<author>
+			<persName><forename type="first">A</forename><surname>Fan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Lewis</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Dauphin</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/p18-1082</idno>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 56th Annual Meeting of the Association for Computational Linguistics</title>
+		<meeting>the 56th Annual Meeting of the Association for Computational Linguistics</meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<date type="published" when="2018">2018</date>
+			<biblScope unit="volume">1</biblScope>
+		</imprint>
+	</monogr>
+	<note>Long Papers)</note>
+</biblStruct>
+
+<biblStruct xml:id="b15">
+	<analytic>
+		<title level="a" type="main">Gptq: Accurate post-training quantization for generative pretrained transformers</title>
+		<author>
+			<persName><forename type="first">E</forename><surname>Frantar</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Ashkboos</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Hoefler</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>Alistarh</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2210.17323</idno>
+		<ptr target="https://ai.google/static/documents/palm2techreport.pdf" />
+	</analytic>
+	<monogr>
+		<title level="m">Google. Palm 2 technical report</title>
+		<imprint>
+			<date type="published" when="2022">2022. 2023</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b16">
+	<monogr>
+		<title level="m" type="main">Truncation sampling as language model desmoothing</title>
+		<author>
+			<persName><forename type="first">J</forename><surname>Hewitt</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><forename type="middle">D</forename><surname>Manning</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">P</forename><surname>Liang</surname></persName>
+		</author>
+		<idno type="DOI">10.48550/ARXIV.2210.15191</idno>
+		<imprint>
+			<date type="published" when="2022-10">October 2022</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b17">
+	<monogr>
+		<author>
+			<persName><forename type="first">J</forename><surname>Hoffmann</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Borgeaud</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Mensch</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">E</forename><surname>Buchatskaya</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Cai</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">E</forename><surname>Rutherford</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><forename type="middle">D L</forename><surname>Casas</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><forename type="middle">A</forename><surname>Hendricks</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Welbl</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Clark</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2203.15556</idno>
+		<title level="m">Training compute-optimal large language models</title>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b18">
+	<analytic>
+		<title level="a" type="main">The curious case of neural text degeneration</title>
+		<author>
+			<persName><forename type="first">A</forename><surname>Holtzman</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Buys</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Du</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Forbes</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Choi</surname></persName>
+		</author>
+		<ptr target="https://openreview.net/forum?id=rygGQyrFvH" />
+	</analytic>
+	<monogr>
+		<title level="m">International Conference on Learning Representations</title>
+		<imprint>
+			<date type="published" when="2020">2020</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b19">
+	<analytic>
+		<title level="a" type="main">Low-rank adaptation of large language models</title>
+		<author>
+			<persName><forename type="first">E</forename><forename type="middle">J</forename><surname>Hu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Shen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">P</forename><surname>Wallis</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Allen-Zhu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">W</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Lora</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">ICLR</title>
+		<imprint>
+			<date type="published" when="2021">2021</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b20">
+	<monogr>
+		<title level="m" type="main">Assisted generation: a new direction toward low-latency text generation</title>
+		<author>
+			<persName><forename type="first">Joao</forename><surname>Gante</surname></persName>
+		</author>
+		<ptr target="https://huggingface.co/blog/assisted-generation" />
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b21">
+	<monogr>
+		<author>
+			<persName><forename type="first">S</forename><surname>Kim</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><surname>Hooper</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Gholami</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Dong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">X</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Shen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><forename type="middle">W</forename><surname>Mahoney</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">K</forename><surname>Keutzer</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Squeezellm</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2306.07629</idno>
+		<title level="m">Dense-and-sparse quantization</title>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b22">
+	<analytic>
+		<title level="a" type="main">Sequence-level knowledge distillation</title>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Kim</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><forename type="middle">M</forename><surname>Rush</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">EMNLP</title>
+		<imprint>
+			<date type="published" when="2016">2016</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b23">
+	<analytic>
+		<title level="a" type="main">Fine-tuning can distort pretrained features and underperform out-of-distribution</title>
+		<author>
+			<persName><forename type="first">A</forename><surname>Kumar</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Raghunathan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><surname>Jones</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Ma</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">P</forename><surname>Liang</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">International Conference on Learning Representations</title>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b24">
+	<analytic>
+		<title level="a" type="main">Efficient memory management for large language model serving with pagedattention</title>
+		<author>
+			<persName><forename type="first">W</forename><surname>Kwon</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Zhuang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Sheng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Zheng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><forename type="middle">H</forename><surname>Yu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><forename type="middle">E</forename><surname>Gonzalez</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">I</forename><surname>Stoica</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the ACM SIGOPS 29th Symposium on Operating Systems Principles</title>
+		<meeting>the ACM SIGOPS 29th Symposium on Operating Systems Principles</meeting>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b25">
+	<monogr>
+		<title level="m" type="main">Fast inference from transformers via speculative decoding</title>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Leviathan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Kalman</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Matias</surname></persName>
+		</author>
+		<idno type="DOI">10.48550/ARXIV.2211.17192</idno>
+		<imprint>
+			<date type="published" when="2022-11">November 2022</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b26">
+	<monogr>
+		<title level="m" type="main">Alpacaeval: An automatic evaluator of instruction-following models</title>
+		<author>
+			<persName><forename type="first">X</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Dubois</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><surname>Taori</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">I</forename><surname>Gulrajani</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><surname>Guestrin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">P</forename><surname>Liang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><forename type="middle">B</forename><surname>Hashimoto</surname></persName>
+		</author>
+		<ptr target="https://github.com/tatsu-lab/alpaca_eval" />
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b27">
+	<monogr>
+		<author>
+			<persName><forename type="first">J</forename><surname>Lin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Tang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Tang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Yang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">X</forename><surname>Dang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Han</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Awq</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2306.00978</idno>
+		<title level="m">Activation-aware weight quantization for llm compression and acceleration</title>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b28">
+	<monogr>
+		<title level="m" type="main">On the probability-quality paradox in language generation</title>
+		<author>
+			<persName><forename type="first">C</forename><surname>Meister</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">G</forename><surname>Wiher</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Pimentel</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><surname>Cotterell</surname></persName>
+		</author>
+		<idno type="DOI">10.48550/ARXIV.2203.17217</idno>
+		<imprint>
+			<date type="published" when="2022-03">March 2022</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b29">
+	<analytic>
+		<title level="a" type="main">Locally typical sampling</title>
+		<author>
+			<persName><forename type="first">C</forename><surname>Meister</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Pimentel</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">G</forename><surname>Wiher</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><surname>Cotterell</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Transactions of the Association for Computational Linguistics</title>
+		<imprint>
+			<biblScope unit="volume">11</biblScope>
+			<biblScope unit="page" from="102" to="121" />
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b30">
+	<monogr>
+		<author>
+			<persName><forename type="first">X</forename><surname>Miao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">G</forename><surname>Oliaro</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">X</forename><surname>Cheng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><forename type="middle">Y Y</forename><surname>Wong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>Arfeen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><surname>Abhyankar</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Jia</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Specinfer</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2305.09781</idno>
+		<title level="m">Accelerating generative llm serving with speculative inference and token tree verification</title>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b31">
+	<analytic>
+		<title level="a" type="main">Nvidia a100 tensor core gpu</title>
+		<author>
+			<persName><surname>Nvidia</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">OpenAI. Gpt-4 technical report</title>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b32">
+	<monogr>
+		<author>
+			<persName><forename type="first">L</forename><surname>Ouyang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">X</forename><surname>Jiang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>Almeida</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><forename type="middle">L</forename><surname>Wainwright</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">P</forename><surname>Mishkin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Agarwal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">K</forename><surname>Slama</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Ray</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2203.02155</idno>
+		<title level="m">Training language models to follow instructions with human feedback</title>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b33">
+	<monogr>
+		<title level="m" type="main">Tiny vicuna 1b</title>
+		<author>
+			<persName><forename type="first">J</forename><surname>Pan</surname></persName>
+		</author>
+		<ptr target="https://huggingface.co/Jiayi-Pan/Tiny-Vicuna-1B" />
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b34">
+	<analytic>
+		<title level="a" type="main">MAUVE: Measuring the gap between neural text and human text using divergence frontiers</title>
+		<author>
+			<persName><forename type="first">K</forename><surname>Pillutla</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Swayamdipta</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><surname>Zellers</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Thickstun</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Welleck</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Choi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Harchaoui</surname></persName>
+		</author>
+		<ptr target="https://openreview.net/forum?id=Tqx7nJp7PR" />
+	</analytic>
+	<monogr>
+		<title level="m">Advances in Neural Information Processing Systems</title>
+		<editor>
+			<persName><forename type="first">A</forename><surname>Beygelzimer</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Y</forename><surname>Dauphin</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">P</forename><surname>Liang</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">J</forename><forename type="middle">W</forename><surname>Vaughan</surname></persName>
+		</editor>
+		<imprint>
+			<date type="published" when="2021">2021</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b35">
+	<monogr>
+		<title level="m" type="main">Efficiently scaling transformer inference</title>
+		<author>
+			<persName><forename type="first">R</forename><surname>Pope</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Douglas</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Chowdhery</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Devlin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Bradbury</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Levskaya</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Heek</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">K</forename><surname>Xiao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Agrawal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Dean</surname></persName>
+		</author>
+		<idno type="DOI">10.48550/ARXIV.2211.05102</idno>
+		<imprint>
+			<date type="published" when="2022-11">November 2022</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b36">
+	<monogr>
+		<title/>
+		<author>
+			<persName><surname>Sharegpt</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Sharegpt</surname></persName>
+		</author>
+		<ptr target="https://huggingface.co/datasets/Aeala/ShareGPT_Vicuna_unfiltered" />
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b37">
+	<monogr>
+		<title level="m" type="main">Fast transformer decoding: One write-head is all you need</title>
+		<author>
+			<persName><forename type="first">N</forename><surname>Shazeer</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:1911.02150</idno>
+		<imprint>
+			<date type="published" when="2019">2019</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b38">
+	<monogr>
+		<title level="m" type="main">Accelerating llm inference with staged speculative decoding</title>
+		<author>
+			<persName><forename type="first">B</forename><surname>Spector</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><surname>Re</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2308.04623</idno>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b39">
+	<analytic>
+		<title level="a" type="main">Blockwise parallel decoding for deep autoregressive models</title>
+		<author>
+			<persName><forename type="first">M</forename><surname>Stern</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">N</forename><forename type="middle">M</forename><surname>Shazeer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Uszkoreit</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Neural Information Processing Systems</title>
+		<imprint>
+			<date type="published" when="2018">2018</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b40">
+	<monogr>
+		<title level="m" type="main">Llama 2: Open foundation and finetuned chat models</title>
+		<author>
+			<persName><forename type="first">H</forename><surname>Touvron</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Martin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">K</forename><surname>Stone</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">P</forename><surname>Albert</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Almahairi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Babaei</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">N</forename><surname>Bashlykov</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Batra</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">P</forename><surname>Bhargava</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Bhosale</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2307.09288</idno>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b41">
+	<monogr>
+		<title/>
+		<author>
+			<persName><forename type="first">L</forename><surname>Tunstall</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">E</forename><surname>Beeching</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">N</forename><surname>Lambert</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">N</forename><surname>Rajani</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">K</forename><surname>Rasul</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Belkada</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Huang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Von Werra</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><surname>Fourrier</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">N</forename><surname>Habib</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">N</forename><surname>Sarrazin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">O</forename><surname>Sanseviero</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><forename type="middle">M</forename><surname>Rush</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Wolf</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Zephyr</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+			<publisher>Direct distillation of lm alignment</publisher>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b42">
+	<monogr>
+		<title level="m" type="main">Speculative decoding: Lossless speedup of autoregressive translation</title>
+		<author>
+			<persName><forename type="first">H</forename><surname>Xia</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Ge</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S.-Q</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">F</forename><surname>Wei</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Sui</surname></persName>
+		</author>
+		<ptr target="https://openreview.net/forum?id=H-VlwsYvVi" />
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b43">
+	<analytic>
+		<title level="a" type="main">Accurate and efficient post-training quantization for large language models</title>
+		<author>
+			<persName><forename type="first">G</forename><surname>Xiao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Lin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Seznec</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Demouth</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Han</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Smoothquant</surname></persName>
+		</author>
+		<idno>PMLR</idno>
+	</analytic>
+	<monogr>
+		<title level="m">International Conference on Machine Learning</title>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+			<biblScope unit="page" from="38087" to="38099" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b44">
+	<analytic>
+		<title level="a" type="main">A survey on non-autoregressive generation for neural machine translation and beyond</title>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Xiao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Guo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Qin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T.-Y</forename><surname>Liu</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">IEEE Transactions on Pattern Analysis and Machine Intelligence</title>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b45">
+	<analytic>
+		<title level="a" type="main">Do transformers really perform badly for graph representation?</title>
+		<author>
+			<persName><forename type="first">C</forename><surname>Ying</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Cai</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Luo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Zheng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">G</forename><surname>Ke</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>He</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Shen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T.-Y</forename><surname>Liu</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Advances in Neural Information Processing Systems</title>
+		<imprint>
+			<biblScope unit="volume">34</biblScope>
+			<biblScope unit="page" from="28877" to="28888" />
+			<date type="published" when="2021">2021</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b46">
+	<monogr>
+		<author>
+			<persName><forename type="first">P</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">G</forename><surname>Zeng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">W</forename><surname>Lu</surname></persName>
+		</author>
+		<title level="m">Tinyllama: An open-source small language model</title>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b47">
+	<monogr>
+		<author>
+			<persName><forename type="first">S</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Roller</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">N</forename><surname>Goyal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Artetxe</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><surname>Dewan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Diab</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">X</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">X</forename><forename type="middle">V</forename><surname>Lin</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2205.01068</idno>
+		<title level="m">Open pre-trained transformer language models</title>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b48">
+	<monogr>
+		<title level="m" type="main">H 2 o: Heavy-hitter oracle for efficient generative inference of large language models</title>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Sheng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Zhou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Zheng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><surname>Cai</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Song</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Tian</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><surname>Ré</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><surname>Barrett</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2306.14048</idno>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b49">
+	<monogr>
+		<title level="m" type="main">Judging llm-as-a-judge with mt-bench and chatbot arena</title>
+		<author>
+			<persName><forename type="first">L</forename><surname>Zheng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">W.-L</forename><surname>Chiang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Sheng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Zhuang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Zhuang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Lin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">E</forename><forename type="middle">P</forename><surname>Xing</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><forename type="middle">E</forename><surname>Gonzalez</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">I</forename><surname>Stoica</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+				</listBibl>
+			</div>
+		</back>
+	</text>
+</TEI>
