@@ -24,8 +24,48 @@ def get_reading_time(interactions: list[dict[str, Any]]) -> int:
                 total_seconds += interaction['data'].get('duration_seconds', 0)
     return total_seconds
 
-def process_paper(paper_id: str, paper_data: dict[str, Any], interactions: list[dict[str, Any]]) -> dict[str, Any]:
+def scan_features(paper_id: str, features_base: Path) -> dict[str, str]:
+    """
+    Scan for available features for a paper.
+    
+    Args:
+        paper_id: Paper ID to scan features for
+        features_base: Base directory containing paper data
+        
+    Returns:
+        Dictionary mapping feature types to their content paths
+    """
+    paper_dir = features_base / paper_id
+    features_dir = paper_dir / "features"
+    
+    if not features_dir.exists():
+        return {}
+    
+    features = {}
+    for feature_dir in features_dir.iterdir():
+        if not feature_dir.is_dir():
+            continue
+            
+        # Look for markdown file matching paper ID
+        feature_files = list(feature_dir.glob(f"{paper_id}*.md"))
+        if feature_files:
+            # Generate path relative to web root - should be like:
+            # data/papers/<paper_id>/features/<feature_type>/<paper_id>.md
+            rel_path = f"data/papers/{paper_id}/features/{feature_dir.name}/{feature_files[0].name}"
+            features[feature_dir.name] = rel_path
+            
+    return features
+
+def process_paper(
+    paper_id: str, 
+    paper_data: dict[str, Any], 
+    interactions: list[dict[str, Any]],
+    features_base: Path
+) -> dict[str, Any]:
     """Process single paper data into frontend format."""
+    # Get feature paths
+    features_path = scan_features(paper_id, features_base)
+    
     return {
         'id': paper_id,
         'title': paper_data.get('title', '').replace('\n', ' '),
@@ -37,22 +77,27 @@ def process_paper(paper_id: str, paper_data: dict[str, Any], interactions: list[
         'last_read': paper_data.get('timestamp', ''),  # Using same timestamp for now
         'total_reading_time_seconds': get_reading_time(interactions),
         'published_date': paper_data.get('published_date', ''),
-        'arxiv_tags': paper_data.get('arxiv_tags', [])
+        'arxiv_tags': paper_data.get('arxiv_tags', []),
+        'features_path': features_path or None  # Only include if features exist
     }
 
 def convert_store(
     snapshot_path: str,
     output_path: str,
     archive_path: str | None = None,
+    features_base: str = "data/papers"
 ) -> None:
     """Convert gh-store snapshot to frontend JSON format.
     
     Args:
         snapshot_path: Path to gh-store snapshot JSON
         output_path: Path where frontend JSON should be written
+        archive_path: Optional path to archive JSON to merge with
+        features_base: Base directory containing paper data and features
     """
     snapshot_path = Path(snapshot_path)
     output_path = Path(output_path)
+    features_base = Path(features_base)
     
     # Create output directory
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -80,7 +125,12 @@ def convert_store(
         paper_id = obj_id.split(':', 1)[1]
         paper_data = obj['data']
         interactions = interaction_data.get(paper_id, [])
-        papers[paper_id] = process_paper(paper_id, paper_data, interactions)
+        papers[paper_id] = process_paper(
+            paper_id, 
+            paper_data, 
+            interactions,
+            features_base
+        )
     
     # Backpopulate from archive if provided
     logger.info(f"Loaded {len(papers)} from snapshot")
@@ -89,8 +139,15 @@ def convert_store(
         with open(archive_path, 'r', encoding='utf-8') as f:
             archive = json.load(f)
         logger.info(f"Loaded {len(archive)} from archive")
+        
+        # Update archived papers with new feature paths
+        for paper_id, paper in archive.items():
+            new_features = scan_features(paper_id, features_base)
+            if new_features:
+                paper['features_path'] = new_features
+                
         archive.update(papers)
-        papers=archive
+        papers = archive
             
     # Write output
     logger.info(f"Writing {len(papers)} papers to {output_path}")

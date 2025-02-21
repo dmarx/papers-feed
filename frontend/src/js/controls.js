@@ -35,7 +35,45 @@ const toggleAllPapers = (shouldCollapse) => {
 };
 
 const initializeControls = () => {
-    // Color controls
+    // Initialize filter mode buttons
+    const filterButtons = document.querySelectorAll('.mode-button');
+    if (filterButtons) {
+        filterButtons.forEach(button => {
+            button.addEventListener('click', () => {
+                document.querySelectorAll('.mode-button').forEach(b => 
+                    b.classList.remove('active'));
+                button.classList.add('active');
+                window.filterState.mode = button.dataset.mode;
+                applyFilters();
+            });
+        });
+    }
+
+    // Initialize clear filters button
+    const clearFilters = document.getElementById('clear-filters');
+    if (clearFilters) {
+        clearFilters.addEventListener('click', () => {
+            window.filterState.activeTags.clear();
+            document.querySelectorAll('.tag-pill').forEach(pill => 
+                pill.classList.remove('active'));
+            applyFilters();
+        });
+    }
+
+    // Initialize select all button
+    const selectAll = document.getElementById('select-all');
+    if (selectAll) {
+        selectAll.addEventListener('click', () => {
+            document.querySelectorAll('.tag-pill').forEach(pill => {
+                const tag = pill.dataset.tag;
+                window.filterState.activeTags.add(tag);
+                pill.classList.add('active');
+            });
+            applyFilters();
+        });
+    }
+
+    // Initialize color controls
     const coloringToggle = document.getElementById('coloringToggle');
     if (coloringToggle) {
         // Load saved preferences
@@ -53,81 +91,62 @@ const initializeControls = () => {
         // Add listeners
         coloringToggle.addEventListener('change', () => {
             localStorage.setItem('coloringEnabled', coloringToggle.checked);
-            renderPapers();
+            if (typeof renderPapers === 'function') {
+                renderPapers();
+            }
         });
         
         document.querySelectorAll('input[name="colorBy"]').forEach(radio => {
             radio.addEventListener('change', () => {
                 localStorage.setItem('colorBy', radio.value);
-                renderPapers();
+                if (typeof renderPapers === 'function') {
+                    renderPapers();
+                }
             });
         });
     }
 
-    // Filter mode buttons
-    document.querySelectorAll('.mode-button').forEach(button => {
-        button.addEventListener('click', () => {
-            document.querySelectorAll('.mode-button').forEach(b => 
-                b.classList.remove('active'));
-            button.classList.add('active');
-            window.filterState.mode = button.dataset.mode;
-            applyFilters();
-        });
-    });
-
-    // Clear filters
-    document.getElementById('clear-filters').addEventListener('click', () => {
-        window.filterState.activeTags.clear();
-        document.querySelectorAll('.tag-pill').forEach(pill => 
-            pill.classList.remove('active'));
-        applyFilters();
-    });
-
-    // Select all tags
-    document.getElementById('select-all').addEventListener('click', () => {
-        document.querySelectorAll('.tag-pill').forEach(pill => {
-            const tag = pill.dataset.tag;
-            window.filterState.activeTags.add(tag);
-            pill.classList.add('active');
-        });
-        applyFilters();
-    });
-
-    // Controls panel visibility
+    // Initialize controls panel
     const showControls = document.getElementById('showControls');
     const controlsPanel = document.getElementById('controlsPanel');
     const closeControls = document.getElementById('closeControls');
 
-    showControls.addEventListener('click', () => {
-        controlsPanel.classList.add('expanded');
-        showControls.style.visibility = 'hidden';
-    });
+    if (showControls && controlsPanel && closeControls) {
+        showControls.addEventListener('click', () => {
+            controlsPanel.classList.add('expanded');
+            showControls.style.visibility = 'hidden';
+        });
 
-    closeControls.addEventListener('click', () => {
-        controlsPanel.classList.remove('expanded');
-        showControls.style.visibility = 'visible';
-    });
-
-    // Close panel when clicking outside
-    document.addEventListener('click', (event) => {
-        if (!controlsPanel.contains(event.target) && 
-            event.target !== showControls && 
-            controlsPanel.classList.contains('expanded')) {
+        closeControls.addEventListener('click', () => {
             controlsPanel.classList.remove('expanded');
             showControls.style.visibility = 'visible';
-        }
-    });
+        });
 
-    // Bulk collapse/expand functionality
-    document.getElementById('executeAction').addEventListener('click', () => {
-        const target = document.querySelector('input[name="target"]:checked').value;
-        const action = document.querySelector('input[name="action"]:checked').value;
-        const shouldCollapse = action === 'collapse';
-        
-        if (target === 'days') {
-            toggleAllDays(shouldCollapse);
-        } else {
-            toggleAllPapers(shouldCollapse);
-        }
-    });
+        // Close panel when clicking outside
+        document.addEventListener('click', (event) => {
+            if (!controlsPanel.contains(event.target) && 
+                event.target !== showControls && 
+                controlsPanel.classList.contains('expanded')) {
+                controlsPanel.classList.remove('expanded');
+                showControls.style.visibility = 'visible';
+            }
+        });
+    }
+
+    // Initialize bulk actions
+    const executeAction = document.getElementById('executeAction');
+    if (executeAction) {
+        executeAction.addEventListener('click', () => {
+            const target = document.querySelector('input[name="target"]:checked')?.value;
+            const action = document.querySelector('input[name="action"]:checked')?.value;
+            if (target && action) {
+                const shouldCollapse = action === 'collapse';
+                if (target === 'days') {
+                    toggleAllDays(shouldCollapse);
+                } else {
+                    toggleAllPapers(shouldCollapse);
+                }
+            }
+        });
+    }
 };
