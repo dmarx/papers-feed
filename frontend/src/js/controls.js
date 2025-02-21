@@ -71,31 +71,4 @@ const initializeControls = () => {
             });
         });
     }
-
-    // Initialize controls panel
-    const showControls = document.getElementById('showControls');
-    const controlsPanel = document.getElementById('controlsPanel');
-    const closeControls = document.getElementById('closeControls');
-
-    if (showControls && controlsPanel && closeControls) {
-        showControls.addEventListener('click', () => {
-            controlsPanel.classList.add('expanded');
-            showControls.style.visibility = 'hidden';
-        });
-
-        closeControls.addEventListener('click', () => {
-            controlsPanel.classList.remove('expanded');
-            showControls.style.visibility = 'visible';
-        });
-
-        // Close panel when clicking outside
-        document.addEventListener('click', (event) => {
-            if (!controlsPanel.contains(event.target) && 
-                event.target !== showControls && 
-                controlsPanel.classList.contains('expanded')) {
-                controlsPanel.classList.remove('expanded');
-                showControls.style.visibility = 'visible';
-            }
-        });
-    }
 };
