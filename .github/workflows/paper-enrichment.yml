@@ -13,18 +13,16 @@ concurrency:
   group: ${{ github.repository }}-event-processing
   cancel-in-progress: false
 
-
 jobs:
-
   download-pdfs:
-  
     runs-on: ubuntu-latest
     if: |
       github.event_name != 'issues' || 
       (github.event_name == 'issues' && contains(github.event.issue.labels.*.name, 'feature-node'))
-
     permissions:
       contents: write
+    outputs:
+      has_changes: ${{ steps.commit.outputs.changes_detected }}
       
     steps:
       - uses: actions/checkout@v4
@@ -42,23 +40,25 @@ jobs:
           python -m pip install --upgrade pip
           pip install papers_feed
       
-      - name: Download PDFs (uncomment to download source)
+      - name: Download PDFs
         run: |
           python -m papers_feed.asset_manager download-pdfs
-          #python -m papers_feed.asset_manager download-source
       
       - name: Commit changes
+        id: commit
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "chore: Download paper files"
           file_pattern: |
             data/papers/**
 
-
   convert-pdfs-to-markdown:
-  
     runs-on: ubuntu-latest
     needs: download-pdfs
+    if: needs.download-pdfs.outputs.has_changes == 'true'
+    outputs:
+      has_changes: ${{ steps.commit.outputs.changes_detected }}
+    
     services:
       grobid:
         image: lfoppiano/grobid:latest-crf
@@ -98,6 +98,7 @@ jobs:
           python scripts/process_pdf.py generate_missing_conversions
 
       - name: Commit and Push Conversions
+        id: commit
         uses: EndBug/add-and-commit@v9
         with:
           add: '.'
@@ -105,10 +106,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-
   process-enrichments:
-  
     needs: convert-pdfs-to-markdown
+    if: needs.convert-pdfs-to-markdown.outputs.has_changes == 'true'
     runs-on: ubuntu-latest
     
     steps:
