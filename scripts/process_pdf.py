@@ -195,14 +195,15 @@ def generate_missing_conversions(
             continue
             
         # Determine feature paths
-        base_dir = pdf_fpath.parent.parent
+        #base_dir = pdf_fpath.parent.parent
+        paper_dir = pdf_fpath.parent
         paper_id = pdf_fpath.stem
-        md_path = get_feature_path(base_dir, f'markdown-{tag}', paper_id, '.md')
+        md_path = get_feature_path(paper_dir, f'markdown-{tag}', paper_id, '.md')
         
         if not md_path.exists():
             process_pdf_grobid(pdf_fpath, regenerate_tei=regenerate_tei)
             # Add both markdown and TEI paths
-            tei_path = get_feature_path(base_dir, f'tei-xml-{tag}', paper_id, '.xml')
+            tei_path = get_feature_path(paper_dir, f'tei-xml-{tag}', paper_id, '.xml')
             modified_files.extend([md_path, tei_path])
             logger.info(f"Generated conversions for {pdf_fpath.name}")
             
