@@ -1,0 +1,2217 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<TEI xml:space="preserve" xmlns="http://www.tei-c.org/ns/1.0" 
+xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" 
+xsi:schemaLocation="http://www.tei-c.org/ns/1.0 https://raw.githubusercontent.com/kermitt2/grobid/master/grobid-home/schemas/xsd/Grobid.xsd"
+ xmlns:xlink="http://www.w3.org/1999/xlink">
+	<teiHeader xml:lang="en">
+		<fileDesc>
+			<titleStmt>
+				<title level="a" type="main">EQ-VAE: Equivariance Regularized Latent Space for Improved Generative Image Modeling</title>
+				<funder ref="#_ZRn3MTT">
+					<orgName type="full">European Union</orgName>
+				</funder>
+				<funder ref="#_DS9BnnB">
+					<orgName type="full">GR-NET</orgName>
+				</funder>
+			</titleStmt>
+			<publicationStmt>
+				<publisher/>
+				<availability  status="unknown">
+					<licence/>
+				</availability>
+				<date type="published" when="2025-02-14">14 Feb 2025</date>
+			</publicationStmt>
+			<sourceDesc>
+				<biblStruct>
+					<analytic>
+						<author>
+							<persName><forename type="first">Theodoros</forename><surname>Kouzelis</surname></persName>
+						</author>
+						<author>
+							<persName><forename type="first">Ioannis</forename><surname>Kakogeorgiou</surname></persName>
+						</author>
+						<author>
+							<persName><forename type="first">Spyros</forename><surname>Gidaris</surname></persName>
+						</author>
+						<author>
+							<persName><forename type="first">Nikos</forename><surname>Komodakis</surname></persName>
+						</author>
+						<title level="a" type="main">EQ-VAE: Equivariance Regularized Latent Space for Improved Generative Image Modeling</title>
+					</analytic>
+					<monogr>
+						<imprint>
+							<date type="published" when="2025-02-14">14 Feb 2025</date>
+						</imprint>
+					</monogr>
+					<idno type="MD5">C23F8D731930A739022D5D6BABDA187F</idno>
+					<idno type="arXiv">arXiv:2502.09509v2[cs.LG]</idno>
+				</biblStruct>
+			</sourceDesc>
+		</fileDesc>
+		<encodingDesc>
+			<appInfo>
+				<application version="0.8.2-SNAPSHOT" ident="GROBID" when="2025-02-22T03:13+0000">
+					<desc>GROBID - A machine learning software for extracting information from scholarly documents</desc>
+					<ref target="https://github.com/kermitt2/grobid"/>
+				</application>
+			</appInfo>
+		</encodingDesc>
+		<profileDesc>
+			<abstract>
+<div xmlns="http://www.tei-c.org/ns/1.0"><p>Latent generative models have emerged as a leading approach for high-quality image synthesis. These models rely on an autoencoder to compress images into a latent space, followed by a generative model to learn the latent distribution. We identify that existing autoencoders lack equivariance to semantic-preserving transformations like scaling and rotation, resulting in complex latent spaces that hinder generative performance. To address this, we propose EQ-VAE, a simple regularization approach that enforces equivariance in the latent space, reducing its complexity without degrading reconstruction quality. By finetuning pre-trained autoencoders with EQ-VAE, we enhance the performance of several state-ofthe-art generative models, including DiT, SiT, REPA and MaskGIT, achieving a ×7 speedup on DiT-XL/2 with only five epochs of SD-VAE fine-tuning. EQ-VAE is compatible with both continuous and discrete autoencoders, thus offering a versatile enhancement for a wide range of latent generative models. Project page and code: <ref type="url" target="https://eq-vae.github.io/">https://eq-vae.github.io/</ref>.</p></div>
+			</abstract>
+		</profileDesc>
+	</teiHeader>
+	<text xml:lang="en">
+		<body>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="1.">Introduction</head><p>Latent generative models <ref type="bibr" target="#b41">(Rombach et al., 2022)</ref> have become a dominant framework for high-fidelity image synthesis, achieving state-of-the-art results across diffusion models <ref type="bibr" target="#b41">(Rombach et al., 2022;</ref><ref type="bibr" target="#b61">Yao et al., 2024;</ref><ref type="bibr" target="#b31">Ma et al., 2024)</ref>, masked generative modeling <ref type="bibr" target="#b4">(Chang et al., 2022;</ref><ref type="bibr" target="#b29">Li et al., 2023)</ref>, and autoregressive models <ref type="bibr" target="#b13">(Esser et al., 2021;</ref><ref type="bibr" target="#b30">Li et al., 2024;</ref><ref type="bibr" target="#b50">Tian et al., 2024)</ref>. These models operate in two phases. First, an autoencoder compresses high-dimensional images into a lower-dimensional latent space, which can be continuous (e.g., SD-VAE for diffusion (Rombach et al.,   1 Archimedes, Athena RC, Greece 2 National Technical University of Athens, Greece 3 valaio.ai, France 4 University of Crete, Greece 5 IACM-Forth, Greece. Correspondence to: Theodoros Kouzelis &lt;theodoros.kouzelis@athenarc.gr&gt;.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>2022</head><p>)) or discrete (e.g., VQ-GAN for autoregressive <ref type="bibr" target="#b13">(Esser et al., 2021;</ref><ref type="bibr">Yu et al., 2022b</ref>) and masked generative modeling <ref type="bibr" target="#b4">(Chang et al., 2022)</ref>). This latent space retains essential semantic and structural information while discarding highfrequency details. Second, a generative model learns to model the distribution of these latent representations, enabling the synthesis of visually coherent images. At inference time, the generative model first samples a latent code, which is then decoded back into the image space by the autoencoder. While much research has focused on improving the generative phase-through advances in architectures <ref type="bibr" target="#b35">(Peebles &amp; Xie, 2023)</ref>, objectives <ref type="bibr" target="#b31">(Ma et al., 2024)</ref>, and optimization techniques <ref type="bibr" target="#b61">(Yao et al., 2024)</ref>-the autoencoder's role in shaping the latent space remains equally critical to overall performance.</p><p>In fact, the quality of the latent space is pivotal, influencing both computational efficiency (by reducing dimensionality and accelerating convergence in the generative phase) and the model's ability to produce high-fidelity outputs <ref type="bibr" target="#b41">(Rombach et al., 2022)</ref>. In diffusion models, most state-of-theart approaches-such as DiT <ref type="bibr" target="#b35">(Peebles &amp; Xie, 2023)</ref>, SiT <ref type="bibr" target="#b31">(Ma et al., 2024)</ref>, PixArt <ref type="bibr" target="#b5">(Chen et al., 2024)</ref>, SD3 <ref type="bibr" target="#b14">(Esser et al., 2024)</ref>, and Flux (Black Forest Labs, 2023)-rely on autoencoders with architectures and training objectives similar to the SD-VAE introduced in Latent Diffusion Models (LDM) <ref type="bibr" target="#b41">(Rombach et al., 2022)</ref>. LDM explores two widely adopted regularization strategies: a continuous variational approach and a discrete codebook framework. The variational approach uses a KL divergence term to align the latent distribution with a Gaussian prior, promoting a smooth and structured latent space <ref type="bibr" target="#b23">(Kingma &amp; Welling, 2014)</ref>. Alternatively, the discrete codebook framework constrains the latent space to a finite set of learned embeddings, limiting its complexity and providing a different form of regularization <ref type="bibr" target="#b13">(Esser et al., 2021)</ref>.</p><p>These regularization strategies inherently introduce a tradeoff. Stronger regularization, such as increasing the weight of the KL divergence term, produces a smoother and more learnable latent space for the generative model in the second phase <ref type="bibr" target="#b53">(Tschannen et al., 2025)</ref>. However, it also reduces the information capacity of the latent representation, leading to a loss of fine-grained details and ultimately degrading  <ref type="table">1</ref>). Accelerated Training (Right) Training curves (without classifier-free guidance) for DiT-XL/2 and REPA (w/ SiT-XL/2), showing that our EQ-VAE accelerates convergence by ×7 and ×4, respectively. reconstruction quality. Empirical evidence suggests that this trade-off can set an upper bound on the overall performance of latent generative models <ref type="bibr" target="#b41">(Rombach et al., 2022)</ref>, as the autoencoder's limited capacity to preserve detailed information restricts the overall ability of latent generative models to synthesize highly-fidelity images. This raises a fundamental question: Can we mitigate this trade-off, creating a latent space that is more optimized for generative modeling, without compromising reconstruction quality, thereby improving the overall generative modeling process?</p><p>A key aspect that could address this challenge lies in the structure and properties of the latent space itself. In particular, we identify an essential limitation of current state-of-theart autoencoders: their latent representations are not equivariant to basic spatial transformations, such as scaling and rotation (see Figure <ref type="figure" target="#fig_1">2</ref>; extended discussion in Sec. 3.2). This introduces unnecessary complexity into the latent manifold, forcing the generative model to learn nonlinear relationships that could otherwise be avoided.</p><p>To address this issue, we propose a simple yet effective modification to the training objective of autoencoders that encourages latent spaces to exhibit the aforementioned equivariance. Our method called EQ-VAE, penalizes discrepancies between reconstructions of transformed latent representations and the corresponding transformations of input images. Notably, EQ-VAE requires no architectural changes to existing autoencoder models and does not necessitate training from scratch. Instead, fine-tuning pre-trained autoencoders for a few epochs with EQ-VAE suffices to imbue the latent space with equivariance properties, reducing its complexity (see Figure <ref type="figure" target="#fig_0">1</ref>-left; quantitative results in Table <ref type="table">5</ref>) and facilitating learning for generative models (e.g., Figure <ref type="figure" target="#fig_0">1</ref>right). This is achieved without degrading the autoencoder's reconstruction quality.</p><p>Our method is compatible with both continuous and discrete autoencoders, enabling broad applicability across latent generative models. For example, applying EQ-VAE to the continuous SD-VAE <ref type="bibr" target="#b41">(Rombach et al., 2022)</ref> significantly improves the performance of downstream diffusion models such as DiT <ref type="bibr" target="#b35">(Peebles &amp; Xie, 2023)</ref>, SiT <ref type="bibr" target="#b31">(Ma et al., 2024)</ref>, and REPA <ref type="bibr" target="#b65">(Yu et al., 2025)</ref>, as measured by FID scores. Similarly, applying EQ-VAE to discrete VQ-GAN <ref type="bibr" target="#b13">(Esser et al., 2021)</ref> enhances performance in the masked generative modeling approach MaskGIT <ref type="bibr" target="#b4">(Chang et al., 2022)</ref>.</p><p>We make the following contributions:</p><p>• We identify that the latent space of established autoencoders lacks equivariance under spatial transformations, which impedes latent generative modeling.</p><p>Building on this observation, we propose EQ-VAE, a simple regularization strategy that improves generative performance without compromising reconstruction quality. • Our method is compatible with both continuous and discrete autoencoders, enabling a plug-and-play approach for commonly used generative models such as diffusion and masked generative models. • We show that by fine-tuning well-established autoencoders with our objective, we significantly accelerate the training of latent generative models. For instance, fine-tuning SD-VAE for just 5 epochs yields a ×7 speedup on DiT-XL/2 and ×4 speedup on REPA (w/ SiT-XL/2) (see Figure <ref type="figure" target="#fig_0">1</ref> (right)).</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="2.">Related work</head><p>Autoencoders for Latent Generative Models Training diffusion models directly in pixel space is computationally inefficient, as most of the bits in a digital image correspond to subtle details with little perceptual significance.</p><p>To overcome this issue, <ref type="bibr" target="#b41">Rombach et al. (2022)</ref> propose latent diffusion models that operate in a compressed latent space produced in a separate stage by an autoencoder. Their KL-regularized autoencoder, SD-VAE, has been extensively utilized in numerous diffusion models <ref type="bibr" target="#b61">(Yao et al., 2024;</ref><ref type="bibr" target="#b31">Ma et al., 2024;</ref><ref type="bibr" target="#b5">Chen et al., 2024)</ref>. Subsequent research has primarily focused on minimizing the reconstruction error that sets an upper bound on generative performance, by increasing the number of latent channels <ref type="bibr" target="#b14">(Esser et al., 2024;</ref><ref type="bibr">Black Forest Labs, 2023;</ref><ref type="bibr" target="#b9">Dai et al., 2023)</ref> and incorporating task specific priors <ref type="bibr" target="#b71">(Zhu et al., 2023)</ref>. To enable efficient training on high-resolution images Xie et al. (2025) and Chen et al. (2025) extensively increase the compression ratio without compromising the reconstruction quality. Hu et al. (2023) investigate the ideal latent space for generative models and find that a relatively weak decoder produces a latent distribution that enhances generative performance. Discrete autoencoders are initially introduced with VQ-VAE (van den Oord et al., 2017) to quantize image patches into discrete visual tokens. VQ-GAN (Esser et al., 2021) further refines VQ-VAE by integrating adversarial and perceptual losses, enabling more accurate and detailed representations. Subsequent works have focused on architectural improvements <ref type="bibr">(Yu et al., 2022a)</ref>, strategies to increase the codebook size and maximize its utilization <ref type="bibr" target="#b64">(Yu et al., 2024;</ref><ref type="bibr">Zhu et al., 2024a)</ref>. Unlike these prior approaches, we investigate a novel perspective-leveraging spatial equivariance-to shape a latent space better suited for generative modeling.</p><p>Auxiliary Objectives and Regularization in VAEs Autoencoders are designed to learn latent spaces that compactly represent meaningful features of the observed data. However, without any regularization, their latent code lacks meaningful structure. Variational Autoencoders (VAEs) were introduced in <ref type="bibr" target="#b23">Kingma &amp; Welling (2014)</ref> to address this by minimizing the KL divergence between the latent distribution and a Gaussian prior. Many subsequent works have adopted and extended this framework <ref type="bibr" target="#b18">(Higgins et al., 2016;</ref><ref type="bibr" target="#b12">Dilokthanakul et al., 2016;</ref><ref type="bibr" target="#b52">Tomczak &amp; Welling, 2018;</ref><ref type="bibr" target="#b48">Takahashi et al., 2019)</ref>. Other works have proposed alternative regularizations based on the Wasserstein distance <ref type="bibr" target="#b51">(Tolstikhin et al., 2018;</ref><ref type="bibr" target="#b24">Kolouri et al., 2018)</ref>, adversarial objectives <ref type="bibr" target="#b67">(Zhao et al., 2018;</ref><ref type="bibr" target="#b32">Makhzani et al., 2015)</ref> and vector quantization (VQ) <ref type="bibr" target="#b55">(van den Oord et al., 2017)</ref>. Closely related to our work, <ref type="bibr" target="#b45">Sinha &amp; Dieng (2021)</ref> proposes a consistency regularization enforcing the latent code to be invariant under spatial transformations. Our EQ-VAE promotes equivariance rather than invariance under spatial transformations and we extensively demonstrate the impact of equivariance regularization on latent generative modeling.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>Equivariance in Computer Vision</head><p>The success of Convolutional neural networks (CNN) in numerous computer vision tasks can be largely attributed to their approximate translation equivariance that arises due to the nature of convolution. To incorporate other symmetries in the data, various group-equivariant convolutional networks have been proposed, including roto-translation equivariance in 2D <ref type="bibr" target="#b8">(Cohen &amp; Welling, 2016;</ref><ref type="bibr" target="#b19">Hoogeboom et al., 2018;</ref><ref type="bibr" target="#b57">Weiler &amp; Cesa, 2019)</ref>, extensions in 3D <ref type="bibr" target="#b59">(Worrall &amp; Brostow, 2018;</ref><ref type="bibr" target="#b49">Thomas et al., 2018;</ref><ref type="bibr" target="#b25">Kondor, 2018)</ref>, and scale equivariance <ref type="bibr" target="#b39">(Rahman &amp; Yeh, 2023;</ref><ref type="bibr" target="#b46">Sosnovik et al., 2020)</ref>. The derivation of group equivariance constraint typically results in steerable filters constructed from a basis. Besides architectural constraints, equivariance can be achieved by parameter sharing <ref type="bibr" target="#b40">(Ravanbakhsh et al., 2017)</ref>, frame averaging <ref type="bibr" target="#b38">(Puny et al., 2022)</ref>, and canonicalization functions <ref type="bibr" target="#b22">(Kaba et al., 2023)</ref>. For autoencoder models, <ref type="bibr" target="#b58">Winter et al. (2022)</ref> produce latent representations from data that are separated into a group invariant and equivariant part, however, they do not investigate the impact of equivariant representations on latent generative modeling.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.">Method</head><p>This section presents our methodology. We first provide an overview of autoencoder models for latent generative modeling (Sec. 3.1), focusing on the continuous case used in diffusion models. We then highlight the lack of equivariance in latent representations (Sec. 3.2) and introduce EQ-VAE to address it (Sec. 3.3).</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.1.">Preliminary: Continuous Autoencoders for Latent Generative Modeling</head><p>The first modeling stage consists of an autoencoder that compresses the pixel space into a continuous <ref type="bibr" target="#b41">(Rombach et al. (2022)</ref>) or discrete <ref type="bibr" target="#b13">(Esser et al. (2021)</ref>) latent space.</p><p>We focus here on the continuous case. Given an input image</p><formula xml:id="formula_0">x ∈ R H×W ×3 , an encoder E transforms the image into a compressed representation z = E(x) ∈ R H f × W f ×c</formula><p>, where f is the compression ratio and c are the latent channels. Then a decoder D takes as input the latent representation and reconstructs the image x = D(z). For an input image x the training objective reads as follows:</p><formula xml:id="formula_1">L VAE (x) = L rec (x, x) + λ gan L gan (x) + λ reg L reg (1)</formula><p>where L rec consists of a pixel space reconstruction objective and a perceptual loss such LPIPS <ref type="bibr" target="#b66">(Zhang et al., 2018)</ref>, L gan is a patch-based adversarial loss <ref type="bibr" target="#b21">(Isola et al., 2017)</ref> and L reg is usually a Kullback-Leibler regularization with a Gaussian prior <ref type="bibr" target="#b23">(Kingma &amp; Welling, 2014)</ref>. </p><formula xml:id="formula_2">Input Image x SD-VAE Ours D(E(τ • x)) D(τ • E(x)) D(τ • E(x))</formula></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.2.">Lack of Equivarance under Spatial Tansformations</head><p>Our work is motivated by a key observation: state-of-theart autoencoders, such as SD-VAE <ref type="bibr" target="#b41">(Rombach et al., 2022)</ref>, produce latent representations E(x) that are not equivariant under basic spatial transformations like scaling and rotation.</p><p>We formalize this as follows:</p><p>Spatial Transformation Let x(p) : R 2 → R c be an image (or latent representation) defined over 2D coordinates p = [u, v] ⊤ . A spatial transformation τ ∈ R 2×2 acts on the coordinates p transforming x as follows:</p><formula xml:id="formula_3">x τ (p) = x(τ -1 p),<label>(2)</label></formula><p>denoted compactly for all p as τ • x.</p><p>Equivariance A latent representation E(x) is equivariant with a transformation τ of the input image x if the transformation can be transferred to the representation output:</p><formula xml:id="formula_4">∀x ∈ X : E(τ • x) = τ • E(x).<label>(3)</label></formula><p>To test whether the latent representations of autoencoder models are equivariant under spatial transformations, we applied scaling and rotations τ directly to the latent code and evaluated the corresponding reconstructions. Specifically, we compare decoding transformed latent representations, D(τ • E(x)), to decoding latents of transformed input images, D(E(τ • x)). We present qualitative and quantitative results in Figure <ref type="figure" target="#fig_1">2</ref> and Figure <ref type="figure" target="#fig_2">3</ref> respectively.</p><p>Our findings reveal a clear disparity: while autoencoders reconstruct images accurately when transformations are ap- This limitation arises because (1) convolutional architectures commonly used in the autoencoders of latent generative models, such as SD-VAE, are not equivariant under arbitrary spatial transformations such as scaling and rotation, and (2) their standard training objectives (for example, reconstruction loss and KL divergence) do not explicitly or implicitly encourage equivariance. As a result, semantically similar inputs, such as an image x and its scaled counterpart τ • x, are encoded into latent codes E(x) and E(τ • x) that are not related by the corresponding spatial transformation, i.e. E(τ • x) ̸ = τ • E(x), thus unnecessarily complicating the structure of the latent space.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.3.">EQ-VAE: Regularization via equivariance constraints</head><p>To address this limitation, we propose EQ-VAE, which regularizes the latent representations to promote equivariance under spatial transformations. As seen in Figure <ref type="figure" target="#fig_0">1</ref> (left) this produces smoother latent representations, enabling more efficient learning.</p><p>Explicit Regularization. A direct way to enforce equivariance is to include the equivariance constraint from Equa-tion (3) as a loss term during training:</p><formula xml:id="formula_5">L explicit (x) = ∥τ • E(x) -E(τ • x)∥ 2 2 , (<label>4</label></formula><formula xml:id="formula_6">)</formula><p>where τ is sampled from a set of spatial transformations. However, minimizing this loss alone can lead to trivial solutions, such as collapsing the latent representation to a constant value E(x) = c, ∀x, which we observe in our experiments (see Table <ref type="table" target="#tab_11">7</ref>), making explicit regularization ineffective.</p><p>Implicit Regularization. To overcome this limitation of explicit regularization, we adopt an implicit approach. Inspired by the findings in Figure <ref type="figure" target="#fig_1">2</ref>, this approach aligns the reconstructions of transformed latent representations (D τ • E(x) ) with the corresponding transformed inputs (τ • x ). Specifically, we modify the original training objective of Equation ( <ref type="formula">1</ref>) as follows:</p><formula xml:id="formula_7">L EQ-VAE (x, τ ) = L rec τ •x, D τ •E(x) + (5) λ gan L gan D τ •E(x) + λ reg L reg</formula><p>where the changes compared to Eq. ( <ref type="formula">1</ref>) are highlighted in color. Notice that when τ is the identity transformation, this formulation reduces to the original objective in Eq. ( <ref type="formula">1</ref>). By leveraging the rich supervision signal from both reconstruction and adversarial objectives, this approach implicitly encourages the encoder to produce equivariant latent representations while avoiding mode collapse (see Sec. A.1).</p><p>Transformation Design. We focus on two types of spatial transformations: anisotropic scaling and rotations. These are parameterized as:</p><formula xml:id="formula_8">S(s x , s y ) = s x 0 0 s y , R(θ) = cos θ -sin θ sin θ cos θ (6)</formula><p>The final transformation is the composition of scaling and rotation: τ = S(s x , s y ) • R(θ). We sample uniformly 0.25 &lt; s x , s y &lt; 1, and θ ∈ ( π 2 , π, 3π 2 ). We consider these three rotation angles (multiples of 90 • ) to avoid corner artifacts. For downsampling, we use bicubic interpolation. Empirically, we find scaling equivariance is more beneficial for generation than rotation equivariance (see Table <ref type="table">5</ref>).</p><p>To preserve the prior reconstruction capabilities of the autoencoder, we return to the standard objective (Eq. ( <ref type="formula">1</ref>)) by sampling the identity transform τ = I in Eq. ( <ref type="formula">5</ref>) with probability p α . Our total objective can thus be written as:</p><formula xml:id="formula_9">L total (x) = L VAE (x) p &lt; p α , L EQ-VAE (x, τ ) p ≥ p α . (<label>7</label></formula><formula xml:id="formula_10">)</formula><p>where p is sampled uniformly from [0, 1]. This controls the strength of our regularization. By default we set p α = 0.5 (we ablate regularization strength in Sec. A.2).</p><p>We note that our approach enforces equivariance by applying transformations directly to the latent space, distinguishing it from methods relying on input data augmentation <ref type="bibr" target="#b3">(Brehmer et al., 2024)</ref>.</p><p>Extending EQ-VAE to Discrete Autoencoders. So far, we described EQ-VAE in the context of continuous autoencoders. In discrete autoencoders e.g., VQ-GAN <ref type="bibr" target="#b13">(Esser et al., 2021)</ref>, the encoder outputs continuous features E(x) that are mapped to the nearest entry in a learned codebook, forming a discretized latent space via quantization. Adapting our method for discrete autoencoders, such as VQ-GAN, is straightforward. We employ our equivariance regularization loss as described in Sec. 3.3 and apply the transformations τ on the latent features E(x) before the quantization.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4.">Experiments</head><p>4.1. Setup Implementation Details We finetune all autoencoders on OpenImages to adhere to the framework used in LDM (Rombach et al., 2022). We finetune for 5 epochs with batch size 10. Detailed specifications of each autoencoder, including spatial compression rates and latent channels, are provided in Appendix E. For DiT (Peebles &amp; Xie, 2023), SiT (Ma et al., 2024) and REPA (Yu et al., 2025), we follow their default settings and train on ImageNet (Deng et al., 2009) with a batch size of 256, where each image is resized to 256×256. We use B/2, XL/2 architectures which employ a patch size 2, except for the experiment with SD-VAE-16 in Table <ref type="table">1</ref> in which we used B/1, due to its lower spatial resolution compared to other autoencoders. These models are originally trained in the latent distribution of SD-VAE-FT-EMA<ref type="foot" target="#foot_0">foot_0</ref> a subsequent version of the original SD-VAE that has been further fine-tuned with an exponential moving average on LAION-Aesthetics <ref type="bibr" target="#b43">(Schuhmann et al., 2022)</ref> (see Table <ref type="table">6</ref> and <ref type="bibr" target="#b35">(Peebles &amp; Xie, 2023)</ref> for their performance differences). For MaskGIT, we follow <ref type="bibr" target="#b1">(Besnier &amp; Chen, 2023</ref>) and train on ImageNet for 300 epochs with a batch size of 256. We follow ADM <ref type="bibr">(Dhariwal &amp; Nichol, 2021)</ref> for all data pre-processing protocols.</p><p>Evaluation For generative performance, we train latent generative models on the latent distribution of each autoencoder and we report Frechet Inception Distance (FID) <ref type="bibr" target="#b17">(Heusel et al., 2017)</ref>, sFID <ref type="bibr" target="#b33">(Nash et al., 2021)</ref>, Inception Score (IS) <ref type="bibr" target="#b42">(Salimans et al., 2016)</ref>, Precision (Pre.) and Recall (Rec.) <ref type="bibr" target="#b27">(Kynkäänniemi et al., 2019)</ref> using 50, 000 samples and following ADM evaluation protocol <ref type="bibr">(Dhariwal &amp; Nichol, 2021)</ref>. To evaluate reconstruction, we report FID, Peak Signal-to-Noise Ratio (PSNR), Structural Similarity (SSIM) <ref type="bibr" target="#b56">(Wang et al., 2004)</ref>, and Perceptual Similarity (LPIPS) <ref type="bibr" target="#b66">(Zhang et al., 2018)</ref> using the ImageNet validation AUTOENCODER RFID↓ GFID↓ EQUIV. ERROR R(θ)↓ S(s)↓ SD-VAE 0.90 43.8 0.93 0.80 + EQ-VAE (ours) 0.82 34.1 0.49 0.15 CONT. SDXL-VAE 0.67 46.0 1.25 0.97 + EQ-VAE (ours) 0.65 35.9 0.65 0.35 SD3-VAE 0.20 58.9 0.51 0.16 + EQ-VAE (ours) 0.19 54.0 0.37 0.11 SD-VAE-16 0.87 64.1 0.95 0.85 + EQ-VAE (ours) 0.82 49.7 0.39 0.17 DISC. VQ-GAN 7.94 6.8 1.35 1.22 + EQ-VAE (ours) 7.54 5.9 0.64 0.55 Table 1: Comparison of Autoencoders with and without EQ-VAE. We evaluate reconstruction quality, equivariance errors (defined in Appendix C), and generative performance for continuous (SD-VAE, SDXL-VAE, SD3-VAE) and discrete (VQ-GAN) autoencoders, with and without EQ-VAE.</p><p>Generative FID (GFID) is measured using DiT-B for continuous VAEs and MaskGIT for VQ-GAN. Our approach reduces reconstruction RFID and equivariance errors while enhancing generative performance (GFID). For additional reconstruction metrics see Table <ref type="table" target="#tab_3">12</ref>.</p><p>set. To distinguish reconstruction and generation FID, we write GFID and RFID, respectively. To quantify the effectiveness of EQ-VAE we further measure the equivariance error (see Appendix C).</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4.2.">Equivariance-regularized VAEs</head><p>We begin our experimental analysis by demonstrating the versatility of EQ-VAE, showing that it seamlessly adapts to both continuous and discrete autoencoders.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>Continuous Autoencoders</head><p>We integrate our EQ-VAE regularization into established continuous autoencoders with varying latent dimensions. Namely, SD-VAE, SD-VAE-16, <ref type="bibr" target="#b41">(Rombach et al., 2022)</ref>, SDXL-VAE <ref type="bibr" target="#b36">(Podell et al., 2024)</ref>, and SD3-VAE <ref type="bibr" target="#b14">(Esser et al., 2024)</ref>. To evaluate the effect of the regularization on generative performance we train DiT-B models on the latent codes before and after our regularization. We present our results in Table <ref type="table">1</ref>. We observe that our simple objective effectively reduces the equivariance error for all autoencoders. Further, EQ-VAE maintains the original autoencoders' reconstruction fidelity while consistently delivering significant improvements in generative performance. The results hint that there is a correlation between the generative performance (GFID) and the reduction in equivariacne error. Notably, for SD-VAE, SDXL-VAE and SD-VAE-16, our regularization significantly boosts generative performance. For SD3-VAE, although the reduction in equivariance error is relatively modest, it still results in a GFID improvement. Table 3: Boosting Masked Generative Modeling. Comparison of GFID and IS on ImageNet 256 × 256 for MaskGIT (Chang et al., 2022) and its open-source PyTorch reproduction † (Besnier &amp; Chen, 2023), trained with either VQ-GAN or our EQ-VAE. EQ-VAE accelerates training by more than ×2 (130 vs. 300 epochs), highlighting EQ-VAE can be effectively applied to vector-quantized autoencoders.</p><p>Discrete Autoencoders To investigate if EQ-VAE can be applied to discrete autoencoders, we experiment on VQ-GAN <ref type="bibr" target="#b13">(Esser et al., 2021)</ref> and validate the effectiveness of our regularization on the masked image modeling framework MaskGIT <ref type="bibr" target="#b4">(Chang et al., 2022)</ref>. In Table <ref type="table">1</ref>, we show that EQ-VAE is effective in the discrete case, reducing the equivariance error as well as improving the generative performance from 6.8 to 5.9 in GFID.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4.3.">Boosting Generative Image Models</head><p>By applying EQ-VAE to both continuous and discrete autoencoders, we enhance the performance of state-of-the-art generative models, including DiT a pure transformer diffusion model, SiT that employs continuous flow-based modeling, REPA a recent approach aligning transformer representations with self-supervised features and MaskGIT a well-established masked generative model.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>DiT &amp; SiT As demonstrated in</head><p>Table 2, our regularization approach yields significant improvements across  <ref type="table" target="#tab_3">2</ref>, we show that SiT models can also benefit from the regularized latent distribution of EQ-VAE, improving GFID from 17.2 to 16.1 at 400K steps.</p><p>REPA We show that our regularization (which is performed in the first stage of latent generative modeling) is complementary to REPA, thus leading to further improvements in convergence and generation performance. Specifically, training REPA (SiT-XL-2) with our EQ-VAE reaches 5.9 GFID in 1M instead of 4M iterations. Thus, the regularized latent distribution of EQ-VAE can make the convergence of REPA ×4 faster (Figure <ref type="figure" target="#fig_0">1</ref>). This is striking because REPA was shown to already significantly speed-up the convergence of diffusion models.</p><p>MaskGIT As shown in Table <ref type="table">3</ref>, MaskGIT trained with our EQ-VAE converges twice as fast reaching 6.80 GFID in 130 epochs, instead of 300. Furthermore, by epoch 300 it reaches 5.91 GFID surpassing the performance reported in both <ref type="bibr" target="#b1">(Besnier &amp; Chen, 2023</ref>) and <ref type="bibr" target="#b4">(Chang et al., 2022)</ref>.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>Comparison with state-of-the-art generative models</head><p>To further demonstrate how EQ-VAE accelerates the learning process, we compare it with recent diffusion methods using classifier-free guidance. Notably, as shown in</p><p>Table 4, MODEL EPOCHS GFID↓ SFID↓ IS↑ PRE.↑ REC.↑ LDM 200 3.60 -247.7 0.87 0.48 MaskDiT 1600 2.28 5.67 276.6 0.80 0.61 SD-DiT 480 3.23 ----SiT-XL/2 1400 2.06 4.50 270.3 0.82 0.59 DiT-XL/2 1400 2.27 4.60 278.2 0.83 0.57 DiT-XL/2 † 1400 2.47 5.18 276.1 0.82 0.57 + EQ-VAE (ours) 300 2.37 4.78 277.3 0.82 0.57 REPA* 800 1.42 4.70 305.7 0.80 0.65 + EQ-VAE * (ours) 200 1.70 5.13 283.0 0.79 0.62 Table 4: Comparison on ImageNet 256×256 with CFG. † indicates that the used autoencoder is the original SD-VAE (instead of SD-VAE-FT-EMA). REPA uses SiT-XL/2. * denotes that guidance interval (Kynkäänniemi et al., 2024) is applied.</p><p>DiT-XL/2 with EQ-VAE reaches 2.37 GFID in just 300 epochs, matching the performance of DiT-XL/2 trained with SD-VAE or SD-VAE-FT-MAE. Even when combining EQ-VAE with the state-of-the-art approach REPA, we are able to achieve comparable results with standard REPA while using ×4 less training compute (200 vs 800 epochs).</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4.4.">Analysis</head><p>Spatial transformations ablation We begin the analysis of our method by ablating the effect of our equivariance regularization on generative performance with each spatial transformation to understand their respective impact. We consider isotropic S(s, s) or anisotropic S(s x , s y ) scaling, rotations R(θ), and combined transformations. We then</p><p>AUTOENCODER τ GFID↓ RFID↓ ID SD-VAE -43.5 0.90 62.2 + EQ-VAE R(θ) 41.2 0.73 57.9 + EQ-VAE S(s, s) 35.8 0.78 41.0 + EQ-VAE R(θ) • S(s, s) 34.1 0.82 39.4 + EQ-VAE R(θ) • S(sx, sy) 33.2 0.92 38.9 Table 5: Spatial Transformation Ablation in EQ-VAE. We measure GFID, RFID, and intrinsic dimension (ID) for latents regularized via rotations, isotropic scaling, anisotropic scaling, and combinations. Combining transformations lowers ID and enhances generative performance, though anisotropic scaling can slightly degrade reconstruction. 0 1 2 3 4 5 34 36 38 40 42 44 SD-VAE +EQ-VAE (ours) # Finetuning Epochs w/ EQ-VAE GFID-50K train a DiT-B/2 on each latent distribution. In Table <ref type="table">5</ref>, we observe that encouraging scale equivariance has a significant impact on generative performance. Furthermore, rotation equivariance is also beneficial in generation performance. Combining transformations yields further improvement, demonstrating their complementary effects. While anisotropic scaling yields a better generative performance since the regularization is more aggressive, it negatively impacts reconstruction quality. Thus, our EQ-VAE default setting uses combinations of rotations and isotropic scaling.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>Latent space complexity and generative performance</head><p>To better understand the impact of our regularization on the complexity of the latent manifold, we measure its Intrinsic Dimension (ID). The ID represents the minimum number of variables needed to describe a data distribution <ref type="bibr" target="#b0">(Bennett, 1969)</ref>. Notably, in Table <ref type="table">5</ref>, we observe a correlation between the intrinsic dimension of the latent manifold and the resulting generative performance. This suggests that the regularized latent distribution becomes simpler to model, further validating the effectiveness of our approach. This reduction in the complexity of latent representations can also be qualitatively observed in Figure <ref type="figure" target="#fig_0">1</ref> (left). For further details on ID, see Appendix B. AUTOENCODER GFID ↓ RFID ↓ SD-VAE (Rombach et al., 2022) 43.8 0.90 SD-VAE-FT-EMA (Rombach et al., 2022) 43.5 0.73 SD-VAE † 43.5 0.81 EQ-VAE 34.1 0.82 Table 6: Additional Training vs. Equivariance Regularization. Comparing various fine-tuning strategies for SD-VAE confirms that EQ-VAE 's improvements stem from equivariance regularization. † Denotes additional training with the standard objective (Eq. (1)) for 5 epochs. How many epochs does EQ-VAE need to enhance generation? To demonstrate how quickly our objective regularizes the latent distribution, we conduct an ablation study by varying the number of fine-tuning epochs. We train a DiT-B/2 model on the resulting latent distribution of each epoch and present the results in Figure 5. Notably, even with a single epoch (10K steps) of fine-tuning, the GFID drops from 43.5 to 36.7, highlighting the rapid refinement our objective achieves. For context, SD-VAE-FT-EMA has been fine-tuned for 300K steps.</p><p>The enhancement in generative performance is not a result of the additional training To verify that the improvement in generative performance stems from our equivariance regularization (Eq. ( <ref type="formula">5</ref>)) rather than additional training, we compare EQ-VAE with SD-VAE † in Table <ref type="table">6</ref>. SD-VAE † is obtained by fine-tuning SD-VAE for five extra epochs using only the original objective (Eq. ( <ref type="formula">1</ref>)). The results show that this additional training has a negligible effect on generative performance, whereas EQ-VAE leads to a significant improvement. Similarly, SD-VAE-EMA-FT, derived from SD-VAE, has minimal impact on the GFID score, further underscoring the effectiveness of EQ-VAE.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="5.">Conclusion</head><p>In this work, we argue that the structure of latent representations produced by the autoencoder is crucial for the convergence speed and performance of latent generative models. We observed that latent representations of established autoencoders are not equivariant under simple spatial transformations. To address this, we introduce EQ-VAE, a simple modification to the autoencoder's training objective.</p><p>We empirically demonstrated that fine-tuning pre-trained autoencoders with EQ-VAE for just a few epochs, is enough to reduce the equivariance error and significantly boost the performance of latent generative models while maintaining their reconstruction capability. We believe that our work introduces several promising future directions, particularly in exploring the theoretical and empirical relationship between the geometry of the latent distribution and the performance of latent generative models.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>Impact Statement</head><p>This paper presents work whose goal is to advance the field of machine learning in general and image synthesis in particular. There are many potential societal consequences of our work, none of which we feel must be specifically highlighted here.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>Contents A Additional Ablations 12</head><p>A.1 Implicit vs Explicit Equivariance Regularization . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 12 A.2 Regularization Strength . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 13 B Details on the Intrinsic Dimension Estimation. 13 C Details on Evaluation Metrics 13 C.1 Generation Metrics . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 13 C.2 Reconstruction Metrics . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . Equivariance Error . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 14 D Detailed Benchmarks 14 D.1 Detailed generative performance . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 14 D.2 Detailed reconstruction performance . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 15 E Specifications of Autoencoder Models 16 F Latent Generative Models 16 G Additional Qualitative Results 17 A. Additional Ablations A.1. Implicit vs Explicit Equivariance Regularization</p><p>Here, we provide an analysis of the design choice of our objective. We aim to design an objective that reduces the equivariance error of the encoder while avoiding mode collapse and preserving reconstruction performance. For each objective investigated, we finetune SD-VAE and evaluate the effect on generative performance by training a DiT-B/2 on the resulting latent distribution. Initially, we perform fine-tuning with the standard objective along with the explicit loss in (Eq. ( <ref type="formula" target="#formula_5">4</ref>)): L V AE + λL explicit and set λ = 0.1. We further experiment with adding a stop-gradient (sg) in the E(τ • x) term in L explicit . In Table <ref type="table" target="#tab_11">7</ref>, we observe that using L explicit successfully reduces the equivariance error for both rotation and scaling transformations. However, both reconstruction and generative performance degrade severely, indicating a mode collapse in the latent space. Comparing SD-VAE along with explicit vs implicit regularization objectives shows that explicit regularization drastically lowers equivariance errors but triggers mode collapse, while implicit regularization enhances significantly the generative performance.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>LOSS</head></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>C.2. Reconstruction Metrics</head><p>We evaluate reconstruction on the validation set of Imagenet which contains 50K images. We provide a description of each metric used for the reconstruction evaluation.</p><p>• PSNR measures the quality of reconstructed images by comparing the maximum possible signal power to the level of noise introduced during reconstruction. Expressed in decibels (dB).</p><p>• SSIM <ref type="bibr" target="#b56">(Wang et al., 2004)</ref> assesses the similarity between two images by evaluating their structural information, luminance, and contrast.</p><p>• LPIPS <ref type="bibr" target="#b66">(Zhang et al., 2018)</ref> evaluates the perceptual similarity between two images by comparing their deep feature representations using VGG (Simonyan, 2014)</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>C.3. Equivariance Error</head><p>To quantify the effectiveness of EQ-VAE at constraining the latent representations of the autoencoders to equivary under scale and rotation transformation we measure the equivariance error. Similar to <ref type="bibr" target="#b46">(Sosnovik et al., 2020)</ref> we define the equivariance error as follows:</p><formula xml:id="formula_11">∆ T eq = 1 |T |•N |T | N ∥τ • E(x) -E(τ • x)∥ 2 2 / ∥E(τ • x)∥ 2 2</formula><p>where N = 50K in the number of samples in ImageNet validation and T is the set of transformations considered. We conduct our evaluation with T r = { π 2 , π, 3π 2 } for rotations and T s = {0.25, 0.50, 0.75} for scale.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>D. Detailed Benchmarks</head></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>D.1. Detailed generative performance</head><p>We provide a detailed evaluation of all the generative models presented in the main paper, including additional metrics and training iterations. Specifically, Table <ref type="table" target="#tab_12">9</ref> details the performance of the DiT-XL/2 and SiT-XL/2 models, while Table <ref type="table">10</ref> presents results for the REPA (SiT-XL/2) models trained with both SD-VAE-FT-EMA (as reported in the respective papers) and EQ-VAE. Additionally, Table <ref type="table">11</ref> provides results for MaskGIT models trained using VQ-GAN and EQ-VAE. For all models, we use the evaluation metrics originally reported in the original publications. </p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>MODEL</head></div><figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_0"><head>Figure 1 :</head><label>1</label><figDesc>Figure 1: Latent Space Structure (Left) Top three principal components of SD-VAE and SDXL-VAE, with and without EQ-VAE, demonstrating visually that our regularization produces smoother latent representations without compromising reconstruction (See Table 1). Accelerated Training (Right) Training curves (without classifier-free guidance) for DiT-XL/2 and REPA (w/ SiT-XL/2), showing that our EQ-VAE accelerates convergence by ×7 and ×4, respectively.</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_1"><head>Figure 2 :</head><label>2</label><figDesc>Figure 2: Latent Space Equivariance. Reconstructed images using SD-VAE (Rombach et al., 2022) and our EQ-VAE when applying scaling transformation τ , with factor s = 0.5, to the input images D(E(τ • x)) versus directly to the latent representations D(τ • E(x)). Our approach preserves reconstruction quality under latent transformations, whereas SD-VAE exhibits significant degradation. See Figure 6 for additional examples.</figDesc><graphic coords="4,62.66,152.63,52.65,52.65" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_2"><head>Figure 3 :</head><label>3</label><figDesc>Figure 3: Enhanced Reconstruction under Latent Transformations. Reconstruction RFID measured between τ • x and D(τ •E(x)) for various spatial transformations. We consider scaling transforms with factors s = 0.75, 0.50, 0.25 and also measure the average RFID over rotation angles θ = π 2 , π, 3π 2 . Results for SD-VAE (Rombach et al., 2022) and SDXL-VAE<ref type="bibr" target="#b36">(Podell et al., 2024)</ref>, with and without EQ-VAE. Our approach significantly reduces RFID compared to baselines, improving image fidelity under latent transformations. For readability, we show ⌊RFID⌋.</figDesc><graphic coords="4,229.57,96.39,52.65,52.65" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_3"><head>Figure 4 :</head><label>4</label><figDesc>Figure4: EQ-VAE accelerates generative modeling. We compare results from two DiT-XL/2 models at 50K, 100K, and 400K iterations, one trained with SD-VAE-FT-EMA (top) and with EQ-VAE (bottom). The same noise and number of sampling steps are used for both models, without classifier-free guidance. Our approach delivers faster improvements in image quality, demonstrating accelerated convergence.</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_4"><head>Figure 5 :</head><label>5</label><figDesc>Figure 5: Rapid Improvement via EQ-VAE Fine-tuning. Even a single epoch of EQ-VAE fine-tuning significantly improves generative modeling performance, reducing GFID from 43.5 to 36.7. Generative modeling with DiT-B/2.</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_3"><head>Table 2 :</head><label>2</label><figDesc>GFID Comparisons. GFID scores on ImageNet 256 × 256 for DiT, SiT, and REPA trained with either SD-VAE-FT-EMA or our EQ-VAE. No classifier-free guidance (CFG) is used. EQ-VAE consistently enhances both generative performance and training efficiency across all generative models.</figDesc><table><row><cell>MODEL</cell><cell cols="3">#PARAMS ITER. GFID↓</cell></row><row><cell>DiT-B/2</cell><cell>130M</cell><cell cols="2">400K 43.5</cell></row><row><cell>w/ EQ-VAE (ours)</cell><cell>130M</cell><cell cols="2">400K 34.1</cell></row><row><cell>SiT-B/2</cell><cell>130M</cell><cell cols="2">400K 33.0</cell></row><row><cell>w/ EQ-VAE (ours)</cell><cell>130M</cell><cell cols="2">400K 31.2</cell></row><row><cell>DiT-XL/2</cell><cell>675M</cell><cell cols="2">400K 19.5</cell></row><row><cell>w/ EQ-VAE (ours)</cell><cell>675M</cell><cell cols="2">400K 14.5</cell></row><row><cell>SiT-XL/2</cell><cell>675M</cell><cell cols="2">400K 17.2</cell></row><row><cell>w/ EQ-VAE (ours)</cell><cell>675M</cell><cell cols="2">400K 16.1</cell></row><row><cell>DiT-XL/2</cell><cell>675M</cell><cell>7M</cell><cell>9.6</cell></row><row><cell>w/ EQ-VAE (ours)</cell><cell>675M</cell><cell>1.5M</cell><cell>8.8</cell></row><row><cell>SiT-XL/2+REPA</cell><cell>675M</cell><cell>4M</cell><cell>5.9</cell></row><row><cell>w/ EQ-VAE (ours)</cell><cell>675M</cell><cell>1M</cell><cell>5.9</cell></row><row><cell>MODEL</cell><cell cols="3">EPOCH GFID↓ IS↑</cell></row><row><cell>MaskGIT</cell><cell>300</cell><cell cols="2">6.19 182.1</cell></row><row><cell>MaskGIT  †</cell><cell>300</cell><cell cols="2">6.80 214.0</cell></row><row><cell cols="2">w/ EQ-VAE (ours) 130</cell><cell cols="2">6.80 188.1</cell></row><row><cell cols="2">w/ EQ-VAE (ours) 300</cell><cell cols="2">5.91 228.8</cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_11"><head>Table 7 :</head><label>7</label><figDesc>Implicit vs. Explicit Equivariance Regularization.</figDesc><table><row><cell></cell><cell cols="2">GFID↓ RFID↓</cell><cell cols="2">EQUIVARIANCE ERROR</cell></row><row><cell></cell><cell></cell><cell></cell><cell>R(θ) ↓</cell><cell>S(s) ↓</cell></row><row><cell>SD-VAE</cell><cell>43.5</cell><cell>0.90</cell><cell>0.93</cell><cell>0.80</cell></row><row><cell>w/ explicit</cell><cell cols="2">141.3 117.93</cell><cell>0.32</cell><cell>0.11</cell></row><row><cell>w/ explicit + sg</cell><cell cols="2">134.7 109.25</cell><cell>0.35</cell><cell>0.13</cell></row><row><cell cols="2">w/ implicit (ours) 34.1</cell><cell>0.82</cell><cell>0.49</cell><cell>0.15</cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_12"><head>Table 9 :</head><label>9</label><figDesc>#ITERS. FID↓ SFID↓ IS↑ PREC.↑ REC.↑ Detailed evaluation for DiT-XL/2 and SiT-XL/2 models. All results are reported without classifier-free guidance (CFG = 1.0).</figDesc><table><row><cell cols="2">DiT-XL/2 (Peebles &amp; Xie, 2023) 400K</cell><cell>19.5</cell><cell>6.5</cell><cell>77.5 0.60</cell><cell>0.60</cell></row><row><cell>w/ EQ-VAE</cell><cell>50K</cell><cell cols="3">73.6 13.1 34.5 0.50</cell><cell>0.37</cell></row><row><cell>w/ EQ-VAE</cell><cell>100K</cell><cell>39.9</cell><cell>6.8</cell><cell>62.2 0.60</cell><cell>0.53</cell></row><row><cell>w/ EQ-VAE</cell><cell>200K</cell><cell>22.8</cell><cell>5.9</cell><cell>73.6 0.61</cell><cell>0.62</cell></row><row><cell>w/ EQ-VAE</cell><cell>400K</cell><cell>14.5</cell><cell>5.6</cell><cell>81.5 0.63</cell><cell>0.66</cell></row><row><cell>SiT-XL/2 (Ma et al., 2024)</cell><cell>400K</cell><cell>17.2</cell><cell>5.1</cell><cell>76.5 0.64</cell><cell>0.63</cell></row><row><cell>w/ EQ-VAE</cell><cell>50K</cell><cell cols="3">76.1 38.4 15.2 0.50</cell><cell>0.37</cell></row><row><cell>w/ EQ-VAE</cell><cell>100K</cell><cell cols="3">41.3 10.9 30.9 0.60</cell><cell>0.53</cell></row><row><cell>w/ EQ-VAE</cell><cell>200K</cell><cell>24.9</cell><cell>6.4</cell><cell>54.6 0.61</cell><cell>0.62</cell></row><row><cell>w/ EQ-VAE</cell><cell>400K</cell><cell>16.1</cell><cell>4.2</cell><cell>79.7 0.64</cell><cell>0.66</cell></row></table></figure>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="1" xml:id="foot_0"><p>https://huggingface.co/stabilityai/sd-vae-ft-ema</p></note>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="2" xml:id="foot_1"><p>https://github.com/openai/guided-diffusion/tree/main/evaluations</p></note>
+		</body>
+		<back>
+
+			<div type="acknowledgement">
+<div><p>Acknowledgements This work has been partially supported by project <rs type="grantNumber">MIS 5154714</rs> of the National Recovery and Resilience Plan Greece 2.0 funded by the <rs type="funder">European Union</rs> under the <rs type="programName">NextGenerationEU Program</rs>.</p><p>Hardware resources were granted with the support of <rs type="funder">GR-NET</rs>. Also, this work was performed using HPC resources from <rs type="institution" subtype="infrastructure">GENCI-IDRIS</rs> (Grants <rs type="grantNumber">2024-AD011012884R3</rs>).</p></div>
+			</div>
+			<listOrg type="funding">
+				<org type="funding" xml:id="_ZRn3MTT">
+					<idno type="grant-number">MIS 5154714</idno>
+					<orgName type="program" subtype="full">NextGenerationEU Program</orgName>
+				</org>
+				<org type="funding" xml:id="_DS9BnnB">
+					<idno type="grant-number">2024-AD011012884R3</idno>
+				</org>
+			</listOrg>
+
+			<listOrg type="infrastructure">
+				<org type="infrastructure">					<orgName type="extracted">GENCI-IDRIS</orgName>
+				</org>
+			</listOrg>
+			<div type="annex">
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>A.2. Regularization Strength</head><p>We evaluate the impact of hyperparameter p α which controls the strength of our regularization in Table <ref type="table">8</ref>. AUTOENCODER p α GFID ↓ RFID ↓ EQ-VAE 0.3 35.4 0.78 EQ-VAE 0.7 34.4 0.88 EQ-VAE 0.5 34.1 0.82 Table <ref type="table">8</ref>: Ablation on regularization strength. We perform two experiments, with lower (p α = 0.7) and higher (p α = 0.3) regularization strength. We observe that our method is relatively robust to choices of p α . We highlight the setting used throughout all our experiments.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>B. Details on the Intrinsic Dimension Estimation.</head><p>Several recent works <ref type="bibr" target="#b54">(Valeriani et al., 2023;</ref><ref type="bibr" target="#b26">Kvinge et al., 2023;</ref><ref type="bibr" target="#b7">Cheng et al., 2023)</ref> have utilized ID to measure the complexity of latent representations in deep learning modeling. Further <ref type="bibr" target="#b37">Pope et al. (2021)</ref> has demonstrated a strong correlation between a dataset's relative difficulty and its ID. We compute the ID of the latent representations using the TwoNN estimator <ref type="bibr" target="#b15">(Facco et al., 2017)</ref>, which relies solely on the distances between each point and its two nearest neighbors. In practice, the TWONN estimator can be affected by noise, which typically leads to an overestimation of the ID. Nevertheless, it is a robust tool to evaluate relative complexity and has been used effectively to analyze representations in deep neural networks <ref type="bibr" target="#b54">(Valeriani et al., 2023)</ref>. We adopt the TWONN implementation of DADAPY <ref type="bibr">(Glielmo et al., 2022)</ref>.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>C. Details on Evaluation Metrics</head></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>C.1. Generation Metrics</head><p>We follow the setup and use the same reference batches of ADM <ref type="bibr">(Nichol &amp; Dhariwal, 2021)</ref> for evaluation, utilizing their official implementation 2 . We use NVIDIA A100 GPUs for our evaluation. We briefly explain each metric used for the evaluation.</p><p>• FID <ref type="bibr" target="#b17">(Heusel et al., 2017)</ref> quantifies the feature distance between the distributions of two image datasets by leveraging the Inception-v3 network <ref type="bibr" target="#b47">(Szegedy et al., 2016)</ref>. The distance is calculated based on the assumption that both feature distributions follow multivariate Gaussian distributions.</p><p>• sFID <ref type="bibr" target="#b33">(Nash et al., 2021)</ref> computes FID with intermediate spatial features of the Inception-v3 network, to capture spatial distribution of the generated images</p><p>• IS <ref type="bibr" target="#b42">(Salimans et al., 2016)</ref> measures a KL-divergence between the original label distribution and the distribution of Inception-v3 network's logits after the softmax normalization.</p><p>• Precision and Recall <ref type="bibr" target="#b27">(Kynkäänniemi et al., 2019)</ref>  Table <ref type="table">13</ref>: Specifications of Autoencoders. We provide additional information for the autoencoders used in our experiments regarding their original training dataset, latent channels c, and compression rate f .</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>F. Latent Generative Models</head><p>Here we provide a brief description of the latent generative models, mentioned in the main paper:</p><p>• MaskGIT <ref type="bibr" target="#b4">(Chang et al., 2022)</ref> utilizes a bidirectional transformer decoder to synthesize images by iteratively predicting masked visual tokens produced by a VQ-GAN <ref type="bibr" target="#b13">(Esser et al., 2021</ref>). • LDM <ref type="bibr" target="#b41">(Rombach et al., 2022)</ref> proposes latent diffusion models, modeling the image distribution in a compressed latent space produced by a KL-or VQ-regularized autoencoder. • DiT <ref type="bibr" target="#b61">(Yao et al., 2024)</ref> proposes a pure transformer backbone for training diffusion models and incorporates AdaIN-zero modules. • MaskDiT <ref type="bibr" target="#b68">(Zheng et al., 2023)</ref> trains diffusion transformers with an auxiliary mask reconstruction task.</p><p>• SD-DiT <ref type="bibr">(Zhu et al., 2024b)</ref> extends the MaskDiT architecture by incorporating a discrimination objective using a momentum encoder. • SiT <ref type="bibr" target="#b31">(Ma et al., 2024)</ref> improves diffusion transformer training by moving from discrete diffusion to continuous flow-based modeling. • REPA <ref type="bibr" target="#b65">(Yu et al., 2025)</ref> aligns the representations of diffusion transformer models to the representations of selfsupervised models. We present results for scaling and rotation transformations τ . Our approach preserves reconstruction quality under latent transformations, whereas SD-VAE exhibits significant degradation. </p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>G. Additional Qualitative Results</head></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>Input</head></div>			</div>
+			<div type="references">
+
+				<listBibl>
+
+<biblStruct xml:id="b0">
+	<analytic>
+		<title level="a" type="main">The intrinsic dimensionality of signal collections</title>
+		<author>
+			<persName><forename type="first">R</forename><surname>Bennett</surname></persName>
+		</author>
+		<idno type="DOI">10.1109/TIT.1969.1054365</idno>
+	</analytic>
+	<monogr>
+		<title level="j">IEEE Transactions on Information Theory</title>
+		<imprint>
+			<biblScope unit="volume">15</biblScope>
+			<biblScope unit="issue">5</biblScope>
+			<biblScope unit="page" from="517" to="525" />
+			<date type="published" when="1969">1969</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b1">
+	<monogr>
+		<title level="m" type="main">A pytorch reproduction of masked generative image transformer</title>
+		<author>
+			<persName><forename type="first">V</forename><surname>Besnier</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Chen</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2310.14400</idno>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b2">
+	<analytic>
+		<title/>
+	</analytic>
+	<monogr>
+		<title level="j">Black Forest Labs. Flux</title>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b3">
+	<monogr>
+		<author>
+			<persName><forename type="first">J</forename><surname>Brehmer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Behrends</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">P</forename><surname>De Haan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Cohen</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2410.23179</idno>
+		<title level="m">Does equivariance matter at scale? arXiv preprint</title>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b4">
+	<analytic>
+		<title level="a" type="main">Masked generative image transformer</title>
+		<author>
+			<persName><forename type="first">H</forename><surname>Chang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Jiang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">W</forename><forename type="middle">T</forename><surname>Freeman</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Maskgit</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">CVPR</title>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+			<biblScope unit="page" from="11315" to="11325" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b5">
+	<analytic>
+		<title level="a" type="main">Pixart-$\alpha$: Fast training of diffusion transformer for photorealistic textto-image synthesis</title>
+		<author>
+			<persName><forename type="first">J</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Yu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><surname>Ge</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Yao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">E</forename><surname>Xie</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Kwok</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">P</forename><surname>Luo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Lu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Li</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">ICLR</title>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b6">
+	<analytic>
+		<title level="a" type="main">Deep compression autoencoder for efficient high-resolution diffusion models</title>
+		<author>
+			<persName><forename type="first">J</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Cai</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">E</forename><surname>Xie</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Yang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Tang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Lu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Han</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">ICLR</title>
+		<imprint>
+			<date type="published" when="2025">2025</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b7">
+	<monogr>
+		<title level="m" type="main">Bridging information-theoretic and geometric compression in language models</title>
+		<author>
+			<persName><forename type="first">E</forename><surname>Cheng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><surname>Kervadec</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Baroni</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2310.13620</idno>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b8">
+	<analytic>
+		<title level="a" type="main">Group equivariant convolutional networks</title>
+		<author>
+			<persName><forename type="first">T</forename><surname>Cohen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Welling</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">ICLR</title>
+		<imprint>
+			<date type="published" when="2016">2016</date>
+			<biblScope unit="page" from="2990" to="2999" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b9">
+	<monogr>
+		<title level="m" type="main">Emu: Enhancing image generation models using photogenic needles in a haystack</title>
+		<author>
+			<persName><forename type="first">X</forename><surname>Dai</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Hou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C.-Y</forename><surname>Ma</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Tsai</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">P</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Vandenhende</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">X</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Dubey</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Yu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Kadian</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">F</forename><surname>Radenovic</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>Mahajan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">K</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Zhao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">V</forename><surname>Petrovic</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><forename type="middle">K</forename><surname>Singh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Motwani</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Wen</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2309.15807</idno>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b10">
+	<analytic>
+		<title level="a" type="main">Imagenet: A large-scale hierarchical image database</title>
+		<author>
+			<persName><forename type="first">J</forename><surname>Deng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">W</forename><surname>Dong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><surname>Socher</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L.-J</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">K</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Fei-Fei</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">CVPR</title>
+		<imprint>
+			<date type="published" when="2009">2009</date>
+			<biblScope unit="page" from="248" to="255" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b11">
+	<analytic>
+		<title level="a" type="main">Diffusion models beat GANs on image synthesis</title>
+		<author>
+			<persName><forename type="first">P</forename><surname>Dhariwal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><forename type="middle">Q</forename><surname>Nichol</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">NeurIPS</title>
+		<imprint>
+			<date type="published" when="2021">2021</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b12">
+	<monogr>
+		<author>
+			<persName><forename type="first">N</forename><surname>Dilokthanakul</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">P</forename><forename type="middle">A</forename><surname>Mediano</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Garnelo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><forename type="middle">C</forename><surname>Lee</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Salimbeni</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">K</forename><surname>Arulkumaran</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Shanahan</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:1611.02648</idno>
+		<title level="m">Deep unsupervised clustering with gaussian mixture variational autoencoders</title>
+		<imprint>
+			<date type="published" when="2016">2016</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b13">
+	<analytic>
+		<title level="a" type="main">Taming transformers for high-resolution image synthesis</title>
+		<author>
+			<persName><forename type="first">P</forename><surname>Esser</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><surname>Rombach</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">B</forename><surname>Ommer</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">CVPR</title>
+		<imprint>
+			<date type="published" when="2021">2021</date>
+			<biblScope unit="page" from="4195" to="4205" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b14">
+	<analytic>
+		<title level="a" type="main">Scaling rectified flow transformers for high-resolution image synthesis</title>
+		<author>
+			<persName><forename type="first">P</forename><surname>Esser</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Kulal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Blattmann</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><surname>Entezari</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Müller</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Saini</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Levi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>Lorenz</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Sauer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">F</forename><surname>Boesel</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>Podell</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Dockhorn</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>English</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><surname>Rombach</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">ICML</title>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+			<biblScope unit="page" from="12606" to="12633" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b15">
+	<analytic>
+		<title level="a" type="main">Estimating the intrinsic dimension of datasets by a minimal neighborhood information</title>
+		<author>
+			<persName><forename type="first">E</forename><surname>Facco</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Errico</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Rodriguez</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Laio</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Scientific reports</title>
+		<imprint>
+			<biblScope unit="volume">7</biblScope>
+			<biblScope unit="issue">1</biblScope>
+			<biblScope unit="page">12140</biblScope>
+			<date type="published" when="2017">2017</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b16">
+	<analytic>
+		<title level="a" type="main">Distance-based analysis of data-manifolds in python</title>
+		<author>
+			<persName><forename type="first">A</forename><surname>Glielmo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">I</forename><surname>Macocco</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>Doimo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Carli</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><surname>Zeni</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><surname>Wild</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Errico</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Rodriguez</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Laio</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Dadapy</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Patterns</title>
+		<imprint>
+			<biblScope unit="volume">3</biblScope>
+			<biblScope unit="issue">10</biblScope>
+			<biblScope unit="page">2022</biblScope>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b17">
+	<analytic>
+		<title level="a" type="main">Gans trained by a two time-scale update rule converge to a local nash equilibrium</title>
+		<author>
+			<persName><forename type="first">M</forename><surname>Heusel</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Ramsauer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Unterthiner</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">B</forename><surname>Nessler</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Hochreiter</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Advances in neural information processing systems</title>
+		<imprint>
+			<biblScope unit="volume">30</biblScope>
+			<date type="published" when="2017">2017</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b18">
+	<analytic>
+		<title level="a" type="main">betavae: Learning basic visual concepts with a constrained variational framework</title>
+		<author>
+			<persName><forename type="first">I</forename><surname>Higgins</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Matthey</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Pal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><forename type="middle">P</forename><surname>Burgess</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">X</forename><surname>Glorot</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><forename type="middle">M</forename><surname>Botvinick</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Mohamed</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Lerchner</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">ICLR</title>
+		<imprint>
+			<date type="published" when="2016">2016</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b19">
+	<monogr>
+		<title/>
+		<author>
+			<persName><forename type="first">E</forename><surname>Hoogeboom</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><forename type="middle">W</forename><surname>Peters</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><forename type="middle">S</forename><surname>Cohen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Welling</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Hexaconv</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:1803.02108</idno>
+		<imprint>
+			<date type="published" when="2018">2018</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b20">
+	<monogr>
+		<title level="m" type="main">Complexity matters: Rethinking the latent space for generative modeling</title>
+		<author>
+			<persName><forename type="first">T</forename><surname>Hu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">F</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">W</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Sun</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Li</surname></persName>
+		</author>
+		<editor>NeurIPS</editor>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b21">
+	<analytic>
+		<title level="a" type="main">Image-toimage translation with conditional adversarial networks</title>
+		<author>
+			<persName><forename type="first">P</forename><surname>Isola</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J.-Y</forename><surname>Zhu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Zhou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><forename type="middle">A</forename><surname>Efros</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">CVPR</title>
+		<imprint>
+			<date type="published" when="2017">2017</date>
+			<biblScope unit="page" from="1125" to="1134" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b22">
+	<analytic>
+		<title level="a" type="main">Equivariance with learned canonicalization functions</title>
+		<author>
+			<persName><forename type="first">S.-O</forename><surname>Kaba</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><forename type="middle">K</forename><surname>Mondal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Bengio</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Ravanbakhsh</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">International Conference on Machine Learning</title>
+		<imprint>
+			<publisher>PMLR</publisher>
+			<date type="published" when="2023">2023</date>
+			<biblScope unit="page" from="15546" to="15566" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b23">
+	<analytic>
+		<title level="a" type="main">Auto-encoding variational bayes</title>
+		<author>
+			<persName><forename type="first">D</forename><forename type="middle">P</forename><surname>Kingma</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Welling</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">ICLR</title>
+		<imprint>
+			<date type="published" when="2014">2014</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b24">
+	<analytic>
+		<title level="a" type="main">Sliced wasserstein auto-encoders</title>
+		<author>
+			<persName><forename type="first">S</forename><surname>Kolouri</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">P</forename><forename type="middle">E</forename><surname>Pope</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><forename type="middle">E</forename><surname>Martin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">G</forename><forename type="middle">K</forename><surname>Rohde</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">ICLR</title>
+		<imprint>
+			<date type="published" when="2018">2018</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b25">
+	<monogr>
+		<title level="m" type="main">N-body networks: a covariant hierarchical neural network architecture for learning atomic potentials</title>
+		<author>
+			<persName><forename type="first">R</forename><surname>Kondor</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:1803.01588</idno>
+		<imprint>
+			<date type="published" when="2018">2018</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b26">
+	<monogr>
+		<title level="m" type="main">Exploring the representation manifolds of stable diffusion through the lens of intrinsic dimension</title>
+		<author>
+			<persName><forename type="first">H</forename><surname>Kvinge</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>Brown</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><surname>Godfrey</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2302.09301</idno>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b27">
+	<analytic>
+		<title level="a" type="main">Improved precision and recall metric for assessing generative models</title>
+		<author>
+			<persName><forename type="first">T</forename><surname>Kynkäänniemi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Karras</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Laine</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Lehtinen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Aila</forename></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Advances in neural information processing systems</title>
+		<imprint>
+			<date type="published" when="2019">2019</date>
+			<biblScope unit="volume">32</biblScope>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b28">
+	<monogr>
+		<title level="m" type="main">Applying guidance in a limited interval improves sample and distribution quality in diffusion models</title>
+		<author>
+			<persName><forename type="first">T</forename><surname>Kynkäänniemi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Aittala</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Karras</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Laine</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Aila</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Lehtinen</surname></persName>
+		</author>
+		<editor>NeurIPS</editor>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b29">
+	<analytic>
+		<title level="a" type="main">Masked generative encoder to unify representation learning and image synthesis</title>
+		<author>
+			<persName><forename type="first">T</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Chang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Mishra</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>Katabi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>Krishnan</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Mage</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">CVPR</title>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+			<biblScope unit="page" from="2142" to="2152" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b30">
+	<monogr>
+		<title level="m" type="main">Autoregressive image generation without vector quantization</title>
+		<author>
+			<persName><forename type="first">T</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Tian</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Deng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">K</forename><surname>He</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2406.11838</idno>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b31">
+	<analytic>
+		<title level="a" type="main">Exploring flow and diffusionbased generative models with scalable interpolant transformers</title>
+		<author>
+			<persName><forename type="first">N</forename><surname>Ma</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Goldstein</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><forename type="middle">S</forename><surname>Albergo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">N</forename><forename type="middle">M</forename><surname>Boffi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">E</forename><surname>Vanden-Eijnden</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Xie</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Sit</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">ECCV</title>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+			<biblScope unit="page" from="23" to="40" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b32">
+	<monogr>
+		<title/>
+		<author>
+			<persName><forename type="first">A</forename><surname>Makhzani</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Shlens</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">N</forename><surname>Jaitly</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">I</forename><surname>Goodfellow</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Frey</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:1511.05644</idno>
+		<imprint>
+			<date type="published" when="2015">2015</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">B. Adversarial autoencoders. arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b33">
+	<monogr>
+		<author>
+			<persName><forename type="first">C</forename><surname>Nash</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Menick</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Dieleman</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">P</forename><forename type="middle">W</forename><surname>Battaglia</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2103.03841</idno>
+		<title level="m">Generating images with sparse representations</title>
+		<imprint>
+			<date type="published" when="2021">2021</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b34">
+	<analytic>
+		<title level="a" type="main">Improved denoising diffusion probabilistic models</title>
+		<author>
+			<persName><forename type="first">A</forename><forename type="middle">Q</forename><surname>Nichol</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">P</forename><surname>Dhariwal</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">ICML</title>
+		<imprint>
+			<date type="published" when="2021-07">Jul 2021</date>
+			<biblScope unit="volume">139</biblScope>
+			<biblScope unit="page" from="18" to="24" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b35">
+	<analytic>
+		<title level="a" type="main">Scalable diffusion models with transformers</title>
+		<author>
+			<persName><forename type="first">W</forename><surname>Peebles</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Xie</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the IEEE/CVF International Conference on Computer Vision</title>
+		<meeting>the IEEE/CVF International Conference on Computer Vision</meeting>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+			<biblScope unit="page" from="4195" to="4205" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b36">
+	<analytic>
+		<title level="a" type="main">SDXL: Improving latent diffusion models for high-resolution image synthesis</title>
+		<author>
+			<persName><forename type="first">D</forename><surname>Podell</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>English</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">K</forename><surname>Lacey</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Blattmann</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Dockhorn</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Müller</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Penna</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><surname>Rombach</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">ICLR</title>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b37">
+	<analytic>
+		<title level="a" type="main">The intrinsic dimension of images and its impact on learning</title>
+		<author>
+			<persName><forename type="first">P</forename><surname>Pope</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><surname>Zhu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Abdelkader</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Goldblum</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Goldstein</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">ICLR</title>
+		<imprint>
+			<date type="published" when="2021">2021</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b38">
+	<analytic>
+		<title level="a" type="main">Frame averaging for invariant and equivariant network design</title>
+		<author>
+			<persName><forename type="first">O</forename><surname>Puny</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Atzmon</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">E</forename><forename type="middle">J</forename><surname>Smith</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">I</forename><surname>Misra</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Grover</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Ben-Hamu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Lipman</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">ICLR</title>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b39">
+	<analytic>
+		<title level="a" type="main">Truly scale-equivariant deep nets with fourier layers</title>
+		<author>
+			<persName><forename type="first">M</forename><forename type="middle">A</forename><surname>Rahman</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><forename type="middle">A</forename><surname>Yeh</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Advances in Neural Information Processing Systems</title>
+		<imprint>
+			<biblScope unit="volume">36</biblScope>
+			<biblScope unit="page" from="6092" to="6104" />
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b40">
+	<analytic>
+		<title level="a" type="main">Equivariance through parameter-sharing</title>
+		<author>
+			<persName><forename type="first">S</forename><surname>Ravanbakhsh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Schneider</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">B</forename><surname>Poczos</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">International conference on machine learning</title>
+		<imprint>
+			<date type="published" when="2017">2017</date>
+			<biblScope unit="page" from="2892" to="2901" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b41">
+	<analytic>
+		<title level="a" type="main">High-resolution image synthesis with latent diffusion models</title>
+		<author>
+			<persName><forename type="first">R</forename><surname>Rombach</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Blattmann</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>Lorenz</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">P</forename><surname>Esser</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">B</forename><surname>Ommer</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">CVPR</title>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+			<biblScope unit="page" from="10684" to="10695" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b42">
+	<analytic>
+		<title level="a" type="main">Improved techniques for training gans</title>
+		<author>
+			<persName><forename type="first">T</forename><surname>Salimans</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">I</forename><surname>Goodfellow</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">W</forename><surname>Zaremba</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">V</forename><surname>Cheung</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Radford</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">X</forename><surname>Chen</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Advances in neural information processing systems</title>
+		<imprint>
+			<biblScope unit="volume">29</biblScope>
+			<date type="published" when="2016">2016</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b43">
+	<monogr>
+		<title level="m" type="main">Laion-5b: An open large-scale dataset for training next generation image-text models</title>
+		<author>
+			<persName><forename type="first">C</forename><surname>Schuhmann</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><surname>Beaumont</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><surname>Vencu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><surname>Gordon</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><surname>Wightman</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Cherti</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Coombes</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Katta</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><surname>Mullis</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Wortsman</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">P</forename><surname>Schramowski</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Kundurthy</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">K</forename><surname>Crowson</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Schmidt</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><surname>Kaczmarczyk</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Jitsev</surname></persName>
+		</author>
+		<editor>NeurIPS</editor>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+			<biblScope unit="volume">35</biblScope>
+			<biblScope unit="page" from="25278" to="25294" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b44">
+	<monogr>
+		<title level="m" type="main">Very deep convolutional networks for largescale image recognition</title>
+		<author>
+			<persName><forename type="first">K</forename><surname>Simonyan</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:1409.1556</idno>
+		<imprint>
+			<date type="published" when="2014">2014</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b45">
+	<analytic>
+		<title level="a" type="main">Consistency regularization for variational auto-encoders</title>
+		<author>
+			<persName><forename type="first">S</forename><surname>Sinha</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><forename type="middle">B</forename><surname>Dieng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Ranzato</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Beygelzimer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Dauphin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">P</forename><surname>Liang</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Vaughan</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Advances in Neural Information Processing Systems</title>
+		<editor>
+			<persName><forename type="first">J</forename><forename type="middle">W</forename></persName>
+		</editor>
+		<imprint>
+			<publisher>Curran Associates, Inc</publisher>
+			<date type="published" when="2021">2021</date>
+			<biblScope unit="volume">34</biblScope>
+			<biblScope unit="page" from="12943" to="12954" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b46">
+	<analytic>
+		<title level="a" type="main">Scaleequivariant steerable networks</title>
+		<author>
+			<persName><forename type="first">I</forename><surname>Sosnovik</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Szmaja</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Smeulders</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">ICLR</title>
+		<imprint>
+			<date type="published" when="2020">2020</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b47">
+	<analytic>
+		<title level="a" type="main">Rethinking the inception architecture for computer vision</title>
+		<author>
+			<persName><forename type="first">C</forename><surname>Szegedy</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">V</forename><surname>Vanhoucke</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Ioffe</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Shlens</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Wojna</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">CVPR</title>
+		<imprint>
+			<date type="published" when="2016">2016</date>
+			<biblScope unit="page" from="2818" to="2826" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b48">
+	<analytic>
+		<title level="a" type="main">Variational autoencoder with implicit optimal priors</title>
+		<author>
+			<persName><forename type="first">H</forename><surname>Takahashi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Iwata</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Yamanaka</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Yamada</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Yagi</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the AAAI Conference on Artificial Intelligence</title>
+		<meeting>the AAAI Conference on Artificial Intelligence</meeting>
+		<imprint>
+			<date type="published" when="2019">2019</date>
+			<biblScope unit="volume">33</biblScope>
+			<biblScope unit="page" from="5066" to="5073" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b49">
+	<monogr>
+		<author>
+			<persName><forename type="first">N</forename><surname>Thomas</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Smidt</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Kearnes</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Yang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">K</forename><surname>Kohlhoff</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">P</forename><surname>Riley</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:1802.08219</idno>
+		<title level="m">Tensor field networks: Rotation-and translation-equivariant neural networks for 3d point clouds</title>
+		<imprint>
+			<date type="published" when="2018">2018</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b50">
+	<monogr>
+		<title level="m" type="main">Visual autoregressive modeling: Scalable image generation via next-scale prediction</title>
+		<author>
+			<persName><forename type="first">K</forename><surname>Tian</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Jiang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Yuan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">B</forename><surname>Peng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Wang</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2404.02905</idno>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b51">
+	<analytic>
+		<title level="a" type="main">Wasserstein auto-encoders</title>
+		<author>
+			<persName><forename type="first">I</forename><surname>Tolstikhin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">O</forename><surname>Bousquet</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Gelly</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">B</forename><surname>Schoelkopf</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">ICLR</title>
+		<imprint>
+			<date type="published" when="2018">2018</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b52">
+	<analytic>
+		<title level="a" type="main">Vae with a vampprior</title>
+		<author>
+			<persName><forename type="first">J</forename><surname>Tomczak</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Welling</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">International conference on artificial intelligence and statistics</title>
+		<imprint>
+			<date type="published" when="2018">2018</date>
+			<biblScope unit="page" from="1214" to="1223" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b53">
+	<analytic>
+		<title level="a" type="main">Givt: Generative infinite-vocabulary transformers</title>
+		<author>
+			<persName><forename type="first">M</forename><surname>Tschannen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><surname>Eastwood</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">F</forename><surname>Mentzer</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">ECCV</title>
+		<imprint>
+			<date type="published" when="2025">2025</date>
+			<biblScope unit="page" from="292" to="309" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b54">
+	<analytic>
+		<title level="a" type="main">The geometry of hidden representations of large transformer models</title>
+		<author>
+			<persName><forename type="first">L</forename><surname>Valeriani</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>Doimo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">F</forename><surname>Cuturello</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Laio</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Ansuini</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Cazzaniga</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Advances in Neural Information Processing Systems</title>
+		<imprint>
+			<biblScope unit="volume">36</biblScope>
+			<biblScope unit="page" from="51234" to="51252" />
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b55">
+	<analytic>
+		<title level="a" type="main">Neural discrete representation learning</title>
+		<author>
+			<persName><forename type="first">A</forename><surname>Van Den Oord</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">O</forename><surname>Vinyals</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">NeurIPS</title>
+		<imprint>
+			<date type="published" when="2017">2017</date>
+			<biblScope unit="volume">30</biblScope>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b56">
+	<analytic>
+		<title level="a" type="main">Image quality assessment: from error visibility to structural similarity</title>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Bovik</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Sheikh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">E</forename><surname>Simoncelli</surname></persName>
+		</author>
+		<idno type="DOI">10.1109/TIP.2003.819861</idno>
+	</analytic>
+	<monogr>
+		<title level="j">IEEE Transactions on Image Processing</title>
+		<imprint>
+			<biblScope unit="volume">13</biblScope>
+			<biblScope unit="issue">4</biblScope>
+			<biblScope unit="page" from="600" to="612" />
+			<date type="published" when="2004">2004</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b57">
+	<analytic>
+		<title level="a" type="main">General e (2)-equivariant steerable cnns</title>
+		<author>
+			<persName><forename type="first">M</forename><surname>Weiler</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">G</forename><surname>Cesa</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Advances in neural information processing systems</title>
+		<imprint>
+			<date type="published" when="2019">2019</date>
+			<biblScope unit="volume">32</biblScope>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b58">
+	<monogr>
+		<title level="m" type="main">Unsupervised learning of group invariant and equivariant representations</title>
+		<author>
+			<persName><forename type="first">R</forename><surname>Winter</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Bertolini</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Le</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">F</forename><surname>Noe</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D.-A</forename><surname>Clevert</surname></persName>
+		</author>
+		<editor>NeurIPS</editor>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b59">
+	<analytic>
+		<title level="a" type="main">Cubenet: Equivariance to 3d rotation and translation</title>
+		<author>
+			<persName><forename type="first">D</forename><surname>Worrall</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">G</forename><surname>Brostow</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">ECCV</title>
+		<imprint>
+			<date type="published" when="2018">2018</date>
+			<biblScope unit="page" from="567" to="584" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b60">
+	<analytic>
+		<title level="a" type="main">Efficient high-resolution text-to-image synthesis with linear diffusion transformers</title>
+		<author>
+			<persName><forename type="first">E</forename><surname>Xie</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Cai</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Tang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Lin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Zhu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Lu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Han</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Sana</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">ICLR</title>
+		<imprint>
+			<date type="published" when="2025">2025</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b61">
+	<monogr>
+		<title level="m" type="main">Fasterdit: Towards faster diffusion transformers training without architecture modification</title>
+		<author>
+			<persName><forename type="first">J</forename><surname>Yao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">W</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">X</forename><surname>Wang</surname></persName>
+		</author>
+		<editor>NeurIPS</editor>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b62">
+	<monogr>
+		<title level="m" type="main">Vector-quantized image modeling with improved VQGAN</title>
+		<author>
+			<persName><forename type="first">J</forename><surname>Yu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">X</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><forename type="middle">Y</forename><surname>Koh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><surname>Pang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Qin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Ku</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Xu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Baldridge</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Wu</surname></persName>
+		</author>
+		<imprint/>
+	</monogr>
+	<note>In ICLR, 2022a</note>
+</biblStruct>
+
+<biblStruct xml:id="b63">
+	<monogr>
+		<title level="m" type="main">Scaling autoregressive models for content-rich text-to-image generation</title>
+		<author>
+			<persName><forename type="first">J</forename><surname>Yu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Xu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><forename type="middle">Y</forename><surname>Koh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Luong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">G</forename><surname>Baid</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">V</forename><surname>Vasudevan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Ku</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Yang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">B</forename><forename type="middle">K</forename><surname>Ayan</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2206.10789</idno>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b64">
+	<analytic>
+		<title level="a" type="main">Language model beats diffusion -tokenizer is key to visual generation</title>
+		<author>
+			<persName><forename type="first">L</forename><surname>Yu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Lezama</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">N</forename><forename type="middle">B</forename><surname>Gundavarapu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Versari</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">K</forename><surname>Sohn</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>Minnen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Cheng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Gupta</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">X</forename><surname>Gu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><forename type="middle">G</forename><surname>Hauptmann</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">B</forename><surname>Gong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M.-H</forename><surname>Yang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">I</forename><surname>Essa</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><forename type="middle">A</forename><surname>Ross</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Jiang</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">The Twelfth International Conference on Learning Representations</title>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b65">
+	<analytic>
+		<title level="a" type="main">Representation alignment for generation: Training diffusion transformers is easier than you think</title>
+		<author>
+			<persName><forename type="first">S</forename><surname>Yu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Kwak</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">H</forename><surname>Jang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Jeong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Huang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Shin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Xie</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">ICLR</title>
+		<imprint>
+			<date type="published" when="2025">2025</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b66">
+	<analytic>
+		<title level="a" type="main">The unreasonable effectiveness of deep features as a perceptual metric</title>
+		<author>
+			<persName><forename type="first">R</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">P</forename><surname>Isola</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><forename type="middle">A</forename><surname>Efros</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">E</forename><surname>Shechtman</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">O</forename><surname>Wang</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">CVPR</title>
+		<imprint>
+			<date type="published" when="2018">2018</date>
+			<biblScope unit="page" from="586" to="595" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b67">
+	<analytic>
+		<title level="a" type="main">Adversarially regularized autoencoders</title>
+		<author>
+			<persName><forename type="first">J</forename><surname>Zhao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Kim</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">K</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Rush</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Lecun</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">ICML</title>
+		<imprint>
+			<date type="published" when="2018">2018</date>
+			<biblScope unit="volume">80</biblScope>
+			<biblScope unit="page" from="5902" to="5911" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b68">
+	<monogr>
+		<title level="m" type="main">Fast training of diffusion models with masked transformers</title>
+		<author>
+			<persName><forename type="first">H</forename><surname>Zheng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">W</forename><surname>Nie</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Vahdat</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Anandkumar</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2306.09305</idno>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+<biblStruct xml:id="b69">
+	<analytic>
+		<title level="a" type="main">Scaling the codebook size of VQ-GAN to 100,000 with a utilization rate of 99%</title>
+		<author>
+			<persName><forename type="first">L</forename><surname>Zhu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">F</forename><surname>Wei</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Lu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>Chen</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">The Thirty-eighth Annual Conference on Neural Information Processing Systems</title>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b70">
+	<analytic>
+		<title level="a" type="main">Sd-dit: Unleashing the power of self-supervised discrimination in diffusion transformer</title>
+		<author>
+			<persName><forename type="first">R</forename><surname>Zhu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Pan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Yao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Sun</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">T</forename><surname>Mei</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><forename type="middle">W</forename><surname>Chen</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">CVPR</title>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+			<biblScope unit="page" from="8435" to="8445" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b71">
+	<monogr>
+		<title level="m" type="main">Designing a better asymmetric vqgan for stablediffusion</title>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Zhu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">X</forename><surname>Feng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Bao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Yuan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">G</forename><surname>Hua</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2306.04632</idno>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+</biblStruct>
+
+				</listBibl>
+			</div>
+		</back>
+	</text>
+</TEI>
