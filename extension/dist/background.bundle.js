@@ -5,105 +5,302 @@ const isInteractionLog = (data) => {
   return typeof log === "object" && log !== null && typeof log.paper_id === "string" && Array.isArray(log.interactions);
 };
 
+const SOURCE_TYPES = {
+  "arxiv": {
+    prefix: "arxiv",
+    urlPatterns: [
+      /arxiv\.org\/(abs|pdf|html)\/([0-9.]+)/,
+      /arxiv\.org\/abs\/([0-9.]+)(v[0-9]+)?/
+    ],
+    idFormat: /[0-9]{4}\.[0-9]{4,5}(v[0-9]+)?/
+  },
+  "semanticscholar": {
+    prefix: "s2",
+    urlPatterns: [
+      /semanticscholar\.org\/paper\/([a-f0-9]+)/,
+      /s2-research\.org\/papers\/([a-f0-9]+)/
+    ],
+    idFormat: /[a-f0-9]{40}/
+  },
+  "doi": {
+    prefix: "doi",
+    urlPatterns: [
+      /doi\.org\/(10\.[0-9.]+\/[a-zA-Z0-9._\-/:()\[\]]+)/
+    ],
+    idFormat: /10\.[0-9.]+\/[a-zA-Z0-9._\-\/:()\[\]]+/
+  },
+  "acm": {
+    prefix: "doi",
+    // ACM uses DOIs
+    urlPatterns: [
+      /dl\.acm\.org\/doi\/(10\.[0-9.]+\/[a-zA-Z0-9._\-/:()\[\]]+)/
+    ],
+    idFormat: /10\.[0-9.]+\/[a-zA-Z0-9._\-\/:()\[\]]+/
+  },
+  "openreview": {
+    prefix: "openreview",
+    urlPatterns: [
+      /openreview\.net\/forum\?id=([a-zA-Z0-9_\-]+)/
+    ],
+    idFormat: /[a-zA-Z0-9_\-]+/
+  }
+};
+function formatPrimaryId(source, id) {
+  const sourcePrefix = SOURCE_TYPES[source]?.prefix || "generic";
+  const safeId = id.replace(/\//g, "_").replace(/:/g, ".").replace(/\s/g, "_").replace(/\\/g, "_");
+  return `${sourcePrefix}.${safeId}`;
+}
+function parseId(prefixedId) {
+  const [prefix, ...idParts] = prefixedId.split(".");
+  const id = idParts.join(".");
+  const sourceType = Object.entries(SOURCE_TYPES).find(
+    ([_, info]) => info.prefix === prefix
+  )?.[0] || "generic";
+  const originalId = sourceType === "doi" ? id.replace(/_/g, "/") : id;
+  return { type: sourceType, id: originalId };
+}
+function getLegacyId(primaryId) {
+  if (!primaryId.includes(".")) {
+    return primaryId;
+  }
+  const { type, id } = parseId(primaryId);
+  if (type === "arxiv") {
+    return id;
+  }
+  return primaryId;
+}
+function isNewFormat(id) {
+  const validPrefixes = Object.values(SOURCE_TYPES).map(
+    (info) => `${info.prefix}.`
+  );
+  validPrefixes.push("generic.");
+  return validPrefixes.some((prefix) => id.startsWith(prefix));
+}
+
+const isInteractionLogJs = (data) => {
+  return typeof data === "object" && data !== null && typeof data.paper_id === "string" && Array.isArray(data.interactions);
+};
 class PaperManager {
   constructor(client) {
     this.client = client;
   }
+  /**
+   * Get or create a paper record
+   * Enhanced to support multiple sources with backward compatibility
+   */
   async getOrCreatePaper(paperData) {
-    const objectId = `paper:${paperData.arxivId}`;
+    let objectId;
+    let useNewFormat = false;
+    if (paperData.primary_id) {
+      objectId = `paper:${paperData.primary_id}`;
+      useNewFormat = true;
+    } else if (paperData.source && paperData.sourceId) {
+      const primary_id = formatPrimaryId(paperData.source, paperData.sourceId);
+      paperData.primary_id = primary_id;
+      objectId = `paper:${primary_id}`;
+      useNewFormat = true;
+    } else if (paperData.arxivId) {
+      objectId = `paper:${paperData.arxivId}`;
+      useNewFormat = false;
+    } else {
+      throw new Error("Invalid paper data: missing ID information");
+    }
     try {
       const obj = await this.client.getObject(objectId);
       const data = obj.data;
+      if (!useNewFormat || data.primary_id) {
+        return data;
+      }
+      if (data.arxivId && !data.primary_id) {
+        const enhancedData = {
+          ...data,
+          source: "arxiv",
+          sourceId: data.arxivId,
+          primary_id: formatPrimaryId("arxiv", data.arxivId)
+        };
+        await this.client.updateObject(objectId, enhancedData);
+        return enhancedData;
+      }
       return data;
     } catch (error) {
       if (error instanceof Error && error.message.includes("No object found")) {
-        const defaultPaperData = {
-          arxivId: paperData.arxivId,
-          url: paperData.url || `https://arxiv.org/abs/${paperData.arxivId}`,
-          title: paperData.title || paperData.arxivId,
-          authors: paperData.authors || "",
-          abstract: paperData.abstract || "",
-          timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-          rating: "novote",
-          published_date: paperData.published_date || "",
-          arxiv_tags: paperData.arxiv_tags || []
-        };
+        let defaultPaperData;
+        if (useNewFormat) {
+          defaultPaperData = {
+            primary_id: paperData.primary_id,
+            source: paperData.source,
+            sourceId: paperData.sourceId,
+            url: paperData.url || "",
+            title: paperData.title || paperData.sourceId,
+            authors: paperData.authors || "",
+            abstract: paperData.abstract || "",
+            timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+            rating: "novote"
+          };
+          if (paperData.source === "arxiv") {
+            defaultPaperData.arxivId = paperData.sourceId;
+            defaultPaperData.arxiv_tags = paperData.arxiv_tags || [];
+            defaultPaperData.published_date = paperData.published_date || "";
+          } else {
+            defaultPaperData.identifiers = {
+              original: paperData.sourceId,
+              url: paperData.url
+            };
+            if (paperData.arxivId) {
+              defaultPaperData.identifiers.arxiv = paperData.arxivId;
+            }
+            if (paperData.doi) {
+              defaultPaperData.identifiers.doi = paperData.doi;
+            }
+            if (paperData.s2Id) {
+              defaultPaperData.identifiers.s2 = paperData.s2Id;
+            }
+          }
+        } else {
+          defaultPaperData = {
+            arxivId: paperData.arxivId,
+            url: paperData.url || `https://arxiv.org/abs/${paperData.arxivId}`,
+            title: paperData.title || paperData.arxivId,
+            authors: paperData.authors || "",
+            abstract: paperData.abstract || "",
+            timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+            rating: "novote",
+            published_date: paperData.published_date || "",
+            arxiv_tags: paperData.arxiv_tags || []
+          };
+        }
         await this.client.createObject(objectId, defaultPaperData);
         return defaultPaperData;
       }
       throw error;
     }
   }
-  async getOrCreateInteractionLog(arxivId) {
-    const objectId = `interactions:${arxivId}`;
+  /**
+   * Get or create an interaction log
+   * Enhanced with backward compatibility for legacy arXiv IDs
+   */
+  async getOrCreateInteractionLog(paperId) {
+    const legacyId = getLegacyId(paperId);
+    const objectId = `interactions:${legacyId}`;
     try {
       const obj = await this.client.getObject(objectId);
       const data = obj.data;
-      if (isInteractionLog(data)) {
+      if (typeof isInteractionLog === "function" ? isInteractionLog(data) : isInteractionLogJs(data)) {
         return data;
       }
       throw new Error("Invalid interaction log format");
     } catch (error) {
       if (error instanceof Error && error.message.includes("No object found")) {
         const newLog = {
-          paper_id: arxivId,
+          paper_id: paperId,
+          // Store the full ID including prefix if present
           interactions: []
         };
+        if (paperId !== legacyId) {
+          newLog.legacy_id = legacyId;
+        }
         await this.client.createObject(objectId, newLog);
         return newLog;
       }
       throw error;
     }
   }
-  async logReadingSession(arxivId, session, paperData) {
-    if (paperData) {
-      await this.getOrCreatePaper({
-        arxivId,
-        ...paperData
-      });
+  /**
+   * Log a reading session for a paper
+   * Enhanced to work with both legacy and new IDs
+   */
+  async logReadingSession(paperId, session, paperData) {
+    let primaryId = paperId;
+    let enhancedPaperData = paperData || {};
+    if (!isNewFormat(paperId) && !enhancedPaperData.primary_id) {
+      primaryId = formatPrimaryId("arxiv", paperId);
+      enhancedPaperData = {
+        ...enhancedPaperData,
+        source: "arxiv",
+        sourceId: paperId,
+        primary_id: primaryId,
+        arxivId: paperId
+      };
     }
-    await this.addInteraction(arxivId, {
+    if (Object.keys(enhancedPaperData).length > 0) {
+      await this.getOrCreatePaper(enhancedPaperData);
+    }
+    await this.addInteraction(paperId, {
       type: "reading_session",
       timestamp: (/* @__PURE__ */ new Date()).toISOString(),
       data: session
     });
   }
-  async logAnnotation(arxivId, key, value, paperData) {
-    if (paperData) {
-      await this.getOrCreatePaper({
-        arxivId,
-        ...paperData
-      });
+  /**
+   * Log an annotation for a paper
+   * Enhanced to work with both legacy and new IDs
+   */
+  async logAnnotation(paperId, key, value, paperData) {
+    let primaryId = paperId;
+    let enhancedPaperData = paperData || {};
+    if (!isNewFormat(paperId) && !enhancedPaperData.primary_id) {
+      primaryId = formatPrimaryId("arxiv", paperId);
+      enhancedPaperData = {
+        ...enhancedPaperData,
+        source: "arxiv",
+        sourceId: paperId,
+        primary_id: primaryId,
+        arxivId: paperId
+      };
     }
-    await this.addInteraction(arxivId, {
+    if (Object.keys(enhancedPaperData).length > 0) {
+      await this.getOrCreatePaper(enhancedPaperData);
+    }
+    await this.addInteraction(paperId, {
       type: "annotation",
       timestamp: (/* @__PURE__ */ new Date()).toISOString(),
       data: { key, value }
     });
   }
-  async updateRating(arxivId, rating, paperData) {
-    const paper = await this.getOrCreatePaper({
-      arxivId,
-      ...paperData
-    });
-    await this.client.updateObject(`paper:${arxivId}`, {
+  /**
+   * Update a paper's rating
+   * Enhanced to work with both legacy and new IDs
+   */
+  async updateRating(paperId, rating, paperData) {
+    let primaryId = paperId;
+    let enhancedPaperData = paperData || {};
+    if (!isNewFormat(paperId) && !enhancedPaperData.primary_id) {
+      primaryId = formatPrimaryId("arxiv", paperId);
+      enhancedPaperData = {
+        ...enhancedPaperData,
+        source: "arxiv",
+        sourceId: paperId,
+        primary_id: primaryId,
+        arxivId: paperId
+      };
+    }
+    const paper = await this.getOrCreatePaper(enhancedPaperData);
+    const objectId = isNewFormat(primaryId) ? `paper:${primaryId}` : `paper:${paperId}`;
+    await this.client.updateObject(objectId, {
       ...paper,
       rating
     });
-    await this.addInteraction(arxivId, {
+    await this.addInteraction(paperId, {
       type: "rating",
       timestamp: (/* @__PURE__ */ new Date()).toISOString(),
       data: { rating }
     });
   }
-  async addInteraction(arxivId, interaction) {
-    const log = await this.getOrCreateInteractionLog(arxivId);
+  /**
+   * Add an interaction to a paper's log
+   * Enhanced with backward compatibility
+   */
+  async addInteraction(paperId, interaction) {
+    const log = await this.getOrCreateInteractionLog(paperId);
     log.interactions.push(interaction);
-    await this.client.updateObject(`interactions:${arxivId}`, log);
+    const legacyId = getLegacyId(paperId);
+    await this.client.updateObject(`interactions:${legacyId}`, log);
   }
-  async getInteractions(arxivId, options = {}) {
+  // Rest of the methods (getInteractions, getPaperReadingTime, etc.) can remain unchanged
+  // as they'll work with the enhanced getOrCreateInteractionLog method
+  async getInteractions(paperId, options = {}) {
     try {
-      const log = await this.getOrCreateInteractionLog(arxivId);
+      const log = await this.getOrCreateInteractionLog(paperId);
       let interactions = log.interactions;
       if (options.type) {
         interactions = interactions.filter((i) => i.type === options.type);
@@ -124,8 +321,8 @@ class PaperManager {
       throw error;
     }
   }
-  async getPaperReadingTime(arxivId) {
-    const interactions = await this.getInteractions(arxivId, { type: "reading_session" });
+  async getPaperReadingTime(paperId) {
+    const interactions = await this.getInteractions(paperId, { type: "reading_session" });
     return interactions.reduce((total, i) => {
       console.log("Calculating from interaction:", i);
       const data = i.data;
@@ -135,8 +332,8 @@ class PaperManager {
       return total;
     }, 0);
   }
-  async getPaperHistory(arxivId) {
-    const objectId = `paper:${arxivId}`;
+  async getPaperHistory(paperId) {
+    const objectId = `paper:${getLegacyId(paperId)}`;
     return this.client.getObjectHistory(objectId);
   }
 }
