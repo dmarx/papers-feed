@@ -27,10 +27,7 @@ export type PaperMetadata = {
   identifiers?: {
     original: string;
     url: string;
-    arxiv?: string;
-    doi?: string;
-    s2?: string;
-    openreview?: string;
+    // Fix for TS2411: Using string index signature
     [key: string]: string;
   };
 }
