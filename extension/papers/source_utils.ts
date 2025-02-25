@@ -140,8 +140,9 @@ export function detectSourceFromUrl(url: string): SourceInfo | null {
     for (const pattern of sourceInfo.urlPatterns) {
       const match = url.match(pattern);
       if (match) {
-        // The last group is always expected to be the ID
-        const id = match[match.lastIndex || match.length - 1];
+        // The last capturing group should be the ID
+        // Fix the error by correctly accessing the last match group
+        const id = match[match.length - 1];
         return {
           type: sourceType,
           id: id,
