@@ -1,18 +1,43 @@
 // extension/papers/types.ts
 import type { Json } from 'gh-store-client';
 
+/**
+ * Paper metadata with multi-source support
+ */
 export type PaperMetadata = {
-  arxivId: string;
+  // Legacy fields (for backward compatibility)
+  arxivId?: string;
+  arxiv_tags?: string[];
+  
+  // Multi-source fields
+  primary_id?: string;  // {source}:{id} format
+  source?: string;      // Source type (arxiv, doi, semanticscholar, etc.)
+  sourceId?: string;    // Original ID from the source
+  
+  // Common fields
   url: string;
   title: string;
   authors: string;
   abstract: string;
   timestamp: string;
   published_date: string;
-  arxiv_tags: string[];
   rating: string;
+  
+  // Source-specific identifiers
+  identifiers?: {
+    original: string;
+    url: string;
+    arxiv?: string;
+    doi?: string;
+    s2?: string;
+    openreview?: string;
+    [key: string]: string;
+  };
 }
 
+/**
+ * Reading session data
+ */
 export type ReadingSessionData = {
   session_id: string;
   duration_seconds: number;
@@ -22,17 +47,27 @@ export type ReadingSessionData = {
   total_elapsed_seconds: number;
 }
 
+/**
+ * Interaction record
+ */
 export type Interaction = {
   type: string;
   timestamp: string;
   data: Json;
 }
 
+/**
+ * Interaction log
+ */
 export type InteractionLog = {
   paper_id: string;
+  legacy_id?: string; // For backward compatibility
   interactions: Interaction[];
 }
 
+/**
+ * Type guard for reading session data
+ */
 export const isReadingSession = (data: unknown): data is ReadingSessionData => {
   const session = data as ReadingSessionData;
   return (
@@ -47,6 +82,9 @@ export const isReadingSession = (data: unknown): data is ReadingSessionData => {
   );
 };
 
+/**
+ * Type guard for interaction log
+ */
 export const isInteractionLog = (data: unknown): data is InteractionLog => {
   const log = data as InteractionLog;
   return (
@@ -56,3 +94,96 @@ export const isInteractionLog = (data: unknown): data is InteractionLog => {
     Array.isArray(log.interactions)
   );
 };
+
+/**
+ * Paper source information
+ */
+export type SourceInfo = {
+  type: string;
+  id: string;
+  primary_id: string;
+  url: string;
+}
+
+/**
+ * Extended reading session with multi-source support
+ */
+export class MultiSourceReadingSession {
+  // In legacy version, this was arxivId
+  paperId: string;
+  sessionId: string;
+  startTime: Date;
+  activeTime: number;
+  idleTime: number;
+  lastActiveTime: Date;
+  isTracking: boolean;
+  config: any;
+  endTime: Date | null;
+  finalizedData: ReadingSessionData | null;
+  
+  constructor(paperId: string, config: any) {
+    this.paperId = paperId;
+    this.sessionId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    this.startTime = new Date();
+    this.activeTime = 0;
+    this.idleTime = 0;
+    this.lastActiveTime = new Date();
+    this.isTracking = true;
+    this.config = config;
+    this.endTime = null;
+    this.finalizedData = null;
+  }
+  
+  // Rest of the methods remain the same as ReadingSession
+  update() {
+    if (this.isTracking && !this.finalizedData) {
+      const now = new Date();
+      const timeSinceLastActive = now.getTime() - this.lastActiveTime.getTime();
+      
+      if (timeSinceLastActive < this.config.idleThreshold) {
+        this.activeTime += timeSinceLastActive;
+      } else {
+        this.idleTime += timeSinceLastActive;
+      }
+      
+      this.lastActiveTime = now;
+    }
+  }
+  
+  finalize() {
+    if (this.finalizedData) {
+      return this.finalizedData;
+    }
+ 
+    this.update();
+    this.isTracking = false;
+    this.endTime = new Date();
+    const totalElapsed = this.endTime.getTime() - this.startTime.getTime();
+ 
+    if (this.activeTime >= this.config.minSessionDuration) {
+      this.finalizedData = {
+        session_id: this.sessionId,
+        duration_seconds: Math.round(this.activeTime / 1000),
+        idle_seconds: Math.round(this.idleTime / 1000),
+        start_time: this.startTime.toISOString(),
+        end_time: this.endTime.toISOString(),
+        total_elapsed_seconds: Math.round(totalElapsed / 1000)
+      };
+      return this.finalizedData;
+    }
+    return null;
+  }
+  
+  end() {
+    return this.finalize();
+  }
+  
+  getMetadata() {
+    return {
+      sessionId: this.sessionId,
+      startTime: this.startTime.toISOString(),
+      activeSeconds: Math.round(this.activeTime / 1000),
+      idleSeconds: Math.round(this.idleTime / 1000)
+    };
+  }
+}
