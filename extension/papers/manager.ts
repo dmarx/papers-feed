@@ -1,4 +1,4 @@
-// extension/papers/manager.js
+// extension/papers/manager.ts
 import { GitHubStoreClient } from 'gh-store-client';
 import type { Json } from 'gh-store-client';
 import { 
@@ -12,10 +12,10 @@ import { formatPrimaryId, getLegacyId, isNewFormat } from './source_utils';
 
 /**
  * Checks if data is an interaction log
- * @param {any} data - Data to check
- * @returns {boolean} - True if data is an interaction log
+ * @param data - Data to check
+ * @returns Whether data is an interaction log
  */
-const isInteractionLogJs = (data) => {
+const isInteractionLogJs = (data: any): boolean => {
   return typeof data === "object" && 
          data !== null && 
          typeof data.paper_id === "string" && 
@@ -58,7 +58,7 @@ export class PaperManager {
     try {
       // Try to get the paper
       const obj = await this.client.getObject(objectId);
-      const data = obj.data;
+      const data = obj.data as Record<string, any>;
       
       // Return object, potentially enhancing it with new format fields
       if (!useNewFormat || data.primary_id) {
@@ -83,7 +83,7 @@ export class PaperManager {
     } catch (error) {
       if (error instanceof Error && error.message.includes("No object found")) {
         // Create new paper with appropriate fields
-        let defaultPaperData: any;
+        let defaultPaperData: Record<string, any>;
         
         if (useNewFormat) {
           // New multi-source format
@@ -196,7 +196,7 @@ export class PaperManager {
   ): Promise<void> {
     // For backward compatibility
     let primaryId = paperId;
-    let enhancedPaperData = paperData || {};
+    let enhancedPaperData: Record<string, any> = paperData || {};
     
     // Handle legacy arXiv IDs
     if (!isNewFormat(paperId) && !enhancedPaperData.primary_id) {
@@ -235,7 +235,7 @@ export class PaperManager {
   ): Promise<void> {
     // For backward compatibility
     let primaryId = paperId;
-    let enhancedPaperData = paperData || {};
+    let enhancedPaperData: Record<string, any> = paperData || {};
     
     // Handle legacy arXiv IDs
     if (!isNewFormat(paperId) && !enhancedPaperData.primary_id) {
@@ -273,7 +273,7 @@ export class PaperManager {
   ): Promise<void> {
     // For backward compatibility
     let primaryId = paperId;
-    let enhancedPaperData = paperData || {};
+    let enhancedPaperData: Record<string, any> = paperData || {};
     
     // Handle legacy arXiv IDs
     if (!isNewFormat(paperId) && !enhancedPaperData.primary_id) {
