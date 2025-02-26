@@ -8,41 +8,58 @@ const isInteractionLog = (data) => {
 const SOURCE_TYPES = {
   "arxiv": {
     prefix: "arxiv",
-    urlPatterns: [
+    url_patterns: [
       /arxiv\.org\/(abs|pdf|html)\/([0-9.]+)/,
       /arxiv\.org\/abs\/([0-9.]+)(v[0-9]+)?/
     ],
-    idFormat: /[0-9]{4}\.[0-9]{4,5}(v[0-9]+)?/
+    id_extractors: [
+      (match) => match[2],
+      (match) => match[1] + (match[2] || "")
+    ],
+    id_format: /[0-9]{4}\.[0-9]{4,5}(v[0-9]+)?/
   },
   "semanticscholar": {
     prefix: "s2",
-    urlPatterns: [
+    url_patterns: [
       /semanticscholar\.org\/paper\/([a-f0-9]+)/,
       /s2-research\.org\/papers\/([a-f0-9]+)/
     ],
-    idFormat: /[a-f0-9]{40}/
+    id_extractors: [
+      (match) => match[1],
+      (match) => match[1]
+    ],
+    id_format: /[a-f0-9]{40}/
   },
   "doi": {
     prefix: "doi",
-    urlPatterns: [
+    url_patterns: [
       /doi\.org\/(10\.[0-9.]+\/[a-zA-Z0-9._\-/:()\[\]]+)/
     ],
-    idFormat: /10\.[0-9.]+\/[a-zA-Z0-9._\-\/:()\[\]]+/
+    id_extractors: [
+      (match) => match[1]
+    ],
+    id_format: /10\.[0-9.]+\/[a-zA-Z0-9._\-/:()\[\]]+/
   },
   "acm": {
     prefix: "doi",
     // ACM uses DOIs
-    urlPatterns: [
+    url_patterns: [
       /dl\.acm\.org\/doi\/(10\.[0-9.]+\/[a-zA-Z0-9._\-/:()\[\]]+)/
     ],
-    idFormat: /10\.[0-9.]+\/[a-zA-Z0-9._\-\/:()\[\]]+/
+    id_extractors: [
+      (match) => match[1]
+    ],
+    id_format: /10\.[0-9.]+\/[a-zA-Z0-9._\-/:()\[\]]+/
   },
   "openreview": {
     prefix: "openreview",
-    urlPatterns: [
+    url_patterns: [
       /openreview\.net\/forum\?id=([a-zA-Z0-9_\-]+)/
     ],
-    idFormat: /[a-zA-Z0-9_\-]+/
+    id_extractors: [
+      (match) => match[1]
+    ],
+    id_format: /[a-zA-Z0-9_\-]+/
   }
 };
 function formatPrimaryId(source, id) {
@@ -53,11 +70,16 @@ function formatPrimaryId(source, id) {
 function parseId(prefixedId) {
   const [prefix, ...idParts] = prefixedId.split(".");
   const id = idParts.join(".");
-  const sourceType = Object.entries(SOURCE_TYPES).find(
-    ([_, info]) => info.prefix === prefix
-  )?.[0] || "generic";
-  const originalId = sourceType === "doi" ? id.replace(/_/g, "/") : id;
-  return { type: sourceType, id: originalId };
+  const prefixToSource = {
+    "arxiv": "arxiv",
+    "s2": "semanticscholar",
+    "doi": "doi",
+    "openreview": "openreview"
+  };
+  return {
+    type: prefixToSource[prefix] || "generic",
+    id: prefix === "doi" ? id.replace(/_/g, "/") : id
+  };
 }
 function getLegacyId(primaryId) {
   if (!primaryId.includes(".")) {
@@ -70,9 +92,7 @@ function getLegacyId(primaryId) {
   return primaryId;
 }
 function isNewFormat(id) {
-  const validPrefixes = Object.values(SOURCE_TYPES).map(
-    (info) => `${info.prefix}.`
-  );
+  const validPrefixes = Object.values(SOURCE_TYPES).map((def) => `${def.prefix}.`);
   validPrefixes.push("generic.");
   return validPrefixes.some((prefix) => id.startsWith(prefix));
 }
