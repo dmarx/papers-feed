@@ -1,0 +1,355 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<TEI xml:space="preserve" xmlns="http://www.tei-c.org/ns/1.0" 
+xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" 
+xsi:schemaLocation="http://www.tei-c.org/ns/1.0 https://raw.githubusercontent.com/kermitt2/grobid/master/grobid-home/schemas/xsd/Grobid.xsd"
+ xmlns:xlink="http://www.w3.org/1999/xlink">
+	<teiHeader xml:lang="en">
+		<fileDesc>
+			<titleStmt>
+				<title level="a" type="main">Think Inside the JSON: Reinforcement Strategy for Strict LLM Schema Adherence</title>
+			</titleStmt>
+			<publicationStmt>
+				<publisher/>
+				<availability  status="unknown">
+					<licence/>
+				</availability>
+				<date type="published" when="2025-02-18">18 Feb 2025</date>
+			</publicationStmt>
+			<sourceDesc>
+				<biblStruct>
+					<analytic>
+						<author>
+							<persName><forename type="first">Bhavik</forename><surname>Agarwal</surname></persName>
+							<email>bagarwal@mastercontrol.com</email>
+						</author>
+						<author>
+							<persName><forename type="first">Ishan</forename><surname>Joshi</surname></persName>
+							<email>ijoshi@mastercontrol.com</email>
+						</author>
+						<author>
+							<persName><forename type="first">Viktoria</forename><forename type="middle">Rojkova</forename><surname>Mastercontrol</surname></persName>
+						</author>
+						<author>
+							<persName><forename type="first">A</forename><forename type="middle">I</forename><surname>Research</surname></persName>
+						</author>
+						<title level="a" type="main">Think Inside the JSON: Reinforcement Strategy for Strict LLM Schema Adherence</title>
+					</analytic>
+					<monogr>
+						<imprint>
+							<date type="published" when="2025-02-18">18 Feb 2025</date>
+						</imprint>
+					</monogr>
+					<idno type="MD5">363272E3B0E9CB3EAD6D5757F7184E8A</idno>
+					<idno type="arXiv">arXiv:2502.14905v1[cs.CL]</idno>
+				</biblStruct>
+			</sourceDesc>
+		</fileDesc>
+		<encodingDesc>
+			<appInfo>
+				<application version="0.8.2-SNAPSHOT" ident="GROBID" when="2025-02-26T18:29+0000">
+					<desc>GROBID - A machine learning software for extracting information from scholarly documents</desc>
+					<ref target="https://github.com/kermitt2/grobid"/>
+				</application>
+			</appInfo>
+		</encodingDesc>
+		<profileDesc>
+			<abstract>
+<div xmlns="http://www.tei-c.org/ns/1.0"><p>In this paper, we address the challenge of enforcing strict schema adherence in large language model (LLM) generation by leveraging LLM reasoning capabilities. Building on the DeepSeek R1 reinforcement learning framework, our approach trains structured reasoning skills of a 1.5B parameter model through a novel pipeline that combines synthetic reasoning data set construction with custom reward functions under Group Relative Policy Optimization (GRPO). Specifically, we first perform R1 reinforcement learning on a 20K sample unstructured to structured data set, mirroring the original DeepSeek R1 methods, to establish core reasoning abilities. Subsequently, we performed supervised fine-tuning on a separate 10K reasoning sample dataset, focusing on refining schema adherence for downstream tasks. Despite the relatively modest training scope, requiring approximately 20 hours on an 8×H100 GPU cluster for GRPO training and 3 hours on 1xA100 for SFT, our model demonstrates robust performance in enforcing schema consistency. We compare our ThinkJSON approach against the original DeepSeek R1 (671B), distilled versions of DeepSeek R1 (Qwen-1.5B and Qwen-7B) and Gemini 2.0 Flash (70B), showcasing its effectiveness in real-world applications. Our results underscore the practical utility of a resource-efficient framework for schema-constrained text generation.</p></div>
+			</abstract>
+		</profileDesc>
+	</teiHeader>
+	<text xml:lang="en">
+		<body>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="1">Introduction</head><p>In the highly regulated domain of bio-manufacturing quality, there is a growing need to convert legacy production records into structured digital formats for compliance and analysis. Biomanufacturing has historically been 'steeped in a paper culture', and even incremental moves toward electronic batch records are significant steps in industry digitalization <ref type="bibr" target="#b15">[Lab25]</ref>. A key prerequisite of this digital migration is schema adherence: AI systems, such as large language models (LLMs) used to transcribe or summarize production logs, must output data that fit a predefined schema exactly. Any deviation (missing fields, incorrect format) could violate data integrity standards and render the generated records unusable for regulatory compliance <ref type="bibr">[ea24c]</ref>. This introduces a critical challenge: While modern LLMs are extraordinarily powerful in free-form text generation, ensuring that they produce strictly structured, schema-valid outputs is not trivial.</p><p>LLMs by default generate text probabilistically, with no built-in guarantee of conforming to a given format <ref type="bibr">[ea25b]</ref>. This unpredictability poses risks when structured output is required for machine consumption or auditing. Empirical studies have found that even state-of-the-art models can fail to consistently follow format instructions -success rates in producing correct JSON, for example, can vary widely from 0% to 100% depending on the task complexity and model used <ref type="bibr">[ea24a]</ref>. Such inconsistency is problematic in any setting, but in regulated bio-manufacturing, an output that does not exactly match the schema (e.g., a misformatted timestamp or an extra delimiter) might lead to compliance issues or require costly manual correction. Developers report that substantial effort is spent on prompt tuning and post-processing to coerce LLMs into the desired format <ref type="bibr" target="#b16">[Sou24]</ref>. From a user perspective, unreliable formatting undermines trustconstraints help prevent nonsense or hallucinated fields, thereby ensuring the output remains credible and useful <ref type="bibr" target="#b16">[Sou24]</ref>. In short, structured output generation is both a technical and a governance challenge: the model must be reliable in content as well as form.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="2">Relevant Work</head><p>Researchers and practitioners are exploring several approaches to address these challenges and enforce schema adherence in LLM outputs. Key strategies include:</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="2.1">Supervised Fine-Tuning</head><p>An LLM can be fine-tuned on domain-specific data with the required output schema, so it learns to produce the correct structure. Fine-tuning on curated input-output pairs (e.g., historical records mapped to structured entries) can significantly improve format fidelity <ref type="bibr">[ea24b]</ref>. However, this approach is resource-intensive -training large models on specialized data is complex and costly, often requiring techniques like low-rank adaptation to be feasible <ref type="bibr">[ea24b]</ref>. Fine-tuning also risks making the model too domain-specific or rigid outside the training distribution.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="2.2">Reinforcement Learning with Human Feedback (RLHF)</head><p>RLHF has proven effective in aligning LLMs with human instructions and preferences <ref type="bibr">[ea25c]</ref>. By training a model with feedback signals that reward correct adherence to the desired format, one can encourage structured outputs. Notably, the instruction-following abilities of models like ChatGPT/GPT-4 are largely attributed to such alignment techniques <ref type="bibr">[ea25c]</ref>, enabling them to obey fine-grained formatting requests (e.g. "output as JSON"). In regulated settings, RLHF could incorporate compliance-specific criteria into the reward model. The downside is that RLHF requires extensive high-quality feedback data and careful reward design; even then, smaller open-source models often still lag behind in format obedience despite alignment efforts <ref type="bibr">[ea25c]</ref>.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="2.3">Constraint-Based Decoding</head><p>Rather than relying on the model to choose the right format, constraint-based methods force compliance by integrating schema rules into the generation process. Techniques like grammar-or regex-guided decoding intercept the model's token output, only allowing continuations that keep the output valid according to a formal schema <ref type="bibr">[ea25b]</ref>, <ref type="bibr">[ea24d]</ref>. This guarantees 100% schema adherence by construction. Recent frameworks implement fast, non-invasive constrained decoding that can guide LLMs to produce, for example, JSON that matches a given schema exactly <ref type="bibr">[ea24b]</ref>. Industry adoption of these ideas is rising; for instance, OpenAI's API now accepts developer-provided JSON schemas and assures that the model's response will conform to them <ref type="bibr">[ea25b]</ref>. The trade-off here is potential complexity in setup and slight inference latency overhead, as well as the challenge of designing schemas that are neither over-nor under-constraining. Nonetheless, when correctness is paramount, constrained decoding is a powerful approach.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="2.4">Prompt Engineering</head><p>The most accessible technique is to craft the input prompt in a way that strongly cues the desired structure. This can involve giving the model explicit formatting instructions, examples of correctly formatted output, or even "layout hints" in the prompt. A well-designed prompt can often induce a model to produce a nearly perfect structured output <ref type="bibr">[ea24b]</ref>. Prompt engineering requires no model training and can be iteratively refined. However, it demands significant manual effort and expertise, and even then does not guarantee consistency <ref type="bibr">[ea24b]</ref>. Models may still err on edge cases or as the prompt complexity grows, and maintaining long, complex prompts (especially across different models or updates) can be cumbersome. In practice, prompt-based solutions might be combined with lightweight validation or post-processing in high-stakes applications.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="2.5">Hybrid Constraint-Based Decoding and Prompt Engineering</head><p>By embedding knowledge of the schema at the prompt level and using a specialized procedure to keep the generation on track (via tagging, iterative re-checks, or extra control tokens), hybrid systems achieve schema adherence more reliably than a vanilla LLM approach <ref type="bibr" target="#b1">[BTW23]</ref>. This structured, schema-first method is key to guaranteeing the outputs are valid, parseable, and aligned with downstream consumption requirements. Schema acts as a blueprint for how the final text must be organized while controllable generation mechanism conditions the model's decoding process on these schema constraints. Instead of free-form text generation, the model is guided to fill in required slots, adhere to the correct format, and avoid extraneous or malformed outputs <ref type="bibr" target="#b1">[BTW23]</ref>.</p><p>Each of these approaches comes with effectiveness trade-offs, especially under the stringent demands of regulated industries. Fine-tuning and RLHF can deeply instill format compliance into a model but at high development cost and with less transparency. Prompt engineering is more flexible and avoid retraining, but it relies on the base model's capacity to follow instructions. Constraint-based decoding offers hard guarantees on structure, appealing for compliance, though it requires integrating external constraint logic with the model's output stream. The choice often depends on the specific use case and constraints -for instance, biomanufacturers must consider not only technical accuracy but also validation, auditing, and data governance. Ensuring that LLM-generated records are both accurate in content and precise in format is vital to meet quality and regulatory standards. Recent work underlines that reliable structured generation remains an open challenge, calling for continued research into methods that can robustly align LLM outputs with predefined schemas <ref type="bibr">[ea24a]</ref>.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3">Method</head><p>Although the strategies outlined above-ranging from prompt engineering to constraint-based decoding-can improve structured output, they often require specialized tooling or large-scale fine-tuning. In regulated domains such as bio-manufacturing, these approaches must also be cost-effective and robust. In this section, we describe a reasoning-driven methodology that leverages synthetic data construction and iterative LLM reasoning to ensure schema adherence with minimal overhead. Specifically, we demonstrate how to:</p><p>• Build RL reasoning dataset Create synthetic unstructured and structured data <ref type="bibr">[ea23a]</ref>, <ref type="bibr">[ea22b]</ref> in tandem using controlled prompts and Qwen 14B/32B <ref type="bibr" target="#b17">[Tea24]</ref>,</p><p>Reverse-engineer how unstructured text can map onto an empty JSON schema by engaging a distilled DeepSeek R1 Qwen 32B <ref type="bibr" target="#b2">[DA25]</ref> to explain-step by step-how each schema field is populated. Develop custom reward mechanisms that directly evaluate how well the outputs adhere to a predefined schema while balancing fluency, completeness, and correctness.</p><p>Train R1-Zero reasoning model from Qwen 2.5 1.5B base model using RL <ref type="bibr">[aa24]</ref>, <ref type="bibr">[ea23c]</ref> and synthetic unstructured-structured pair dataset, integrate custom rewards into GRPO <ref type="bibr">[aa24]</ref> without altering the core policy optimization loop. The combined reward drives the training so that the model produces outputs that score highly on all relevant criteria.</p><p>Fine tune R1-Zero model into R1 with supervised fine-tuning using reasoning dataset.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.1">Generating Structured and Unstructured Data</head><p>We begin by prompting a language model (Qwen 14B and 32B) to produce diverse, fully populated JSON schemas (including nested and complex fields). These filled schemas emulate real-world documentation (e.g., QA checklists, batch records) while showcasing variations in schema hardness and domain.</p><p>You are an expert in building a hierarchical JSON schema and object for the domain { DOMAIN }.</p><p>Your task is to create :</p><p>1. A multi -level JSON Schema describing :</p><p>-ROOT ( level 0) ,</p><formula xml:id="formula_0">-SECTION ( level 1) , -SUBSECTION ( level 2) , -$ DETAIL _{ N }$ ( level 3+) .</formula><p>Each level may contain tables (2 D data layouts ) and checkbox elements ( MCQs , confirmations ) , with nested components reflecting complex structures .</p><p>2. A JSON Object that strictly matches this schema , including :</p><p>-\" id \" and \" title \" -\" level \" and \"$ level _{ type }$\" -An array of \" component \" objects ( paragraphs , tables , or checkboxes ) -A recursive \" children \" array -Special \" properties \" ( e . g . , \" variables \" , \" content \") for data , logs , metrics , or formulas Formatting Requirements :</p><p>-Escape all quotes (\") , replace newlines with \\ n -No trailing commas , single quotes , or extra data -Enclose the final output with no extra explanations :</p><p>In parallel, we generate corresponding blank schemas-retaining structural outlines but omitting values. This gives us a "before and after" pair for each schema: an empty template and a filled instance. Such pairs are crucial for teaching LLMs how unstructured text should be systematically transformed into the exact JSON schema. We then produce unstructured text reflecting the same content as the filled schema-but presented in varying layouts (e.g., sequential paragraphs, parallel sections, combined strategies) and table formats (ASCII art, XML/HTML-like snippets, simulated PDF extraction, etc.). These multi-format "narratives" mimic the real challenge of reading and interpreting inconsistent legacy documents. Table styles : \ n { RANDOM _ TABLE _ STYLE } -Checkbox styles : ' ' '[ ] , YES , NO , N /A , etc . ' ' ' ** RULES **: 1. Map every JSON level , component , and attribute to the correct layout / style . 2. Surround JSON data points with additional words / sentences to obscure parsing . 3. Include all data ( title , variables , metadata , content ) ; no extra sections . 4. End each data point with a brief , unrelated remark . 5. Add filler paragraphs ( definitions , domain info , etc .) not directly tied to the JSON content .</p><p>In doing so, we create a synthetic corpus that covers a broad range of domain contexts, from general manufacturing logs to specialized quality assurance frameworks. Each piece of unstructured text is logically equivalent to a filled JSON schema, yet differs in structure, style, and formatting.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.2">Reasoning Dataset: Reverse-Engineering from Text to Schema</head><p>We employ Distilled DeepSeekR1 Qwen 32B with the following prompt:</p><p>You are an AI assistant tasked with extracting structured data from a piece of text .</p><p>Inputs :</p><p>1. Text ( source of information )</p><p>2. Blank Schema ( unfilled JSON schema )</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.">Filled Schema ( final populated JSON )</head><p>Goals :</p><p>1. Compare Text + Blank Schema to the Filled Schema .</p><p>2. Explain step by step ( chain -of -thought ) how the text populates the blank schema .</p><p>3. Output only the reasoning steps ( thought process ) .</p><p>4. Cross -verify that this reasoning exactly produces the Filled Schema .</p><p>Format your final response as :</p><p>Chain of Thought Explanation : """</p><p>The LLM is instructed to output only its chain-of-thought reasoning, explicitly describing the mapping from text to schema. Such self-explaining prompts push the model to maintain strict schema fidelity while revealing the logic behind each structural decision. Because the prompt demands an explicit reasoning path, the LLM self-checks how each field is filled, minimizing random or malformed output. The chain-of-thought not only ensures correctness but also documents how the text was interpreted which is vital for regulated environments. By varying the domain (e.g., different types of QA reports) and text layout styles, we create a dataset that fosters LLM resilience to formatting quirks.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.3">GRPO Training on a Small Foundation Model</head><p>Once we finalize the reasoning dataset, we proceed to train a small foundation model-mirroring the minimalistic DeepSeek R1 Zero approach-using GRPO <ref type="bibr" target="#b2">[DA25]</ref>. We employ a 1.5B-parameter base model "to develop reasoning capabilities without any supervised data, focusing on their self-evolution through a pure reinforcement learning process" <ref type="bibr" target="#b2">[DA25]</ref>. By leveraging a group-based advantage calculation and carefully designed reward signals (e.g., schema compliance, correctness), we efficiently instill structured reasoning capabilities within a resource-constrained pipeline. By incorporating multiple reward functions <ref type="bibr">[ea23b]</ref> into the GRPO framework, we can simultaneously encourage format correctness (via r format) and content/domain correctness (via r equation). The combined reward drives training so that the model produces outputs that score highly on all relevant criteria. The entire process remains computationally light (e.g., 20 hours on an 8×H100 cluster), demonstrating that strict schema adherence can be achieved even with compact, low-overhead foundation models.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.3.1">JSON-Based Reward</head><p>This reward algorithm balances two aspects: (1) schema faithfulness via the key-value matching fraction, and (2) structural completeness via JSON length similarity. A high final reward indicates that the predicted JSON object closely matches the ground truth both in field contents and overall size.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.3.2">Format Verification Reward</head><p>The format check enforces correct usage of specialized tags, crucial for downstream tasks that rely on clearly separated reasoning (&lt;think&gt; block) and final answers (&lt;answer&gt; block). The binary reward (0 or 1) simplifies reinforcement signals, focusing exclusively on structural correctness rather than content fidelity. The optional logging step enables sampling a small fraction of completions for qualitative inspection, aiding diagnostic or future training data curation.</p><p>Algorithm 1 JSON-Based Reward Computation 1: Given: A list of completions C = {c 1 , . . . , c n } from the model. A list of ground-truth JSON objects G = {g 1 , . . . , g n }.</p><p>Each g i is a valid JSON string. for each pair (c i , g i ) in (C, G) do 5:</p><formula xml:id="formula_1">c ′ i ← "&lt;think&gt;" ∥ c i ▷ Insert &lt;think&gt; prefix 6:</formula><p>ans ← substring(c ′ i , ''&lt;answer&gt;'', ''&lt;/answer&gt;'')</p><p>7:</p><p>if ans is empty then 8:</p><formula xml:id="formula_2">r i ← 0 9:</formula><p>append r i to R; continue</p><p>10: end if ▷ Parse as JSON 11: parse ans into answer json; parse g i into gt json 12: if either parse fails then 13: r i ← 0 14: append r i to R; continue 15: end if ▷ Compute field overlap 16: K a ← keys(answer json) 17: K g ← keys(gt json) 18: total fields ← |K a ∪ K g | 19: matching fields ← k∈(Ka∩Kg) 1[answer json[k] = gt json[k]] 20: if total fields &gt; 0 then 21: key match score ← matching fields total fields 22: else 23: key match score ← 0 24: end if ▷ Compare JSON lengths 25: ℓ a ← length(answer json) or 1 26: ℓ g ← length(gt json) or 1 27: length ratio ← min(ℓa,ℓg) max(ℓa,ℓg) ▷ Calculate final reward 28: r i ← key match score+length ratio 2 29: clamp r i to [0, 1]; round to 1 decimal place 30: if r i ≥ 0.6 then 31: log c ′ i with 60% probability 32: end if 33: append r i to R 34: end for 35:</p><p>return R 36: end procedure Algorithm 2 Format Verification Reward 1: Goal: Assign a reward of 0 or 1 depending on whether a generated completion follows an expected structure using &lt;think&gt;...&lt;/think&gt; and &lt;answer&gt;...&lt;/answer&gt;.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>2: Inputs:</head><p>A list of completions C = {c 1 , . . . , c n } (model-generated).</p><p>A list of ground-truth objects G = {g 1 , . . . , g n } (not directly used here, but included for extensibility). A small probability p (e.g., 0.1) for selectively logging completions. 3: Output: A list of scalar rewards R = {r 1 , . . . , r n }, with r i ∈ {0, 1}. Synthesize prompt format:</p><formula xml:id="formula_3">c ′ i ← "&lt;think&gt;" ∥ c i ▷ Prepend "&lt;think&gt;" 7:</formula><p>Probabilistic logging:</p><formula xml:id="formula_4">Draw x ∼ U [0, 1]. 8: if x &lt; p then 9:</formula><p>Log c ′ i to file for future analysis. Format check via regex: Define R = "^&lt;think&gt;([^&lt;]*(?:&lt;(?!/?think&gt;)[^&lt;]*)*)&lt;/think&gt;\n&lt;answer&gt;([\\s\\S]*?)&lt;/answer&gt;$" Match R against c ′ i .</p><p>12:</p><p>if match fails (no correct grouping) then 13:</p><formula xml:id="formula_5">r i ← 0 14: else 15: r i ← 1 16: end if 17:</formula><p>Append r i to R. 18: end for 19: return R Algorithm 3 GRPO with Multiple Reward Functions Notation and Setup Define a combined reward:</p><formula xml:id="formula_6">R comb (c) = f r 1 (c), r 2 (c), . . . , r K (c) ,</formula><p>where f can be a weighted sum, mean, or any aggregator, π θ be the current policy (a language model parameterized by θ), {r k } K k=1 be K reward functions (e.g., r format , r equation )</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>Group-Based Relative Advantage</head><p>Let G = { c 1 , . . . , c M } be a group of M outputs sampled from π θ .</p><p>For each c i , compute a combined reward R i = R comb (c i ).</p><p>Define the relative (rank-based) advantage:</p><formula xml:id="formula_7">A (rel) (c i ) = 1 M -1 j̸ =i 1 R i &gt; R j ,</formula><p>which is the fraction of samples in G that have lower reward than c i .</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>GRPO Update</head><p>Update θ to favor completions with higher relative advantage.</p><p>The GRPO loss for group G is:</p><formula xml:id="formula_8">L GRPO (θ) = - ci∈G A (rel) (c i ) log π θ (c i ) + Reg(θ),</formula><p>where Reg(θ) includes regularization terms (e.g., entropy bonus, KL-divergence). </p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.4">Supervised Fine-Tuning</head><p>While reinforcement learning confers advanced reasoning capacities, but supervised fine-tuning provides the final task-and schema-specific "polish" that ensures outputs are both logically grounded and robustly aligned with real-world standards. <ref type="bibr" target="#b2">[DA25]</ref>. Reinforcement learning (RL) optimizes a policy for broad correctness or format adherence but can overlook rare or domain-specific intricacies (e.g., specialized field naming conventions, unusual data types). SFT exposes the model to explicit examples that emphasize precisely how to handle real-world edge cases, ensuring no field or condition is left under-represented. Although RL fosters adaptability, the learned policy may still exhibit variability in ambiguous contexts or unrepresented task scenarios <ref type="bibr" target="#b2">[DA25]</ref>. SFT, by contrast, anchors the final policy to concrete labeled examples, reducing output drift. By overlaying a final SFT stage, ThinkJSON tightly aligns its already-developed reasoning to the strict output requirements (e.g., correct JSON keys, mandatory fields), producing outputs suitable for audit or compliance. For SFT (and SFT+LoRA) we used the Unsloth training framework on an A100 GPU, completing the process in about 3 hours.</p><p>### Role :</p><p>You are an expert data extractor mapping hierarchical text to a given JSON Schema .</p><p>### DATA INPUT : Text ; Blank JSON Schema ### TASK REQUIREMENT :</p><p>1. Map all relevant text to the JSON Schema .</p><p>2. Output in two sections :</p><p>-&lt; think &gt;: Reasoning -&lt; answer &gt;: Filled JSON ### STRICT RULES :</p><p>1. Provide both &lt; think &gt; and &lt; answer &gt;.</p><p>-If minimal reasoning , say : \" Direct mapping from text to schema .\" 2. Map text exactly to the JSON Schema ( no omission / alteration ) .</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.">Preserve hierarchy ( ROOT</head><formula xml:id="formula_9">$\ to $ SECTION $\ to $ SUBSECTION $\ to $ DETAIL \_ N )</formula><p>4. Correctly set attributes ( id , idc , idx , level \_ type , component \_ type , etc .) .</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="5.">JSON Format :</head><p>-Escape quotes as \"</p><p>-Replace newlines with \\ n -No trailing commas -Only double quotes 6. Explain key decisions in &lt; think &gt;.</p><p>### IMPORTANT :</p><p>If &lt; think &gt; or &lt; answer &gt; is missing , response is incomplete .\") , axis =1) </p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4">Evaluation</head><p>We evaluated five models: ThinkJSON, Original DeepSeek R1 (671B), Distilled DeepSeek R1 (Qwen-1.5B / Qwen-7B) and Gemini 2.0 Flash (70B) which specializes on structured output generation <ref type="bibr">[tea25]</ref>, on a structured data extraction benchmark involving 6.5K rows. Each row was processed to produce or omit a valid JSON object, and we measured metrics including:</p><p>• Rows With No Output: Number of rows for which the model produced no structured output.</p><p>• Rows With Valid JSON: Number of rows resulting in syntactically valid JSON objects.</p><p>• Mean Match Percentage: Average proportion of fields correctly mapped.</p><p>• Mean Noise Percentage: Average proportion of extraneous or malformed tokens within the extracted JSON. As illustrated, ThinkJSON yields strong results, with a 62.41% mean match (highest of all five models) and the lowest 0.27% mean noise, indicating minimal extraneous output. The Original DeepSeek R1 also achieves relatively high valid-JSON coverage but shows a lower mean match (41.43%) and higher noise (11.14%). The two distilled variants of DeepSeek R1-Qwen 1.5B and Qwen 7B-exhibit weaker performance overall, with high rates of no extracted JSON or large amounts of noise. Meanwhile, Gemini 2.0 Flash achieves a midrange mean match of 42.88% but suffers from significant noise at 10.86%. These findings underscore the effectiveness of our structured reasoning approach in producing concise, schema-valid outputs.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="5">Discussion and Future Direction</head><p>Our experimental findings confirm that the reasoning-driven, schema-constrained generation pipeline is both broadly applicable-capable of handling diverse reasoning tasks beyond purely mathematical or scientific domains-and budget-conscious, as it requires comparatively moderate GPU resources and a modest dataset of reasoning examples. This balanced approach addresses a critical need in bio-manufacturing compliance , where AI systems must deliver not only correct structure but also reliable, domain-specific reasoning to meet regulatory standards <ref type="bibr">[ea22a]</ref>, <ref type="bibr">[ea25a]</ref>.</p><p>The hallmark of our framework is integrating compliance considerations at the core of the generation process. Rather than relying on prompt-based or post-hoc solutions, our pipeline combines schema adherence objectives with iterative reasoning loops, thus reducing the need for manual oversight. This focus on strict output validation resonates with bio-manufacturing's regulatory requirements-where precise field mappings and hierarchical consistency are crucial for electronic batch records and industry audits.</p><p>While we have employed a 1.5B-parameter foundation model, our method is readily scalable to bigger backbones (e.g., 7B parameters). Larger models could potentially yield richer context interpretation and more robust handling of rare or domain-specific phenomena. In future work, we plan to explore how increased capacity further expands the set of reasoning scenarios the model can tackle while maintaining resource efficiency-a pivotal benefit in industrial adoption.</p><p>Overall, this reinforcement + fine-tuning pipeline for structured text generation offers a flexible, compliance-aware approach that applies universal reasoning principles-spanning regulated biomanufacturing tasks and broader domains-without incurring prohibitive computational overhead. This synergy of versatility and cost-effectiveness positions our method as a significant step forward in delivering reliable, schema-adherent AI-driven solutions.</p></div><figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_0"><head>Figure 1 :</head><label>1</label><figDesc>Figure 1: "Think inside the JSON" pipeline</figDesc><graphic coords="4,74.34,72.02,463.29,616.86" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_1"><figDesc>You are an expert in generating hierarchical text documents from JSON Object data points . ** Task **: Convert the JSON Object into an unstructured , paragraph -based document . ** Given Data **: ** Domain **; ** JSON Schema **; ** JSON Object ** ** OUTPUT FORMAT ** ( enclosed strictly within &lt; text &gt;) :for components / levels : \ n { RANDOM _ LAYOUT } -</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_3"><head>4:</head><figDesc>Initialize an empty rewards list: R ← [ ]. 5: for each pair (c i , g i ) in (C, G) do 6:</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_5"><head>Figure 2 :</head><label>2</label><figDesc>Figure 2: GRPO Training Metrics</figDesc><graphic coords="10,74.34,402.63,463.33,130.45" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_6"><head>Figure 3 :</head><label>3</label><figDesc>Figure 3: SFT Training Metrics</figDesc><graphic coords="11,74.34,407.04,463.29,205.47" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_7"><head>Figure</head><figDesc>Figure 4: Performance Comparison</figDesc><graphic coords="12,74.34,194.54,463.32,277.35" type="bitmap" /></figure>
+		</body>
+		<back>
+			<div type="references">
+
+				<listBibl>
+
+<biblStruct xml:id="b0">
+	<monogr>
+		<ptr target="https://arxiv.org/pdf/arXiv:2402.03300" />
+		<title level="m">Pushing the Limits of Mathematical Reasoning in Open Language Models</title>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b1">
+	<monogr>
+		<title level="m" type="main">Efficient Guided Generation for Large Language Models</title>
+		<author>
+			<persName><forename type="first">Brandon</forename><forename type="middle">T</forename><surname>Remi Louf</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Willard</surname></persName>
+		</author>
+		<ptr target="https://arxiv.org/pdf/2307.09702" />
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b2">
+	<monogr>
+		<author>
+			<persName><forename type="first">Deepseek-Ai</forename></persName>
+		</author>
+		<ptr target="https://arxiv.org/pdf/2501.12948" />
+		<title level="m">Deepeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning</title>
+		<imprint>
+			<date type="published" when="2025">2025</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b3">
+	<monogr>
+		<author>
+			<persName><forename type="first">Nico</forename><surname>Erdmann</surname></persName>
+		</author>
+		<ptr target="https://ispe.org/pharmaceutical-engineering/march-april-2022/ai-maturity-model-gxp-application-foundation-ai" />
+		<title level="m">Maturity Model for GxP Application: A Foundation for AI Validation</title>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b4">
+	<analytic>
+		<title/>
+		<ptr target="https://arxiv.org/abs/2212.10560" />
+	</analytic>
+	<monogr>
+		<title level="j">Yizhong Wang et all. Self-Instruct: Aligning Language Models with Self-Generated Instructions</title>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b5">
+	<analytic>
+		<title/>
+		<ptr target="https://arxiv.org/abs/2303.17651" />
+	</analytic>
+	<monogr>
+		<title level="j">Aman Madaan et all. Self-Refine: Iterative Refinement with Self-Feedback</title>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b6">
+	<monogr>
+		<author>
+			<persName><forename type="first">Christoph</forename><surname>Dann</surname></persName>
+		</author>
+		<ptr target="https://proceedings.mlr.press/v202/dann23a.html" />
+		<title level="m">Reinforcement Learning Can Be More Efficient with Multiple Rewards</title>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b7">
+	<monogr>
+		<author>
+			<persName><forename type="first">P</forename><surname>Wang</surname></persName>
+		</author>
+		<ptr target="https://arxiv.org/pdf/2312.08935" />
+		<title level="m">Math-Shepherd: A Labelfree Step-by-Step Verifier for LLMs in Mathematical Reasoning</title>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b8">
+	<monogr>
+		<author>
+			<persName><forename type="first">Connor</forename><surname>Shorten</surname></persName>
+		</author>
+		<ptr target="https://arxiv.org/abs/2408.11061" />
+		<title level="m">JSON Response Formatting with Large Language Models</title>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b9">
+	<monogr>
+		<title level="m" type="main">Large Language Model-Driven Structured Output: A Comprehensive Benchmark and Spatial Data Generation Framework</title>
+		<author>
+			<persName><forename type="first">Diya</forename><surname>Li</surname></persName>
+		</author>
+		<ptr target="https://www.mdpi.com/2220-9964/13/11/405" />
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b10">
+	<analytic>
+		<title level="a" type="main">We Need Structured Output</title>
+		<author>
+			<persName><forename type="first">Michael</forename><surname>Liu</surname></persName>
+		</author>
+		<ptr target="https://lxieyang.github.io/assets/files/pubs/llm-constraints-2024/llm-constraints-2024.pdf" />
+	</analytic>
+	<monogr>
+		<title level="m">Towards User-centered Constraints on Large Language Model Output</title>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b11">
+	<monogr>
+		<title level="m" type="main">Flexible and efficient structured generation engine for large language models</title>
+		<author>
+			<persName><forename type="first">Yixin</forename><surname>Dong</surname></persName>
+		</author>
+		<ptr target="https://arxiv.org/pdf/2411.15100" />
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b12">
+	<analytic>
+		<title level="a" type="main">An Overview on Pharmaceutical Regulatory Affairs Using Artificial Intelligence</title>
+		<author>
+			<persName><forename type="first">Vaishali</forename><surname>Aher</surname></persName>
+		</author>
+		<ptr target="https://www.ijpsjournal.com/article" />
+	</analytic>
+	<monogr>
+		<title level="j">An+ Overview+ on+ Pharmaceutical+ Regulatory+ Affairs+ Using+ Artificial+ Intelligence+</title>
+		<imprint>
+			<date type="published" when="2025">2025</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b13">
+	<monogr>
+		<author>
+			<persName><forename type="first">Saibo</forename><surname>Geng</surname></persName>
+		</author>
+		<ptr target="https://arxiv.org/html/2501.10868" />
+		<title level="m">Generating Structured Outputs from Language Models: Benchmark and Studies</title>
+		<imprint>
+			<date type="published" when="2025">2025</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b14">
+	<monogr>
+		<ptr target="https://arxiv.org/html/2502.04498" />
+		<title level="m">Zhaoyang Wang et all. Verifiable Format Control for Large Language Model Generations</title>
+		<imprint>
+			<date type="published" when="2025">2025</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b15">
+	<monogr>
+		<author>
+			<persName><forename type="first">Maryann</forename><surname>Labant</surname></persName>
+		</author>
+		<ptr target="https://www.genengnews.com/topics/bioprocessing" />
+		<title level="m">Smart Biomanufacturing: From piecemeal to all of a piece</title>
+		<imprint>
+			<date type="published" when="2025">2025</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b16">
+	<monogr>
+		<title/>
+		<author>
+			<persName><forename type="first">Tharsis</forename><surname>Souza</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2024">Taming LLMs. 2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b17">
+	<monogr>
+		<author>
+			<persName><forename type="first">Qwen</forename><surname>Team</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Qwen</surname></persName>
+		</author>
+		<ptr target="https://qwenlm.github.io/blog/qwen2.5" />
+		<title level="m">Qwen2.5: A Party of Foundation Models</title>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct xml:id="b18">
+	<monogr>
+		<author>
+			<persName><forename type="first">A</forename><forename type="middle">I</forename><surname>Google</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Team</surname></persName>
+		</author>
+		<ptr target="https://ai.google.dev/gemini-api/docs/structured-output?lang=python" />
+		<title level="m">Generate Structured Output with the Gemini API</title>
+		<imprint>
+			<date type="published" when="2025">2025</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+				</listBibl>
+			</div>
+		</back>
+	</text>
+</TEI>
