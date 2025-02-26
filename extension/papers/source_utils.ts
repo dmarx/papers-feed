@@ -1,74 +1,79 @@
 // extension/papers/source_utils.ts
 // Utilities for supporting multiple paper sources while maintaining compatibility
 
-/**
- * Source type definitions and patterns
- */
-interface SourceTypeInfo {
+import { SourceInfo } from './types';
+
+// Source type definitions
+interface SourceTypeDefinition {
   prefix: string;
-  urlPatterns: RegExp[];
-  idFormat?: RegExp;
+  url_patterns: RegExp[];
+  id_extractors: ((match: RegExpMatchArray) => string)[];
+  id_format?: RegExp;
 }
 
-/**
- * Result of source detection from URL
- */
-export interface SourceInfo {
-  type: string;
-  id: string;
-  primary_id: string;
-  url: string;
-}
-
-/**
- * Source type definitions
- */
-const SOURCE_TYPES: Record<string, SourceTypeInfo> = {
+const SOURCE_TYPES: Record<string, SourceTypeDefinition> = {
   'arxiv': {
     prefix: 'arxiv',
-    urlPatterns: [
+    url_patterns: [
       /arxiv\.org\/(abs|pdf|html)\/([0-9.]+)/,
       /arxiv\.org\/abs\/([0-9.]+)(v[0-9]+)?/
     ],
-    idFormat: /[0-9]{4}\.[0-9]{4,5}(v[0-9]+)?/
+    id_extractors: [
+      (match) => match[2],
+      (match) => match[1] + (match[2] || '')
+    ],
+    id_format: /[0-9]{4}\.[0-9]{4,5}(v[0-9]+)?/
   },
   'semanticscholar': {
     prefix: 's2',
-    urlPatterns: [
+    url_patterns: [
       /semanticscholar\.org\/paper\/([a-f0-9]+)/,
       /s2-research\.org\/papers\/([a-f0-9]+)/
     ],
-    idFormat: /[a-f0-9]{40}/
+    id_extractors: [
+      (match) => match[1],
+      (match) => match[1]
+    ],
+    id_format: /[a-f0-9]{40}/
   },
   'doi': {
     prefix: 'doi',
-    urlPatterns: [
+    url_patterns: [
       /doi\.org\/(10\.[0-9.]+\/[a-zA-Z0-9._\-/:()\[\]]+)/
     ],
-    idFormat: /10\.[0-9.]+\/[a-zA-Z0-9._\-\/:()\[\]]+/
+    id_extractors: [
+      (match) => match[1]
+    ],
+    id_format: /10\.[0-9.]+\/[a-zA-Z0-9._\-/:()\[\]]+/
   },
   'acm': {
     prefix: 'doi',  // ACM uses DOIs
-    urlPatterns: [
+    url_patterns: [
       /dl\.acm\.org\/doi\/(10\.[0-9.]+\/[a-zA-Z0-9._\-/:()\[\]]+)/
     ],
-    idFormat: /10\.[0-9.]+\/[a-zA-Z0-9._\-\/:()\[\]]+/
+    id_extractors: [
+      (match) => match[1]
+    ],
+    id_format: /10\.[0-9.]+\/[a-zA-Z0-9._\-/:()\[\]]+/
   },
   'openreview': {
     prefix: 'openreview',
-    urlPatterns: [
+    url_patterns: [
       /openreview\.net\/forum\?id=([a-zA-Z0-9_\-]+)/
     ],
-    idFormat: /[a-zA-Z0-9_\-]+/
+    id_extractors: [
+      (match) => match[1]
+    ],
+    id_format: /[a-zA-Z0-9_\-]+/
   }
 };
 
 /**
  * Format a source-specific ID into a universal primary ID format
  * 
- * @param source - Source type (e.g. 'arxiv', 'doi')
- * @param id - Original source-specific identifier
- * @returns Formatted primary ID
+ * @param {string} source - Source type (e.g. 'arxiv', 'doi')
+ * @param {string} id - Original source-specific identifier
+ * @returns {string} Formatted primary ID
  */
 export function formatPrimaryId(source: string, id: string): string {
   // Use source-specific prefixes
@@ -87,8 +92,8 @@ export function formatPrimaryId(source: string, id: string): string {
 /**
  * Parse a primary ID into its source type and original source ID
  * 
- * @param prefixedId - The primary ID in the format "{source_prefix}.{id}"
- * @returns Object with source type and source ID
+ * @param {string} prefixedId - The primary ID in the format "{source_prefix}.{id}"
+ * @returns {Object} Object with source type and source ID
  */
 export function parseId(prefixedId: string): { type: string; id: string } {
   // Split at the first dot
@@ -96,21 +101,24 @@ export function parseId(prefixedId: string): { type: string; id: string } {
   const id = idParts.join('.'); // Rejoin in case ID contains periods
   
   // Map prefix to source type
-  const sourceType = Object.entries(SOURCE_TYPES).find(
-    ([_, info]) => info.prefix === prefix
-  )?.[0] || 'generic';
+  const prefixToSource: Record<string, string> = {
+    'arxiv': 'arxiv',
+    's2': 'semanticscholar',
+    'doi': 'doi',
+    'openreview': 'openreview'
+  };
   
-  // For DOIs, restore slashes
-  const originalId = sourceType === 'doi' ? id.replace(/_/g, '/') : id;
-  
-  return { type: sourceType, id: originalId };
+  return {
+    type: prefixToSource[prefix] || 'generic',
+    id: prefix === 'doi' ? id.replace(/_/g, '/') : id
+  };
 }
 
 /**
  * Get a legacy-compatible ID (for backward compatibility)
  * 
- * @param primaryId - The primary ID (can be prefixed or legacy)
- * @returns Legacy-compatible ID
+ * @param {string} primaryId - The primary ID (can be prefixed or legacy)
+ * @returns {string} Legacy-compatible ID
  */
 export function getLegacyId(primaryId: string): string {
   // If there's no prefix, assume it's already a legacy ID
@@ -132,17 +140,16 @@ export function getLegacyId(primaryId: string): string {
 /**
  * Detect paper source and ID from URL
  * 
- * @param url - URL to detect source from
- * @returns Source information or null if not detected
+ * @param {string} url - URL to detect source from
+ * @returns {SourceInfo|null} Source information or null if not detected
  */
 export function detectSourceFromUrl(url: string): SourceInfo | null {
-  for (const [sourceType, sourceInfo] of Object.entries(SOURCE_TYPES)) {
-    for (const pattern of sourceInfo.urlPatterns) {
-      const match = url.match(pattern);
+  // Check each source type
+  for (const [sourceType, definition] of Object.entries(SOURCE_TYPES)) {
+    for (let i = 0; i < definition.url_patterns.length; i++) {
+      const match = url.match(definition.url_patterns[i]);
       if (match) {
-        // The last capturing group should be the ID
-        // Fix the error by correctly accessing the last match group
-        const id = match[match.length - 1];
+        const id = definition.id_extractors[i](match);
         return {
           type: sourceType,
           id: id,
@@ -159,25 +166,22 @@ export function detectSourceFromUrl(url: string): SourceInfo | null {
 /**
  * Checks if a string is in the new prefixed format
  * 
- * @param id - ID to check
- * @returns True if the ID is in the new format
+ * @param {string} id - ID to check
+ * @returns {boolean} True if the ID is in the new format
  */
 export function isNewFormat(id: string): boolean {
-  // Get all valid prefixes
-  const validPrefixes = Object.values(SOURCE_TYPES).map(
-    info => `${info.prefix}.`
-  );
-  validPrefixes.push('generic.'); // Also add generic prefix
+  // Check if it has a valid prefix
+  const validPrefixes = Object.values(SOURCE_TYPES).map(def => `${def.prefix}.`);
+  validPrefixes.push('generic.'); // Add generic prefix
   
-  // Check if it has any valid prefix
   return validPrefixes.some(prefix => id.startsWith(prefix));
 }
 
 /**
  * Gets a display label for a source type
  * 
- * @param sourceType - Source type
- * @returns Human-readable label
+ * @param {string} sourceType - Source type
+ * @returns {string} Human-readable label
  */
 export function getSourceLabel(sourceType: string): string {
   const labels: Record<string, string> = {
@@ -189,4 +193,44 @@ export function getSourceLabel(sourceType: string): string {
   };
   
   return labels[sourceType] || sourceType.charAt(0).toUpperCase() + sourceType.slice(1);
+}
+
+/**
+ * Validate if an ID matches the expected format for its source
+ * 
+ * @param {string} sourceType - Source type
+ * @param {string} id - Source ID
+ * @returns {boolean} Whether the ID is valid
+ */
+export function validateSourceId(sourceType: string, id: string): boolean {
+  const definition = SOURCE_TYPES[sourceType];
+  if (!definition || !definition.id_format) {
+    return true; // If no format is defined, assume valid
+  }
+  
+  return definition.id_format.test(id);
+}
+
+/**
+ * Get canonical URL for a paper
+ * 
+ * @param {string} sourceType - Source type
+ * @param {string} id - Source ID
+ * @returns {string} Canonical URL
+ */
+export function getCanonicalUrl(sourceType: string, id: string): string {
+  switch (sourceType) {
+    case 'arxiv':
+      return `https://arxiv.org/abs/${id}`;
+    case 'semanticscholar':
+      return `https://www.semanticscholar.org/paper/${id}`;
+    case 'doi':
+      return `https://doi.org/${id}`;
+    case 'acm':
+      return `https://dl.acm.org/doi/${id}`;
+    case 'openreview':
+      return `https://openreview.net/forum?id=${id}`;
+    default:
+      return id.startsWith('10.') ? `https://doi.org/${id}` : "";
+  }
 }
