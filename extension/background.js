@@ -3,6 +3,10 @@ import { GitHubStoreClient } from 'gh-store-client';
 import { PaperManager } from './papers/manager';
 import { loadSessionConfig, getConfigurationInMs } from './config/session.js';
 import { ReadingSessionData } from './papers/types';
+// Added imports for multi-source support
+import { MultiSourceDetector } from './papers/detector';
+import { getLegacyId } from './papers/source_utils';
+import { initMultiSourceSupport } from './background_multi_source';
 
 let githubToken = '';
 let githubRepo = '';
@@ -77,7 +81,7 @@ class ReadingSession {
            idleSeconds: Math.round(this.idleTime / 1000)
        };
     }
-    }
+}
 
 // Load credentials and configuration when extension starts
 async function loadCredentials() {
@@ -97,8 +101,33 @@ async function loadCredentials() {
     sessionConfig = getConfigurationInMs(await loadSessionConfig());
     console.log('Session configuration loaded:', sessionConfig);
 
+    // Initialize multi-source support
+    enhancedInitialization();
+    
     // Initialize debug objects after everything is loaded
     initializeDebugObjects();
+}
+
+// Initialize multi-source support
+function enhancedInitialization() {
+    // Initialize multi-source support
+    const { processPaperUrl, enhancedHandleTabChange } = initMultiSourceSupport();
+    
+    // Store the original functions for compatibility
+    const originalHandleTabChange = handleTabChange;
+    const originalProcessArxivUrl = processArxivUrl;
+    
+    // Replace with enhanced versions
+    window.processArxivUrl = originalProcessArxivUrl; // Keep for compatibility
+    window.processPaperUrl = processPaperUrl;
+    
+    // Override the handleTabChange function
+    window.handleTabChange = (tab) => {
+        return enhancedHandleTabChange(tab, originalHandleTabChange);
+    };
+    
+    // Debug information
+    console.log('Multi-source paper support initialized');
 }
 
 // Listen for credential changes
@@ -209,6 +238,7 @@ chrome.webNavigation.onCompleted.addListener(async (details) => {
     }]
 });
 
+// Original handleTabChange function (will be replaced by enhanced version)
 async function handleTabChange(tab) {
     const isArxiv = tab.url?.includes('arxiv.org/');
     console.log('Tab change detected:', { isArxiv, url: tab.url });
@@ -235,13 +265,66 @@ async function handleTabChange(tab) {
     }
 }
 
+// Enhanced handleTabChange function for multi-source support
+async function enhancedHandleTabChange(tab) {
+    // Use detector to identify paper source
+    const url = tab?.url || '';
+    const sourceInfo = MultiSourceDetector.detect(url);
+    const isPaperUrl = !!sourceInfo;
+    
+    console.log('Tab change detected:', { isPaperUrl, url });
+    
+    if (!isPaperUrl) {
+        console.log('Not a recognized paper page, ending current session');
+        await endCurrentSession();
+        return;
+    }
+    
+    if (currentSession) {
+        console.log('Ending existing session before starting new one');
+        await endCurrentSession();
+    }
+    
+    console.log('Processing paper URL for new session');
+    
+    // Use appropriate processor based on source
+    let paperData;
+    if (sourceInfo.type === 'arxiv') {
+        // Use original arXiv processor for compatibility
+        paperData = await processArxivUrl(url);
+        // Add multi-source fields
+        if (paperData) {
+            paperData.source = 'arxiv';
+            paperData.sourceId = paperData.arxivId;
+            paperData.primary_id = sourceInfo.primary_id;
+        }
+    } else {
+        // Use new processor for other sources
+        paperData = await processPaperUrl(url);
+    }
+    
+    if (paperData) {
+        // Use appropriate ID based on availability - maintaining compatibility
+        const trackingId = paperData.arxivId || paperData.sourceId;
+        
+        console.log('Starting new session for:', trackingId);
+        currentSession = new ReadingSession(trackingId, sessionConfig);
+        const metadata = currentSession.getMetadata();
+        console.log('New session created:', metadata);
+        startActivityTracking();
+        
+        // Store the paper data
+        currentPaperData = paperData;
+    }
+}
+
 async function endCurrentSession() {
     if (currentSession && currentPaperData) {
-        console.log('Ending session for:', currentPaperData.arxivId);
+        console.log('Ending session for:', currentPaperData.arxivId || currentPaperData.sourceId);
         const sessionData = currentSession.finalize();
         if (sessionData) {
             console.log('Creating reading event:', sessionData);
-            await createReadingEvent(currentPaperData, sessionData);
+            await enhancedCreateReadingEvent(currentPaperData, sessionData);
         }
         currentSession = null;
         currentPaperData = null;
@@ -267,6 +350,7 @@ function stopActivityTracking() {
     }
 }
 
+// Original createReadingEvent function
 async function createReadingEvent(paperData, sessionData) {
     if (!paperManager || !paperData) {
         console.error('Missing required data for creating reading event:', {
@@ -295,6 +379,47 @@ async function createReadingEvent(paperData, sessionData) {
     }
 }
 
+// Enhanced createReadingEvent function for multi-source support
+async function enhancedCreateReadingEvent(paperData, sessionData) {
+    if (!paperManager || !paperData) {
+        console.error('Missing required data for creating reading event:', {
+            hasPaperManager: !!paperManager,
+            hasPaperData: !!paperData
+        });
+        return;
+    }
+
+    try {
+        // Determine which ID to use for logging
+        const paperIdForLogging = paperData.arxivId || 
+                            (paperData.source && paperData.sourceId ? 
+                            paperData.sourceId : 
+                            null);
+        
+        if (!paperIdForLogging) {
+            console.error('No valid paper ID found for logging');
+            return;
+        }
+        
+        await paperManager.logReadingSession(
+            paperIdForLogging,
+            sessionData,
+            paperData
+        );
+        
+        console.log('Reading session logged:', {
+            paperId: paperIdForLogging,
+            sessionId: sessionData.session_id,
+            activeTime: sessionData.duration_seconds,
+            idleTime: sessionData.idle_seconds,
+            totalTime: sessionData.total_elapsed_seconds
+        });
+        
+    } catch (error) {
+        console.error('Error logging reading session:', error);
+    }
+}
+
 async function createGithubIssue(paperData) {
     if (!paperManager) {
         console.error('Paper manager not initialized');
@@ -303,7 +428,7 @@ async function createGithubIssue(paperData) {
 
     try {
         const existingPaper = await paperManager.getOrCreatePaper(paperData);
-        console.log('Paper metadata stored/retrieved:', existingPaper.arxivId);
+        console.log('Paper metadata stored/retrieved:', existingPaper.arxivId || existingPaper.sourceId);
         return existingPaper;
     } catch (error) {
         console.error('Error handling paper metadata:', error);
