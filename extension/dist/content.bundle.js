@@ -1,10 +1,10 @@
-// extension/content.js
-console.log('ArXiv extension content script loaded');
+// content.js
+// Enhanced to support multiple paper sources
+console.log('Academic Paper Tracker content script loaded');
 
-// CSS for the annotation UI
-// Updated styles section
+// CSS for the annotation UI - Updated with source-specific styling
 const STYLES = `
-.arxiv-annotator {
+.paper-annotator {
     display: inline-block;
     margin-left: 4px;
     cursor: pointer;
@@ -14,12 +14,12 @@ const STYLES = `
     vertical-align: baseline;
 }
 
-.arxiv-annotator:hover {
+.paper-annotator:hover {
     opacity: 1;
 }
 
-.arxiv-popup {
-    position: absolute;  /* Changed from fixed to absolute */
+.paper-popup {
+    position: absolute;
     background: white;
     border: 1px solid #ddd;
     border-radius: 6px;
@@ -27,30 +27,56 @@ const STYLES = `
     box-shadow: 0 4px 12px rgba(0,0,0,0.15);
     width: 300px;
     z-index: 10000;
-    box-sizing: border-box;  /* Added to ensure padding is included in width */
+    box-sizing: border-box;
 }
 
-.arxiv-popup-header {
+.paper-popup-header {
     font-weight: bold;
     margin-bottom: 8px;
     line-height: 1.4;
     font-size: 1em;
 }
 
-.arxiv-popup-meta {
+.paper-popup-meta {
     color: #666;
     font-size: 0.85em;
     margin-bottom: 12px;
     line-height: 1.4;
 }
 
-.arxiv-popup-buttons {
+.paper-popup-source {
+    display: inline-block;
+    font-size: 11px;
+    border-radius: 4px;
+    padding: 2px 6px;
+    margin-bottom: 10px;
+    color: white;
+    font-weight: 500;
+}
+
+.source-arxiv {
+    background-color: #B31B1B;
+}
+
+.source-doi, .source-acm {
+    background-color: #0277bd;
+}
+
+.source-semanticscholar {
+    background-color: #2e7d32;
+}
+
+.source-openreview {
+    background-color: #6d4c41;
+}
+
+.paper-popup-buttons {
     display: flex;
     gap: 8px;
     margin: 8px 0;
 }
 
-.arxiv-popup button {
+.paper-popup button {
     padding: 6px 12px;
     border: 1px solid #ddd;
     border-radius: 4px;
@@ -60,18 +86,18 @@ const STYLES = `
     font-size: 0.9em;
 }
 
-.arxiv-popup button:hover {
+.paper-popup button:hover {
     background: #e8e8e8;
     border-color: #ccc;
 }
 
-.arxiv-popup button.active {
+.paper-popup button.active {
     background: #e0e0e0;
     border-color: #aaa;
 }
 
-.arxiv-popup textarea {
-    width: calc(100% - 16px);  /* Account for padding */
+.paper-popup textarea {
+    width: calc(100% - 16px);
     min-height: 80px;
     margin: 8px 0;
     padding: 8px;
@@ -81,35 +107,35 @@ const STYLES = `
     font-family: inherit;
     font-size: 0.9em;
     line-height: 1.4;
-    box-sizing: border-box;  /* Added to ensure padding is included in width */
+    box-sizing: border-box;
 }
 
-.arxiv-popup textarea:focus {
+.paper-popup textarea:focus {
     outline: none;
     border-color: #aaa;
 }
 
-.arxiv-popup-actions {
+.paper-popup-actions {
     display: flex;
     justify-content: flex-end;
     gap: 8px;
     margin-top: 12px;
 }
 
-.arxiv-popup .save-button {
+.paper-popup .save-button {
     background: #2563eb;
     color: white;
     border-color: #2563eb;
 }
 
-.arxiv-popup .save-button:hover {
+.paper-popup .save-button:hover {
     background: #1d4ed8;
     border-color: #1d4ed8;
 }
 
 /* Loading state */
-.arxiv-popup-header:empty::after,
-.arxiv-popup-header:contains('Loading...') {
+.paper-popup-header:empty::after,
+.paper-popup-header:contains('Loading...') {
     content: '';
     display: inline-block;
     width: 12px;
@@ -122,6 +148,27 @@ const STYLES = `
 
 @keyframes spin {
     to { transform: rotate(360deg); }
+}
+
+/* Source-specific annotator icons */
+.annotator-arxiv::after {
+    content: '📝';
+}
+
+.annotator-doi::after, .annotator-acm::after {
+    content: '🔍';
+}
+
+.annotator-semanticscholar::after {
+    content: '📊';
+}
+
+.annotator-openreview::after {
+    content: '📋';
+}
+
+.annotator-generic::after {
+    content: '📄';
 }
 `;
 
@@ -137,7 +184,7 @@ let activePopup = null;
 document.addEventListener('click', (e) => {
     if (activePopup && 
         !activePopup.contains(e.target) && 
-        !e.target.classList.contains('arxiv-annotator')) {
+        !e.target.classList.contains('paper-annotator')) {
         activePopup.parentElement?.remove(); // Remove the wrapper
         activePopup = null;
     }
@@ -145,6 +192,86 @@ document.addEventListener('click', (e) => {
 
 // Cache for paper metadata
 const metadataCache = new Map();
+
+// Source definitions for URL matching
+const PAPER_SOURCES = [
+    {
+        type: 'arxiv',
+        urlPatterns: [
+            /arxiv\.org\/abs\/([0-9.]+)/,
+            /arxiv\.org\/pdf\/([0-9.]+)\.pdf/,
+            /arxiv\.org\/\w+\/([0-9.]+)/
+        ],
+        getIdFromMatch: (match) => match[1]
+    },
+    {
+        type: 'doi',
+        urlPatterns: [
+            /doi\.org\/(10\.[0-9.]+\/[a-zA-Z0-9._\-/:()\[\]]+)/
+        ],
+        getIdFromMatch: (match) => match[1]
+    },
+    {
+        type: 'acm',
+        urlPatterns: [
+            /dl\.acm\.org\/doi\/(10\.[0-9.]+\/[a-zA-Z0-9._\-/:()\[\]]+)/
+        ],
+        getIdFromMatch: (match) => match[1]
+    },
+    {
+        type: 'semanticscholar',
+        urlPatterns: [
+            /semanticscholar\.org\/paper\/([a-f0-9]+)/,
+            /s2-research\.org\/papers\/([a-f0-9]+)/
+        ],
+        getIdFromMatch: (match) => match[1]
+    },
+    {
+        type: 'openreview',
+        urlPatterns: [
+            /openreview\.net\/forum\?id=([a-zA-Z0-9_\-]+)/
+        ],
+        getIdFromMatch: (match) => match[1]
+    }
+];
+
+/**
+ * Detect paper source and ID from URL
+ * @param {string} url URL to check for paper identifiers
+ * @returns {Object|null} Source information or null if not a paper URL
+ */
+function detectPaperSource(url) {
+    // Check each source type
+    for (const source of PAPER_SOURCES) {
+        for (let i = 0; i < source.urlPatterns.length; i++) {
+            const match = url.match(source.urlPatterns[i]);
+            if (match) {
+                return {
+                    type: source.type,
+                    id: source.getIdFromMatch(match),
+                    url: url
+                };
+            }
+        }
+    }
+    return null;
+}
+
+/**
+ * Get a formatted label for paper source
+ * @param {string} source Paper source identifier
+ * @returns {string} Human-readable source label
+ */
+function getSourceLabel(source) {
+    const labels = {
+        'arxiv': 'arXiv',
+        'semanticscholar': 'Semantic Scholar',
+        'doi': 'DOI',
+        'acm': 'ACM Digital Library',
+        'openreview': 'OpenReview'
+    };
+    return labels[source] || source.charAt(0).toUpperCase() + source.slice(1);
+}
 
 // Parse arXiv API response
 async function parseXMLResponse(xmlText) {
@@ -165,62 +292,107 @@ async function parseXMLResponse(xmlText) {
     };
 }
 
-// Fetch paper metadata
-async function fetchPaperMetadata(arxivId) {
-    console.log('Starting metadata fetch for:', arxivId);
+/**
+ * Fetch paper metadata based on source
+ * @param {string} source Paper source type
+ * @param {string} id Paper identifier
+ * @returns {Promise<Object|null>} Paper metadata or null if unavailable
+ */
+async function fetchPaperMetadata(source, id) {
+    console.log(`Starting metadata fetch for ${source}:${id}`);
+    
+    // Generate cache key
+    const cacheKey = `${source}:${id}`;
     
     // Check cache first
-    if (metadataCache.has(arxivId)) {
-        console.log('Found in cache:', arxivId);
-        return metadataCache.get(arxivId);
+    if (metadataCache.has(cacheKey)) {
+        console.log('Found in cache:', cacheKey);
+        return metadataCache.get(cacheKey);
     }
 
-    console.log('Fetching from arXiv API:', arxivId);
+    // Source-specific metadata fetching
     try {
-        const apiUrl = `https://export.arxiv.org/api/query?id_list=${arxivId}`;
-        console.log('API URL:', apiUrl);
+        let metadata = null;
         
-        const response = await fetch(apiUrl);
-        console.log('API response status:', response.status);
-        
-        const text = await response.text();
-        console.log('API response length:', text.length);
-        
-        const metadata = await parseXMLResponse(text);
-        console.log('Parsed metadata:', metadata);
+        if (source === 'arxiv') {
+            // Use arXiv API
+            const apiUrl = `https://export.arxiv.org/api/query?id_list=${id}`;
+            console.log('API URL:', apiUrl);
+            
+            const response = await fetch(apiUrl);
+            console.log('API response status:', response.status);
+            
+            if (response.ok) {
+                const text = await response.text();
+                metadata = await parseXMLResponse(text);
+            }
+        } else {
+            // For other sources, try to extract from page meta tags first
+            metadata = {
+                title: document.querySelector('meta[name="citation_title"]')?.content ||
+                       document.querySelector('meta[property="og:title"]')?.content,
+                authors: document.querySelector('meta[name="citation_authors"]')?.content ||
+                         document.querySelector('meta[name="author"]')?.content,
+                abstract: document.querySelector('meta[name="description"]')?.content ||
+                          document.querySelector('meta[property="og:description"]')?.content,
+                published: document.querySelector('meta[name="citation_publication_date"]')?.content
+            };
+            
+            // If not found in meta tags, set defaults
+            if (!metadata.title) {
+                metadata.title = `${getSourceLabel(source)} Paper: ${id}`;
+            }
+        }
 
         if (metadata) {
-            metadataCache.set(arxivId, metadata);
+            console.log('Fetched metadata:', metadata);
+            metadataCache.set(cacheKey, metadata);
             return metadata;
-        } else {
-            console.log('Failed to parse metadata');
-        }
+        } 
     } catch (error) {
         console.error('Error fetching metadata:', error);
     }
 
-    return null;
+    // Default minimal metadata if all else fails
+    const defaultMetadata = {
+        title: `${getSourceLabel(source)} Paper: ${id}`,
+        authors: '',
+        abstract: '',
+        published: ''
+    };
+    
+    metadataCache.set(cacheKey, defaultMetadata);
+    return defaultMetadata;
 }
 
-// Create popup element
-async function createPopup(arxivId, initialTitle = '') {
-    console.log('Creating popup for:', arxivId);
+/**
+ * Create popup element for paper annotation
+ * @param {string} source Paper source
+ * @param {string} id Paper ID
+ * @param {string} initialTitle Optional initial title
+ * @returns {Promise<HTMLElement>} Popup element
+ */
+async function createPopup(source, id, initialTitle = '') {
+    console.log(`Creating popup for ${source}:${id}`);
     
-    // Fetch metadata first
-    const metadata = await fetchPaperMetadata(arxivId);
+    // Fetch metadata
+    const metadata = await fetchPaperMetadata(source, id);
     console.log('Fetched metadata:', metadata);
 
     const popup = document.createElement('div');
-    popup.className = 'arxiv-popup';
+    popup.className = 'paper-popup';
+    
+    // Create popup content
     popup.innerHTML = `
-        <div class="arxiv-popup-header">${metadata?.title || initialTitle || arxivId}</div>
-        <div class="arxiv-popup-meta">${metadata?.authors || ''}</div>
-        <div class="arxiv-popup-buttons">
+        <div class="paper-popup-source source-${source}">${getSourceLabel(source)}</div>
+        <div class="paper-popup-header">${metadata?.title || initialTitle || id}</div>
+        <div class="paper-popup-meta">${metadata?.authors || ''}</div>
+        <div class="paper-popup-buttons">
             <button class="vote-button" data-vote="thumbsup">👍 Interesting</button>
             <button class="vote-button" data-vote="thumbsdown">👎 Not Relevant</button>
         </div>
         <textarea placeholder="Add notes..."></textarea>
-        <div class="arxiv-popup-actions">
+        <div class="paper-popup-actions">
             <button class="save-button">Save</button>
         </div>
     `;
@@ -238,13 +410,14 @@ async function createPopup(arxivId, initialTitle = '') {
         const vote = popup.querySelector('.vote-button.active')?.dataset.vote;
         const notes = popup.querySelector('textarea').value;
         
-        // Send to background script
+        // Format data for the background script
         if (vote || notes) {
             chrome.runtime.sendMessage({
                 type: 'updateAnnotation',
                 annotationType: notes ? 'notes' : 'vote',
                 data: {
-                    paperId: arxivId,
+                    paperId: id,
+                    source: source,
                     vote,
                     notes,
                     title: metadata?.title,
@@ -260,46 +433,43 @@ async function createPopup(arxivId, initialTitle = '') {
         }
     });
 
+    // Store source and ID for reference
+    popup.paperSource = source;
+    popup.paperId = id;
+    
     return popup;
 }
 
-// Process a link element
-async function processArxivLink(link) {
+/**
+ * Create wrapper for popup placement
+ * @returns {HTMLElement} Popup wrapper element
+ */
+function createPopupWrapper() {
+    const wrapper = document.createElement('div');
+    wrapper.style.position = 'relative';
+    wrapper.style.zIndex = '10000';
+    return wrapper;
+}
+
+/**
+ * Process a paper link element
+ * @param {HTMLAnchorElement} link Link element to process
+ */
+async function processPaperLink(link) {
     // Skip if already processed
-    if (link.classList.contains('arxiv-processed')) return;
-    link.classList.add('arxiv-processed');
+    if (link.classList.contains('paper-processed')) return;
+    link.classList.add('paper-processed');
 
-    // Extract arXiv ID
-    const patterns = [
-        /arxiv\.org\/abs\/([0-9.]+)/,
-        /arxiv\.org\/pdf\/([0-9.]+)\.pdf/,
-        /arxiv\.org\/\w+\/([0-9.]+)/
-    ];
+    // Detect paper source from URL
+    const sourceInfo = detectPaperSource(link.href);
+    if (!sourceInfo) return;
     
-    let arxivId = null;
-    for (const pattern of patterns) {
-        const match = link.href.match(pattern);
-        if (match) {
-            arxivId = match[1];
-            break;
-        }
-    }
+    const { type: source, id } = sourceInfo;
 
-    if (!arxivId) return;
-
-    // Create annotator button
+    // Create annotator button with source-specific class
     const annotator = document.createElement('span');
-    annotator.className = 'arxiv-annotator';
-    annotator.textContent = '📝';
-    annotator.title = 'Add annotation';
-    
-    // Create a wrapper for the popup that will help with positioning
-    function createPopupWrapper(annotator) {
-        const wrapper = document.createElement('div');
-        wrapper.style.position = 'relative';
-        wrapper.style.zIndex = '10000';
-        return wrapper;
-    }
+    annotator.className = `paper-annotator annotator-${source}`;
+    annotator.title = `Add ${getSourceLabel(source)} annotation`;
     
     // Update the click handler
     annotator.addEventListener('click', async (e) => {
@@ -309,14 +479,14 @@ async function processArxivLink(link) {
         // Remove existing popup if any
         if (activePopup) {
             activePopup.parentElement?.remove(); // Remove the wrapper
-            if (activePopup.arxivId === arxivId) {
+            if (activePopup.paperSource === source && activePopup.paperId === id) {
                 activePopup = null;
                 return;
             }
         }
     
-        // Create popup first
-        const popup = await createPopup(arxivId);
+        // Create popup
+        const popup = await createPopup(source, id);
         
         // Create wrapper and add popup to it
         const wrapper = createPopupWrapper();
@@ -334,31 +504,65 @@ async function processArxivLink(link) {
         }
         popup.style.top = `${annotatorRect.height + 5}px`;
         
-        // Keep reference and show
-        popup.arxivId = arxivId;
+        // Add to page and store reference
         annotator.parentNode.insertBefore(wrapper, annotator.nextSibling);
         activePopup = popup;
     });
+    
     // Add to page
     link.parentNode.insertBefore(annotator, link.nextSibling);
 }
 
-// Process initial links
-document.querySelectorAll('a[href*="arxiv.org"]').forEach(processArxivLink);
+// Process initial links for all supported sources
+function processInitialLinks() {
+    // Process arXiv links (backward compatibility)
+    document.querySelectorAll('a[href*="arxiv.org"]').forEach(processPaperLink);
+    
+    // Process DOI links
+    document.querySelectorAll('a[href*="doi.org"]').forEach(processPaperLink);
+    document.querySelectorAll('a[href*="dl.acm.org/doi"]').forEach(processPaperLink);
+    
+    // Process Semantic Scholar links
+    document.querySelectorAll('a[href*="semanticscholar.org/paper"]').forEach(processPaperLink);
+    
+    // Process OpenReview links
+    document.querySelectorAll('a[href*="openreview.net/forum"]').forEach(processPaperLink);
+}
 
-// Watch for new links
+// Process all links on page load
+processInitialLinks();
+
+// Watch for new links with a mutation observer
 const observer = new MutationObserver((mutations) => {
     mutations.forEach(mutation => {
         mutation.addedNodes.forEach(node => {
             if (node.nodeType === Node.ELEMENT_NODE) {
-                node.querySelectorAll('a[href*="arxiv.org"]').forEach(processArxivLink);
+                // Process all supported link types
+                if (node.tagName === 'A') {
+                    processPaperLink(node);
+                } else {
+                    // Check for links inside added elements
+                    node.querySelectorAll('a[href*="arxiv.org"]').forEach(processPaperLink);
+                    node.querySelectorAll('a[href*="doi.org"]').forEach(processPaperLink);
+                    node.querySelectorAll('a[href*="dl.acm.org/doi"]').forEach(processPaperLink);
+                    node.querySelectorAll('a[href*="semanticscholar.org/paper"]').forEach(processPaperLink);
+                    node.querySelectorAll('a[href*="openreview.net/forum"]').forEach(processPaperLink);
+                }
             }
         });
     });
 });
 
+// Configure and start the observer
 observer.observe(document.body, {
     childList: true,
     subtree: true
 });
+
+// Optional: Export functions for testing
+window.paperTracker = {
+    detectPaperSource,
+    fetchPaperMetadata,
+    processPaperLink
+};
 //# sourceMappingURL=content.bundle.js.map

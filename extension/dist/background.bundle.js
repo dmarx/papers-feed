@@ -453,140 +453,176 @@ class MultiSourceDetector {
   }
 }
 
-// extension/background_multi_source.js
-// Extension to support multiple paper sources
-
-
-/**
- * Extracts metadata from the current page if possible
- * 
- * @param {number} tabId - ID of the current tab
- * @returns {Promise<Object|null>} - Extracted metadata or null
- */
 async function extractMetadataFromPage(tabId) {
   try {
     const result = await chrome.tabs.executeScript(tabId, {
       code: `
         (function() {
-          const metadata = {
-            title: document.querySelector('meta[name="citation_title"]')?.content ||
-                   document.querySelector('meta[property="og:title"]')?.content ||
-                   document.title,
-            authors: document.querySelector('meta[name="citation_authors"]')?.content ||
-                     document.querySelector('meta[name="author"]')?.content,
-            abstract: document.querySelector('meta[name="description"]')?.content ||
-                      document.querySelector('meta[property="og:description"]')?.content,
-            published_date: document.querySelector('meta[name="citation_publication_date"]')?.content
-          };
-          
-          // If metadata not found in meta tags, try common page elements
-          if (!metadata.title) {
-            const h1 = document.querySelector('h1');
-            if (h1) metadata.title = h1.textContent.trim();
+          try {
+            // Try to extract from common meta tags first
+            const metadata = {
+              title: document.querySelector('meta[name="citation_title"]')?.content ||
+                     document.querySelector('meta[property="og:title"]')?.content ||
+                     document.title,
+              authors: document.querySelector('meta[name="citation_author"]')?.content ||
+                       document.querySelector('meta[name="citation_authors"]')?.content ||
+                       document.querySelector('meta[name="author"]')?.content,
+              abstract: document.querySelector('meta[name="description"]')?.content ||
+                        document.querySelector('meta[property="og:description"]')?.content ||
+                        document.querySelector('meta[name="citation_abstract"]')?.content,
+              published_date: document.querySelector('meta[name="citation_publication_date"]')?.content ||
+                              document.querySelector('meta[name="citation_date"]')?.content,
+              doi: document.querySelector('meta[name="citation_doi"]')?.content,
+              url: document.querySelector('meta[property="og:url"]')?.content || window.location.href,
+              citations: null
+            };
+            
+            // Source-specific extraction fallbacks
+            if (!metadata.title) {
+              const h1 = document.querySelector('h1');
+              if (h1) metadata.title = h1.textContent.trim();
+            }
+            
+            if (!metadata.abstract) {
+              // Try common abstract containers
+              const abstractEl = document.querySelector('.abstract') || 
+                                document.querySelector('#abstract') ||
+                                document.querySelector('[class*="abstract"]') ||
+                                document.querySelector('[id*="abstract"]');
+              if (abstractEl) metadata.abstract = abstractEl.textContent.trim();
+            }
+            
+            // DOI-specific extraction
+            if (!metadata.doi && window.location.href.includes('doi.org')) {
+              const match = window.location.href.match(/doi\\.org\\/(10\\.[0-9.]+\\/[^\\s&/?#]+[^\\s&/?#.:])/);
+              if (match) metadata.doi = match[1];
+            }
+            
+            // ACM-specific extraction
+            if (window.location.href.includes('dl.acm.org')) {
+              // Try to get citation count
+              const citationEl = document.querySelector('.citation-metrics');
+              if (citationEl) {
+                const citText = citationEl.textContent;
+                const citMatch = citText?.match(/(\\d+)\\s+citations/i);
+                if (citMatch) metadata.citations = parseInt(citMatch[1], 10);
+              }
+              
+              // Try to extract DOI from URL or page
+              if (!metadata.doi) {
+                const doiMatch = window.location.href.match(/dl\\.acm\\.org\\/doi\\/(10\\.[0-9.]+\\/[^\\s&/?#]+[^\\s&/?#.:])/);
+                if (doiMatch) metadata.doi = doiMatch[1];
+              }
+            }
+            
+            // Semantic Scholar specific extraction
+            if (window.location.href.includes('semanticscholar.org')) {
+              // Try to get citation count
+              const citationEl = document.querySelector('[data-test-id="citation-count"]');
+              if (citationEl) {
+                const citText = citationEl.textContent;
+                const citMatch = citText?.match(/(\\d+)/);
+                if (citMatch) metadata.citations = parseInt(citMatch[1], 10);
+              }
+              
+              // Format authors if found in a specific format
+              const authorElements = document.querySelectorAll('[data-test-id="author-list"] a');
+              if (authorElements.length > 0) {
+                metadata.authors = Array.from(authorElements)
+                  .map(el => el.textContent?.trim())
+                  .filter(Boolean)
+                  .join(', ');
+              }
+            }
+            
+            return metadata;
+          } catch (e) {
+            console.error('Error extracting metadata:', e);
+            return null;
           }
-          
-          if (!metadata.abstract) {
-            const abstractEl = document.querySelector('.abstract') || 
-                              document.querySelector('#abstract') ||
-                              document.querySelector('[class*="abstract"]');
-            if (abstractEl) metadata.abstract = abstractEl.textContent.trim();
-          }
-          
-          return metadata;
         })();
       `
     });
-    
     if (result && result[0]) {
       return result[0];
     }
   } catch (error) {
-    console.error('Error executing script:', error);
+    console.error("Error executing metadata extraction script:", error);
   }
-  
   return null;
 }
-
-/**
- * Enhanced version of processArxivUrl that supports multiple sources
- * 
- * @param {string} url - URL to process
- * @returns {Promise<Object|null>} - Paper data or null
- */
-async function processPaperUrl(url) {
-  console.log('Multi-source processing for URL:', url);
-  
-  // Use detector to identify paper source
+async function processPaperUrl(url, processArxivUrl) {
+  console.log("Processing URL for multiple sources:", url);
   const sourceInfo = MultiSourceDetector.detect(url);
-  
-  // If not a recognized paper URL, exit
   if (!sourceInfo) {
-    console.log('No recognized paper source detected in URL');
-    
-    // Try legacy arXiv detection as fallback
-    return processArxivUrl(url);
+    console.log("No paper source detected, falling back to arXiv-only processing");
+    return processArxivUrl ? processArxivUrl(url) : null;
   }
-  
-  console.log('Detected paper source:', sourceInfo);
-  
   const { type: sourceType, id: sourceId, primary_id } = sourceInfo;
-  
-  // For arXiv, use the existing well-tested processor
-  if (sourceType === 'arxiv') {
-    const paperData = await processArxivUrl(url);
-    
-    // Enhance with multi-source fields if successful
-    if (paperData) {
-      paperData.source = 'arxiv';
-      paperData.sourceId = paperData.arxivId;
-      paperData.primary_id = primary_id;
+  console.log(`Detected ${sourceType} paper with ID: ${sourceId}`);
+  if (sourceType === "arxiv" && processArxivUrl) {
+    const paperData2 = await processArxivUrl(url);
+    if (paperData2) {
+      paperData2.source = "arxiv";
+      paperData2.sourceId = paperData2.arxivId;
+      paperData2.primary_id = primary_id;
     }
-    
-    return paperData;
+    return paperData2;
   }
-  
-  // For non-arXiv sources, create basic paper data
-  const paperData = {
+  let paperData = {
     source: sourceType,
-    sourceId: sourceId,
-    primary_id: primary_id,
-    url: url,
-    timestamp: new Date().toISOString(),
-    rating: 'novote'
+    sourceId,
+    primary_id,
+    url,
+    timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+    rating: "novote"
   };
-  
-  // Try to extract title, authors, etc. from page if possible
   try {
     const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (tabs.length > 0) {
+    if (tabs.length > 0 && tabs[0].id) {
       const metadata = await extractMetadataFromPage(tabs[0].id);
       if (metadata) {
         paperData.title = metadata.title || `${sourceType.toUpperCase()} Paper: ${sourceId}`;
-        paperData.authors = metadata.authors || '';
-        paperData.abstract = metadata.abstract || '';
-        paperData.published_date = metadata.published_date || '';
+        paperData.authors = metadata.authors || "";
+        paperData.abstract = metadata.abstract || "";
+        paperData.published_date = metadata.published_date || "";
+        if (metadata.doi) {
+          paperData.doi = metadata.doi;
+        }
+        if (metadata.citations) {
+          paperData.citations = metadata.citations;
+        }
       } else {
         paperData.title = `${sourceType.toUpperCase()} Paper: ${sourceId}`;
       }
+    } else {
+      paperData.title = `${sourceType.toUpperCase()} Paper: ${sourceId}`;
     }
   } catch (error) {
-    console.error('Error extracting page metadata:', error);
+    console.error("Error extracting metadata:", error);
     paperData.title = `${sourceType.toUpperCase()} Paper: ${sourceId}`;
   }
-  
-  // Add source-specific identifiers
-  if (sourceType === 'doi') {
+  paperData.identifiers = {
+    original: sourceId,
+    url
+  };
+  if (sourceType === "doi" || sourceType === "acm") {
     paperData.doi = sourceId;
-  } else if (sourceType === 'semanticscholar') {
+    paperData.identifiers.doi = sourceId;
+  } else if (sourceType === "semanticscholar") {
     paperData.s2Id = sourceId;
+    paperData.identifiers.s2 = sourceId;
   }
-  
-  console.log('Paper data processed:', paperData);
+  console.log("Processed paper data:", paperData);
   return paperData;
 }
 
+// extension/background_multi_source.js
+// Extension to support multiple paper sources
+
+
 /**
- * Extend the URL listener to detect multiple paper sources
+ * Setup listener for new paper sources
  */
 function setupMultiSourceListener() {
   // Create a new listener for additional paper sources
@@ -602,13 +638,16 @@ function setupMultiSourceListener() {
     const paperData = await processPaperUrl(details.url);
     if (paperData) {
       console.log('Paper data extracted:', paperData);
+      
+      // Create or update paper in storage
       await createGithubIssue(paperData);
     }
   }, {
     url: [
       { hostSuffix: 'semanticscholar.org' },
       { hostSuffix: 'doi.org' },
-      { hostSuffix: 'dl.acm.org' }
+      { hostSuffix: 'dl.acm.org' },
+      { hostSuffix: 'openreview.net' }
     ]
   });
   
@@ -616,23 +655,29 @@ function setupMultiSourceListener() {
 }
 
 /**
- * Enhance tab change handler to support multiple sources
+ * Enhanced tab change handler for multiple sources
  * 
- * @param {Object} tab - Tab data
+ * @param {Object} tab - Current tab data
+ * @param {Function} originalHandler - Original handler for legacy support
  */
-async function enhancedHandleTabChange(tab) {
+async function enhancedHandleTabChange(tab, originalHandler) {
   const url = tab?.url || '';
   
   // Use detector to identify paper source
   const sourceInfo = MultiSourceDetector.detect(url);
   const isPaperUrl = !!sourceInfo;
   
-  console.log('Tab change detected:', { isPaperUrl, url });
+  console.log('Tab change detected:', { isPaperUrl, url, sourceInfo });
   
   if (!isPaperUrl) {
     console.log('Not a recognized paper page, ending current session');
     await endCurrentSession();
     return;
+  }
+  
+  // For arXiv papers, use the original handler for full compatibility
+  if (sourceInfo.type === 'arxiv' && originalHandler) {
+    return originalHandler(tab);
   }
   
   if (currentSession) {
@@ -656,7 +701,7 @@ async function enhancedHandleTabChange(tab) {
 }
 
 /**
- * Initialize the multi-source extensions
+ * Initialize the multi-source support
  */
 function initMultiSourceSupport() {
   // Setup listener for additional paper sources
@@ -780,7 +825,7 @@ function enhancedInitialization() {
     
     // Store the original functions for compatibility
     const originalHandleTabChange = handleTabChange;
-    const originalProcessArxivUrl = processArxivUrl$1;
+    const originalProcessArxivUrl = processArxivUrl;
     
     // Replace with enhanced versions
     window.processArxivUrl = originalProcessArxivUrl; // Keep for compatibility
@@ -889,7 +934,7 @@ chrome.webNavigation.onCompleted.addListener(async (details) => {
     console.log('Navigation detected:', details.url);
     if (details.url.includes('arxiv.org')) {
         console.log('arXiv URL detected, processing...');
-        const paperData = await processArxivUrl$1(details.url);
+        const paperData = await processArxivUrl(details.url);
         if (paperData) {
             console.log('Paper data extracted:', paperData);
             await createGithubIssue$1(paperData);
@@ -920,7 +965,7 @@ async function handleTabChange(tab) {
     }
 
     console.log('Processing arXiv URL for new session');
-    currentPaperData$1 = await processArxivUrl$1(tab.url);
+    currentPaperData$1 = await processArxivUrl(tab.url);
     if (currentPaperData$1) {
         console.log('Starting new session for:', currentPaperData$1.arxivId);
         currentSession$1 = new ReadingSession$1(currentPaperData$1.arxivId, sessionConfig$1);
@@ -1114,7 +1159,7 @@ async function parseXMLText(xmlText) {
     }
 }
 
-async function processArxivUrl$1(url) {
+async function processArxivUrl(url) {
     console.log('Processing URL:', url);
     
     let arxivId = null;
