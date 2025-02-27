@@ -551,7 +551,7 @@ async function extractMetadataFromPage(tabId) {
   }
   return null;
 }
-async function processPaperUrl(url, processArxivUrl) {
+async function processPaperUrl$1(url, processArxivUrl) {
   console.log("Processing URL for multiple sources:", url);
   const sourceInfo = MultiSourceDetector.detect(url);
   if (!sourceInfo) {
@@ -560,15 +560,6 @@ async function processPaperUrl(url, processArxivUrl) {
   }
   const { type: sourceType, id: sourceId, primary_id } = sourceInfo;
   console.log(`Detected ${sourceType} paper with ID: ${sourceId}`);
-  if (sourceType === "arxiv" && processArxivUrl) {
-    const paperData2 = await processArxivUrl(url);
-    if (paperData2) {
-      paperData2.source = "arxiv";
-      paperData2.sourceId = paperData2.arxivId;
-      paperData2.primary_id = primary_id;
-    }
-    return paperData2;
-  }
   let paperData = {
     source: sourceType,
     sourceId,
@@ -622,6 +613,68 @@ async function processPaperUrl(url, processArxivUrl) {
 
 
 /**
+ * Enhanced version of processArxivUrl that supports multiple sources
+ * 
+ * @param {string} url - URL to process
+ * @returns {Promise<Object|null>} - Paper data or null
+ */
+async function processPaperUrl(url) {
+  console.log('Multi-source processing for URL:', url);
+  
+  // Use detector to identify paper source
+  const sourceInfo = MultiSourceDetector.detect(url);
+  
+  // If not a recognized paper URL, exit
+  if (!sourceInfo) {
+    console.log('No recognized paper source detected in URL');
+    
+    // Try legacy arXiv detection as fallback - this will be provided by the background script
+    if (typeof processArxivUrl === 'function') {
+      return processArxivUrl(url);
+    }
+    return null;
+  }
+  
+  console.log('Detected paper source:', sourceInfo);
+  
+  const { type: sourceType, id: sourceId, primary_id } = sourceInfo;
+  
+  // For arXiv, use the existing well-tested processor if available
+  if (sourceType === 'arxiv' && typeof processArxivUrl === 'function') {
+    const paperData = await processArxivUrl(url);
+    
+    // Enhance with multi-source fields if successful
+    if (paperData) {
+      paperData.source = 'arxiv';
+      paperData.sourceId = paperData.arxivId;
+      paperData.primary_id = primary_id;
+    }
+    
+    return paperData;
+  }
+  
+  // Delegate to the TypeScript implementation in papers/process_paper_url.ts
+  // This uses the imported processUrl function
+  try {
+    const paperData = await processPaperUrl$1(url);
+    return paperData;
+  } catch (error) {
+    console.error('Error processing paper URL:', error);
+    
+    // Create basic paper data as fallback
+    return {
+      source: sourceType,
+      sourceId: sourceId,
+      primary_id: primary_id,
+      url: url,
+      title: `${sourceType.toUpperCase()} Paper: ${sourceId}`,
+      timestamp: new Date().toISOString(),
+      rating: 'novote'
+    };
+  }
+}
+
+/**
  * Setup listener for new paper sources
  */
 function setupMultiSourceListener() {
@@ -640,7 +693,12 @@ function setupMultiSourceListener() {
       console.log('Paper data extracted:', paperData);
       
       // Create or update paper in storage
-      await createGithubIssue(paperData);
+      // The createGithubIssue function will be provided by the background script
+      if (typeof createGithubIssue === 'function') {
+        await createGithubIssue(paperData);
+      } else {
+        console.error('createGithubIssue function not available');
+      }
     }
   }, {
     url: [
@@ -671,7 +729,11 @@ async function enhancedHandleTabChange(tab, originalHandler) {
   
   if (!isPaperUrl) {
     console.log('Not a recognized paper page, ending current session');
-    await endCurrentSession();
+    
+    // The endCurrentSession function will be provided by the background script
+    if (typeof endCurrentSession === 'function') {
+      await endCurrentSession();
+    }
     return;
   }
   
@@ -680,24 +742,42 @@ async function enhancedHandleTabChange(tab, originalHandler) {
     return originalHandler(tab);
   }
   
-  if (currentSession) {
+  // Background script variables/functions that we need to access
+  if (typeof currentSession !== 'undefined' && currentSession) {
     console.log('Ending existing session before starting new one');
-    await endCurrentSession();
+    if (typeof endCurrentSession === 'function') {
+      await endCurrentSession();
+    }
   }
   
   console.log('Processing paper URL for new session');
-  currentPaperData = await processPaperUrl(url);
+  const paperData = await processPaperUrl(url);
   
-  if (currentPaperData) {
+  if (paperData && typeof ReadingSession === 'function' && typeof sessionConfig !== 'undefined') {
     // Use appropriate ID based on availability - maintaining backward compatibility
-    const trackingId = currentPaperData.arxivId || currentPaperData.sourceId;
+    const trackingId = paperData.arxivId || paperData.sourceId;
     
     console.log('Starting new session for:', trackingId);
-    currentSession = new ReadingSession(trackingId, sessionConfig);
-    const metadata = currentSession.getMetadata();
-    console.log('New session created:', metadata);
-    startActivityTracking();
+    
+    // Set currentPaperData and currentSession - these are global variables in the background script
+    if (typeof currentSession !== 'undefined') {
+      currentSession = new ReadingSession(trackingId, sessionConfig);
+      const metadata = currentSession.getMetadata();
+      console.log('New session created:', metadata);
+      
+      if (typeof startActivityTracking === 'function') {
+        startActivityTracking();
+      }
+    }
+    
+    if (typeof currentPaperData !== 'undefined') {
+      currentPaperData = paperData;
+    }
+    
+    return paperData;
   }
+  
+  return null;
 }
 
 /**
@@ -725,6 +805,10 @@ let currentSession$1 = null;
 let activityInterval = null;
 let sessionConfig$1 = null;
 let paperManager = null;
+
+// Store references to functions that will be enhanced
+let originalHandleTabChange = null;
+let enhancedTabChangeHandler = null;
 
 let ReadingSession$1 = class ReadingSession {
     constructor(arxivId, config) {
@@ -820,21 +904,14 @@ async function loadCredentials() {
 
 // Initialize multi-source support
 function enhancedInitialization() {
+    // Save original functions for compatibility
+    originalHandleTabChange = handleTabChange;
+    
     // Initialize multi-source support
-    const { processPaperUrl, enhancedHandleTabChange } = initMultiSourceSupport();
+    const { enhancedHandleTabChange } = initMultiSourceSupport();
     
-    // Store the original functions for compatibility
-    const originalHandleTabChange = handleTabChange;
-    const originalProcessArxivUrl = processArxivUrl;
-    
-    // Replace with enhanced versions
-    window.processArxivUrl = originalProcessArxivUrl; // Keep for compatibility
-    window.processPaperUrl = processPaperUrl;
-    
-    // Override the handleTabChange function
-    window.handleTabChange = (tab) => {
-        return enhancedHandleTabChange(tab, originalHandleTabChange);
-    };
+    // Store enhanced functions
+    enhancedTabChangeHandler = enhancedHandleTabChange;
     
     // Debug information
     console.log('Multi-source paper support initialized');
@@ -902,7 +979,8 @@ async function handleUpdateRating(rating, sendResponse) {
     }
 
     try {
-        await paperManager.updateRating(currentPaperData$1.arxivId, rating, currentPaperData$1);
+        const paperId = currentPaperData$1.arxivId || currentPaperData$1.sourceId;
+        await paperManager.updateRating(paperId, rating, currentPaperData$1);
         currentPaperData$1.rating = rating;
         sendResponse({ success: true });
     } catch (error) {
@@ -914,12 +992,22 @@ async function handleUpdateRating(rating, sendResponse) {
 // Tab and window management
 chrome.tabs.onActivated.addListener(async (activeInfo) => {
     const tab = await chrome.tabs.get(activeInfo.tabId);
-    handleTabChange(tab);
+    // Use enhanced tab change handler if available, otherwise fall back to original
+    if (enhancedTabChangeHandler) {
+        enhancedTabChangeHandler(tab, originalHandleTabChange);
+    } else {
+        handleTabChange(tab);
+    }
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     if (changeInfo.status === 'complete') {
-        handleTabChange(tab);
+        // Use enhanced tab change handler if available, otherwise fall back to original
+        if (enhancedTabChangeHandler) {
+            enhancedTabChangeHandler(tab, originalHandleTabChange);
+        } else {
+            handleTabChange(tab);
+        }
     }
 });
 
@@ -934,7 +1022,7 @@ chrome.webNavigation.onCompleted.addListener(async (details) => {
     console.log('Navigation detected:', details.url);
     if (details.url.includes('arxiv.org')) {
         console.log('arXiv URL detected, processing...');
-        const paperData = await processArxivUrl(details.url);
+        const paperData = await processArxivUrl$1(details.url);
         if (paperData) {
             console.log('Paper data extracted:', paperData);
             await createGithubIssue$1(paperData);
@@ -948,7 +1036,7 @@ chrome.webNavigation.onCompleted.addListener(async (details) => {
     }]
 });
 
-// Original handleTabChange function (will be replaced by enhanced version)
+// Original handleTabChange function
 async function handleTabChange(tab) {
     const isArxiv = tab.url?.includes('arxiv.org/');
     console.log('Tab change detected:', { isArxiv, url: tab.url });
@@ -965,7 +1053,7 @@ async function handleTabChange(tab) {
     }
 
     console.log('Processing arXiv URL for new session');
-    currentPaperData$1 = await processArxivUrl(tab.url);
+    currentPaperData$1 = await processArxivUrl$1(tab.url);
     if (currentPaperData$1) {
         console.log('Starting new session for:', currentPaperData$1.arxivId);
         currentSession$1 = new ReadingSession$1(currentPaperData$1.arxivId, sessionConfig$1);
@@ -1071,6 +1159,7 @@ async function handleAnnotationUpdate(type, data) {
     try {
         const paperData = data.title ? {
             title: data.title,
+            source: data.source
         } : undefined;
 
         if (type === 'vote') {
@@ -1159,7 +1248,7 @@ async function parseXMLText(xmlText) {
     }
 }
 
-async function processArxivUrl(url) {
+async function processArxivUrl$1(url) {
     console.log('Processing URL:', url);
     
     let arxivId = null;
@@ -1216,8 +1305,8 @@ async function processArxivUrl(url) {
 
 // Initialize debug objects in service worker scope
 function initializeDebugObjects() {
-    // @ts-ignore
-    globalThis.__DEBUG__ = {
+    // Don't use window in service worker context
+    self.__DEBUG__ = {
         get paperManager() { return paperManager; },
         getGithubClient: () => paperManager?.client,
         getCurrentPaper: () => currentPaperData$1,
