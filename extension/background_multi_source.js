@@ -2,7 +2,7 @@
 // Extension to support multiple paper sources
 
 import { MultiSourceDetector } from './papers/detector';
-import { processPaperUrl, enhancePaperData } from './papers/process_paper_url';
+import { processPaperUrl as processUrl, enhancePaperData } from './papers/process_paper_url';
 
 /**
  * Extracts metadata from the current page if possible
@@ -65,6 +65,68 @@ async function extractMetadataFromPage(tabId) {
 }
 
 /**
+ * Enhanced version of processArxivUrl that supports multiple sources
+ * 
+ * @param {string} url - URL to process
+ * @returns {Promise<Object|null>} - Paper data or null
+ */
+async function processPaperUrl(url) {
+  console.log('Multi-source processing for URL:', url);
+  
+  // Use detector to identify paper source
+  const sourceInfo = MultiSourceDetector.detect(url);
+  
+  // If not a recognized paper URL, exit
+  if (!sourceInfo) {
+    console.log('No recognized paper source detected in URL');
+    
+    // Try legacy arXiv detection as fallback - this will be provided by the background script
+    if (typeof processArxivUrl === 'function') {
+      return processArxivUrl(url);
+    }
+    return null;
+  }
+  
+  console.log('Detected paper source:', sourceInfo);
+  
+  const { type: sourceType, id: sourceId, primary_id } = sourceInfo;
+  
+  // For arXiv, use the existing well-tested processor if available
+  if (sourceType === 'arxiv' && typeof processArxivUrl === 'function') {
+    const paperData = await processArxivUrl(url);
+    
+    // Enhance with multi-source fields if successful
+    if (paperData) {
+      paperData.source = 'arxiv';
+      paperData.sourceId = paperData.arxivId;
+      paperData.primary_id = primary_id;
+    }
+    
+    return paperData;
+  }
+  
+  // Delegate to the TypeScript implementation in papers/process_paper_url.ts
+  // This uses the imported processUrl function
+  try {
+    const paperData = await processUrl(url);
+    return paperData;
+  } catch (error) {
+    console.error('Error processing paper URL:', error);
+    
+    // Create basic paper data as fallback
+    return {
+      source: sourceType,
+      sourceId: sourceId,
+      primary_id: primary_id,
+      url: url,
+      title: `${sourceType.toUpperCase()} Paper: ${sourceId}`,
+      timestamp: new Date().toISOString(),
+      rating: 'novote'
+    };
+  }
+}
+
+/**
  * Setup listener for new paper sources
  */
 function setupMultiSourceListener() {
@@ -83,7 +145,12 @@ function setupMultiSourceListener() {
       console.log('Paper data extracted:', paperData);
       
       // Create or update paper in storage
-      await createGithubIssue(paperData);
+      // The createGithubIssue function will be provided by the background script
+      if (typeof createGithubIssue === 'function') {
+        await createGithubIssue(paperData);
+      } else {
+        console.error('createGithubIssue function not available');
+      }
     }
   }, {
     url: [
@@ -114,7 +181,11 @@ async function enhancedHandleTabChange(tab, originalHandler) {
   
   if (!isPaperUrl) {
     console.log('Not a recognized paper page, ending current session');
-    await endCurrentSession();
+    
+    // The endCurrentSession function will be provided by the background script
+    if (typeof endCurrentSession === 'function') {
+      await endCurrentSession();
+    }
     return;
   }
   
@@ -123,24 +194,42 @@ async function enhancedHandleTabChange(tab, originalHandler) {
     return originalHandler(tab);
   }
   
-  if (currentSession) {
+  // Background script variables/functions that we need to access
+  if (typeof currentSession !== 'undefined' && currentSession) {
     console.log('Ending existing session before starting new one');
-    await endCurrentSession();
+    if (typeof endCurrentSession === 'function') {
+      await endCurrentSession();
+    }
   }
   
   console.log('Processing paper URL for new session');
-  currentPaperData = await processPaperUrl(url);
+  const paperData = await processPaperUrl(url);
   
-  if (currentPaperData) {
+  if (paperData && typeof ReadingSession === 'function' && typeof sessionConfig !== 'undefined') {
     // Use appropriate ID based on availability - maintaining backward compatibility
-    const trackingId = currentPaperData.arxivId || currentPaperData.sourceId;
+    const trackingId = paperData.arxivId || paperData.sourceId;
     
     console.log('Starting new session for:', trackingId);
-    currentSession = new ReadingSession(trackingId, sessionConfig);
-    const metadata = currentSession.getMetadata();
-    console.log('New session created:', metadata);
-    startActivityTracking();
+    
+    // Set currentPaperData and currentSession - these are global variables in the background script
+    if (typeof currentSession !== 'undefined') {
+      currentSession = new ReadingSession(trackingId, sessionConfig);
+      const metadata = currentSession.getMetadata();
+      console.log('New session created:', metadata);
+      
+      if (typeof startActivityTracking === 'function') {
+        startActivityTracking();
+      }
+    }
+    
+    if (typeof currentPaperData !== 'undefined') {
+      currentPaperData = paperData;
+    }
+    
+    return paperData;
   }
+  
+  return null;
 }
 
 /**
