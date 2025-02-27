@@ -138,8 +138,11 @@ async function runIntegrationTest() {
       
       const verifiedPaper = await mockClient.getObject(objectId);
       console.log(`✅ Verified paper data in storage: ${objectId}`);
-      console.log(`  Title: ${verifiedPaper.data.title}`);
-      console.log(`  Rating: ${verifiedPaper.data.rating}`);
+      
+      // Type assertion to handle Json type
+      const paperData = verifiedPaper.data as Record<string, any>;
+      console.log(`  Title: ${paperData.title}`);
+      console.log(`  Rating: ${paperData.rating}`);
     } catch (error) {
       console.error(`❌ Failed to verify paper in storage: ${error}`);
     }
