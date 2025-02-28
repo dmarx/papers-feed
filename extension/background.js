@@ -120,8 +120,16 @@ function enhancedInitialization() {
     originalHandleTabChange = handleTabChange;
     originalProcessArxivUrl = processArxivUrl;
     
-    // Initialize multi-source support
-    const { processPaperUrl, enhancedHandleTabChange } = initMultiSourceSupport();
+    // Initialize multi-source support with explicit context binding
+    const { processPaperUrl, enhancedHandleTabChange } = initMultiSourceSupport({
+        createGithubIssue,       // Pass createGithubIssue function to background_multi_source
+        endCurrentSession,       // Pass endCurrentSession function
+        ReadingSession,          // Pass ReadingSession class
+        sessionConfig,           // Pass sessionConfig
+        startActivityTracking,   // Pass startActivityTracking function
+        setCurrentPaperData,     // New helper function to set current paper data
+        processArxivUrl          // Pass the original arXiv processor
+    });
     
     // Store enhanced functions
     enhancedTabChangeHandler = enhancedHandleTabChange;
@@ -129,6 +137,12 @@ function enhancedInitialization() {
     
     // Debug information
     console.log('Multi-source paper support initialized');
+}
+
+// Helper function to set current paper data
+function setCurrentPaperData(data) {
+    currentPaperData = data;
+    return currentPaperData;
 }
 
 // Listen for credential changes
@@ -231,12 +245,33 @@ chrome.windows.onFocusChanged.addListener((windowId) => {
     }
 });
 
-// Listen for URL changes
+// Listen for URL changes - now handling both arXiv and other sources
 chrome.webNavigation.onCompleted.addListener(async (details) => {
     console.log('Navigation detected:', details.url);
-    if (details.url.includes('arxiv.org')) {
-        console.log('arXiv URL detected, processing...');
-        const paperData = await processArxivUrl(details.url);
+    
+    // Check if this is a paper URL using the multi-source detector
+    const sourceInfo = MultiSourceDetector.detect(details.url);
+    
+    if (sourceInfo) {
+        console.log(`${sourceInfo.type.toUpperCase()} URL detected, processing...`);
+        
+        // Use appropriate processor based on source
+        let paperData;
+        if (sourceInfo.type === 'arxiv' && originalProcessArxivUrl) {
+            // Use original processor for arXiv
+            paperData = await originalProcessArxivUrl(details.url);
+            
+            // Add multi-source fields
+            if (paperData) {
+                paperData.source = 'arxiv';
+                paperData.sourceId = paperData.arxivId;
+                paperData.primary_id = sourceInfo.primary_id;
+            }
+        } else if (enhancedProcessPaperUrl) {
+            // Use enhanced processor for other sources
+            paperData = await enhancedProcessPaperUrl(details.url);
+        }
+        
         if (paperData) {
             console.log('Paper data extracted:', paperData);
             await createGithubIssue(paperData);
@@ -245,9 +280,13 @@ chrome.webNavigation.onCompleted.addListener(async (details) => {
         }
     }
 }, {
-    url: [{
-        hostSuffix: 'arxiv.org'
-    }]
+    url: [
+        { hostSuffix: 'arxiv.org' },
+        { hostSuffix: 'semanticscholar.org' },
+        { hostSuffix: 'doi.org' },
+        { hostSuffix: 'dl.acm.org' },
+        { hostSuffix: 'openreview.net' }
+    ]
 });
 
 // Original handleTabChange function
@@ -382,15 +421,17 @@ async function enhancedCreateReadingEvent(paperData, sessionData) {
 async function createGithubIssue(paperData) {
     if (!paperManager) {
         console.error('Paper manager not initialized');
-        return;
+        return null;
     }
 
     try {
         const existingPaper = await paperManager.getOrCreatePaper(paperData);
-        console.log('Paper metadata stored/retrieved:', existingPaper.arxivId || existingPaper.sourceId);
+        console.log('Paper metadata stored/retrieved:', 
+            existingPaper.arxivId || existingPaper.sourceId || existingPaper.primary_id);
         return existingPaper;
     } catch (error) {
         console.error('Error handling paper metadata:', error);
+        return null;
     }
 }
 
