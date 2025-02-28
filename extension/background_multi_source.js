@@ -282,3 +282,4 @@ export function initMultiSourceSupport(context = {}) {
     processPaperUrl,
     enhancedHandleTabChange
   };
+}
