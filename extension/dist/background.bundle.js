@@ -555,6 +555,15 @@ async function processPaperUrl$1(url, processArxivUrl) {
   }
   const { type: sourceType, id: sourceId, primary_id } = sourceInfo;
   console.log(`Detected ${sourceType} paper with ID: ${sourceId}`);
+  if (sourceType === "arxiv" && processArxivUrl) {
+    const paperData2 = await processArxivUrl(url);
+    if (paperData2) {
+      paperData2.source = "arxiv";
+      paperData2.sourceId = paperData2.arxivId;
+      paperData2.primary_id = primary_id;
+    }
+    return paperData2;
+  }
   let paperData = {
     source: sourceType,
     sourceId,
@@ -608,6 +617,19 @@ async function processPaperUrl$1(url, processArxivUrl) {
 
 
 /**
+ * Context for external functions provided by the background script
+ */
+let externalContext = {
+  createGithubIssue: null,
+  endCurrentSession: null,
+  ReadingSession: null,
+  sessionConfig: null,
+  startActivityTracking: null,
+  setCurrentPaperData: null,
+  processArxivUrl: null
+};
+
+/**
  * Enhanced version of processArxivUrl that supports multiple sources
  * 
  * @param {string} url - URL to process
@@ -623,9 +645,9 @@ async function processPaperUrl(url) {
   if (!sourceInfo) {
     console.log('No recognized paper source detected in URL');
     
-    // Try legacy arXiv detection as fallback - this will be provided by the background script
-    if (typeof processArxivUrl === 'function') {
-      return processArxivUrl(url);
+    // Try legacy arXiv detection as fallback
+    if (externalContext.processArxivUrl) {
+      return externalContext.processArxivUrl(url);
     }
     return null;
   }
@@ -635,8 +657,8 @@ async function processPaperUrl(url) {
   const { type: sourceType, id: sourceId, primary_id } = sourceInfo;
   
   // For arXiv, use the existing well-tested processor if available
-  if (sourceType === 'arxiv' && typeof processArxivUrl === 'function') {
-    const paperData = await processArxivUrl(url);
+  if (sourceType === 'arxiv' && externalContext.processArxivUrl) {
+    const paperData = await externalContext.processArxivUrl(url);
     
     // Enhance with multi-source fields if successful
     if (paperData) {
@@ -649,9 +671,18 @@ async function processPaperUrl(url) {
   }
   
   // Delegate to the TypeScript implementation in papers/process_paper_url.ts
-  // This uses the imported processUrl function
   try {
-    const paperData = await processPaperUrl$1(url);
+    const paperData = await processPaperUrl$1(url, externalContext.processArxivUrl);
+    
+    // Store in GitHub if available
+    if (paperData && externalContext.createGithubIssue) {
+      try {
+        await externalContext.createGithubIssue(paperData);
+      } catch (e) {
+        console.error('Error storing paper data in GitHub:', e);
+      }
+    }
+    
     return paperData;
   } catch (error) {
     console.error('Error processing paper URL:', error);
@@ -687,10 +718,9 @@ function setupMultiSourceListener() {
     if (paperData) {
       console.log('Paper data extracted:', paperData);
       
-      // Create or update paper in storage
-      // The createGithubIssue function will be provided by the background script
-      if (typeof createGithubIssue === 'function') {
-        await createGithubIssue(paperData);
+      // Create or update paper in GitHub storage
+      if (externalContext.createGithubIssue) {
+        await externalContext.createGithubIssue(paperData);
       } else {
         console.error('createGithubIssue function not available');
       }
@@ -725,9 +755,9 @@ async function enhancedHandleTabChange(tab, originalHandler) {
   if (!isPaperUrl) {
     console.log('Not a recognized paper page, ending current session');
     
-    // The endCurrentSession function will be provided by the background script
-    if (typeof endCurrentSession === 'function') {
-      await endCurrentSession();
+    // End current session if available
+    if (externalContext.endCurrentSession) {
+      await externalContext.endCurrentSession();
     }
     return;
   }
@@ -737,39 +767,39 @@ async function enhancedHandleTabChange(tab, originalHandler) {
     return originalHandler(tab);
   }
   
-  // Background script variables/functions that we need to access
-  if (typeof currentSession !== 'undefined' && currentSession) {
-    console.log('Ending existing session before starting new one');
-    if (typeof endCurrentSession === 'function') {
-      await endCurrentSession();
-    }
+  // For other sources, end any existing session
+  if (externalContext.endCurrentSession) {
+    await externalContext.endCurrentSession();
   }
   
   console.log('Processing paper URL for new session');
   const paperData = await processPaperUrl(url);
   
-  if (paperData && typeof ReadingSession === 'function' && typeof sessionConfig !== 'undefined') {
-    // Use appropriate ID based on availability - maintaining backward compatibility
+  if (paperData) {
+    // Use appropriate ID based on availability
     const trackingId = paperData.arxivId || paperData.sourceId;
     
     console.log('Starting new session for:', trackingId);
     
-    // Set currentPaperData and currentSession - these are global variables in the background script
-    if (typeof currentSession !== 'undefined') {
-      currentSession = new ReadingSession(trackingId, sessionConfig);
+    if (externalContext.ReadingSession && externalContext.sessionConfig) {
+      // Create a new session
+      const currentSession = new externalContext.ReadingSession(trackingId, externalContext.sessionConfig);
       const metadata = currentSession.getMetadata();
       console.log('New session created:', metadata);
       
-      if (typeof startActivityTracking === 'function') {
-        startActivityTracking();
+      // Set the current paper data
+      if (externalContext.setCurrentPaperData) {
+        externalContext.setCurrentPaperData(paperData);
       }
+      
+      // Start tracking activity
+      if (externalContext.startActivityTracking) {
+        externalContext.startActivityTracking();
+      }
+      
+      // Return the paper data
+      return paperData;
     }
-    
-    if (typeof currentPaperData !== 'undefined') {
-      currentPaperData = paperData;
-    }
-    
-    return paperData;
   }
   
   return null;
@@ -777,12 +807,21 @@ async function enhancedHandleTabChange(tab, originalHandler) {
 
 /**
  * Initialize the multi-source support
+ * 
+ * @param {Object} context - External functions from background script
  */
-function initMultiSourceSupport() {
+function initMultiSourceSupport(context = {}) {
+  // Store external context
+  externalContext = {
+    ...externalContext,
+    ...context
+  };
+  
   // Setup listener for additional paper sources
   setupMultiSourceListener();
   
-  console.log('Multi-source paper support initialized');
+  console.log('Multi-source paper support initialized with context:', 
+    Object.keys(externalContext).filter(k => !!externalContext[k]));
   
   // Return overrides that can be applied to the main module
   return {
@@ -795,17 +834,19 @@ function initMultiSourceSupport() {
 
 let githubToken = '';
 let githubRepo = '';
-let currentPaperData$1 = null;
-let currentSession$1 = null;
+let currentPaperData = null;
+let currentSession = null;
 let activityInterval = null;
-let sessionConfig$1 = null;
+let sessionConfig = null;
 let paperManager = null;
 
 // Store references to functions that will be enhanced
 let originalHandleTabChange = null;
+let originalProcessArxivUrl = null;
 let enhancedTabChangeHandler = null;
+let enhancedProcessPaperUrl = null;
 
-let ReadingSession$1 = class ReadingSession {
+class ReadingSession {
     constructor(arxivId, config) {
        this.arxivId = arxivId;
        this.sessionId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
@@ -870,7 +911,7 @@ let ReadingSession$1 = class ReadingSession {
            idleSeconds: Math.round(this.idleTime / 1000)
        };
     }
-};
+}
 
 // Load credentials and configuration when extension starts
 async function loadCredentials() {
@@ -887,8 +928,8 @@ async function loadCredentials() {
     }
     
     // Load session configuration
-    sessionConfig$1 = getConfigurationInMs(await loadSessionConfig());
-    console.log('Session configuration loaded:', sessionConfig$1);
+    sessionConfig = getConfigurationInMs(await loadSessionConfig());
+    console.log('Session configuration loaded:', sessionConfig);
 
     // Initialize multi-source support
     enhancedInitialization();
@@ -901,15 +942,31 @@ async function loadCredentials() {
 function enhancedInitialization() {
     // Save original functions for compatibility
     originalHandleTabChange = handleTabChange;
+    originalProcessArxivUrl = processArxivUrl;
     
-    // Initialize multi-source support
-    const { enhancedHandleTabChange } = initMultiSourceSupport();
+    // Initialize multi-source support with explicit context binding
+    const { processPaperUrl, enhancedHandleTabChange } = initMultiSourceSupport({
+        createGithubIssue,       // Pass createGithubIssue function to background_multi_source
+        endCurrentSession,       // Pass endCurrentSession function
+        ReadingSession,          // Pass ReadingSession class
+        sessionConfig,           // Pass sessionConfig
+        startActivityTracking,   // Pass startActivityTracking function
+        setCurrentPaperData,     // New helper function to set current paper data
+        processArxivUrl          // Pass the original arXiv processor
+    });
     
     // Store enhanced functions
     enhancedTabChangeHandler = enhancedHandleTabChange;
+    enhancedProcessPaperUrl = processPaperUrl;
     
     // Debug information
     console.log('Multi-source paper support initialized');
+}
+
+// Helper function to set current paper data
+function setCurrentPaperData(data) {
+    currentPaperData = data;
+    return currentPaperData;
 }
 
 // Listen for credential changes
@@ -922,8 +979,8 @@ chrome.storage.onChanged.addListener(async (changes) => {
         githubRepo = changes.githubRepo.newValue;
     }
     if (changes.sessionConfig) {
-        sessionConfig$1 = getConfigurationInMs(changes.sessionConfig.newValue);
-        console.log('Session configuration updated:', sessionConfig$1);
+        sessionConfig = getConfigurationInMs(changes.sessionConfig.newValue);
+        console.log('Session configuration updated:', sessionConfig);
     }
     
     // Reinitialize paper manager if credentials changed
@@ -944,8 +1001,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     console.log('Message received:', request);
     
     if (request.type === 'getCurrentPaper') {
-        console.log('Popup requested current paper:', currentPaperData$1);
-        sendResponse(currentPaperData$1);
+        console.log('Popup requested current paper:', currentPaperData);
+        sendResponse(currentPaperData);
     }
     else if (request.type === 'updateRating') {
         console.log('Rating update requested:', request.rating);
@@ -968,15 +1025,15 @@ async function handleUpdateRating(rating, sendResponse) {
         return;
     }
 
-    if (!currentPaperData$1) {
+    if (!currentPaperData) {
         sendResponse({ success: false, error: 'No current paper' });
         return;
     }
 
     try {
-        const paperId = currentPaperData$1.arxivId || currentPaperData$1.sourceId;
-        await paperManager.updateRating(paperId, rating, currentPaperData$1);
-        currentPaperData$1.rating = rating;
+        const paperId = currentPaperData.arxivId || currentPaperData.sourceId;
+        await paperManager.updateRating(paperId, rating, currentPaperData);
+        currentPaperData.rating = rating;
         sendResponse({ success: true });
     } catch (error) {
         console.error('Error updating rating:', error);
@@ -1008,27 +1065,52 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 
 chrome.windows.onFocusChanged.addListener((windowId) => {
     if (windowId === chrome.windows.WINDOW_ID_NONE) {
-        endCurrentSession$1();
+        endCurrentSession();
     }
 });
 
-// Listen for URL changes
+// Listen for URL changes - now handling both arXiv and other sources
 chrome.webNavigation.onCompleted.addListener(async (details) => {
     console.log('Navigation detected:', details.url);
-    if (details.url.includes('arxiv.org')) {
-        console.log('arXiv URL detected, processing...');
-        const paperData = await processArxivUrl$1(details.url);
+    
+    // Check if this is a paper URL using the multi-source detector
+    const sourceInfo = MultiSourceDetector.detect(details.url);
+    
+    if (sourceInfo) {
+        console.log(`${sourceInfo.type.toUpperCase()} URL detected, processing...`);
+        
+        // Use appropriate processor based on source
+        let paperData;
+        if (sourceInfo.type === 'arxiv' && originalProcessArxivUrl) {
+            // Use original processor for arXiv
+            paperData = await originalProcessArxivUrl(details.url);
+            
+            // Add multi-source fields
+            if (paperData) {
+                paperData.source = 'arxiv';
+                paperData.sourceId = paperData.arxivId;
+                paperData.primary_id = sourceInfo.primary_id;
+            }
+        } else if (enhancedProcessPaperUrl) {
+            // Use enhanced processor for other sources
+            paperData = await enhancedProcessPaperUrl(details.url);
+        }
+        
         if (paperData) {
             console.log('Paper data extracted:', paperData);
-            await createGithubIssue$1(paperData);
+            await createGithubIssue(paperData);
         } else {
             console.log('Failed to extract paper data');
         }
     }
 }, {
-    url: [{
-        hostSuffix: 'arxiv.org'
-    }]
+    url: [
+        { hostSuffix: 'arxiv.org' },
+        { hostSuffix: 'semanticscholar.org' },
+        { hostSuffix: 'doi.org' },
+        { hostSuffix: 'dl.acm.org' },
+        { hostSuffix: 'openreview.net' }
+    ]
 });
 
 // Original handleTabChange function
@@ -1038,48 +1120,48 @@ async function handleTabChange(tab) {
     
     if (!isArxiv) {
         console.log('Not an arXiv page, ending current session');
-        await endCurrentSession$1();
+        await endCurrentSession();
         return;
     }
 
-    if (currentSession$1) {
+    if (currentSession) {
         console.log('Ending existing session before starting new one');
-        await endCurrentSession$1();
+        await endCurrentSession();
     }
 
     console.log('Processing arXiv URL for new session');
-    currentPaperData$1 = await processArxivUrl$1(tab.url);
-    if (currentPaperData$1) {
-        console.log('Starting new session for:', currentPaperData$1.arxivId);
-        currentSession$1 = new ReadingSession$1(currentPaperData$1.arxivId, sessionConfig$1);
-        const metadata = currentSession$1.getMetadata();
+    currentPaperData = await processArxivUrl(tab.url);
+    if (currentPaperData) {
+        console.log('Starting new session for:', currentPaperData.arxivId);
+        currentSession = new ReadingSession(currentPaperData.arxivId, sessionConfig);
+        const metadata = currentSession.getMetadata();
         console.log('New session created:', metadata);
-        startActivityTracking$1();
+        startActivityTracking();
     }
 }
 
-async function endCurrentSession$1() {
-    if (currentSession$1 && currentPaperData$1) {
-        console.log('Ending session for:', currentPaperData$1.arxivId || currentPaperData$1.sourceId);
-        const sessionData = currentSession$1.finalize();
+async function endCurrentSession() {
+    if (currentSession && currentPaperData) {
+        console.log('Ending session for:', currentPaperData.arxivId || currentPaperData.sourceId);
+        const sessionData = currentSession.finalize();
         if (sessionData) {
             console.log('Creating reading event:', sessionData);
-            await enhancedCreateReadingEvent(currentPaperData$1, sessionData);
+            await enhancedCreateReadingEvent(currentPaperData, sessionData);
         }
-        currentSession$1 = null;
-        currentPaperData$1 = null;
+        currentSession = null;
+        currentPaperData = null;
         stopActivityTracking();
     }
 }
 
-function startActivityTracking$1() {
+function startActivityTracking() {
     if (!activityInterval) {
         console.log('Starting activity tracking');
         activityInterval = setInterval(() => {
-            if (currentSession$1) {
-                currentSession$1.update();
+            if (currentSession) {
+                currentSession.update();
             }
-        }, sessionConfig$1.activityUpdateInterval);
+        }, sessionConfig.activityUpdateInterval);
     }
 }
 
@@ -1131,18 +1213,20 @@ async function enhancedCreateReadingEvent(paperData, sessionData) {
     }
 }
 
-async function createGithubIssue$1(paperData) {
+async function createGithubIssue(paperData) {
     if (!paperManager) {
         console.error('Paper manager not initialized');
-        return;
+        return null;
     }
 
     try {
         const existingPaper = await paperManager.getOrCreatePaper(paperData);
-        console.log('Paper metadata stored/retrieved:', existingPaper.arxivId || existingPaper.sourceId);
+        console.log('Paper metadata stored/retrieved:', 
+            existingPaper.arxivId || existingPaper.sourceId || existingPaper.primary_id);
         return existingPaper;
     } catch (error) {
         console.error('Error handling paper metadata:', error);
+        return null;
     }
 }
 
@@ -1243,7 +1327,7 @@ async function parseXMLText(xmlText) {
     }
 }
 
-async function processArxivUrl$1(url) {
+async function processArxivUrl(url) {
     console.log('Processing URL:', url);
     
     let arxivId = null;
@@ -1304,9 +1388,9 @@ function initializeDebugObjects() {
     self.__DEBUG__ = {
         get paperManager() { return paperManager; },
         getGithubClient: () => paperManager?.client,
-        getCurrentPaper: () => currentPaperData$1,
-        getCurrentSession: () => currentSession$1,
-        getConfig: () => sessionConfig$1
+        getCurrentPaper: () => currentPaperData,
+        getCurrentSession: () => currentSession,
+        getConfig: () => sessionConfig
     };
 
     console.log('Debug objects registered, access via __DEBUG__ in service worker console');
