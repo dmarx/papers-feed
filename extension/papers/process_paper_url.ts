@@ -30,28 +30,43 @@ async function extractMetadataFromPage(tabId: number): Promise<PageMetadata | nu
       target: { tabId: tabId },
       func: () => {
         try {
+          // Helper function to safely get content from meta tags
+          const getMetaContent = (selector: string): string | undefined => {
+            const element = document.querySelector(selector);
+            return element && 'content' in element ? 
+              (element as HTMLMetaElement).content : undefined;
+          };
+
           // Try to extract from common meta tags first
-          const metadata = {
-            title: document.querySelector('meta[name="citation_title"]')?.content ||
-                   document.querySelector('meta[property="og:title"]')?.content ||
+          const metadata: {
+            title?: string;
+            authors?: string;
+            abstract?: string;
+            published_date?: string;
+            doi?: string;
+            url?: string;
+            citations?: number | null;
+          } = {
+            title: getMetaContent('meta[name="citation_title"]') ||
+                   getMetaContent('meta[property="og:title"]') ||
                    document.title,
-            authors: document.querySelector('meta[name="citation_author"]')?.content ||
-                     document.querySelector('meta[name="citation_authors"]')?.content ||
-                     document.querySelector('meta[name="author"]')?.content,
-            abstract: document.querySelector('meta[name="description"]')?.content ||
-                      document.querySelector('meta[property="og:description"]')?.content ||
-                      document.querySelector('meta[name="citation_abstract"]')?.content,
-            published_date: document.querySelector('meta[name="citation_publication_date"]')?.content ||
-                            document.querySelector('meta[name="citation_date"]')?.content,
-            doi: document.querySelector('meta[name="citation_doi"]')?.content,
-            url: document.querySelector('meta[property="og:url"]')?.content || window.location.href,
+            authors: getMetaContent('meta[name="citation_author"]') ||
+                     getMetaContent('meta[name="citation_authors"]') ||
+                     getMetaContent('meta[name="author"]'),
+            abstract: getMetaContent('meta[name="description"]') ||
+                      getMetaContent('meta[property="og:description"]') ||
+                      getMetaContent('meta[name="citation_abstract"]'),
+            published_date: getMetaContent('meta[name="citation_publication_date"]') ||
+                            getMetaContent('meta[name="citation_date"]'),
+            doi: getMetaContent('meta[name="citation_doi"]'),
+            url: getMetaContent('meta[property="og:url"]') || window.location.href,
             citations: null
           };
           
           // Source-specific extraction fallbacks
           if (!metadata.title) {
             const h1 = document.querySelector('h1');
-            if (h1) metadata.title = h1.textContent.trim();
+            if (h1 && h1.textContent) metadata.title = h1.textContent.trim();
           }
           
           if (!metadata.abstract) {
@@ -60,7 +75,7 @@ async function extractMetadataFromPage(tabId: number): Promise<PageMetadata | nu
                               document.querySelector('#abstract') ||
                               document.querySelector('[class*="abstract"]') ||
                               document.querySelector('[id*="abstract"]');
-            if (abstractEl) metadata.abstract = abstractEl.textContent.trim();
+            if (abstractEl && abstractEl.textContent) metadata.abstract = abstractEl.textContent.trim();
           }
           
           // DOI-specific extraction
@@ -73,9 +88,9 @@ async function extractMetadataFromPage(tabId: number): Promise<PageMetadata | nu
           if (window.location.href.includes('dl.acm.org')) {
             // Try to get citation count
             const citationEl = document.querySelector('.citation-metrics');
-            if (citationEl) {
+            if (citationEl && citationEl.textContent) {
               const citText = citationEl.textContent;
-              const citMatch = citText?.match(/(\d+)\s+citations/i);
+              const citMatch = citText.match(/(\d+)\s+citations/i);
               if (citMatch) metadata.citations = parseInt(citMatch[1], 10);
             }
             
@@ -90,9 +105,9 @@ async function extractMetadataFromPage(tabId: number): Promise<PageMetadata | nu
           if (window.location.href.includes('semanticscholar.org')) {
             // Try to get citation count
             const citationEl = document.querySelector('[data-test-id="citation-count"]');
-            if (citationEl) {
+            if (citationEl && citationEl.textContent) {
               const citText = citationEl.textContent;
-              const citMatch = citText?.match(/(\d+)/);
+              const citMatch = citText.match(/(\d+)/);
               if (citMatch) metadata.citations = parseInt(citMatch[1], 10);
             }
             
@@ -110,14 +125,14 @@ async function extractMetadataFromPage(tabId: number): Promise<PageMetadata | nu
           if (window.location.href.includes('openreview.net')) {
             // Try to extract authors
             const authorElements = document.querySelectorAll('.note_content_field:contains("Authors") + .note_content_value');
-            if (authorElements.length > 0) {
-              metadata.authors = authorElements[0].textContent?.trim();
+            if (authorElements.length > 0 && authorElements[0].textContent) {
+              metadata.authors = authorElements[0].textContent.trim();
             }
 
             // Try to extract abstract
             const abstractElements = document.querySelectorAll('.note_content_field:contains("Abstract") + .note_content_value');
-            if (abstractElements.length > 0) {
-              metadata.abstract = abstractElements[0].textContent?.trim();
+            if (abstractElements.length > 0 && abstractElements[0].textContent) {
+              metadata.abstract = abstractElements[0].textContent.trim();
             }
           }
           
@@ -130,7 +145,28 @@ async function extractMetadataFromPage(tabId: number): Promise<PageMetadata | nu
     });
     
     if (results && results[0] && results[0].result) {
-      return results[0].result as PageMetadata;
+      const result = results[0].result as {
+        title?: string;
+        authors?: string;
+        abstract?: string;
+        published_date?: string;
+        doi?: string;
+        url?: string;
+        citations?: number | null;
+      };
+      
+      // Convert to PageMetadata and ensure citations is properly typed
+      const metadata: PageMetadata = {
+        title: result.title,
+        authors: result.authors,
+        abstract: result.abstract,
+        published_date: result.published_date,
+        doi: result.doi,
+        url: result.url,
+        citations: result.citations !== null ? result.citations : undefined
+      };
+      
+      return metadata;
     }
   } catch (error) {
     console.error('Error executing metadata extraction script:', error);
@@ -205,7 +241,7 @@ export async function processPaperUrl(
           paperData.doi = metadata.doi;
         }
         
-        if (metadata.citations) {
+        if (metadata.citations !== undefined) {
           paperData.citations = metadata.citations;
         }
       } else {
