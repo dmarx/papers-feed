@@ -5,6 +5,19 @@ import { MultiSourceDetector } from './papers/detector';
 import { processPaperUrl as processUrl, enhancePaperData } from './papers/process_paper_url';
 
 /**
+ * Context for external functions provided by the background script
+ */
+let externalContext = {
+  createGithubIssue: null,
+  endCurrentSession: null,
+  ReadingSession: null,
+  sessionConfig: null,
+  startActivityTracking: null,
+  setCurrentPaperData: null,
+  processArxivUrl: null
+};
+
+/**
  * Extracts metadata from the current page if possible
  * 
  * @param {number} tabId - ID of the current tab
@@ -12,50 +25,56 @@ import { processPaperUrl as processUrl, enhancePaperData } from './papers/proces
  */
 async function extractMetadataFromPage(tabId) {
   try {
-    const result = await chrome.tabs.executeScript(tabId, {
-      code: `
-        (function() {
-          try {
-            // Try to extract from common meta tags first
-            const metadata = {
-              title: document.querySelector('meta[name="citation_title"]')?.content ||
-                     document.querySelector('meta[property="og:title"]')?.content ||
-                     document.title,
-              authors: document.querySelector('meta[name="citation_author"]')?.content ||
-                       document.querySelector('meta[name="citation_authors"]')?.content ||
-                       document.querySelector('meta[name="author"]')?.content,
-              abstract: document.querySelector('meta[name="description"]')?.content ||
-                        document.querySelector('meta[property="og:description"]')?.content ||
-                        document.querySelector('meta[name="citation_abstract"]')?.content,
-              published_date: document.querySelector('meta[name="citation_publication_date"]')?.content ||
-                              document.querySelector('meta[name="citation_date"]')?.content,
-              doi: document.querySelector('meta[name="citation_doi"]')?.content
-            };
-            
-            // If metadata not found in meta tags, try common page elements
-            if (!metadata.title) {
-              const h1 = document.querySelector('h1');
-              if (h1) metadata.title = h1.textContent.trim();
-            }
-            
-            if (!metadata.abstract) {
-              const abstractEl = document.querySelector('.abstract') || 
-                                document.querySelector('#abstract') ||
-                                document.querySelector('[class*="abstract"]');
-              if (abstractEl) metadata.abstract = abstractEl.textContent.trim();
-            }
-            
-            return metadata;
-          } catch (e) {
-            console.error('Error extracting metadata:', e);
-            return null;
+    const result = await chrome.scripting.executeScript({
+      target: { tabId: tabId },
+      func: () => {
+        try {
+          // Helper function to safely get content from meta tags
+          const getMetaContent = (selector) => {
+            const element = document.querySelector(selector);
+            return element && 'content' in element ? 
+              element.content : undefined;
+          };
+
+          // Try to extract from common meta tags first
+          const metadata = {
+            title: getMetaContent('meta[name="citation_title"]') ||
+                   getMetaContent('meta[property="og:title"]') ||
+                   document.title,
+            authors: getMetaContent('meta[name="citation_author"]') ||
+                     getMetaContent('meta[name="citation_authors"]') ||
+                     getMetaContent('meta[name="author"]'),
+            abstract: getMetaContent('meta[name="description"]') ||
+                      getMetaContent('meta[property="og:description"]') ||
+                      getMetaContent('meta[name="citation_abstract"]'),
+            published_date: getMetaContent('meta[name="citation_publication_date"]') ||
+                            getMetaContent('meta[name="citation_date"]'),
+            doi: getMetaContent('meta[name="citation_doi"]')
+          };
+          
+          // If metadata not found in meta tags, try common page elements
+          if (!metadata.title) {
+            const h1 = document.querySelector('h1');
+            if (h1 && h1.textContent) metadata.title = h1.textContent.trim();
           }
-        })();
-      `
+          
+          if (!metadata.abstract) {
+            const abstractEl = document.querySelector('.abstract') || 
+                              document.querySelector('#abstract') ||
+                              document.querySelector('[class*="abstract"]');
+            if (abstractEl && abstractEl.textContent) metadata.abstract = abstractEl.textContent.trim();
+          }
+          
+          return metadata;
+        } catch (e) {
+          console.error('Error extracting metadata:', e);
+          return null;
+        }
+      }
     });
     
-    if (result && result[0]) {
-      return result[0];
+    if (result && result[0] && result[0].result) {
+      return result[0].result;
     }
   } catch (error) {
     console.error('Error executing script:', error);
@@ -80,9 +99,9 @@ async function processPaperUrl(url) {
   if (!sourceInfo) {
     console.log('No recognized paper source detected in URL');
     
-    // Try legacy arXiv detection as fallback - this will be provided by the background script
-    if (typeof processArxivUrl === 'function') {
-      return processArxivUrl(url);
+    // Try legacy arXiv detection as fallback
+    if (externalContext.processArxivUrl) {
+      return externalContext.processArxivUrl(url);
     }
     return null;
   }
@@ -92,8 +111,8 @@ async function processPaperUrl(url) {
   const { type: sourceType, id: sourceId, primary_id } = sourceInfo;
   
   // For arXiv, use the existing well-tested processor if available
-  if (sourceType === 'arxiv' && typeof processArxivUrl === 'function') {
-    const paperData = await processArxivUrl(url);
+  if (sourceType === 'arxiv' && externalContext.processArxivUrl) {
+    const paperData = await externalContext.processArxivUrl(url);
     
     // Enhance with multi-source fields if successful
     if (paperData) {
@@ -106,9 +125,18 @@ async function processPaperUrl(url) {
   }
   
   // Delegate to the TypeScript implementation in papers/process_paper_url.ts
-  // This uses the imported processUrl function
   try {
-    const paperData = await processUrl(url);
+    const paperData = await processUrl(url, externalContext.processArxivUrl);
+    
+    // Store in GitHub if available
+    if (paperData && externalContext.createGithubIssue) {
+      try {
+        await externalContext.createGithubIssue(paperData);
+      } catch (e) {
+        console.error('Error storing paper data in GitHub:', e);
+      }
+    }
+    
     return paperData;
   } catch (error) {
     console.error('Error processing paper URL:', error);
@@ -144,10 +172,9 @@ function setupMultiSourceListener() {
     if (paperData) {
       console.log('Paper data extracted:', paperData);
       
-      // Create or update paper in storage
-      // The createGithubIssue function will be provided by the background script
-      if (typeof createGithubIssue === 'function') {
-        await createGithubIssue(paperData);
+      // Create or update paper in GitHub storage
+      if (externalContext.createGithubIssue) {
+        await externalContext.createGithubIssue(paperData);
       } else {
         console.error('createGithubIssue function not available');
       }
@@ -182,9 +209,9 @@ async function enhancedHandleTabChange(tab, originalHandler) {
   if (!isPaperUrl) {
     console.log('Not a recognized paper page, ending current session');
     
-    // The endCurrentSession function will be provided by the background script
-    if (typeof endCurrentSession === 'function') {
-      await endCurrentSession();
+    // End current session if available
+    if (externalContext.endCurrentSession) {
+      await externalContext.endCurrentSession();
     }
     return;
   }
@@ -194,39 +221,39 @@ async function enhancedHandleTabChange(tab, originalHandler) {
     return originalHandler(tab);
   }
   
-  // Background script variables/functions that we need to access
-  if (typeof currentSession !== 'undefined' && currentSession) {
-    console.log('Ending existing session before starting new one');
-    if (typeof endCurrentSession === 'function') {
-      await endCurrentSession();
-    }
+  // For other sources, end any existing session
+  if (externalContext.endCurrentSession) {
+    await externalContext.endCurrentSession();
   }
   
   console.log('Processing paper URL for new session');
   const paperData = await processPaperUrl(url);
   
-  if (paperData && typeof ReadingSession === 'function' && typeof sessionConfig !== 'undefined') {
-    // Use appropriate ID based on availability - maintaining backward compatibility
+  if (paperData) {
+    // Use appropriate ID based on availability
     const trackingId = paperData.arxivId || paperData.sourceId;
     
     console.log('Starting new session for:', trackingId);
     
-    // Set currentPaperData and currentSession - these are global variables in the background script
-    if (typeof currentSession !== 'undefined') {
-      currentSession = new ReadingSession(trackingId, sessionConfig);
+    if (externalContext.ReadingSession && externalContext.sessionConfig) {
+      // Create a new session
+      const currentSession = new externalContext.ReadingSession(trackingId, externalContext.sessionConfig);
       const metadata = currentSession.getMetadata();
       console.log('New session created:', metadata);
       
-      if (typeof startActivityTracking === 'function') {
-        startActivityTracking();
+      // Set the current paper data
+      if (externalContext.setCurrentPaperData) {
+        externalContext.setCurrentPaperData(paperData);
       }
+      
+      // Start tracking activity
+      if (externalContext.startActivityTracking) {
+        externalContext.startActivityTracking();
+      }
+      
+      // Return the paper data
+      return paperData;
     }
-    
-    if (typeof currentPaperData !== 'undefined') {
-      currentPaperData = paperData;
-    }
-    
-    return paperData;
   }
   
   return null;
@@ -234,16 +261,24 @@ async function enhancedHandleTabChange(tab, originalHandler) {
 
 /**
  * Initialize the multi-source support
+ * 
+ * @param {Object} context - External functions from background script
  */
-export function initMultiSourceSupport() {
+export function initMultiSourceSupport(context = {}) {
+  // Store external context
+  externalContext = {
+    ...externalContext,
+    ...context
+  };
+  
   // Setup listener for additional paper sources
   setupMultiSourceListener();
   
-  console.log('Multi-source paper support initialized');
+  console.log('Multi-source paper support initialized with context:', 
+    Object.keys(externalContext).filter(k => !!externalContext[k]));
   
   // Return overrides that can be applied to the main module
   return {
     processPaperUrl,
     enhancedHandleTabChange
   };
-}
