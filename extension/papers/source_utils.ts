@@ -59,9 +59,12 @@ const SOURCE_TYPES: Record<string, SourceTypeDefinition> = {
   'openreview': {
     prefix: 'openreview',
     url_patterns: [
-      /openreview\.net\/forum\?id=([a-zA-Z0-9_\-]+)/
+      /openreview\.net\/forum\?id=([a-zA-Z0-9_\-]+)/,
+      // Add support for PDF links on OpenReview
+      /openreview\.net\/pdf\?id=([a-zA-Z0-9_\-]+)/
     ],
     id_extractors: [
+      (match) => match[1],
       (match) => match[1]
     ],
     id_format: /[a-zA-Z0-9_\-]+/
