@@ -25,98 +25,112 @@ interface PageMetadata {
  */
 async function extractMetadataFromPage(tabId: number): Promise<PageMetadata | null> {
   try {
-    // Execute script to extract metadata
-    const result = await chrome.tabs.executeScript(tabId, {
-      code: `
-        (function() {
-          try {
-            // Try to extract from common meta tags first
-            const metadata = {
-              title: document.querySelector('meta[name="citation_title"]')?.content ||
-                     document.querySelector('meta[property="og:title"]')?.content ||
-                     document.title,
-              authors: document.querySelector('meta[name="citation_author"]')?.content ||
-                       document.querySelector('meta[name="citation_authors"]')?.content ||
-                       document.querySelector('meta[name="author"]')?.content,
-              abstract: document.querySelector('meta[name="description"]')?.content ||
-                        document.querySelector('meta[property="og:description"]')?.content ||
-                        document.querySelector('meta[name="citation_abstract"]')?.content,
-              published_date: document.querySelector('meta[name="citation_publication_date"]')?.content ||
-                              document.querySelector('meta[name="citation_date"]')?.content,
-              doi: document.querySelector('meta[name="citation_doi"]')?.content,
-              url: document.querySelector('meta[property="og:url"]')?.content || window.location.href,
-              citations: null
-            };
-            
-            // Source-specific extraction fallbacks
-            if (!metadata.title) {
-              const h1 = document.querySelector('h1');
-              if (h1) metadata.title = h1.textContent.trim();
-            }
-            
-            if (!metadata.abstract) {
-              // Try common abstract containers
-              const abstractEl = document.querySelector('.abstract') || 
-                                document.querySelector('#abstract') ||
-                                document.querySelector('[class*="abstract"]') ||
-                                document.querySelector('[id*="abstract"]');
-              if (abstractEl) metadata.abstract = abstractEl.textContent.trim();
-            }
-            
-            // DOI-specific extraction
-            if (!metadata.doi && window.location.href.includes('doi.org')) {
-              const match = window.location.href.match(/doi\\.org\\/(10\\.[0-9.]+\\/[^\\s&/?#]+[^\\s&/?#.:])/);
-              if (match) metadata.doi = match[1];
-            }
-            
-            // ACM-specific extraction
-            if (window.location.href.includes('dl.acm.org')) {
-              // Try to get citation count
-              const citationEl = document.querySelector('.citation-metrics');
-              if (citationEl) {
-                const citText = citationEl.textContent;
-                const citMatch = citText?.match(/(\\d+)\\s+citations/i);
-                if (citMatch) metadata.citations = parseInt(citMatch[1], 10);
-              }
-              
-              // Try to extract DOI from URL or page
-              if (!metadata.doi) {
-                const doiMatch = window.location.href.match(/dl\\.acm\\.org\\/doi\\/(10\\.[0-9.]+\\/[^\\s&/?#]+[^\\s&/?#.:])/);
-                if (doiMatch) metadata.doi = doiMatch[1];
-              }
-            }
-            
-            // Semantic Scholar specific extraction
-            if (window.location.href.includes('semanticscholar.org')) {
-              // Try to get citation count
-              const citationEl = document.querySelector('[data-test-id="citation-count"]');
-              if (citationEl) {
-                const citText = citationEl.textContent;
-                const citMatch = citText?.match(/(\\d+)/);
-                if (citMatch) metadata.citations = parseInt(citMatch[1], 10);
-              }
-              
-              // Format authors if found in a specific format
-              const authorElements = document.querySelectorAll('[data-test-id="author-list"] a');
-              if (authorElements.length > 0) {
-                metadata.authors = Array.from(authorElements)
-                  .map(el => el.textContent?.trim())
-                  .filter(Boolean)
-                  .join(', ');
-              }
-            }
-            
-            return metadata;
-          } catch (e) {
-            console.error('Error extracting metadata:', e);
-            return null;
+    // Use chrome.scripting.executeScript instead of the deprecated chrome.tabs.executeScript
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: tabId },
+      func: () => {
+        try {
+          // Try to extract from common meta tags first
+          const metadata = {
+            title: document.querySelector('meta[name="citation_title"]')?.content ||
+                   document.querySelector('meta[property="og:title"]')?.content ||
+                   document.title,
+            authors: document.querySelector('meta[name="citation_author"]')?.content ||
+                     document.querySelector('meta[name="citation_authors"]')?.content ||
+                     document.querySelector('meta[name="author"]')?.content,
+            abstract: document.querySelector('meta[name="description"]')?.content ||
+                      document.querySelector('meta[property="og:description"]')?.content ||
+                      document.querySelector('meta[name="citation_abstract"]')?.content,
+            published_date: document.querySelector('meta[name="citation_publication_date"]')?.content ||
+                            document.querySelector('meta[name="citation_date"]')?.content,
+            doi: document.querySelector('meta[name="citation_doi"]')?.content,
+            url: document.querySelector('meta[property="og:url"]')?.content || window.location.href,
+            citations: null
+          };
+          
+          // Source-specific extraction fallbacks
+          if (!metadata.title) {
+            const h1 = document.querySelector('h1');
+            if (h1) metadata.title = h1.textContent.trim();
           }
-        })();
-      `
+          
+          if (!metadata.abstract) {
+            // Try common abstract containers
+            const abstractEl = document.querySelector('.abstract') || 
+                              document.querySelector('#abstract') ||
+                              document.querySelector('[class*="abstract"]') ||
+                              document.querySelector('[id*="abstract"]');
+            if (abstractEl) metadata.abstract = abstractEl.textContent.trim();
+          }
+          
+          // DOI-specific extraction
+          if (!metadata.doi && window.location.href.includes('doi.org')) {
+            const match = window.location.href.match(/doi\.org\/(10\.[0-9.]+\/[^\s&/?#]+[^\s&/?#.:])/);
+            if (match) metadata.doi = match[1];
+          }
+          
+          // ACM-specific extraction
+          if (window.location.href.includes('dl.acm.org')) {
+            // Try to get citation count
+            const citationEl = document.querySelector('.citation-metrics');
+            if (citationEl) {
+              const citText = citationEl.textContent;
+              const citMatch = citText?.match(/(\d+)\s+citations/i);
+              if (citMatch) metadata.citations = parseInt(citMatch[1], 10);
+            }
+            
+            // Try to extract DOI from URL or page
+            if (!metadata.doi) {
+              const doiMatch = window.location.href.match(/dl\.acm\.org\/doi\/(10\.[0-9.]+\/[^\s&/?#]+[^\s&/?#.:])/);
+              if (doiMatch) metadata.doi = doiMatch[1];
+            }
+          }
+          
+          // Semantic Scholar specific extraction
+          if (window.location.href.includes('semanticscholar.org')) {
+            // Try to get citation count
+            const citationEl = document.querySelector('[data-test-id="citation-count"]');
+            if (citationEl) {
+              const citText = citationEl.textContent;
+              const citMatch = citText?.match(/(\d+)/);
+              if (citMatch) metadata.citations = parseInt(citMatch[1], 10);
+            }
+            
+            // Format authors if found in a specific format
+            const authorElements = document.querySelectorAll('[data-test-id="author-list"] a');
+            if (authorElements.length > 0) {
+              metadata.authors = Array.from(authorElements)
+                .map(el => el.textContent?.trim())
+                .filter(Boolean)
+                .join(', ');
+            }
+          }
+
+          // OpenReview specific extraction
+          if (window.location.href.includes('openreview.net')) {
+            // Try to extract authors
+            const authorElements = document.querySelectorAll('.note_content_field:contains("Authors") + .note_content_value');
+            if (authorElements.length > 0) {
+              metadata.authors = authorElements[0].textContent?.trim();
+            }
+
+            // Try to extract abstract
+            const abstractElements = document.querySelectorAll('.note_content_field:contains("Abstract") + .note_content_value');
+            if (abstractElements.length > 0) {
+              metadata.abstract = abstractElements[0].textContent?.trim();
+            }
+          }
+          
+          return metadata;
+        } catch (e) {
+          console.error('Error extracting metadata:', e);
+          return null;
+        }
+      }
     });
     
-    if (result && result[0]) {
-      return result[0] as PageMetadata;
+    if (results && results[0] && results[0].result) {
+      return results[0].result as PageMetadata;
     }
   } catch (error) {
     console.error('Error executing metadata extraction script:', error);
@@ -174,7 +188,7 @@ export async function processPaperUrl(
     rating: 'novote'
   };
   
-  // Try to extract metadata from the page
+  // Try to extract metadata from the page - but handle the case where this fails
   try {
     const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
     if (tabs.length > 0 && tabs[0].id) {
@@ -203,6 +217,7 @@ export async function processPaperUrl(
     }
   } catch (error) {
     console.error('Error extracting metadata:', error);
+    // If there's any error in metadata extraction, use a default title
     paperData.title = `${sourceType.toUpperCase()} Paper: ${sourceId}`;
   }
   
