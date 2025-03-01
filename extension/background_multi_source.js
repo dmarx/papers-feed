@@ -3,6 +3,9 @@
 
 import { MultiSourceDetector } from './papers/detector';
 import { processPaperUrl as processUrl, enhancePaperData } from './papers/process_paper_url';
+import { loguru } from './utils/logger';
+
+const logger = loguru.getLogger('MultiSourceSupport');
 
 /**
  * Context for external functions provided by the background script
@@ -16,6 +19,9 @@ let externalContext = {
   setCurrentPaperData: null,
   processArxivUrl: null
 };
+
+// Track URLs that are being processed to avoid duplicates
+const pendingUrls = new Set();
 
 /**
  * Extracts metadata from the current page if possible
@@ -77,7 +83,7 @@ async function extractMetadataFromPage(tabId) {
       return result[0].result;
     }
   } catch (error) {
-    console.error('Error executing script:', error);
+    logger.error('Error executing script:', error);
   }
   
   return null;
@@ -90,105 +96,85 @@ async function extractMetadataFromPage(tabId) {
  * @returns {Promise<Object|null>} - Paper data or null
  */
 async function processPaperUrl(url) {
-  console.log('Multi-source processing for URL:', url);
+  logger.info(`Multi-source processing for URL: ${url}`);
   
-  // Use detector to identify paper source
-  const sourceInfo = MultiSourceDetector.detect(url);
-  
-  // If not a recognized paper URL, exit
-  if (!sourceInfo) {
-    console.log('No recognized paper source detected in URL');
-    
-    // Try legacy arXiv detection as fallback
-    if (externalContext.processArxivUrl) {
-      return externalContext.processArxivUrl(url);
-    }
+  // Prevent duplicate processing
+  if (pendingUrls.has(url)) {
+    logger.info(`URL already being processed, skipping: ${url}`);
     return null;
   }
   
-  console.log('Detected paper source:', sourceInfo);
+  // Mark URL as being processed
+  pendingUrls.add(url);
   
-  const { type: sourceType, id: sourceId, primary_id } = sourceInfo;
-  
-  // For arXiv, use the existing well-tested processor if available
-  if (sourceType === 'arxiv' && externalContext.processArxivUrl) {
-    const paperData = await externalContext.processArxivUrl(url);
-    
-    // Enhance with multi-source fields if successful
-    if (paperData) {
-      paperData.source = 'arxiv';
-      paperData.sourceId = paperData.arxivId;
-      paperData.primary_id = primary_id;
-    }
-    
-    return paperData;
-  }
-  
-  // Delegate to the TypeScript implementation in papers/process_paper_url.ts
   try {
-    const paperData = await processUrl(url, externalContext.processArxivUrl);
+    // Use detector to identify paper source
+    const sourceInfo = MultiSourceDetector.detect(url);
     
-    // Store in GitHub if available
-    if (paperData && externalContext.createGithubIssue) {
-      try {
-        await externalContext.createGithubIssue(paperData);
-      } catch (e) {
-        console.error('Error storing paper data in GitHub:', e);
-      }
-    }
-    
-    return paperData;
-  } catch (error) {
-    console.error('Error processing paper URL:', error);
-    
-    // Create basic paper data as fallback
-    return {
-      source: sourceType,
-      sourceId: sourceId,
-      primary_id: primary_id,
-      url: url,
-      title: `${sourceType.toUpperCase()} Paper: ${sourceId}`,
-      timestamp: new Date().toISOString(),
-      rating: 'novote'
-    };
-  }
-}
-
-/**
- * Setup listener for new paper sources
- */
-function setupMultiSourceListener() {
-  // Create a new listener for additional paper sources
-  chrome.webNavigation.onCompleted.addListener(async (details) => {
-    console.log('Multi-source navigation detected:', details.url);
-    
-    // Skip arXiv URLs which are handled by the original listener
-    if (details.url.includes('arxiv.org')) {
-      return;
-    }
-    
-    // Process other paper URLs
-    const paperData = await processPaperUrl(details.url);
-    if (paperData) {
-      console.log('Paper data extracted:', paperData);
+    // If not a recognized paper URL, exit
+    if (!sourceInfo) {
+      logger.info('No recognized paper source detected in URL');
       
-      // Create or update paper in GitHub storage
-      if (externalContext.createGithubIssue) {
-        await externalContext.createGithubIssue(paperData);
-      } else {
-        console.error('createGithubIssue function not available');
+      // Try legacy arXiv detection as fallback
+      if (externalContext.processArxivUrl) {
+        return externalContext.processArxivUrl(url);
       }
+      return null;
     }
-  }, {
-    url: [
-      { hostSuffix: 'semanticscholar.org' },
-      { hostSuffix: 'doi.org' },
-      { hostSuffix: 'dl.acm.org' },
-      { hostSuffix: 'openreview.net' }
-    ]
-  });
-  
-  console.log('Multi-source paper detection enabled');
+    
+    logger.info(`Detected paper source: ${sourceInfo.type}:${sourceInfo.id}`);
+    
+    const { type: sourceType, id: sourceId, primary_id } = sourceInfo;
+    
+    // For arXiv, use the existing well-tested processor if available
+    if (sourceType === 'arxiv' && externalContext.processArxivUrl) {
+      const paperData = await externalContext.processArxivUrl(url);
+      
+      // Enhance with multi-source fields if successful
+      if (paperData) {
+        paperData.source = 'arxiv';
+        paperData.sourceId = paperData.arxivId;
+        paperData.primary_id = primary_id;
+      }
+      
+      return paperData;
+    }
+    
+    // Delegate to the TypeScript implementation in papers/process_paper_url.ts
+    try {
+      const paperData = await processUrl(url, externalContext.processArxivUrl);
+      
+      // Store in GitHub if available - but don't await to avoid race conditions
+      if (paperData && externalContext.createGithubIssue) {
+        externalContext.createGithubIssue(paperData).catch(e => {
+          logger.error('Error storing paper data in GitHub:', e);
+        });
+      }
+      
+      return paperData;
+    } catch (error) {
+      logger.error('Error processing paper URL:', error);
+      
+      // Create basic paper data as fallback
+      return {
+        source: sourceType,
+        sourceId: sourceId,
+        primary_id: primary_id,
+        url: url,
+        title: `${sourceType.toUpperCase()} Paper: ${sourceId}`,
+        timestamp: new Date().toISOString(),
+        rating: 'novote'
+      };
+    }
+  } catch (error) {
+    logger.error(`Unexpected error in processPaperUrl: ${error}`);
+    return null;
+  } finally {
+    // Remove URL from pending after a delay to prevent immediate reprocessing
+    setTimeout(() => {
+      pendingUrls.delete(url);
+    }, 500);
+  }
 }
 
 /**
@@ -198,65 +184,88 @@ function setupMultiSourceListener() {
  * @param {Function} originalHandler - Original handler for legacy support
  */
 async function enhancedHandleTabChange(tab, originalHandler) {
-  const url = tab?.url || '';
-  
-  // Use detector to identify paper source
-  const sourceInfo = MultiSourceDetector.detect(url);
-  const isPaperUrl = !!sourceInfo;
-  
-  console.log('Tab change detected:', { isPaperUrl, url, sourceInfo });
-  
-  if (!isPaperUrl) {
-    console.log('Not a recognized paper page, ending current session');
-    
-    // End current session if available
-    if (externalContext.endCurrentSession) {
-      await externalContext.endCurrentSession();
-    }
+  if (!tab || !tab.url) {
     return;
   }
   
-  // For arXiv papers, use the original handler for full compatibility
-  if (sourceInfo.type === 'arxiv' && originalHandler) {
-    return originalHandler(tab);
+  const url = tab.url;
+  
+  // Prevent duplicate processing
+  if (pendingUrls.has(url)) {
+    logger.info(`URL already being processed in enhancedHandleTabChange: ${url}`);
+    return;
   }
   
-  // For other sources, end any existing session
-  if (externalContext.endCurrentSession) {
-    await externalContext.endCurrentSession();
-  }
+  // Mark URL as being processed
+  pendingUrls.add(url);
   
-  console.log('Processing paper URL for new session');
-  const paperData = await processPaperUrl(url);
-  
-  if (paperData) {
-    // Use appropriate ID based on availability
-    const trackingId = paperData.arxivId || paperData.sourceId;
+  try {
+    // Use detector to identify paper source
+    const sourceInfo = MultiSourceDetector.detect(url);
+    const isPaperUrl = !!sourceInfo;
     
-    console.log('Starting new session for:', trackingId);
+    logger.info(`Tab change detected:`, { isPaperUrl, url, sourceInfo });
     
-    if (externalContext.ReadingSession && externalContext.sessionConfig) {
-      // Create a new session
-      const currentSession = new externalContext.ReadingSession(trackingId, externalContext.sessionConfig);
-      const metadata = currentSession.getMetadata();
-      console.log('New session created:', metadata);
+    if (!isPaperUrl) {
+      logger.info('Not a recognized paper page, ending current session');
       
-      // Set the current paper data
-      if (externalContext.setCurrentPaperData) {
-        externalContext.setCurrentPaperData(paperData);
+      // End current session if available
+      if (externalContext.endCurrentSession) {
+        await externalContext.endCurrentSession();
       }
-      
-      // Start tracking activity
-      if (externalContext.startActivityTracking) {
-        externalContext.startActivityTracking();
-      }
-      
-      // Return the paper data
-      return paperData;
+      return;
     }
+    
+    // For arXiv papers, use the original handler for full compatibility
+    if (sourceInfo.type === 'arxiv' && originalHandler) {
+      return originalHandler(tab);
+    }
+    
+    // For other sources, end any existing session
+    if (externalContext.endCurrentSession) {
+      await externalContext.endCurrentSession();
+    }
+    
+    logger.info('Processing paper URL for new session');
+    const paperData = await processPaperUrl(url);
+    
+    if (paperData) {
+      // Use appropriate ID based on availability
+      const trackingId = paperData.arxivId || paperData.sourceId;
+      
+      logger.info(`Starting new session for: ${trackingId}`);
+      
+      if (externalContext.ReadingSession && externalContext.sessionConfig) {
+        // Create a new session
+        const currentSession = new externalContext.ReadingSession(trackingId, externalContext.sessionConfig);
+        const metadata = currentSession.getMetadata();
+        logger.info('New session created:', metadata);
+        
+        // Set the current paper data
+        if (externalContext.setCurrentPaperData) {
+          externalContext.setCurrentPaperData(paperData);
+        }
+        
+        // Start tracking activity
+        if (externalContext.startActivityTracking) {
+          externalContext.startActivityTracking();
+        }
+        
+        // Return the paper data
+        return paperData;
+      }
+    }
+    
+    return null;
+  } catch (error) {
+    logger.error(`Error in enhanced tab change handler: ${error}`);
+    return null;
+  } finally {
+    // Remove URL from pending after a delay
+    setTimeout(() => {
+      pendingUrls.delete(url);
+    }, 500);
   }
-  
-  return null;
 }
 
 /**
@@ -271,10 +280,7 @@ export function initMultiSourceSupport(context = {}) {
     ...context
   };
   
-  // Setup listener for additional paper sources
-  setupMultiSourceListener();
-  
-  console.log('Multi-source paper support initialized with context:', 
+  logger.info('Multi-source paper support initialized with context:', 
     Object.keys(externalContext).filter(k => !!externalContext[k]));
   
   // Return overrides that can be applied to the main module
