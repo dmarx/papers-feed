@@ -9,6 +9,9 @@ import {
   isInteractionLog
 } from './types';
 import { formatPrimaryId, getLegacyId, isNewFormat } from './source_utils';
+import { loguru } from '../utils/logger';
+
+const logger = loguru.getLogger('PaperManager');
 
 /**
  * Checks if data is an interaction log
@@ -23,11 +26,18 @@ const isInteractionLogJs = (data: any): boolean => {
 };
 
 export class PaperManager {
-  constructor(private client: GitHubStoreClient) {}
+  private client: GitHubStoreClient;
+  // Add creation locks for concurrency control
+  private creationLocks = new Map<string, Promise<any>>();
+  
+  constructor(client: GitHubStoreClient) {
+    this.client = client;
+  }
 
   /**
    * Get or create a paper record
    * Enhanced to support multiple sources with backward compatibility
+   * and added concurrency control to prevent duplicate creation
    */
   async getOrCreatePaper(paperData: any): Promise<any> {
     // Determine the object ID to use with backward compatibility
@@ -48,141 +58,180 @@ export class PaperManager {
     } else if (paperData.arxivId) {
       // Legacy arXiv ID format
       objectId = `paper:${paperData.arxivId}`;
-      
-      // For legacy compatibility, don't add new fields yet
       useNewFormat = false;
     } else {
       throw new Error("Invalid paper data: missing ID information");
     }
     
-    try {
-      // Try to get the paper
-      const obj = await this.client.getObject(objectId);
-      const data = obj.data as Record<string, any>;
-      
-      // Return object, potentially enhancing it with new format fields
-      if (!useNewFormat || data.primary_id) {
-        return data;
-      }
-      
-      // Add new format fields to legacy data if needed
-      if (data.arxivId && !data.primary_id) {
-        const enhancedData = {
-          ...data,
-          source: 'arxiv',
-          sourceId: data.arxivId,
-          primary_id: formatPrimaryId('arxiv', data.arxivId)
-        };
+    // Check if we're already creating this object
+    if (this.creationLocks.has(objectId)) {
+      logger.info(`Waiting for existing creation of ${objectId}`);
+      return this.creationLocks.get(objectId);
+    }
+    
+    // Create a new promise for this operation
+    const creationPromise = (async () => {
+      try {
+        // Try to get the paper
+        const obj = await this.client.getObject(objectId);
+        const data = obj.data as Record<string, any>;
         
-        // Update the object with enhanced data
-        await this.client.updateObject(objectId, enhancedData);
-        return enhancedData;
-      }
-      
-      return data;
-    } catch (error) {
-      if (error instanceof Error && error.message.includes("No object found")) {
-        // Create new paper with appropriate fields
-        let defaultPaperData: Record<string, any>;
+        // Return object, potentially enhancing it with new format fields
+        if (!useNewFormat || data.primary_id) {
+          return data;
+        }
         
-        if (useNewFormat) {
-          // New multi-source format
-          defaultPaperData = {
-            primary_id: paperData.primary_id,
-            source: paperData.source,
-            sourceId: paperData.sourceId,
-            url: paperData.url || '',
-            title: paperData.title || paperData.sourceId,
-            authors: paperData.authors || '',
-            abstract: paperData.abstract || '',
-            timestamp: new Date().toISOString(),
-            rating: 'novote'
+        // Add new format fields to legacy data if needed
+        if (data.arxivId && !data.primary_id) {
+          const enhancedData = {
+            ...data,
+            source: 'arxiv',
+            sourceId: data.arxivId,
+            primary_id: formatPrimaryId('arxiv', data.arxivId)
           };
           
-          // For arXiv, maintain backward compatibility
-          if (paperData.source === 'arxiv') {
-            defaultPaperData.arxivId = paperData.sourceId;
-            defaultPaperData.arxiv_tags = paperData.arxiv_tags || [];
-            defaultPaperData.published_date = paperData.published_date || '';
-          } else {
-            // For other sources, add source-specific identifiers
-            defaultPaperData.identifiers = {
-              original: paperData.sourceId,
-              url: paperData.url
+          // Update the object with enhanced data
+          await this.client.updateObject(objectId, enhancedData);
+          return enhancedData;
+        }
+        
+        return data;
+      } catch (error) {
+        if (error instanceof Error && error.message.includes("No object found")) {
+          // Create new paper with appropriate fields
+          let defaultPaperData: Record<string, any>;
+          
+          if (useNewFormat) {
+            // New multi-source format
+            defaultPaperData = {
+              primary_id: paperData.primary_id,
+              source: paperData.source,
+              sourceId: paperData.sourceId,
+              url: paperData.url || '',
+              title: paperData.title || paperData.sourceId,
+              authors: paperData.authors || '',
+              abstract: paperData.abstract || '',
+              timestamp: new Date().toISOString(),
+              rating: 'novote'
             };
             
-            // Add cross-references if available
-            if (paperData.arxivId) {
-              defaultPaperData.identifiers.arxiv = paperData.arxivId;
+            // For arXiv, maintain backward compatibility
+            if (paperData.source === 'arxiv') {
+              defaultPaperData.arxivId = paperData.sourceId;
+              defaultPaperData.arxiv_tags = paperData.arxiv_tags || [];
+              defaultPaperData.published_date = paperData.published_date || '';
+            } else {
+              // For other sources, add source-specific identifiers
+              defaultPaperData.identifiers = {
+                original: paperData.sourceId,
+                url: paperData.url
+              };
+              
+              // Add cross-references if available
+              if (paperData.arxivId) {
+                defaultPaperData.identifiers.arxiv = paperData.arxivId;
+              }
+              if (paperData.doi) {
+                defaultPaperData.identifiers.doi = paperData.doi;
+              }
+              if (paperData.s2Id) {
+                defaultPaperData.identifiers.s2 = paperData.s2Id;
+              }
             }
-            if (paperData.doi) {
-              defaultPaperData.identifiers.doi = paperData.doi;
-            }
-            if (paperData.s2Id) {
-              defaultPaperData.identifiers.s2 = paperData.s2Id;
-            }
+          } else {
+            // Legacy format for backward compatibility
+            defaultPaperData = {
+              arxivId: paperData.arxivId,
+              url: paperData.url || `https://arxiv.org/abs/${paperData.arxivId}`,
+              title: paperData.title || paperData.arxivId,
+              authors: paperData.authors || '',
+              abstract: paperData.abstract || '',
+              timestamp: new Date().toISOString(),
+              rating: 'novote',
+              published_date: paperData.published_date || '',
+              arxiv_tags: paperData.arxiv_tags || []
+            };
           }
-        } else {
-          // Legacy format for backward compatibility
-          defaultPaperData = {
-            arxivId: paperData.arxivId,
-            url: paperData.url || `https://arxiv.org/abs/${paperData.arxivId}`,
-            title: paperData.title || paperData.arxivId,
-            authors: paperData.authors || '',
-            abstract: paperData.abstract || '',
-            timestamp: new Date().toISOString(),
-            rating: 'novote',
-            published_date: paperData.published_date || '',
-            arxiv_tags: paperData.arxiv_tags || []
-          };
+          
+          logger.info(`Creating new paper object: ${objectId}`);
+          await this.client.createObject(objectId, defaultPaperData);
+          return defaultPaperData;
         }
-
-        await this.client.createObject(objectId, defaultPaperData);
-        return defaultPaperData;
+        throw error;
+      } finally {
+        // Release the lock after a delay to prevent immediate duplicates
+        setTimeout(() => {
+          this.creationLocks.delete(objectId);
+        }, 500);
       }
-      throw error;
-    }
+    })();
+    
+    // Store the promise
+    this.creationLocks.set(objectId, creationPromise);
+    
+    return creationPromise;
   }
 
   /**
    * Get or create an interaction log
    * Enhanced with backward compatibility for legacy arXiv IDs
+   * and concurrency control
    */
   private async getOrCreateInteractionLog(paperId: string): Promise<InteractionLog> {
     // For backward compatibility, use legacy ID format for storage
     const legacyId = getLegacyId(paperId);
     const objectId = `interactions:${legacyId}`;
     
-    try {
-      const obj = await this.client.getObject(objectId);
-      const data = obj.data as unknown;
-      
-      // Use TypeScript type guard if available, otherwise JS version
-      if (typeof isInteractionLog === 'function' ? 
-          isInteractionLog(data) : 
-          isInteractionLogJs(data)) {
-        return data as InteractionLog;
-      }
-      
-      throw new Error('Invalid interaction log format');
-    } catch (error) {
-      if (error instanceof Error && error.message.includes('No object found')) {
-        // Create new log
-        const newLog: InteractionLog = {
-          paper_id: paperId,  // Store the full ID including prefix if present
-          interactions: []
-        };
+    // Check if we're already creating this log
+    if (this.creationLocks.has(objectId)) {
+      logger.info(`Waiting for existing creation of interaction log: ${objectId}`);
+      return this.creationLocks.get(objectId) as Promise<InteractionLog>;
+    }
+    
+    // Create a new promise for this operation
+    const creationPromise = (async () => {
+      try {
+        const obj = await this.client.getObject(objectId);
+        const data = obj.data as unknown;
         
-        // For backward compatibility, also add legacy_id if different
-        if (paperId !== legacyId) {
-          (newLog as any).legacy_id = legacyId;
+        // Use TypeScript type guard if available, otherwise JS version
+        if (typeof isInteractionLog === 'function' ? 
+            isInteractionLog(data) : 
+            isInteractionLogJs(data)) {
+          return data as InteractionLog;
         }
         
-        await this.client.createObject(objectId, newLog);
-        return newLog;
+        throw new Error('Invalid interaction log format');
+      } catch (error) {
+        if (error instanceof Error && error.message.includes('No object found')) {
+          // Create new log
+          const newLog: InteractionLog = {
+            paper_id: paperId,  // Store the full ID including prefix if present
+            interactions: []
+          };
+          
+          // For backward compatibility, also add legacy_id if different
+          if (paperId !== legacyId) {
+            (newLog as any).legacy_id = legacyId;
+          }
+          
+          logger.info(`Creating new interaction log: ${objectId}`);
+          await this.client.createObject(objectId, newLog);
+          return newLog;
+        }
+        throw error;
+      } finally {
+        // Release the lock after a delay
+        setTimeout(() => {
+          this.creationLocks.delete(objectId);
+        }, 500);
       }
-      throw error;
-    }
+    })();
+    
+    // Store the promise
+    this.creationLocks.set(objectId, creationPromise);
+    
+    return creationPromise;
   }
 
   /**
@@ -321,9 +370,9 @@ export class PaperManager {
     await this.client.updateObject(`interactions:${legacyId}`, log);
   }
 
-  // Rest of the methods (getInteractions, getPaperReadingTime, etc.) can remain unchanged
-  // as they'll work with the enhanced getOrCreateInteractionLog method
-
+  /**
+   * Get interactions for a paper
+   */
   async getInteractions(
     paperId: string,
     options: {
@@ -358,10 +407,13 @@ export class PaperManager {
     }
   }
     
+  /**
+   * Get total reading time for a paper
+   */
   async getPaperReadingTime(paperId: string): Promise<number> {
     const interactions = await this.getInteractions(paperId, { type: 'reading_session' });
     return interactions.reduce((total, i) => {
-      console.log('Calculating from interaction:', i);
+      logger.info('Calculating from interaction:', i);
       
       const data = i.data;
       if (typeof data === 'object' && data !== null && 'duration_seconds' in data) {
@@ -371,6 +423,9 @@ export class PaperManager {
     }, 0);
   }
 
+  /**
+   * Get paper history
+   */
   async getPaperHistory(paperId: string): Promise<Json[]> {
     // Use legacy ID for backward compatibility
     const objectId = `paper:${getLegacyId(paperId)}`;
