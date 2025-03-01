@@ -1,0 +1,12 @@
+**Browser Extension Environment Considerations**
+- Service Workers: Code in background.js runs in a service worker environment with no access to DOM, window, or document objects
+- Content Scripts: Only code in content scripts has access to the DOM
+- API Compatibility: Use environment-appropriate APIs:
+  - In background scripts: Avoid DOM APIs, use text parsing for XML/HTML
+  - In content scripts: Can use full DOM APIs
+  - In background scripts: Use self for global scope, not window
+- Testing: Test background scripts with service worker restrictions in mind
+- Parsing: For data parsing in background scripts:
+  - Use regex-based approaches instead of DOMParser
+  - Use JSON.parse for JSON
+  - Consider using string manipulation for simple HTML/XML parsing

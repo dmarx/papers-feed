@@ -35,13 +35,25 @@ export default defineConfig({
   },
   
   resolve: {
-    // Help Vite find gh-store-client
+    // Help Vite find modules
     mainFields: ['module', 'main'],
     extensions: ['.mjs', '.js', '.ts', '.jsx', '.tsx', '.json']
   },
 
-  // Handle Node.js built-in modules
+  // Define the environment to avoid window references
+  define: {
+    'window': 'self',
+  },
+
+  // Explicitly handling environment for service worker
+  worker: {
+    format: 'es'
+  },
+
+  // Handle build options for dependencies
   optimizeDeps: {
-    include: ['gh-store-client']
+    include: ['gh-store-client'],
+    // Exclude problematic dependencies that might reference window
+    exclude: []
   }
 });
