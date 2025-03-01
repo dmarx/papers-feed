@@ -184,3 +184,56 @@ export class MultiSourceReadingSession {
     };
   }
 }
+
+// extension/papers/types.ts
+
+export interface UnifiedPaperData {
+  // Core fields required for all sources
+  primary_id: string;  // Standardized ID format: {source}.{id}
+  source: string;      // Source identifier (arxiv, doi, semanticscholar, etc.)
+  sourceId: string;    // Original ID from the source
+  url: string;         // Paper URL
+  title: string;       // Paper title
+  authors: string;     // Author list as string
+  abstract: string;    // Paper abstract
+  timestamp: string;   // When the paper was first tracked
+  rating: string;      // User rating (thumbsup, thumbsdown, novote)
+  
+  // Legacy support fields
+  arxivId?: string;            // For backward compatibility
+  published_date?: string;     // Publication date
+  arxiv_tags?: string[];       // ArXiv categories
+  
+  // Source-specific fields
+  doi?: string;                // DOI string for DOI and ACM sources
+  identifiers?: {              // Cross-reference identifiers
+    original: string;          // Original ID from the source
+    url: string;               // Canonical URL
+    arxiv?: string;            // ArXiv ID
+    doi?: string;              // DOI reference
+    s2?: string;               // Semantic Scholar ID
+    acm?: string;              // ACM ID
+    openreview?: string;       // OpenReview ID
+   [key: string]: string;     // Other identifier types
+ };
+ 
+ // Metadata fields
+ citations?: number;          // Citation count
+ journal?: string;            // Journal name
+ conference?: string;         // Conference name
+ volume?: string;             // Journal volume
+ issue?: string;              // Journal issue
+ pages?: string;              // Page numbers
+ publisher?: string;          // Publisher name
+ 
+ // Custom source-specific fields
+ conferenceInfo?: {           // Enhanced conference information
+   name: string;              // Conference name
+   year: number;              // Year
+   location: string;          // Location
+   abbreviation?: string;     // Conference abbreviation (e.g., "ICLR")
+ };
+ 
+ // Allow for extension with string indexing
+ [key: string]: any;
+}
