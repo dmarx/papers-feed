@@ -103,90 +103,8 @@ export type SourceInfo = {
 }
 
 /**
- * Extended reading session with multi-source support
+ * Extended paper data interface for all source types
  */
-export class MultiSourceReadingSession {
-  // In legacy version, this was arxivId
-  paperId: string;
-  sessionId: string;
-  startTime: Date;
-  activeTime: number;
-  idleTime: number;
-  lastActiveTime: Date;
-  isTracking: boolean;
-  config: any;
-  endTime: Date | null;
-  finalizedData: ReadingSessionData | null;
-  
-  constructor(paperId: string, config: any) {
-    this.paperId = paperId;
-    this.sessionId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-    this.startTime = new Date();
-    this.activeTime = 0;
-    this.idleTime = 0;
-    this.lastActiveTime = new Date();
-    this.isTracking = true;
-    this.config = config;
-    this.endTime = null;
-    this.finalizedData = null;
-  }
-  
-  // Rest of the methods remain the same as ReadingSession
-  update() {
-    if (this.isTracking && !this.finalizedData) {
-      const now = new Date();
-      const timeSinceLastActive = now.getTime() - this.lastActiveTime.getTime();
-      
-      if (timeSinceLastActive < this.config.idleThreshold) {
-        this.activeTime += timeSinceLastActive;
-      } else {
-        this.idleTime += timeSinceLastActive;
-      }
-      
-      this.lastActiveTime = now;
-    }
-  }
-  
-  finalize() {
-    if (this.finalizedData) {
-      return this.finalizedData;
-    }
- 
-    this.update();
-    this.isTracking = false;
-    this.endTime = new Date();
-    const totalElapsed = this.endTime.getTime() - this.startTime.getTime();
- 
-    if (this.activeTime >= this.config.minSessionDuration) {
-      this.finalizedData = {
-        session_id: this.sessionId,
-        duration_seconds: Math.round(this.activeTime / 1000),
-        idle_seconds: Math.round(this.idleTime / 1000),
-        start_time: this.startTime.toISOString(),
-        end_time: this.endTime.toISOString(),
-        total_elapsed_seconds: Math.round(totalElapsed / 1000)
-      };
-      return this.finalizedData;
-    }
-    return null;
-  }
-  
-  end() {
-    return this.finalize();
-  }
-  
-  getMetadata() {
-    return {
-      sessionId: this.sessionId,
-      startTime: this.startTime.toISOString(),
-      activeSeconds: Math.round(this.activeTime / 1000),
-      idleSeconds: Math.round(this.idleTime / 1000)
-    };
-  }
-}
-
-// extension/papers/types.ts
-
 export interface UnifiedPaperData {
   // Core fields required for all sources
   primary_id: string;  // Standardized ID format: {source}.{id}
@@ -206,34 +124,9 @@ export interface UnifiedPaperData {
   
   // Source-specific fields
   // Fix for TS2411: Using string index signature
-  // doi?: string;                // DOI string for DOI and ACM sources
   identifiers?: {              // Cross-reference identifiers
-    // original: string;          // Original ID from the source
-    // url: string;               // Canonical URL
-    // arxiv?: string;            // ArXiv ID
-    // doi?: string;              // DOI reference
-    // s2?: string;               // Semantic Scholar ID
-    // acm?: string;              // ACM ID
-    // openreview?: string;       // OpenReview ID
     [key: string]: string;     // Other identifier types
  };
- 
- // // Metadata fields
- // citations?: number;          // Citation count
- // journal?: string;            // Journal name
- // conference?: string;         // Conference name
- // volume?: string;             // Journal volume
- // issue?: string;              // Journal issue
- // pages?: string;              // Page numbers
- // publisher?: string;          // Publisher name
- 
- // Custom source-specific fields
- // conferenceInfo?: {           // Enhanced conference information
- //   name: string;              // Conference name
- //   year: number;              // Year
- //   location: string;          // Location
- //   abbreviation?: string;     // Conference abbreviation (e.g., "ICLR")
- // };
  
  // Allow for extension with string indexing
  // Fix for TS2411: Using string index signature
