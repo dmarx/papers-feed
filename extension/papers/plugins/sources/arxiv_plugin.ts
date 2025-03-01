@@ -102,23 +102,23 @@ export const arxivPlugin: SourcePlugin = {
       const parser = parseXML(text);
       
       // Extract entry data
-      const entryContent = parser.getEntry(text);
+      const entryContent = parser.getEntry();
       
       // Extract title
-      const title = parser.getTagContent('title', entryContent);
+      const title = parser.getTagContent('title');
       
       // Extract authors using the author parser
-      const authorsList = parser.getAuthor(text);
+      const authorsList = parser.getAuthor();
       const authors = authorsList.join(', ');
       
       // Extract summary
-      const abstract = parser.getTagContent('summary', entryContent);
+      const abstract = parser.getTagContent('summary');
       
       // Extract categories using the categories parser
-      const categories = parser.getCategories(text);
+      const categories = parser.getCategories();
       
       // Extract published date
-      const published = parser.getPublishedDate(text);
+      const published = parser.getPublishedDate();
       
       return {
         title,
