@@ -103,7 +103,8 @@ export const semanticScholarPlugin: SourcePlugin = {
     
     try {
       const apiUrl = `https://api.semanticscholar.org/v1/paper/${id}`;
-      const response = await fetch(apiUrl);
+      // Use self.fetch for service worker environment
+      const response = await self.fetch(apiUrl);
       
       if (!response.ok) {
         throw new Error(`API error: ${response.status}`);
