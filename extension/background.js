@@ -491,7 +491,12 @@ async function processUnifiedPaperUrl(url) {
     
     // If paper data was extracted, create or update in GitHub
     if (paperData) {
-      await createGithubIssueWithDebounce(paperData);
+      logger.info(`Paper data extracted, creating GitHub issue for: ${paperData.primary_id || paperData.arxivId}`);
+      try {
+        await createGithubIssue(paperData);
+      } catch (error) {
+        logger.error(`Error creating GitHub issue: ${error}`);
+      }
     }
     
     return paperData;
@@ -525,9 +530,26 @@ async function handleTabChangeWithPlugins(tab) {
     await endCurrentSession();
   }
   
-  // Process the paper URL using the unified processor
+  // Process the paper URL
   logger.info(`Processing paper URL: ${tab.url}`);
-  const paperData = await processUnifiedPaperUrl(tab.url);
+  
+  // Use sourceInfo to get paper data rather than going through processUnifiedPaperUrl again
+  let paperData;
+  
+  if (sourceInfo.type === 'arxiv' && originalProcessArxivUrl) {
+    // Use original arXiv processor for compatibility
+    paperData = await originalProcessArxivUrl(tab.url);
+    
+    // Enhance with source fields
+    if (paperData) {
+      paperData.source = 'arxiv';
+      paperData.sourceId = paperData.arxivId;
+      paperData.primary_id = sourceInfo.primary_id;
+    }
+  } else if (enhancedProcessPaperUrl) {
+    // Use enhanced processor for other sources
+    paperData = await enhancedProcessPaperUrl(tab.url);
+  }
   
   if (paperData) {
     logger.info(`Starting new session for: ${paperData.primary_id}`);
@@ -543,6 +565,14 @@ async function handleTabChangeWithPlugins(tab) {
     
     // Start tracking reading time
     startActivityTracking();
+    
+    // Create GitHub issue
+    logger.info(`Creating GitHub issue for: ${paperData.primary_id || paperData.arxivId}`);
+    try {
+      await createGithubIssue(paperData);
+    } catch (error) {
+      logger.error(`Error creating GitHub issue: ${error}`);
+    }
   }
 }
 
@@ -646,10 +676,10 @@ async function enhancedCreateReadingEvent(paperData, sessionData) {
     }
 }
 
-// Paper creation with debouncing to prevent duplicates
-async function createGithubIssueWithDebounce(paperData) {
+// Direct GitHub issue creation function
+async function createGithubIssue(paperData) {
     if (!paperManager) {
-        console.error('Paper manager not initialized');
+        logger.error('Paper manager not initialized');
         return null;
     }
 
@@ -661,43 +691,19 @@ async function createGithubIssueWithDebounce(paperData) {
                             null);
     
     if (!paperUniqueId) {
-        console.error('Cannot create paper - no valid identifier');
+        logger.error('Cannot create paper - no valid identifier');
         return null;
     }
     
-    // Check if we already have a pending creation for this paper
-    if (pendingPaperCreations.has(paperUniqueId)) {
-        logger.info(`Waiting for existing paper creation: ${paperUniqueId}`);
-        return pendingPaperCreations.get(paperUniqueId);
+    try {
+        logger.info(`Creating/getting paper issue: ${paperUniqueId}`);
+        const existingPaper = await paperManager.getOrCreatePaper(paperData);
+        logger.info(`Paper metadata stored/retrieved: ${existingPaper.arxivId || existingPaper.sourceId || existingPaper.primary_id}`);
+        return existingPaper;
+    } catch (error) {
+        logger.error(`Error handling paper metadata: ${error}`, error);
+        return null;
     }
-    
-    // Create a new promise for this operation
-    const creationPromise = (async () => {
-        try {
-            logger.info(`Creating/getting paper issue: ${paperUniqueId}`);
-            const existingPaper = await paperManager.getOrCreatePaper(paperData);
-            logger.info(`Paper metadata stored/retrieved: ${existingPaper.arxivId || existingPaper.sourceId || existingPaper.primary_id}`);
-            return existingPaper;
-        } catch (error) {
-            logger.error(`Error handling paper metadata: ${error}`);
-            return null;
-        } finally {
-            // Remove from pending after a short delay to prevent immediate duplicates
-            setTimeout(() => {
-                pendingPaperCreations.delete(paperUniqueId);
-            }, 500);
-        }
-    })();
-    
-    // Store the promise
-    pendingPaperCreations.set(paperUniqueId, creationPromise);
-    
-    return creationPromise;
-}
-
-// Simplified version that delegates to the debounced version
-async function createGithubIssue(paperData) {
-    return createGithubIssueWithDebounce(paperData);
 }
 
 async function handleAnnotationUpdate(type, data) {
