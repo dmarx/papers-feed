@@ -84,7 +84,10 @@ export const semanticScholarPlugin: SourcePlugin = {
         title: title || '',
         authors: authors || '',
         abstract: abstract || '',
-        citations,
+        source_specific_metadata: {
+          citations: citations,
+          // Any other S2-specific metadata
+        },
         identifiers: doi ? { doi } : undefined
       };
     } catch (error) {
