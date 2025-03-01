@@ -7,6 +7,10 @@ import { ReadingSessionData } from './papers/types';
 import { MultiSourceDetector } from './papers/detector';
 import { getLegacyId } from './papers/source_utils';
 import { initMultiSourceSupport } from './background_multi_source';
+import { initializePluginSystem } from './papers/plugins/loader';
+import { loguru } from './utils/logger';
+
+const logger = loguru.getLogger('Background');
 
 let githubToken = '';
 let githubRepo = '';
@@ -89,6 +93,79 @@ class ReadingSession {
     }
 }
 
+// Enhanced reading session that works with all paper sources
+class EnhancedReadingSession {
+  constructor(paperData, config) {
+    // Use primary_id as the canonical identifier
+    this.paperId = paperData.primary_id;
+    this.paperData = paperData;
+    
+    // Generate unique session ID
+    this.sessionId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    
+    // Initialize timing data
+    this.startTime = new Date();
+    this.activeTime = 0;
+    this.idleTime = 0;
+    this.lastActiveTime = new Date();
+    this.isTracking = true;
+    this.config = config;
+    this.endTime = null;
+    this.finalizedData = null;
+  }
+  
+  update() {
+    if (this.isTracking && !this.finalizedData) {
+      const now = new Date();
+      const timeSinceLastActive = now.getTime() - this.lastActiveTime.getTime();
+      
+      if (timeSinceLastActive < this.config.idleThreshold) {
+        this.activeTime += timeSinceLastActive;
+      } else {
+        this.idleTime += timeSinceLastActive;
+      }
+      
+      this.lastActiveTime = now;
+    }
+  }
+  
+  finalize() {
+    if (this.finalizedData) {
+      return this.finalizedData;
+    }
+ 
+    this.update();
+    this.isTracking = false;
+    this.endTime = new Date();
+    const totalElapsed = this.endTime.getTime() - this.startTime.getTime();
+ 
+    if (this.activeTime >= this.config.minSessionDuration) {
+      this.finalizedData = {
+        session_id: this.sessionId,
+        duration_seconds: Math.round(this.activeTime / 1000),
+        idle_seconds: Math.round(this.idleTime / 1000),
+        start_time: this.startTime.toISOString(),
+        end_time: this.endTime.toISOString(),
+        total_elapsed_seconds: Math.round(totalElapsed / 1000)
+      };
+      return this.finalizedData;
+    }
+    return null;
+  }
+  
+  getMetadata() {
+    return {
+      sourceType: this.paperData.source,
+      paperId: this.paperId,
+      title: this.paperData.title,
+      sessionId: this.sessionId,
+      startTime: this.startTime.toISOString(),
+      activeSeconds: Math.round(this.activeTime / 1000),
+      idleSeconds: Math.round(this.idleTime / 1000)
+    };
+  }
+}
+
 // Load credentials and configuration when extension starts
 async function loadCredentials() {
     const items = await chrome.storage.sync.get(['githubToken', 'githubRepo']);
@@ -169,8 +246,26 @@ chrome.storage.onChanged.addListener(async (changes) => {
     }
 });
 
+// Initialize the extension
+async function initialize() {
+  logger.info('Initializing extension');
+  
+  // Load credentials and config
+  await loadCredentials();
+  
+  // Initialize plugin system
+  await initializePluginSystem();
+  
+  // Set up listeners for tab changes
+  await setupListeners();
+  
+  logger.info('Extension initialized');
+}
+
 // Initialize credentials
-loadCredentials();
+initialize().catch(error => {
+  logger.error('Initialization failed', error);
+});
 
 // Message passing between background and popup
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
@@ -215,6 +310,94 @@ async function handleUpdateRating(rating, sendResponse) {
         console.error('Error updating rating:', error);
         sendResponse({ success: false, error: error.message });
     }
+}
+
+// Set up event listeners using plugin system
+async function setupListeners() {
+  // Get all supported hosts from plugins
+  const { pluginRegistry } = await import('./papers/plugins/registry');
+  const plugins = pluginRegistry.getAll();
+  
+  // Create host patterns from all plugins
+  const hostPatterns = [];
+  
+  for (const plugin of plugins) {
+    // Extract domain from first pattern as a simple approach
+    // A more robust approach would parse all patterns
+    const pattern = plugin.urlPatterns[0].toString();
+    const match = pattern.match(/([a-zA-Z0-9.-]+)\\\.org/);
+    if (match) {
+      hostPatterns.push({ hostSuffix: `${match[1]}.org` });
+    }
+  }
+  
+  // Set up navigation listener with all hosts
+  chrome.webNavigation.onCompleted.addListener(async (details) => {
+    logger.info(`Navigation detected: ${details.url}`);
+    
+    // Get tab info
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tabs.length > 0 && tabs[0].id === details.tabId) {
+      // Use enhanced handler with plugin system
+      handleTabChangeWithPlugins(tabs[0]);
+    }
+  }, { url: hostPatterns });
+  
+  // Also listen for tab activation
+  chrome.tabs.onActivated.addListener(async (activeInfo) => {
+    const tab = await chrome.tabs.get(activeInfo.tabId);
+    handleTabChangeWithPlugins(tab);
+  });
+  
+  // Listen for tab updates
+  chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+    if (changeInfo.status === 'complete') {
+      handleTabChangeWithPlugins(tab);
+    }
+  });
+}
+
+// Handle tab changes with plugin system
+async function handleTabChangeWithPlugins(tab) {
+  if (!tab.url) return;
+  
+  // Check if this is a paper URL using the plugin system
+  const sourceInfo = MultiSourceDetector.detect(tab.url);
+  
+  if (!sourceInfo) {
+    logger.info('Not a recognized paper page, ending current session');
+    await endCurrentSession();
+    return;
+  }
+  
+  // End any existing session
+  if (currentSession) {
+    logger.info('Ending existing session before starting new one');
+    await endCurrentSession();
+  }
+  
+  // Process the paper URL
+  logger.info(`Processing paper URL: ${tab.url}`);
+  const paperData = await MultiSourceDetector.processUrl(tab.url, processArxivUrl);
+  
+  if (paperData) {
+    logger.info(`Starting new session for: ${paperData.primary_id}`);
+    
+    // Store current paper data
+    currentPaperData = paperData;
+    
+    // Create a new reading session
+    currentSession = new EnhancedReadingSession(paperData, sessionConfig);
+    
+    const metadata = currentSession.getMetadata();
+    logger.info('New session created:', metadata);
+    
+    // Start tracking reading time
+    startActivityTracking();
+    
+    // Create or update paper in GitHub
+    await createGithubIssue(paperData);
+  }
 }
 
 // Tab and window management
@@ -388,25 +571,25 @@ async function enhancedCreateReadingEvent(paperData, sessionData) {
     }
 
     try {
-        // Determine which ID to use for logging
-        const paperIdForLogging = paperData.arxivId || 
-                            (paperData.source && paperData.sourceId ? 
-                            paperData.sourceId : 
-                            null);
+        // Use primary_id for storage
+        const paperId = paperData.primary_id || 
+                    (paperData.source && paperData.sourceId ? 
+                      formatPrimaryId(paperData.source, paperData.sourceId) : 
+                      (paperData.arxivId || null));
         
-        if (!paperIdForLogging) {
+        if (!paperId) {
             console.error('No valid paper ID found for logging');
             return;
         }
         
         await paperManager.logReadingSession(
-            paperIdForLogging,
+            paperId,
             sessionData,
             paperData
         );
         
         console.log('Reading session logged:', {
-            paperId: paperIdForLogging,
+            paperId: paperId,
             sessionId: sessionData.session_id,
             activeTime: sessionData.duration_seconds,
             idleTime: sessionData.idle_seconds,
@@ -600,121 +783,3 @@ function initializeDebugObjects() {
 
     console.log('Debug objects registered, access via __DEBUG__ in service worker console');
 }
-
-// Additions to extension/background.js
-
-// Import plugin system
-import { initializePluginSystem } from './papers/plugins/loader';
-import { MultiSourceDetector } from './papers/detector';
-import { loguru } from './utils/logger';
-
-const logger = loguru.getLogger('Background');
-
-// Initialize the extension
-async function initialize() {
-  logger.info('Initializing extension');
-  
-  // Load credentials and config
-  await loadCredentials();
-  
-  // Initialize plugin system
-  await initializePluginSystem();
-  
-  // Set up listeners for tab changes
-  setupListeners();
-  
-  logger.info('Extension initialized');
-}
-
-// Set up event listeners using plugin system
-function setupListeners() {
-  // Get all supported hosts from plugins
-  const { pluginRegistry } = await import('./papers/plugins/registry');
-  const plugins = pluginRegistry.getAll();
-  
-  // Create host patterns from all plugins
-  const hostPatterns = [];
-  
-  for (const plugin of plugins) {
-    // Extract domain from first pattern as a simple approach
-    // A more robust approach would parse all patterns
-    const pattern = plugin.urlPatterns[0].toString();
-    const match = pattern.match(/([a-zA-Z0-9.-]+)\\\.org/);
-    if (match) {
-      hostPatterns.push({ hostSuffix: `${match[1]}.org` });
-    }
-  }
-  
-  // Set up navigation listener with all hosts
-  chrome.webNavigation.onCompleted.addListener(async (details) => {
-    logger.info(`Navigation detected: ${details.url}`);
-    
-    // Get tab info
-    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (tabs.length > 0 && tabs[0].id === details.tabId) {
-      // Use enhanced handler with plugin system
-      handleTabChangeWithPlugins(tabs[0]);
-    }
-  }, { url: hostPatterns });
-  
-  // Also listen for tab activation
-  chrome.tabs.onActivated.addListener(async (activeInfo) => {
-    const tab = await chrome.tabs.get(activeInfo.tabId);
-    handleTabChangeWithPlugins(tab);
-  });
-  
-  // Listen for tab updates
-  chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-    if (changeInfo.status === 'complete') {
-      handleTabChangeWithPlugins(tab);
-    }
-  });
-}
-
-// Handle tab changes with plugin system
-async function handleTabChangeWithPlugins(tab) {
-  if (!tab.url) return;
-  
-  // Check if this is a paper URL using the plugin system
-  const sourceInfo = MultiSourceDetector.detect(tab.url);
-  
-  if (!sourceInfo) {
-    logger.info('Not a recognized paper page, ending current session');
-    await endCurrentSession();
-    return;
-  }
-  
-  // End any existing session
-  if (currentSession) {
-    logger.info('Ending existing session before starting new one');
-    await endCurrentSession();
-  }
-  
-  // Process the paper URL
-  logger.info(`Processing paper URL: ${tab.url}`);
-  const paperData = await MultiSourceDetector.processUrl(tab.url, processArxivUrl);
-  
-  if (paperData) {
-    logger.info(`Starting new session for: ${paperData.primary_id}`);
-    
-    // Store current paper data
-    currentPaperData = paperData;
-    
-    // Create a new reading session
-    currentSession = new ReadingSession(paperData.primary_id, sessionConfig);
-    
-    const metadata = currentSession.getMetadata();
-    logger.info('New session created:', metadata);
-    
-    // Start tracking reading time
-    startActivityTracking();
-    
-    // Create or update paper in GitHub
-    await createGithubIssue(paperData);
-  }
-}
-
-// Call initialization
-initialize().catch(error => {
-  logger.error('Initialization failed', error);
-});
