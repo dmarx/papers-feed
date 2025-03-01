@@ -63,113 +63,106 @@ export class PaperManager {
       throw new Error("Invalid paper data: missing ID information");
     }
     
-    // Check if we're already creating this object
-    if (this.creationLocks.has(objectId)) {
-      logger.info(`Waiting for existing creation of ${objectId}`);
-      return this.creationLocks.get(objectId);
-    }
+    logger.info(`Getting or creating paper: ${objectId}`);
     
-    // Create a new promise for this operation
-    const creationPromise = (async () => {
-      try {
-        // Try to get the paper
-        const obj = await this.client.getObject(objectId);
-        const data = obj.data as Record<string, any>;
+    try {
+      // Try to get the paper
+      const obj = await this.client.getObject(objectId);
+      const data = obj.data as Record<string, any>;
+      
+      logger.info(`Found existing paper: ${objectId}`);
+      
+      // Return object, potentially enhancing it with new format fields
+      if (!useNewFormat || data.primary_id) {
+        return data;
+      }
+      
+      // Add new format fields to legacy data if needed
+      if (data.arxivId && !data.primary_id) {
+        const enhancedData = {
+          ...data,
+          source: 'arxiv',
+          sourceId: data.arxivId,
+          primary_id: formatPrimaryId('arxiv', data.arxivId)
+        };
         
-        // Return object, potentially enhancing it with new format fields
-        if (!useNewFormat || data.primary_id) {
-          return data;
-        }
+        // Update the object with enhanced data
+        logger.info(`Updating legacy paper with new format fields: ${objectId}`);
+        await this.client.updateObject(objectId, enhancedData);
+        return enhancedData;
+      }
+      
+      return data;
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("No object found")) {
+        // Create new paper with appropriate fields
+        let defaultPaperData: Record<string, any>;
         
-        // Add new format fields to legacy data if needed
-        if (data.arxivId && !data.primary_id) {
-          const enhancedData = {
-            ...data,
-            source: 'arxiv',
-            sourceId: data.arxivId,
-            primary_id: formatPrimaryId('arxiv', data.arxivId)
+        if (useNewFormat) {
+          // New multi-source format
+          defaultPaperData = {
+            primary_id: paperData.primary_id,
+            source: paperData.source,
+            sourceId: paperData.sourceId,
+            url: paperData.url || '',
+            title: paperData.title || paperData.sourceId,
+            authors: paperData.authors || '',
+            abstract: paperData.abstract || '',
+            timestamp: new Date().toISOString(),
+            rating: 'novote'
           };
           
-          // Update the object with enhanced data
-          await this.client.updateObject(objectId, enhancedData);
-          return enhancedData;
-        }
-        
-        return data;
-      } catch (error) {
-        if (error instanceof Error && error.message.includes("No object found")) {
-          // Create new paper with appropriate fields
-          let defaultPaperData: Record<string, any>;
-          
-          if (useNewFormat) {
-            // New multi-source format
-            defaultPaperData = {
-              primary_id: paperData.primary_id,
-              source: paperData.source,
-              sourceId: paperData.sourceId,
-              url: paperData.url || '',
-              title: paperData.title || paperData.sourceId,
-              authors: paperData.authors || '',
-              abstract: paperData.abstract || '',
-              timestamp: new Date().toISOString(),
-              rating: 'novote'
+          // For arXiv, maintain backward compatibility
+          if (paperData.source === 'arxiv') {
+            defaultPaperData.arxivId = paperData.sourceId;
+            defaultPaperData.arxiv_tags = paperData.arxiv_tags || [];
+            defaultPaperData.published_date = paperData.published_date || '';
+          } else {
+            // For other sources, add source-specific identifiers
+            defaultPaperData.identifiers = {
+              original: paperData.sourceId,
+              url: paperData.url
             };
             
-            // For arXiv, maintain backward compatibility
-            if (paperData.source === 'arxiv') {
-              defaultPaperData.arxivId = paperData.sourceId;
-              defaultPaperData.arxiv_tags = paperData.arxiv_tags || [];
-              defaultPaperData.published_date = paperData.published_date || '';
-            } else {
-              // For other sources, add source-specific identifiers
-              defaultPaperData.identifiers = {
-                original: paperData.sourceId,
-                url: paperData.url
-              };
-              
-              // Add cross-references if available
-              if (paperData.arxivId) {
-                defaultPaperData.identifiers.arxiv = paperData.arxivId;
-              }
-              if (paperData.doi) {
-                defaultPaperData.identifiers.doi = paperData.doi;
-              }
-              if (paperData.s2Id) {
-                defaultPaperData.identifiers.s2 = paperData.s2Id;
-              }
+            // Add cross-references if available
+            if (paperData.arxivId) {
+              defaultPaperData.identifiers.arxiv = paperData.arxivId;
             }
-          } else {
-            // Legacy format for backward compatibility
-            defaultPaperData = {
-              arxivId: paperData.arxivId,
-              url: paperData.url || `https://arxiv.org/abs/${paperData.arxivId}`,
-              title: paperData.title || paperData.arxivId,
-              authors: paperData.authors || '',
-              abstract: paperData.abstract || '',
-              timestamp: new Date().toISOString(),
-              rating: 'novote',
-              published_date: paperData.published_date || '',
-              arxiv_tags: paperData.arxiv_tags || []
-            };
+            if (paperData.doi) {
+              defaultPaperData.identifiers.doi = paperData.doi;
+            }
+            if (paperData.s2Id) {
+              defaultPaperData.identifiers.s2 = paperData.s2Id;
+            }
           }
-          
-          logger.info(`Creating new paper object: ${objectId}`);
-          await this.client.createObject(objectId, defaultPaperData);
-          return defaultPaperData;
+        } else {
+          // Legacy format for backward compatibility
+          defaultPaperData = {
+            arxivId: paperData.arxivId,
+            url: paperData.url || `https://arxiv.org/abs/${paperData.arxivId}`,
+            title: paperData.title || paperData.arxivId,
+            authors: paperData.authors || '',
+            abstract: paperData.abstract || '',
+            timestamp: new Date().toISOString(),
+            rating: 'novote',
+            published_date: paperData.published_date || '',
+            arxiv_tags: paperData.arxiv_tags || []
+          };
         }
-        throw error;
-      } finally {
-        // Release the lock after a delay to prevent immediate duplicates
-        setTimeout(() => {
-          this.creationLocks.delete(objectId);
-        }, 500);
+        
+        logger.info(`Creating new paper object: ${objectId}`);
+        try {
+          await this.client.createObject(objectId, defaultPaperData);
+          logger.info(`Successfully created paper: ${objectId}`);
+          return defaultPaperData;
+        } catch (createError) {
+          logger.error(`Error creating paper object: ${createError}`);
+          throw createError;
+        }
       }
-    })();
-    
-    // Store the promise
-    this.creationLocks.set(objectId, creationPromise);
-    
-    return creationPromise;
+      logger.error(`Error in getOrCreatePaper: ${error}`);
+      throw error;
+    }
   }
 
   /**
