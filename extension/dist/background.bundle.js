@@ -136,9 +136,12 @@ const SOURCE_TYPES = {
 function formatPrimaryId(source, id) {
   const sourcePrefix = SOURCE_TYPES[source]?.prefix || "generic";
   const safeId = id.replace(/\//g, "_").replace(/:/g, ".").replace(/\s/g, "_").replace(/\\/g, "_");
-  return `${sourcePrefix}.${safeId}`;
+  const primaryId = `${sourcePrefix}.${safeId}`;
+  console.log(`Formatted primary ID: ${source}:${id} → ${primaryId}`);
+  return primaryId;
 }
 function parseId(prefixedId) {
+  console.log(`Parsing ID: ${prefixedId}`);
   const [prefix, ...idParts] = prefixedId.split(".");
   const id = idParts.join(".");
   const prefixToSource = {
@@ -147,42 +150,54 @@ function parseId(prefixedId) {
     "doi": "doi",
     "openreview": "openreview"
   };
-  return {
+  const result = {
     type: prefixToSource[prefix] || "generic",
     id: prefix === "doi" ? id.replace(/_/g, "/") : id
   };
+  console.log(`Parsed ID result: ${JSON.stringify(result)}`);
+  return result;
 }
 function getLegacyId(primaryId) {
+  console.log(`Getting legacy ID for: ${primaryId}`);
   if (!primaryId.includes(".")) {
+    console.log(`No prefix found, returning as is: ${primaryId}`);
     return primaryId;
   }
   const { type, id } = parseId(primaryId);
   if (type === "arxiv") {
+    console.log(`ArXiv ID detected, returning: ${id}`);
     return id;
   }
+  console.log(`Non-arXiv ID, returning original: ${primaryId}`);
   return primaryId;
 }
 function detectSourceFromUrl(url) {
+  console.log(`Detecting source from URL: ${url}`);
   for (const [sourceType, definition] of Object.entries(SOURCE_TYPES)) {
     for (let i = 0; i < definition.url_patterns.length; i++) {
       const match = url.match(definition.url_patterns[i]);
       if (match) {
         const id = definition.id_extractors[i](match);
+        const primaryId = formatPrimaryId(sourceType, id);
+        console.log(`Detected source: ${sourceType}, ID: ${id}, primary ID: ${primaryId}`);
         return {
           type: sourceType,
           id,
-          primary_id: formatPrimaryId(sourceType, id),
+          primary_id: primaryId,
           url
         };
       }
     }
   }
+  console.log(`No source detected for URL: ${url}`);
   return null;
 }
 function isNewFormat(id) {
   const validPrefixes = Object.values(SOURCE_TYPES).map((def) => `${def.prefix}.`);
   validPrefixes.push("generic.");
-  return validPrefixes.some((prefix) => id.startsWith(prefix));
+  const result = validPrefixes.some((prefix) => id.startsWith(prefix));
+  console.log(`ID format check for ${id}: ${result ? "New format" : "Legacy format"}`);
+  return result;
 }
 
 class Logger {
@@ -325,22 +340,30 @@ class PaperManager {
    * and concurrency control
    */
   async getOrCreateInteractionLog(paperId) {
+    console.log("PaperManager.getOrCreateInteractionLog called for:", paperId);
     const legacyId = getLegacyId(paperId);
+    console.log("Using legacyId:", legacyId);
     const objectId = `interactions:${legacyId}`;
+    console.log("Object ID for interaction log:", objectId);
     if (this.creationLocks.has(objectId)) {
       logger$4.info(`Waiting for existing creation of interaction log: ${objectId}`);
       return this.creationLocks.get(objectId);
     }
     const creationPromise = (async () => {
       try {
+        console.log("Attempting to get existing interaction log");
         const obj = await this.client.getObject(objectId);
         const data = obj.data;
+        console.log("Retrieved data:", data);
         if (typeof isInteractionLog === "function" ? isInteractionLog(data) : isInteractionLogJs(data)) {
+          console.log("Valid interaction log found");
           return data;
         }
+        console.log("Invalid interaction log format");
         throw new Error("Invalid interaction log format");
       } catch (error) {
         if (error instanceof Error && error.message.includes("No object found")) {
+          console.log("Creating new interaction log");
           const newLog = {
             paper_id: paperId,
             // Store the full ID including prefix if present
@@ -348,15 +371,19 @@ class PaperManager {
           };
           if (paperId !== legacyId) {
             newLog.legacy_id = legacyId;
+            console.log("Added legacy_id to new log");
           }
           logger$4.info(`Creating new interaction log: ${objectId}`);
           await this.client.createObject(objectId, newLog);
+          console.log("New interaction log created successfully");
           return newLog;
         }
+        console.error("Error in getOrCreateInteractionLog:", error);
         throw error;
       } finally {
         setTimeout(() => {
           this.creationLocks.delete(objectId);
+          console.log("Creation lock released for:", objectId);
         }, 500);
       }
     })();
@@ -368,6 +395,11 @@ class PaperManager {
    * Enhanced to work with both legacy and new IDs
    */
   async logReadingSession(paperId, session, paperData) {
+    console.log("PaperManager.logReadingSession called with:", {
+      paperId,
+      session,
+      paperData: paperData ? { ...paperData } : void 0
+    });
     let primaryId = paperId;
     let enhancedPaperData = paperData || {};
     if (!isNewFormat(paperId) && !enhancedPaperData.primary_id) {
@@ -379,15 +411,19 @@ class PaperManager {
         primary_id: primaryId,
         arxivId: paperId
       };
+      console.log("Converted legacy ID to:", primaryId);
     }
     if (Object.keys(enhancedPaperData).length > 0) {
+      console.log("Ensuring paper exists:", enhancedPaperData);
       await this.getOrCreatePaper(enhancedPaperData);
     }
+    console.log("About to add interaction for paperId:", paperId);
     await this.addInteraction(paperId, {
       type: "reading_session",
       timestamp: (/* @__PURE__ */ new Date()).toISOString(),
       data: session
     });
+    console.log("Interaction added successfully");
   }
   /**
    * Log an annotation for a paper
@@ -449,10 +485,19 @@ class PaperManager {
    * Enhanced with backward compatibility
    */
   async addInteraction(paperId, interaction) {
-    const log = await this.getOrCreateInteractionLog(paperId);
-    log.interactions.push(interaction);
-    const legacyId = getLegacyId(paperId);
-    await this.client.updateObject(`interactions:${legacyId}`, log);
+    console.log("PaperManager.addInteraction called for:", paperId, "type:", interaction.type);
+    try {
+      const log = await this.getOrCreateInteractionLog(paperId);
+      console.log("Got interaction log:", log);
+      log.interactions.push(interaction);
+      const legacyId = getLegacyId(paperId);
+      console.log("Using legacyId for storage:", legacyId);
+      await this.client.updateObject(`interactions:${legacyId}`, log);
+      console.log("Interaction log updated successfully");
+    } catch (error) {
+      console.error("Error in addInteraction:", error);
+      throw error;
+    }
   }
   /**
    * Get interactions for a paper
@@ -948,10 +993,9 @@ let paperManager = null;
 let originalProcessArxivUrl = null;
 let enhancedProcessPaperUrl = null;
 const pendingUrls = /* @__PURE__ */ new Set();
-class EnhancedReadingSession {
-  constructor(paperData, config) {
-    this.paperId = paperData.primary_id;
-    this.paperData = paperData;
+class ReadingSession {
+  constructor(arxivId, config) {
+    this.arxivId = arxivId;
     this.sessionId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
     this.startTime = /* @__PURE__ */ new Date();
     this.activeTime = 0;
@@ -1000,9 +1044,6 @@ class EnhancedReadingSession {
   }
   getMetadata() {
     return {
-      sourceType: this.paperData.source,
-      paperId: this.paperId,
-      title: this.paperData.title,
       sessionId: this.sessionId,
       startTime: this.startTime.toISOString(),
       activeSeconds: Math.round(this.activeTime / 1e3),
@@ -1010,21 +1051,58 @@ class EnhancedReadingSession {
     };
   }
 }
-class ReadingSession extends EnhancedReadingSession {
-  constructor(arxivId, config) {
-    const paperData = {
-      primary_id: `arxiv.${arxivId}`,
-      source: "arxiv",
-      sourceId: arxivId,
-      title: arxivId || "Unknown Paper",
-      arxivId
-    };
-    super(paperData, config);
-    this.arxivId = arxivId;
+class EnhancedReadingSession {
+  constructor(paperData, config) {
+    this.paperId = paperData.primary_id;
+    this.paperData = paperData;
+    this.sessionId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    this.startTime = /* @__PURE__ */ new Date();
+    this.activeTime = 0;
+    this.idleTime = 0;
+    this.lastActiveTime = /* @__PURE__ */ new Date();
+    this.isTracking = true;
+    this.config = config;
+    this.endTime = null;
+    this.finalizedData = null;
   }
-  // Override getMetadata for backward compatibility
+  update() {
+    if (this.isTracking && !this.finalizedData) {
+      const now = /* @__PURE__ */ new Date();
+      const timeSinceLastActive = now.getTime() - this.lastActiveTime.getTime();
+      if (timeSinceLastActive < this.config.idleThreshold) {
+        this.activeTime += timeSinceLastActive;
+      } else {
+        this.idleTime += timeSinceLastActive;
+      }
+      this.lastActiveTime = now;
+    }
+  }
+  finalize() {
+    if (this.finalizedData) {
+      return this.finalizedData;
+    }
+    this.update();
+    this.isTracking = false;
+    this.endTime = /* @__PURE__ */ new Date();
+    const totalElapsed = this.endTime.getTime() - this.startTime.getTime();
+    if (this.activeTime >= this.config.minSessionDuration) {
+      this.finalizedData = {
+        session_id: this.sessionId,
+        duration_seconds: Math.round(this.activeTime / 1e3),
+        idle_seconds: Math.round(this.idleTime / 1e3),
+        start_time: this.startTime.toISOString(),
+        end_time: this.endTime.toISOString(),
+        total_elapsed_seconds: Math.round(totalElapsed / 1e3)
+      };
+      return this.finalizedData;
+    }
+    return null;
+  }
   getMetadata() {
     return {
+      sourceType: this.paperData.source,
+      paperId: this.paperId,
+      title: this.paperData.title,
       sessionId: this.sessionId,
       startTime: this.startTime.toISOString(),
       activeSeconds: Math.round(this.activeTime / 1e3),
@@ -1045,10 +1123,11 @@ async function loadCredentials() {
   sessionConfig = getConfigurationInMs(await loadSessionConfig());
   console.log("Session configuration loaded:", sessionConfig);
   enhancedInitialization();
+  initializeDebugObjects();
 }
 function enhancedInitialization() {
   originalProcessArxivUrl = processArxivUrl;
-  const { processPaperUrl } = initMultiSourceSupport({
+  const { processPaperUrl} = initMultiSourceSupport({
     createGithubIssue,
     // Pass createGithubIssue function to background_multi_source
     endCurrentSession,
@@ -1342,6 +1421,10 @@ function stopActivityTracking() {
   }
 }
 async function enhancedCreateReadingEvent(paperData, sessionData) {
+  console.log("enhancedCreateReadingEvent called with:", {
+    paperData: paperData ? { ...paperData } : null,
+    sessionData: sessionData ? { ...sessionData } : null
+  });
   if (!paperManager || !paperData) {
     console.error("Missing required data for creating reading event:", {
       hasPaperManager: !!paperManager,
@@ -1351,16 +1434,18 @@ async function enhancedCreateReadingEvent(paperData, sessionData) {
   }
   try {
     const paperId = paperData.primary_id || (paperData.source && paperData.sourceId ? formatPrimaryId(paperData.source, paperData.sourceId) : paperData.arxivId || null);
+    console.log("Determined paperId for logging:", paperId);
     if (!paperId) {
       console.error("No valid paper ID found for logging");
       return;
     }
+    console.log("Calling paperManager.logReadingSession with:", paperId);
     await paperManager.logReadingSession(
       paperId,
       sessionData,
       paperData
     );
-    console.log("Reading session logged:", {
+    console.log("Reading session logged successfully:", {
       paperId,
       sessionId: sessionData.session_id,
       activeTime: sessionData.duration_seconds,
@@ -1369,6 +1454,13 @@ async function enhancedCreateReadingEvent(paperData, sessionData) {
     });
   } catch (error) {
     console.error("Error logging reading session:", error);
+    if (error instanceof Error) {
+      console.error("Error details:", {
+        name: error.name,
+        message: error.message,
+        stack: error.stack
+      });
+    }
   }
 }
 async function createGithubIssue(paperData) {
@@ -1517,5 +1609,17 @@ async function processArxivUrl(url) {
     console.error("Error processing arXiv URL:", error);
     return null;
   }
+}
+function initializeDebugObjects() {
+  self.__DEBUG__ = {
+    get paperManager() {
+      return paperManager;
+    },
+    getGithubClient: () => paperManager?.client,
+    getCurrentPaper: () => currentPaperData,
+    getCurrentSession: () => currentSession,
+    getConfig: () => sessionConfig
+  };
+  console.log("Debug objects registered, access via __DEBUG__ in service worker console");
 }
 //# sourceMappingURL=background.bundle.js.map
