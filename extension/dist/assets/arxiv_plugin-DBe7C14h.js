@@ -126,7 +126,7 @@ const arxivPlugin = {
     logger.info(`Fetching API data for arXiv:${id}`);
     try {
       const apiUrl = `https://export.arxiv.org/api/query?id_list=${id}`;
-      const response = await fetch(apiUrl);
+      const response = await self.fetch(apiUrl);
       if (!response.ok) {
         throw new Error(`API error: ${response.status}`);
       }
@@ -160,4 +160,4 @@ const arxivPlugin = {
 pluginRegistry.register(arxivPlugin);
 
 export { arxivPlugin };
-//# sourceMappingURL=arxiv_plugin-DYv4ayTV.js.map
+//# sourceMappingURL=arxiv_plugin-DBe7C14h.js.map

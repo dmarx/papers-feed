@@ -958,7 +958,7 @@ async function loadBuiltinPlugins() {
   logger$1.info("Loading built-in plugins");
   try {
     await Promise.all([
-      __vitePreload(() => import('./assets/arxiv_plugin-DYv4ayTV.js'),true?[]:void 0),
+      __vitePreload(() => import('./assets/arxiv_plugin-DBe7C14h.js'),true?[]:void 0),
       __vitePreload(() => import('./assets/semantic_scholar_plugin-CyBKvLW0.js'),true?[]:void 0)
       // Add more plugins here as they're implemented
     ]);
