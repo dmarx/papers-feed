@@ -205,7 +205,7 @@ export interface UnifiedPaperData {
   arxiv_tags?: string[];       // ArXiv categories
   
   // Source-specific fields
-  doi?: string;                // DOI string for DOI and ACM sources
+  // doi?: string;                // DOI string for DOI and ACM sources
   identifiers?: {              // Cross-reference identifiers
     original: string;          // Original ID from the source
     url: string;               // Canonical URL
@@ -217,23 +217,25 @@ export interface UnifiedPaperData {
    [key: string]: string;     // Other identifier types
  };
  
- // Metadata fields
- citations?: number;          // Citation count
- journal?: string;            // Journal name
- conference?: string;         // Conference name
- volume?: string;             // Journal volume
- issue?: string;              // Journal issue
- pages?: string;              // Page numbers
- publisher?: string;          // Publisher name
+ // // Metadata fields
+ // citations?: number;          // Citation count
+ // journal?: string;            // Journal name
+ // conference?: string;         // Conference name
+ // volume?: string;             // Journal volume
+ // issue?: string;              // Journal issue
+ // pages?: string;              // Page numbers
+ // publisher?: string;          // Publisher name
  
  // Custom source-specific fields
- conferenceInfo?: {           // Enhanced conference information
-   name: string;              // Conference name
-   year: number;              // Year
-   location: string;          // Location
-   abbreviation?: string;     // Conference abbreviation (e.g., "ICLR")
- };
+ // conferenceInfo?: {           // Enhanced conference information
+ //   name: string;              // Conference name
+ //   year: number;              // Year
+ //   location: string;          // Location
+ //   abbreviation?: string;     // Conference abbreviation (e.g., "ICLR")
+ // };
  
  // Allow for extension with string indexing
- [key: string]: any;
+ source_specific_metadata?: {
+  [key: string]: any;
+ };
 }
