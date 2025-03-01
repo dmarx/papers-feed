@@ -205,16 +205,17 @@ export interface UnifiedPaperData {
   arxiv_tags?: string[];       // ArXiv categories
   
   // Source-specific fields
+  // Fix for TS2411: Using string index signature
   // doi?: string;                // DOI string for DOI and ACM sources
   identifiers?: {              // Cross-reference identifiers
-    original: string;          // Original ID from the source
-    url: string;               // Canonical URL
-    arxiv?: string;            // ArXiv ID
-    doi?: string;              // DOI reference
-    s2?: string;               // Semantic Scholar ID
-    acm?: string;              // ACM ID
-    openreview?: string;       // OpenReview ID
-   [key: string]: string;     // Other identifier types
+    // original: string;          // Original ID from the source
+    // url: string;               // Canonical URL
+    // arxiv?: string;            // ArXiv ID
+    // doi?: string;              // DOI reference
+    // s2?: string;               // Semantic Scholar ID
+    // acm?: string;              // ACM ID
+    // openreview?: string;       // OpenReview ID
+    [key: string]: string;     // Other identifier types
  };
  
  // // Metadata fields
@@ -235,6 +236,7 @@ export interface UnifiedPaperData {
  // };
  
  // Allow for extension with string indexing
+ // Fix for TS2411: Using string index signature
  source_specific_metadata?: {
   [key: string]: any;
  };
