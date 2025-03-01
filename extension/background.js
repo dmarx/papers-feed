@@ -600,3 +600,121 @@ function initializeDebugObjects() {
 
     console.log('Debug objects registered, access via __DEBUG__ in service worker console');
 }
+
+// Additions to extension/background.js
+
+// Import plugin system
+import { initializePluginSystem } from './papers/plugins/loader';
+import { MultiSourceDetector } from './papers/detector';
+import { loguru } from './utils/logger';
+
+const logger = loguru.getLogger('Background');
+
+// Initialize the extension
+async function initialize() {
+  logger.info('Initializing extension');
+  
+  // Load credentials and config
+  await loadCredentials();
+  
+  // Initialize plugin system
+  await initializePluginSystem();
+  
+  // Set up listeners for tab changes
+  setupListeners();
+  
+  logger.info('Extension initialized');
+}
+
+// Set up event listeners using plugin system
+function setupListeners() {
+  // Get all supported hosts from plugins
+  const { pluginRegistry } = await import('./papers/plugins/registry');
+  const plugins = pluginRegistry.getAll();
+  
+  // Create host patterns from all plugins
+  const hostPatterns = [];
+  
+  for (const plugin of plugins) {
+    // Extract domain from first pattern as a simple approach
+    // A more robust approach would parse all patterns
+    const pattern = plugin.urlPatterns[0].toString();
+    const match = pattern.match(/([a-zA-Z0-9.-]+)\\\.org/);
+    if (match) {
+      hostPatterns.push({ hostSuffix: `${match[1]}.org` });
+    }
+  }
+  
+  // Set up navigation listener with all hosts
+  chrome.webNavigation.onCompleted.addListener(async (details) => {
+    logger.info(`Navigation detected: ${details.url}`);
+    
+    // Get tab info
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tabs.length > 0 && tabs[0].id === details.tabId) {
+      // Use enhanced handler with plugin system
+      handleTabChangeWithPlugins(tabs[0]);
+    }
+  }, { url: hostPatterns });
+  
+  // Also listen for tab activation
+  chrome.tabs.onActivated.addListener(async (activeInfo) => {
+    const tab = await chrome.tabs.get(activeInfo.tabId);
+    handleTabChangeWithPlugins(tab);
+  });
+  
+  // Listen for tab updates
+  chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+    if (changeInfo.status === 'complete') {
+      handleTabChangeWithPlugins(tab);
+    }
+  });
+}
+
+// Handle tab changes with plugin system
+async function handleTabChangeWithPlugins(tab) {
+  if (!tab.url) return;
+  
+  // Check if this is a paper URL using the plugin system
+  const sourceInfo = MultiSourceDetector.detect(tab.url);
+  
+  if (!sourceInfo) {
+    logger.info('Not a recognized paper page, ending current session');
+    await endCurrentSession();
+    return;
+  }
+  
+  // End any existing session
+  if (currentSession) {
+    logger.info('Ending existing session before starting new one');
+    await endCurrentSession();
+  }
+  
+  // Process the paper URL
+  logger.info(`Processing paper URL: ${tab.url}`);
+  const paperData = await MultiSourceDetector.processUrl(tab.url, processArxivUrl);
+  
+  if (paperData) {
+    logger.info(`Starting new session for: ${paperData.primary_id}`);
+    
+    // Store current paper data
+    currentPaperData = paperData;
+    
+    // Create a new reading session
+    currentSession = new ReadingSession(paperData.primary_id, sessionConfig);
+    
+    const metadata = currentSession.getMetadata();
+    logger.info('New session created:', metadata);
+    
+    // Start tracking reading time
+    startActivityTracking();
+    
+    // Create or update paper in GitHub
+    await createGithubIssue(paperData);
+  }
+}
+
+// Call initialization
+initialize().catch(error => {
+  logger.error('Initialization failed', error);
+});
