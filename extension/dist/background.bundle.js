@@ -238,88 +238,86 @@ class PaperManager {
     } else {
       throw new Error("Invalid paper data: missing ID information");
     }
-    if (this.creationLocks.has(objectId)) {
-      logger$4.info(`Waiting for existing creation of ${objectId}`);
-      return this.creationLocks.get(objectId);
-    }
-    const creationPromise = (async () => {
-      try {
-        const obj = await this.client.getObject(objectId);
-        const data = obj.data;
-        if (!useNewFormat || data.primary_id) {
-          return data;
-        }
-        if (data.arxivId && !data.primary_id) {
-          const enhancedData = {
-            ...data,
-            source: "arxiv",
-            sourceId: data.arxivId,
-            primary_id: formatPrimaryId$1("arxiv", data.arxivId)
-          };
-          await this.client.updateObject(objectId, enhancedData);
-          return enhancedData;
-        }
+    logger$4.info(`Getting or creating paper: ${objectId}`);
+    try {
+      const obj = await this.client.getObject(objectId);
+      const data = obj.data;
+      logger$4.info(`Found existing paper: ${objectId}`);
+      if (!useNewFormat || data.primary_id) {
         return data;
-      } catch (error) {
-        if (error instanceof Error && error.message.includes("No object found")) {
-          let defaultPaperData;
-          if (useNewFormat) {
-            defaultPaperData = {
-              primary_id: paperData.primary_id,
-              source: paperData.source,
-              sourceId: paperData.sourceId,
-              url: paperData.url || "",
-              title: paperData.title || paperData.sourceId,
-              authors: paperData.authors || "",
-              abstract: paperData.abstract || "",
-              timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-              rating: "novote"
-            };
-            if (paperData.source === "arxiv") {
-              defaultPaperData.arxivId = paperData.sourceId;
-              defaultPaperData.arxiv_tags = paperData.arxiv_tags || [];
-              defaultPaperData.published_date = paperData.published_date || "";
-            } else {
-              defaultPaperData.identifiers = {
-                original: paperData.sourceId,
-                url: paperData.url
-              };
-              if (paperData.arxivId) {
-                defaultPaperData.identifiers.arxiv = paperData.arxivId;
-              }
-              if (paperData.doi) {
-                defaultPaperData.identifiers.doi = paperData.doi;
-              }
-              if (paperData.s2Id) {
-                defaultPaperData.identifiers.s2 = paperData.s2Id;
-              }
-            }
-          } else {
-            defaultPaperData = {
-              arxivId: paperData.arxivId,
-              url: paperData.url || `https://arxiv.org/abs/${paperData.arxivId}`,
-              title: paperData.title || paperData.arxivId,
-              authors: paperData.authors || "",
-              abstract: paperData.abstract || "",
-              timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-              rating: "novote",
-              published_date: paperData.published_date || "",
-              arxiv_tags: paperData.arxiv_tags || []
-            };
-          }
-          logger$4.info(`Creating new paper object: ${objectId}`);
-          await this.client.createObject(objectId, defaultPaperData);
-          return defaultPaperData;
-        }
-        throw error;
-      } finally {
-        setTimeout(() => {
-          this.creationLocks.delete(objectId);
-        }, 500);
       }
-    })();
-    this.creationLocks.set(objectId, creationPromise);
-    return creationPromise;
+      if (data.arxivId && !data.primary_id) {
+        const enhancedData = {
+          ...data,
+          source: "arxiv",
+          sourceId: data.arxivId,
+          primary_id: formatPrimaryId$1("arxiv", data.arxivId)
+        };
+        logger$4.info(`Updating legacy paper with new format fields: ${objectId}`);
+        await this.client.updateObject(objectId, enhancedData);
+        return enhancedData;
+      }
+      return data;
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("No object found")) {
+        let defaultPaperData;
+        if (useNewFormat) {
+          defaultPaperData = {
+            primary_id: paperData.primary_id,
+            source: paperData.source,
+            sourceId: paperData.sourceId,
+            url: paperData.url || "",
+            title: paperData.title || paperData.sourceId,
+            authors: paperData.authors || "",
+            abstract: paperData.abstract || "",
+            timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+            rating: "novote"
+          };
+          if (paperData.source === "arxiv") {
+            defaultPaperData.arxivId = paperData.sourceId;
+            defaultPaperData.arxiv_tags = paperData.arxiv_tags || [];
+            defaultPaperData.published_date = paperData.published_date || "";
+          } else {
+            defaultPaperData.identifiers = {
+              original: paperData.sourceId,
+              url: paperData.url
+            };
+            if (paperData.arxivId) {
+              defaultPaperData.identifiers.arxiv = paperData.arxivId;
+            }
+            if (paperData.doi) {
+              defaultPaperData.identifiers.doi = paperData.doi;
+            }
+            if (paperData.s2Id) {
+              defaultPaperData.identifiers.s2 = paperData.s2Id;
+            }
+          }
+        } else {
+          defaultPaperData = {
+            arxivId: paperData.arxivId,
+            url: paperData.url || `https://arxiv.org/abs/${paperData.arxivId}`,
+            title: paperData.title || paperData.arxivId,
+            authors: paperData.authors || "",
+            abstract: paperData.abstract || "",
+            timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+            rating: "novote",
+            published_date: paperData.published_date || "",
+            arxiv_tags: paperData.arxiv_tags || []
+          };
+        }
+        logger$4.info(`Creating new paper object: ${objectId}`);
+        try {
+          await this.client.createObject(objectId, defaultPaperData);
+          logger$4.info(`Successfully created paper: ${objectId}`);
+          return defaultPaperData;
+        } catch (createError) {
+          logger$4.error(`Error creating paper object: ${createError}`);
+          throw createError;
+        }
+      }
+      logger$4.error(`Error in getOrCreatePaper: ${error}`);
+      throw error;
+    }
   }
   /**
    * Get or create an interaction log
@@ -1042,7 +1040,6 @@ let paperManager = null;
 let originalProcessArxivUrl = null;
 let enhancedProcessPaperUrl = null;
 const pendingUrls = /* @__PURE__ */ new Set();
-const pendingPaperCreations = /* @__PURE__ */ new Map();
 class ReadingSession {
   constructor(arxivId, config) {
     this.arxivId = arxivId;
@@ -1385,7 +1382,12 @@ async function processUnifiedPaperUrl(url) {
       paperData = await enhancedProcessPaperUrl(url);
     }
     if (paperData) {
-      await createGithubIssueWithDebounce(paperData);
+      logger.info(`Paper data extracted, creating GitHub issue for: ${paperData.primary_id || paperData.arxivId}`);
+      try {
+        await createGithubIssue(paperData);
+      } catch (error) {
+        logger.error(`Error creating GitHub issue: ${error}`);
+      }
     }
     return paperData;
   } catch (error) {
@@ -1410,7 +1412,17 @@ async function handleTabChangeWithPlugins(tab) {
     await endCurrentSession();
   }
   logger.info(`Processing paper URL: ${tab.url}`);
-  const paperData = await processUnifiedPaperUrl(tab.url);
+  let paperData;
+  if (sourceInfo.type === "arxiv" && originalProcessArxivUrl) {
+    paperData = await originalProcessArxivUrl(tab.url);
+    if (paperData) {
+      paperData.source = "arxiv";
+      paperData.sourceId = paperData.arxivId;
+      paperData.primary_id = sourceInfo.primary_id;
+    }
+  } else if (enhancedProcessPaperUrl) {
+    paperData = await enhancedProcessPaperUrl(tab.url);
+  }
   if (paperData) {
     logger.info(`Starting new session for: ${paperData.primary_id}`);
     currentPaperData = paperData;
@@ -1418,6 +1430,12 @@ async function handleTabChangeWithPlugins(tab) {
     const metadata = currentSession.getMetadata();
     logger.info("New session created:", metadata);
     startActivityTracking();
+    logger.info(`Creating GitHub issue for: ${paperData.primary_id || paperData.arxivId}`);
+    try {
+      await createGithubIssue(paperData);
+    } catch (error) {
+      logger.error(`Error creating GitHub issue: ${error}`);
+    }
   }
 }
 async function endCurrentSession() {
@@ -1479,40 +1497,25 @@ async function enhancedCreateReadingEvent(paperData, sessionData) {
     console.error("Error logging reading session:", error);
   }
 }
-async function createGithubIssueWithDebounce(paperData) {
+async function createGithubIssue(paperData) {
   if (!paperManager) {
-    console.error("Paper manager not initialized");
+    logger.error("Paper manager not initialized");
     return null;
   }
   const paperUniqueId = paperData.primary_id || paperData.arxivId || (paperData.source && paperData.sourceId ? `${paperData.source}:${paperData.sourceId}` : null);
   if (!paperUniqueId) {
-    console.error("Cannot create paper - no valid identifier");
+    logger.error("Cannot create paper - no valid identifier");
     return null;
   }
-  if (pendingPaperCreations.has(paperUniqueId)) {
-    logger.info(`Waiting for existing paper creation: ${paperUniqueId}`);
-    return pendingPaperCreations.get(paperUniqueId);
+  try {
+    logger.info(`Creating/getting paper issue: ${paperUniqueId}`);
+    const existingPaper = await paperManager.getOrCreatePaper(paperData);
+    logger.info(`Paper metadata stored/retrieved: ${existingPaper.arxivId || existingPaper.sourceId || existingPaper.primary_id}`);
+    return existingPaper;
+  } catch (error) {
+    logger.error(`Error handling paper metadata: ${error}`, error);
+    return null;
   }
-  const creationPromise = (async () => {
-    try {
-      logger.info(`Creating/getting paper issue: ${paperUniqueId}`);
-      const existingPaper = await paperManager.getOrCreatePaper(paperData);
-      logger.info(`Paper metadata stored/retrieved: ${existingPaper.arxivId || existingPaper.sourceId || existingPaper.primary_id}`);
-      return existingPaper;
-    } catch (error) {
-      logger.error(`Error handling paper metadata: ${error}`);
-      return null;
-    } finally {
-      setTimeout(() => {
-        pendingPaperCreations.delete(paperUniqueId);
-      }, 500);
-    }
-  })();
-  pendingPaperCreations.set(paperUniqueId, creationPromise);
-  return creationPromise;
-}
-async function createGithubIssue(paperData) {
-  return createGithubIssueWithDebounce(paperData);
 }
 async function handleAnnotationUpdate(type, data) {
   if (!paperManager) {
