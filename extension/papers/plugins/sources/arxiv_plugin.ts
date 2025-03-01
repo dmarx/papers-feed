@@ -91,7 +91,7 @@ export const arxivPlugin: SourcePlugin = {
     try {
       const apiUrl = `https://export.arxiv.org/api/query?id_list=${id}`;
       
-      // Use self.fetch instead of window.fetch for service worker compatibility
+      // Use self.fetch (available in service worker) instead of window.fetch
       const response = await self.fetch(apiUrl);
       
       if (!response.ok) {
