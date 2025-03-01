@@ -3,6 +3,7 @@
 import { SourcePlugin } from '../source_plugin';
 import { UnifiedPaperData } from '../../types';
 import { loguru } from '../../../utils/logger';
+import { parseXML } from '../../../utils/worker_safe_parser';
 
 const logger = loguru.getLogger('ArXivPlugin');
 
@@ -96,35 +97,28 @@ export const arxivPlugin: SourcePlugin = {
       }
       
       const text = await response.text();
-      const parser = new DOMParser();
-      const xmlDoc = parser.parseFromString(text, "text/xml");
       
-      // Parse XML
-      const entry = xmlDoc.querySelector('entry');
-      if (!entry) {
-        throw new Error('No entry found in API response');
-      }
+      // Use the worker-safe XML parser
+      const parser = parseXML(text);
       
-      const title = entry.querySelector('title')?.textContent?.trim() || '';
+      // Extract entry data
+      const entryContent = parser.getEntry(text);
       
-      // Extract authors
-      const authorNodes = entry.querySelectorAll('author name');
-      const authors = Array.from(authorNodes)
-        .map(node => node.textContent?.trim())
-        .filter(Boolean)
-        .join(', ');
+      // Extract title
+      const title = parser.getTagContent('title', entryContent);
       
-      // Extract summary/abstract
-      const abstract = entry.querySelector('summary')?.textContent?.trim() || '';
+      // Extract authors using the author parser
+      const authorsList = parser.getAuthor(text);
+      const authors = authorsList.join(', ');
       
-      // Extract categories
-      const categoryNodes = entry.querySelectorAll('category');
-      const categories = Array.from(categoryNodes)
-        .map(node => node.getAttribute('term'))
-        .filter(Boolean) as string[];
+      // Extract summary
+      const abstract = parser.getTagContent('summary', entryContent);
+      
+      // Extract categories using the categories parser
+      const categories = parser.getCategories(text);
       
       // Extract published date
-      const published = entry.querySelector('published')?.textContent?.trim() || '';
+      const published = parser.getPublishedDate(text);
       
       return {
         title,
