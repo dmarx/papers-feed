@@ -133,7 +133,7 @@ const SOURCE_TYPES = {
     id_format: /[a-zA-Z0-9_\-]+/
   }
 };
-function formatPrimaryId$1(source, id) {
+function formatPrimaryId(source, id) {
   const sourcePrefix = SOURCE_TYPES[source]?.prefix || "generic";
   const safeId = id.replace(/\//g, "_").replace(/:/g, ".").replace(/\s/g, "_").replace(/\\/g, "_");
   return `${sourcePrefix}.${safeId}`;
@@ -171,7 +171,7 @@ function detectSourceFromUrl(url) {
         return {
           type: sourceType,
           id,
-          primary_id: formatPrimaryId$1(sourceType, id),
+          primary_id: formatPrimaryId(sourceType, id),
           url
         };
       }
@@ -228,7 +228,7 @@ class PaperManager {
       objectId = `paper:${paperData.primary_id}`;
       useNewFormat = true;
     } else if (paperData.source && paperData.sourceId) {
-      const primary_id = formatPrimaryId$1(paperData.source, paperData.sourceId);
+      const primary_id = formatPrimaryId(paperData.source, paperData.sourceId);
       paperData.primary_id = primary_id;
       objectId = `paper:${primary_id}`;
       useNewFormat = true;
@@ -251,7 +251,7 @@ class PaperManager {
           ...data,
           source: "arxiv",
           sourceId: data.arxivId,
-          primary_id: formatPrimaryId$1("arxiv", data.arxivId)
+          primary_id: formatPrimaryId("arxiv", data.arxivId)
         };
         logger$4.info(`Updating legacy paper with new format fields: ${objectId}`);
         await this.client.updateObject(objectId, enhancedData);
@@ -371,7 +371,7 @@ class PaperManager {
     let primaryId = paperId;
     let enhancedPaperData = paperData || {};
     if (!isNewFormat(paperId) && !enhancedPaperData.primary_id) {
-      primaryId = formatPrimaryId$1("arxiv", paperId);
+      primaryId = formatPrimaryId("arxiv", paperId);
       enhancedPaperData = {
         ...enhancedPaperData,
         source: "arxiv",
@@ -397,7 +397,7 @@ class PaperManager {
     let primaryId = paperId;
     let enhancedPaperData = paperData || {};
     if (!isNewFormat(paperId) && !enhancedPaperData.primary_id) {
-      primaryId = formatPrimaryId$1("arxiv", paperId);
+      primaryId = formatPrimaryId("arxiv", paperId);
       enhancedPaperData = {
         ...enhancedPaperData,
         source: "arxiv",
@@ -423,7 +423,7 @@ class PaperManager {
     let primaryId = paperId;
     let enhancedPaperData = paperData || {};
     if (!isNewFormat(paperId) && !enhancedPaperData.primary_id) {
-      primaryId = formatPrimaryId$1("arxiv", paperId);
+      primaryId = formatPrimaryId("arxiv", paperId);
       enhancedPaperData = {
         ...enhancedPaperData,
         source: "arxiv",
@@ -560,7 +560,7 @@ class MultiSourceDetector {
       if (paperData2) {
         paperData2.source = "arxiv";
         paperData2.sourceId = paperData2.arxivId;
-        paperData2.primary_id = formatPrimaryId$1("arxiv", paperData2.arxivId);
+        paperData2.primary_id = formatPrimaryId("arxiv", paperData2.arxivId);
       }
       return paperData2;
     }
@@ -848,97 +848,6 @@ async function processPaperUrl(url) {
 }
 
 /**
- * Enhanced tab change handler for multiple sources
- * 
- * @param {Object} tab - Current tab data
- * @param {Function} originalHandler - Original handler for legacy support
- */
-async function enhancedHandleTabChange(tab, originalHandler) {
-  if (!tab || !tab.url) {
-    return;
-  }
-  
-  const url = tab.url;
-  
-  // Prevent duplicate processing
-  if (pendingUrls$1.has(url)) {
-    logger$3.info(`URL already being processed in enhancedHandleTabChange: ${url}`);
-    return;
-  }
-  
-  // Mark URL as being processed
-  pendingUrls$1.add(url);
-  
-  try {
-    // Use detector to identify paper source
-    const sourceInfo = MultiSourceDetector.detect(url);
-    const isPaperUrl = !!sourceInfo;
-    
-    logger$3.info(`Tab change detected:`, { isPaperUrl, url, sourceInfo });
-    
-    if (!isPaperUrl) {
-      logger$3.info('Not a recognized paper page, ending current session');
-      
-      // End current session if available
-      if (externalContext.endCurrentSession) {
-        await externalContext.endCurrentSession();
-      }
-      return;
-    }
-    
-    // For arXiv papers, use the original handler for full compatibility
-    if (sourceInfo.type === 'arxiv' && originalHandler) {
-      return originalHandler(tab);
-    }
-    
-    // For other sources, end any existing session
-    if (externalContext.endCurrentSession) {
-      await externalContext.endCurrentSession();
-    }
-    
-    logger$3.info('Processing paper URL for new session');
-    const paperData = await processPaperUrl(url);
-    
-    if (paperData) {
-      // Use appropriate ID based on availability
-      const trackingId = paperData.arxivId || paperData.sourceId;
-      
-      logger$3.info(`Starting new session for: ${trackingId}`);
-      
-      if (externalContext.ReadingSession && externalContext.sessionConfig) {
-        // Create a new session
-        const currentSession = new externalContext.ReadingSession(trackingId, externalContext.sessionConfig);
-        const metadata = currentSession.getMetadata();
-        logger$3.info('New session created:', metadata);
-        
-        // Set the current paper data
-        if (externalContext.setCurrentPaperData) {
-          externalContext.setCurrentPaperData(paperData);
-        }
-        
-        // Start tracking activity
-        if (externalContext.startActivityTracking) {
-          externalContext.startActivityTracking();
-        }
-        
-        // Return the paper data
-        return paperData;
-      }
-    }
-    
-    return null;
-  } catch (error) {
-    logger$3.error(`Error in enhanced tab change handler: ${error}`);
-    return null;
-  } finally {
-    // Remove URL from pending after a delay
-    setTimeout(() => {
-      pendingUrls$1.delete(url);
-    }, 500);
-  }
-}
-
-/**
  * Initialize the multi-source support
  * 
  * @param {Object} context - External functions from background script
@@ -955,8 +864,7 @@ function initMultiSourceSupport(context = {}) {
   
   // Return overrides that can be applied to the main module
   return {
-    processPaperUrl,
-    enhancedHandleTabChange
+    processPaperUrl
   };
 }
 
@@ -1040,9 +948,10 @@ let paperManager = null;
 let originalProcessArxivUrl = null;
 let enhancedProcessPaperUrl = null;
 const pendingUrls = /* @__PURE__ */ new Set();
-class ReadingSession {
-  constructor(arxivId, config) {
-    this.arxivId = arxivId;
+class EnhancedReadingSession {
+  constructor(paperData, config) {
+    this.paperId = paperData.primary_id;
+    this.paperData = paperData;
     this.sessionId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
     this.startTime = /* @__PURE__ */ new Date();
     this.activeTime = 0;
@@ -1091,6 +1000,9 @@ class ReadingSession {
   }
   getMetadata() {
     return {
+      sourceType: this.paperData.source,
+      paperId: this.paperId,
+      title: this.paperData.title,
       sessionId: this.sessionId,
       startTime: this.startTime.toISOString(),
       activeSeconds: Math.round(this.activeTime / 1e3),
@@ -1098,58 +1010,21 @@ class ReadingSession {
     };
   }
 }
-class EnhancedReadingSession {
-  constructor(paperData, config) {
-    this.paperId = paperData.primary_id;
-    this.paperData = paperData;
-    this.sessionId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-    this.startTime = /* @__PURE__ */ new Date();
-    this.activeTime = 0;
-    this.idleTime = 0;
-    this.lastActiveTime = /* @__PURE__ */ new Date();
-    this.isTracking = true;
-    this.config = config;
-    this.endTime = null;
-    this.finalizedData = null;
+class ReadingSession extends EnhancedReadingSession {
+  constructor(arxivId, config) {
+    const paperData = {
+      primary_id: `arxiv.${arxivId}`,
+      source: "arxiv",
+      sourceId: arxivId,
+      title: arxivId || "Unknown Paper",
+      arxivId
+    };
+    super(paperData, config);
+    this.arxivId = arxivId;
   }
-  update() {
-    if (this.isTracking && !this.finalizedData) {
-      const now = /* @__PURE__ */ new Date();
-      const timeSinceLastActive = now.getTime() - this.lastActiveTime.getTime();
-      if (timeSinceLastActive < this.config.idleThreshold) {
-        this.activeTime += timeSinceLastActive;
-      } else {
-        this.idleTime += timeSinceLastActive;
-      }
-      this.lastActiveTime = now;
-    }
-  }
-  finalize() {
-    if (this.finalizedData) {
-      return this.finalizedData;
-    }
-    this.update();
-    this.isTracking = false;
-    this.endTime = /* @__PURE__ */ new Date();
-    const totalElapsed = this.endTime.getTime() - this.startTime.getTime();
-    if (this.activeTime >= this.config.minSessionDuration) {
-      this.finalizedData = {
-        session_id: this.sessionId,
-        duration_seconds: Math.round(this.activeTime / 1e3),
-        idle_seconds: Math.round(this.idleTime / 1e3),
-        start_time: this.startTime.toISOString(),
-        end_time: this.endTime.toISOString(),
-        total_elapsed_seconds: Math.round(totalElapsed / 1e3)
-      };
-      return this.finalizedData;
-    }
-    return null;
-  }
+  // Override getMetadata for backward compatibility
   getMetadata() {
     return {
-      sourceType: this.paperData.source,
-      paperId: this.paperId,
-      title: this.paperData.title,
       sessionId: this.sessionId,
       startTime: this.startTime.toISOString(),
       activeSeconds: Math.round(this.activeTime / 1e3),
@@ -1170,11 +1045,10 @@ async function loadCredentials() {
   sessionConfig = getConfigurationInMs(await loadSessionConfig());
   console.log("Session configuration loaded:", sessionConfig);
   enhancedInitialization();
-  initializeDebugObjects();
 }
 function enhancedInitialization() {
   originalProcessArxivUrl = processArxivUrl;
-  const { processPaperUrl} = initMultiSourceSupport({
+  const { processPaperUrl } = initMultiSourceSupport({
     createGithubIssue,
     // Pass createGithubIssue function to background_multi_source
     endCurrentSession,
@@ -1643,17 +1517,5 @@ async function processArxivUrl(url) {
     console.error("Error processing arXiv URL:", error);
     return null;
   }
-}
-function initializeDebugObjects() {
-  self.__DEBUG__ = {
-    get paperManager() {
-      return paperManager;
-    },
-    getGithubClient: () => paperManager?.client,
-    getCurrentPaper: () => currentPaperData,
-    getCurrentSession: () => currentSession,
-    getConfig: () => sessionConfig
-  };
-  console.log("Debug objects registered, access via __DEBUG__ in service worker console");
 }
 //# sourceMappingURL=background.bundle.js.map
