@@ -89,7 +89,10 @@ export function formatPrimaryId(source: string, id: string): string {
     .replace(/\s/g, '_')
     .replace(/\\/g, '_');
   
-  return `${sourcePrefix}.${safeId}`;
+  const primaryId = `${sourcePrefix}.${safeId}`;
+  console.log(`Formatted primary ID: ${source}:${id} → ${primaryId}`); // Debug
+  
+  return primaryId;
 }
 
 /**
@@ -99,6 +102,8 @@ export function formatPrimaryId(source: string, id: string): string {
  * @returns {Object} Object with source type and source ID
  */
 export function parseId(prefixedId: string): { type: string; id: string } {
+  console.log(`Parsing ID: ${prefixedId}`); // Debug
+  
   // Split at the first dot
   const [prefix, ...idParts] = prefixedId.split('.');
   const id = idParts.join('.'); // Rejoin in case ID contains periods
@@ -111,10 +116,13 @@ export function parseId(prefixedId: string): { type: string; id: string } {
     'openreview': 'openreview'
   };
   
-  return {
+  const result = {
     type: prefixToSource[prefix] || 'generic',
     id: prefix === 'doi' ? id.replace(/_/g, '/') : id
   };
+  
+  console.log(`Parsed ID result: ${JSON.stringify(result)}`); // Debug
+  return result;
 }
 
 /**
@@ -124,8 +132,11 @@ export function parseId(prefixedId: string): { type: string; id: string } {
  * @returns {string} Legacy-compatible ID
  */
 export function getLegacyId(primaryId: string): string {
+  console.log(`Getting legacy ID for: ${primaryId}`); // Debug
+  
   // If there's no prefix, assume it's already a legacy ID
   if (!primaryId.includes('.')) {
+    console.log(`No prefix found, returning as is: ${primaryId}`); // Debug
     return primaryId;
   }
   
@@ -133,10 +144,12 @@ export function getLegacyId(primaryId: string): string {
   
   // For arXiv, return just the ID (backward compatible)
   if (type === 'arxiv') {
+    console.log(`ArXiv ID detected, returning: ${id}`); // Debug
     return id;
   }
   
   // For other sources, use the full prefixed ID to avoid collisions with arXiv IDs
+  console.log(`Non-arXiv ID, returning original: ${primaryId}`); // Debug
   return primaryId;
 }
 
@@ -147,22 +160,27 @@ export function getLegacyId(primaryId: string): string {
  * @returns {SourceInfo|null} Source information or null if not detected
  */
 export function detectSourceFromUrl(url: string): SourceInfo | null {
+  console.log(`Detecting source from URL: ${url}`); // Debug
+  
   // Check each source type
   for (const [sourceType, definition] of Object.entries(SOURCE_TYPES)) {
     for (let i = 0; i < definition.url_patterns.length; i++) {
       const match = url.match(definition.url_patterns[i]);
       if (match) {
         const id = definition.id_extractors[i](match);
+        const primaryId = formatPrimaryId(sourceType, id);
+        console.log(`Detected source: ${sourceType}, ID: ${id}, primary ID: ${primaryId}`); // Debug
         return {
           type: sourceType,
           id: id,
-          primary_id: formatPrimaryId(sourceType, id),
+          primary_id: primaryId,
           url: url
         };
       }
     }
   }
   
+  console.log(`No source detected for URL: ${url}`); // Debug
   return null;
 }
 
@@ -177,7 +195,9 @@ export function isNewFormat(id: string): boolean {
   const validPrefixes = Object.values(SOURCE_TYPES).map(def => `${def.prefix}.`);
   validPrefixes.push('generic.'); // Add generic prefix
   
-  return validPrefixes.some(prefix => id.startsWith(prefix));
+  const result = validPrefixes.some(prefix => id.startsWith(prefix));
+  console.log(`ID format check for ${id}: ${result ? 'New format' : 'Legacy format'}`); // Debug
+  return result;
 }
 
 /**
