@@ -1,5 +1,69 @@
 import { l as loguru, p as pluginRegistry } from '../background.bundle.js';
 
+function parseXML(xmlText) {
+  return {
+    getTagContent(tag, content) {
+      const searchText = content || xmlText;
+      const regex = new RegExp(`<${tag}[^>]*>(.*?)</${tag}>`, "s");
+      const match = searchText.match(regex);
+      return match ? match[1].trim() : "";
+    },
+    getAll(tag) {
+      const result = [];
+      const regex = new RegExp(`<${tag}[^>]*>(.*?)</${tag}>`, "gs");
+      let match;
+      while ((match = regex.exec(xmlText)) !== null) {
+        result.push(match[1].trim());
+      }
+      return result;
+    },
+    getAttribute(tag, attr) {
+      const result = [];
+      const regex = new RegExp(`<${tag}[^>]*${attr}="([^"]+)"`, "g");
+      let match;
+      while ((match = regex.exec(xmlText)) !== null) {
+        result.push(match[1]);
+      }
+      return result;
+    },
+    getEntry(text) {
+      const searchText = text || xmlText;
+      const entryRegex = /<entry>([\s\S]*?)<\/entry>/;
+      const entryMatch = searchText.match(entryRegex);
+      return entryMatch ? entryMatch[1] : "";
+    },
+    getAuthor(text) {
+      const searchText = text || xmlText;
+      const authors = [];
+      const regex = /<author>[^]*?<name>([^]*?)<\/name>[^]*?<\/author>/g;
+      let match;
+      while (match = regex.exec(searchText)) {
+        authors.push(match[1].trim());
+      }
+      return authors;
+    },
+    getCategories(text) {
+      const searchText = text || xmlText;
+      const categories = /* @__PURE__ */ new Set();
+      const primaryMatch = searchText.match(/<arxiv:primary_category[^>]*term="([^"]+)"/);
+      if (primaryMatch) {
+        categories.add(primaryMatch[1]);
+      }
+      const categoryRegex = /<category[^>]*term="([^"]+)"/g;
+      let match;
+      while (match = categoryRegex.exec(searchText)) {
+        categories.add(match[1]);
+      }
+      return Array.from(categories);
+    },
+    getPublishedDate(text) {
+      const searchText = text || xmlText;
+      const match = searchText.match(/<published>([^<]+)<\/published>/);
+      return match ? match[1].trim() : "";
+    }
+  };
+}
+
 const logger = loguru.getLogger("ArXivPlugin");
 const arxivPlugin = {
   id: "arxiv",
@@ -67,19 +131,14 @@ const arxivPlugin = {
         throw new Error(`API error: ${response.status}`);
       }
       const text = await response.text();
-      const parser = new DOMParser();
-      const xmlDoc = parser.parseFromString(text, "text/xml");
-      const entry = xmlDoc.querySelector("entry");
-      if (!entry) {
-        throw new Error("No entry found in API response");
-      }
-      const title = entry.querySelector("title")?.textContent?.trim() || "";
-      const authorNodes = entry.querySelectorAll("author name");
-      const authors = Array.from(authorNodes).map((node) => node.textContent?.trim()).filter(Boolean).join(", ");
-      const abstract = entry.querySelector("summary")?.textContent?.trim() || "";
-      const categoryNodes = entry.querySelectorAll("category");
-      const categories = Array.from(categoryNodes).map((node) => node.getAttribute("term")).filter(Boolean);
-      const published = entry.querySelector("published")?.textContent?.trim() || "";
+      const parser = parseXML(text);
+      const entryContent = parser.getEntry();
+      const title = parser.getTagContent("title");
+      const authorsList = parser.getAuthor();
+      const authors = authorsList.join(", ");
+      const abstract = parser.getTagContent("summary");
+      const categories = parser.getCategories();
+      const published = parser.getPublishedDate();
       return {
         title,
         authors,
@@ -101,4 +160,4 @@ const arxivPlugin = {
 pluginRegistry.register(arxivPlugin);
 
 export { arxivPlugin };
-//# sourceMappingURL=arxiv_plugin-Br5PaNkc.js.map
+//# sourceMappingURL=arxiv_plugin-DYv4ayTV.js.map
