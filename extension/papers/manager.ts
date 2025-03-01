@@ -171,9 +171,14 @@ export class PaperManager {
    * and concurrency control
    */
   private async getOrCreateInteractionLog(paperId: string): Promise<InteractionLog> {
+    console.log('PaperManager.getOrCreateInteractionLog called for:', paperId); // Debug
+    
     // For backward compatibility, use legacy ID format for storage
     const legacyId = getLegacyId(paperId);
+    console.log('Using legacyId:', legacyId); // Debug
+    
     const objectId = `interactions:${legacyId}`;
+    console.log('Object ID for interaction log:', objectId); // Debug
     
     // Check if we're already creating this log
     if (this.creationLocks.has(objectId)) {
@@ -184,20 +189,26 @@ export class PaperManager {
     // Create a new promise for this operation
     const creationPromise = (async () => {
       try {
+        console.log('Attempting to get existing interaction log'); // Debug
         const obj = await this.client.getObject(objectId);
         const data = obj.data as unknown;
+        
+        console.log('Retrieved data:', data); // Debug
         
         // Use TypeScript type guard if available, otherwise JS version
         if (typeof isInteractionLog === 'function' ? 
             isInteractionLog(data) : 
             isInteractionLogJs(data)) {
+          console.log('Valid interaction log found'); // Debug
           return data as InteractionLog;
         }
         
+        console.log('Invalid interaction log format'); // Debug
         throw new Error('Invalid interaction log format');
       } catch (error) {
         if (error instanceof Error && error.message.includes('No object found')) {
           // Create new log
+          console.log('Creating new interaction log'); // Debug
           const newLog: InteractionLog = {
             paper_id: paperId,  // Store the full ID including prefix if present
             interactions: []
@@ -206,17 +217,21 @@ export class PaperManager {
           // For backward compatibility, also add legacy_id if different
           if (paperId !== legacyId) {
             (newLog as any).legacy_id = legacyId;
+            console.log('Added legacy_id to new log'); // Debug
           }
           
           logger.info(`Creating new interaction log: ${objectId}`);
           await this.client.createObject(objectId, newLog);
+          console.log('New interaction log created successfully'); // Debug
           return newLog;
         }
+        console.error('Error in getOrCreateInteractionLog:', error); // Debug
         throw error;
       } finally {
         // Release the lock after a delay
         setTimeout(() => {
           this.creationLocks.delete(objectId);
+          console.log('Creation lock released for:', objectId); // Debug
         }, 500);
       }
     })();
@@ -236,6 +251,13 @@ export class PaperManager {
     session: ReadingSessionData,
     paperData?: any
   ): Promise<void> {
+    // New debug logging
+    console.log('PaperManager.logReadingSession called with:', { 
+      paperId, 
+      session,
+      paperData: paperData ? {...paperData} : undefined
+    });
+
     // For backward compatibility
     let primaryId = paperId;
     let enhancedPaperData: Record<string, any> = paperData || {};
@@ -250,19 +272,23 @@ export class PaperManager {
         primary_id: primaryId,
         arxivId: paperId
       };
+      console.log('Converted legacy ID to:', primaryId); // Debug
     }
 
     // Ensure paper exists with proper data
     if (Object.keys(enhancedPaperData).length > 0) {
+      console.log('Ensuring paper exists:', enhancedPaperData); // Debug
       await this.getOrCreatePaper(enhancedPaperData);
     }
 
     // Log the session as interaction
+    console.log('About to add interaction for paperId:', paperId); // Debug
     await this.addInteraction(paperId, {
       type: "reading_session",
       timestamp: new Date().toISOString(),
       data: session
     });
+    console.log('Interaction added successfully'); // Debug
   }
 
   /**
@@ -355,12 +381,24 @@ export class PaperManager {
    * Enhanced with backward compatibility
    */
   private async addInteraction(paperId: string, interaction: Interaction): Promise<void> {
-    const log = await this.getOrCreateInteractionLog(paperId);
-    log.interactions.push(interaction);
+    console.log('PaperManager.addInteraction called for:', paperId, 'type:', interaction.type); // Debug
     
-    // Use legacy ID for storage key to maintain backward compatibility
-    const legacyId = getLegacyId(paperId);
-    await this.client.updateObject(`interactions:${legacyId}`, log);
+    try {
+      const log = await this.getOrCreateInteractionLog(paperId);
+      console.log('Got interaction log:', log); // Debug
+      
+      log.interactions.push(interaction);
+      
+      // Use legacy ID for storage key to maintain backward compatibility
+      const legacyId = getLegacyId(paperId);
+      console.log('Using legacyId for storage:', legacyId); // Debug
+      
+      await this.client.updateObject(`interactions:${legacyId}`, log);
+      console.log('Interaction log updated successfully'); // Debug
+    } catch (error) {
+      console.error('Error in addInteraction:', error);
+      throw error;
+    }
   }
 
   /**
