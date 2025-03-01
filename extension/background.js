@@ -5,7 +5,7 @@ import { loadSessionConfig, getConfigurationInMs } from './config/session.js';
 import { ReadingSessionData } from './papers/types';
 // Added imports for multi-source support
 import { MultiSourceDetector } from './papers/detector';
-import { getLegacyId } from './papers/source_utils';
+import { formatPrimaryId } from './papers/source_utils';
 import { initMultiSourceSupport } from './background_multi_source';
 import { initializePluginSystem } from './papers/plugins/loader';
 import { loguru } from './utils/logger';
@@ -20,82 +20,13 @@ let activityInterval = null;
 let sessionConfig = null;
 let paperManager = null;
 
-// Store references to functions that will be enhanced
-let originalHandleTabChange = null;
+// Store reference to original processArxivUrl for compatibility
 let originalProcessArxivUrl = null;
-let enhancedTabChangeHandler = null;
 let enhancedProcessPaperUrl = null;
 
 // Debounce mechanism to avoid multiple creations of the same paper
 const pendingUrls = new Set();
 const pendingPaperCreations = new Map();
-
-class ReadingSession {
-    constructor(arxivId, config) {
-       this.arxivId = arxivId;
-       this.sessionId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-       this.startTime = new Date();
-       this.activeTime = 0;
-       this.idleTime = 0;
-       this.lastActiveTime = new Date();
-       this.isTracking = true;
-       this.config = config;
-       this.endTime = null;
-       this.finalizedData = null;
-    }
-    
-    update() {
-       if (this.isTracking && !this.finalizedData) {
-           const now = new Date();
-           const timeSinceLastActive = now.getTime() - this.lastActiveTime.getTime();
-           
-           if (timeSinceLastActive < this.config.idleThreshold) {
-               this.activeTime += timeSinceLastActive;
-           } else {
-               this.idleTime += timeSinceLastActive;
-           }
-           
-           this.lastActiveTime = now;
-       }
-    }
-    
-    finalize() {
-       if (this.finalizedData) {
-           return this.finalizedData;
-       }
-    
-       this.update();
-       this.isTracking = false;
-       this.endTime = new Date();
-       const totalElapsed = this.endTime.getTime() - this.startTime.getTime();
-    
-       if (this.activeTime >= this.config.minSessionDuration) {
-           this.finalizedData = {
-               session_id: this.sessionId,
-               duration_seconds: Math.round(this.activeTime / 1000),
-               idle_seconds: Math.round(this.idleTime / 1000),
-               start_time: this.startTime.toISOString(),
-               end_time: this.endTime.toISOString(),
-               total_elapsed_seconds: Math.round(totalElapsed / 1000)
-           };
-           return this.finalizedData;
-       }
-       return null;
-    }
-    
-    end() {
-       return this.finalize();
-    }
-    
-    getMetadata() {
-       return {
-           sessionId: this.sessionId,
-           startTime: this.startTime.toISOString(),
-           activeSeconds: Math.round(this.activeTime / 1000),
-           idleSeconds: Math.round(this.idleTime / 1000)
-       };
-    }
-}
 
 // Enhanced reading session that works with all paper sources
 class EnhancedReadingSession {
@@ -157,11 +88,41 @@ class EnhancedReadingSession {
     return null;
   }
   
+  end() {
+    return this.finalize();
+  }
+  
   getMetadata() {
     return {
       sourceType: this.paperData.source,
       paperId: this.paperId,
       title: this.paperData.title,
+      sessionId: this.sessionId,
+      startTime: this.startTime.toISOString(),
+      activeSeconds: Math.round(this.activeTime / 1000),
+      idleSeconds: Math.round(this.idleTime / 1000)
+    };
+  }
+}
+
+// For backward compatibility, extend EnhancedReadingSession
+class ReadingSession extends EnhancedReadingSession {
+  constructor(arxivId, config) {
+    // Create paper data object compatible with the enhanced class
+    const paperData = {
+      primary_id: `arxiv.${arxivId}`,
+      source: 'arxiv',
+      sourceId: arxivId,
+      title: arxivId || 'Unknown Paper',
+      arxivId: arxivId
+    };
+    super(paperData, config);
+    this.arxivId = arxivId; // For backward compatibility
+  }
+  
+  // Override getMetadata for backward compatibility
+  getMetadata() {
+    return {
       sessionId: this.sessionId,
       startTime: this.startTime.toISOString(),
       activeSeconds: Math.round(this.activeTime / 1000),
@@ -190,19 +151,15 @@ async function loadCredentials() {
 
     // Initialize multi-source support
     enhancedInitialization();
-    
-    // Initialize debug objects after everything is loaded
-    initializeDebugObjects();
 }
 
 // Initialize multi-source support
 function enhancedInitialization() {
-    // Save original functions for compatibility
-    originalHandleTabChange = handleTabChange;
+    // Save original function for compatibility
     originalProcessArxivUrl = processArxivUrl;
     
     // Initialize multi-source support with explicit context binding
-    const { processPaperUrl, enhancedHandleTabChange } = initMultiSourceSupport({
+    const { processPaperUrl } = initMultiSourceSupport({
         createGithubIssue,       // Pass createGithubIssue function to background_multi_source
         endCurrentSession,       // Pass endCurrentSession function
         ReadingSession,          // Pass ReadingSession class
@@ -212,8 +169,7 @@ function enhancedInitialization() {
         processArxivUrl          // Pass the original arXiv processor
     });
     
-    // Store enhanced functions
-    enhancedTabChangeHandler = enhancedHandleTabChange;
+    // Store enhanced function
     enhancedProcessPaperUrl = processPaperUrl;
     
     // Debug information
@@ -576,33 +532,6 @@ async function handleTabChangeWithPlugins(tab) {
   }
 }
 
-// Original handleTabChange function (kept for backward compatibility)
-async function handleTabChange(tab) {
-    const isArxiv = tab.url?.includes('arxiv.org/');
-    console.log('Tab change detected:', { isArxiv, url: tab.url });
-    
-    if (!isArxiv) {
-        console.log('Not an arXiv page, ending current session');
-        await endCurrentSession();
-        return;
-    }
-
-    if (currentSession) {
-        console.log('Ending existing session before starting new one');
-        await endCurrentSession();
-    }
-
-    console.log('Processing arXiv URL for new session');
-    currentPaperData = await processArxivUrl(tab.url);
-    if (currentPaperData) {
-        console.log('Starting new session for:', currentPaperData.arxivId);
-        currentSession = new ReadingSession(currentPaperData.arxivId, sessionConfig);
-        const metadata = currentSession.getMetadata();
-        console.log('New session created:', metadata);
-        startActivityTracking();
-    }
-}
-
 async function endCurrentSession() {
     if (currentSession && currentPaperData) {
         console.log('Ending session for:', currentPaperData.arxivId || currentPaperData.sourceId);
@@ -856,18 +785,4 @@ async function processArxivUrl(url) {
         console.error('Error processing arXiv URL:', error);
         return null;
     }
-}
-
-// Initialize debug objects in service worker scope
-function initializeDebugObjects() {
-    // Don't use window in service worker context
-    self.__DEBUG__ = {
-        get paperManager() { return paperManager; },
-        getGithubClient: () => paperManager?.client,
-        getCurrentPaper: () => currentPaperData,
-        getCurrentSession: () => currentSession,
-        getConfig: () => sessionConfig
-    };
-
-    console.log('Debug objects registered, access via __DEBUG__ in service worker console');
 }
