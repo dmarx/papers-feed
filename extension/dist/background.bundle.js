@@ -1,3 +1,66 @@
+const scriptRel = (function detectScriptRel() {
+  const relList = typeof document !== "undefined" && document.createElement("link").relList;
+  return relList && relList.supports && relList.supports("modulepreload") ? "modulepreload" : "preload";
+})();const assetsURL = function(dep) { return "/"+dep };const seen = {};const __vitePreload = function preload(baseModule, deps, importerUrl) {
+  let promise = Promise.resolve();
+  if (true && deps && deps.length > 0) {
+    document.getElementsByTagName("link");
+    const cspNonceMeta = document.querySelector(
+      "meta[property=csp-nonce]"
+    );
+    const cspNonce = cspNonceMeta?.nonce || cspNonceMeta?.getAttribute("nonce");
+    promise = Promise.allSettled(
+      deps.map((dep) => {
+        dep = assetsURL(dep);
+        if (dep in seen) return;
+        seen[dep] = true;
+        const isCss = dep.endsWith(".css");
+        const cssSelector = isCss ? '[rel="stylesheet"]' : "";
+        if (document.querySelector(`link[href="${dep}"]${cssSelector}`)) {
+          return;
+        }
+        const link = document.createElement("link");
+        link.rel = isCss ? "stylesheet" : scriptRel;
+        if (!isCss) {
+          link.as = "script";
+        }
+        link.crossOrigin = "";
+        link.href = dep;
+        if (cspNonce) {
+          link.setAttribute("nonce", cspNonce);
+        }
+        document.head.appendChild(link);
+        if (isCss) {
+          return new Promise((res, rej) => {
+            link.addEventListener("load", res);
+            link.addEventListener(
+              "error",
+              () => rej(new Error(`Unable to preload CSS for ${dep}`))
+            );
+          });
+        }
+      })
+    );
+  }
+  function handlePreloadError(err) {
+    const e = new Event("vite:preloadError", {
+      cancelable: true
+    });
+    e.payload = err;
+    window.dispatchEvent(e);
+    if (!e.defaultPrevented) {
+      throw err;
+    }
+  }
+  return promise.then((res) => {
+    for (const item of res || []) {
+      if (item.status !== "rejected") continue;
+      handlePreloadError(item.reason);
+    }
+    return baseModule().catch(handlePreloadError);
+  });
+};
+
 var d=class{constructor(e={}){this.cache=new Map,this.maxSize=e.maxSize??1e3,this.ttl=e.ttl??1e3*60*60,this.accessOrder=[];}get(e){let s=this.cache.get(e);if(s){if(Date.now()-s.lastAccessed>this.ttl){this.cache.delete(e),this.removeFromAccessOrder(e);return}return s.lastAccessed=Date.now(),this.updateAccessOrder(e),s.issueNumber}}set(e,s,t){if(this.cache.size>=this.maxSize&&!this.cache.has(e)){let r=this.accessOrder[this.accessOrder.length-1];r&&(this.cache.delete(r),this.removeFromAccessOrder(r));}this.cache.set(e,{issueNumber:s,lastAccessed:Date.now(),createdAt:t.createdAt,updatedAt:t.updatedAt}),this.updateAccessOrder(e);}remove(e){this.cache.delete(e),this.removeFromAccessOrder(e);}clear(){this.cache.clear(),this.accessOrder=[];}getStats(){return {size:this.cache.size,maxSize:this.maxSize,ttl:this.ttl}}shouldRefresh(e,s){let t=this.cache.get(e);return t?s>t.updatedAt:true}updateAccessOrder(e){this.removeFromAccessOrder(e),this.accessOrder.unshift(e);}removeFromAccessOrder(e){let s=this.accessOrder.indexOf(e);s>-1&&this.accessOrder.splice(s,1);}};var l="0.3.2";var f=class{constructor(e,s,t={}){this.token=e,this.repo=s,this.config={baseLabel:t.baseLabel??"stored-object",uidPrefix:t.uidPrefix??"UID:",reactions:{processed:t.reactions?.processed??"+1",initialState:t.reactions?.initialState??"rocket"}},this.cache=new d(t.cache);}async fetchFromGitHub(e,s={}){let t=new URL(`https://api.github.com/repos/${this.repo}${e}`);s.params&&(Object.entries(s.params).forEach(([i,a])=>{t.searchParams.append(i,a);}),delete s.params);let r=await fetch(t.toString(),{...s,headers:{Authorization:`token ${this.token}`,Accept:"application/vnd.github.v3+json",...s.headers}});if(!r.ok)throw new Error(`GitHub API error: ${r.status}`);return r.json()}createCommentPayload(e,s){let t={_data:e,_meta:{client_version:l,timestamp:new Date().toISOString(),update_mode:"append"}};return s&&(t.type=s),t}async getObject(e){let s=this.cache.get(e),t;if(s)try{t=await this.fetchFromGitHub(`/issues/${s}`),this._verifyIssueLabels(t,e)||(this.cache.remove(e),t=void 0);}catch{this.cache.remove(e);}if(!t){let c=await this.fetchFromGitHub("/issues",{method:"GET",params:{labels:[this.config.baseLabel,`${this.config.uidPrefix}${e}`].join(","),state:"closed"}});if(!c||c.length===0)throw new Error(`No object found with ID: ${e}`);t=c[0];}if(!t?.body)throw new Error(`Invalid issue data received for ID: ${e}`);let r=JSON.parse(t.body),i=new Date(t.created_at),a=new Date(t.updated_at);return this.cache.set(e,t.number,{createdAt:i,updatedAt:a}),{meta:{objectId:e,label:`${this.config.uidPrefix}${e}`,createdAt:i,updatedAt:a,version:await this._getVersion(t.number)},data:r}}async createObject(e,s){let t=`${this.config.uidPrefix}${e}`,r=await this.fetchFromGitHub("/issues",{method:"POST",body:JSON.stringify({title:`Stored Object: ${e}`,body:JSON.stringify(s,null,2),labels:[this.config.baseLabel,t]})});this.cache.set(e,r.number,{createdAt:new Date(r.created_at),updatedAt:new Date(r.updated_at)});let i=this.createCommentPayload(s,"initial_state"),a=await this.fetchFromGitHub(`/issues/${r.number}/comments`,{method:"POST",body:JSON.stringify({body:JSON.stringify(i,null,2)})});return await this.fetchFromGitHub(`/issues/comments/${a.id}/reactions`,{method:"POST",body:JSON.stringify({content:this.config.reactions.processed})}),await this.fetchFromGitHub(`/issues/comments/${a.id}/reactions`,{method:"POST",body:JSON.stringify({content:this.config.reactions.initialState})}),await this.fetchFromGitHub(`/issues/${r.number}`,{method:"PATCH",body:JSON.stringify({state:"closed"})}),{meta:{objectId:e,label:t,createdAt:new Date(r.created_at),updatedAt:new Date(r.updated_at),version:1},data:s}}_verifyIssueLabels(e,s){let t=new Set([this.config.baseLabel,`${this.config.uidPrefix}${s}`]);return e.labels.some(r=>t.has(r.name))}async updateObject(e,s){let t=await this.fetchFromGitHub("/issues",{method:"GET",params:{labels:[this.config.baseLabel,`${this.config.uidPrefix}${e}`].join(","),state:"all"}});if(!t||t.length===0)throw new Error(`No object found with ID: ${e}`);let r=t[0],i=this.createCommentPayload(s);return await this.fetchFromGitHub(`/issues/${r.number}/comments`,{method:"POST",body:JSON.stringify({body:JSON.stringify(i,null,2)})}),await this.fetchFromGitHub(`/issues/${r.number}`,{method:"PATCH",body:JSON.stringify({state:"open"})}),this.getObject(e)}async listAll(){let e=await this.fetchFromGitHub("/issues",{method:"GET",params:{labels:this.config.baseLabel,state:"closed"}}),s={};for(let t of e)if(!t.labels.some(r=>r.name==="archived"))try{let r=this._getObjectIdFromLabels(t),i=JSON.parse(t.body),a={objectId:r,label:r,createdAt:new Date(t.created_at),updatedAt:new Date(t.updated_at),version:await this._getVersion(t.number)};s[r]={meta:a,data:i};}catch{continue}return s}async listUpdatedSince(e){let s=await this.fetchFromGitHub("/issues",{method:"GET",params:{labels:this.config.baseLabel,state:"closed",since:e.toISOString()}}),t={};for(let r of s)if(!r.labels.some(i=>i.name==="archived"))try{let i=this._getObjectIdFromLabels(r),a=JSON.parse(r.body),n=new Date(r.updated_at);if(n>e){let c={objectId:i,label:i,createdAt:new Date(r.created_at),updatedAt:n,version:await this._getVersion(r.number)};t[i]={meta:c,data:a};}}catch{continue}return t}async getObjectHistory(e){let s=await this.fetchFromGitHub("/issues",{method:"GET",params:{labels:[this.config.baseLabel,`${this.config.uidPrefix}${e}`].join(","),state:"all"}});if(!s||s.length===0)throw new Error(`No object found with ID: ${e}`);let t=s[0],r=await this.fetchFromGitHub(`/issues/${t.number}/comments`),i=[];for(let a of r)try{let n=JSON.parse(a.body),c="update",m,b={client_version:"legacy",timestamp:a.created_at,update_mode:"append"};typeof n=="object"?"_data"in n?(c=n.type||"update",m=n._data,b=n._meta||b):"type"in n&&n.type==="initial_state"?(c="initial_state",m=n.data):m=n:m=n,i.push({timestamp:a.created_at,type:c,data:m,commentId:a.id});}catch{continue}return i}async _getVersion(e){return (await this.fetchFromGitHub(`/issues/${e}/comments`)).length+1}_getObjectIdFromLabels(e){for(let s of e.labels)if(s.name!==this.config.baseLabel&&s.name.startsWith(this.config.uidPrefix))return s.name.slice(this.config.uidPrefix.length);throw new Error(`No UID label found with prefix ${this.config.uidPrefix}`)}};
 
 const isInteractionLog = (data) => {
@@ -65,7 +128,7 @@ const SOURCE_TYPES = {
     id_format: /[a-zA-Z0-9_\-]+/
   }
 };
-function formatPrimaryId(source, id) {
+function formatPrimaryId$1(source, id) {
   const sourcePrefix = SOURCE_TYPES[source]?.prefix || "generic";
   const safeId = id.replace(/\//g, "_").replace(/:/g, ".").replace(/\s/g, "_").replace(/\\/g, "_");
   return `${sourcePrefix}.${safeId}`;
@@ -103,7 +166,7 @@ function detectSourceFromUrl(url) {
         return {
           type: sourceType,
           id,
-          primary_id: formatPrimaryId(sourceType, id),
+          primary_id: formatPrimaryId$1(sourceType, id),
           url
         };
       }
@@ -135,7 +198,7 @@ class PaperManager {
       objectId = `paper:${paperData.primary_id}`;
       useNewFormat = true;
     } else if (paperData.source && paperData.sourceId) {
-      const primary_id = formatPrimaryId(paperData.source, paperData.sourceId);
+      const primary_id = formatPrimaryId$1(paperData.source, paperData.sourceId);
       paperData.primary_id = primary_id;
       objectId = `paper:${primary_id}`;
       useNewFormat = true;
@@ -156,7 +219,7 @@ class PaperManager {
           ...data,
           source: "arxiv",
           sourceId: data.arxivId,
-          primary_id: formatPrimaryId("arxiv", data.arxivId)
+          primary_id: formatPrimaryId$1("arxiv", data.arxivId)
         };
         await this.client.updateObject(objectId, enhancedData);
         return enhancedData;
@@ -253,7 +316,7 @@ class PaperManager {
     let primaryId = paperId;
     let enhancedPaperData = paperData || {};
     if (!isNewFormat(paperId) && !enhancedPaperData.primary_id) {
-      primaryId = formatPrimaryId("arxiv", paperId);
+      primaryId = formatPrimaryId$1("arxiv", paperId);
       enhancedPaperData = {
         ...enhancedPaperData,
         source: "arxiv",
@@ -279,7 +342,7 @@ class PaperManager {
     let primaryId = paperId;
     let enhancedPaperData = paperData || {};
     if (!isNewFormat(paperId) && !enhancedPaperData.primary_id) {
-      primaryId = formatPrimaryId("arxiv", paperId);
+      primaryId = formatPrimaryId$1("arxiv", paperId);
       enhancedPaperData = {
         ...enhancedPaperData,
         source: "arxiv",
@@ -305,7 +368,7 @@ class PaperManager {
     let primaryId = paperId;
     let enhancedPaperData = paperData || {};
     if (!isNewFormat(paperId) && !enhancedPaperData.primary_id) {
-      primaryId = formatPrimaryId("arxiv", paperId);
+      primaryId = formatPrimaryId$1("arxiv", paperId);
       enhancedPaperData = {
         ...enhancedPaperData,
         source: "arxiv",
@@ -435,7 +498,7 @@ class MultiSourceDetector {
       if (paperData2) {
         paperData2.source = "arxiv";
         paperData2.sourceId = paperData2.arxivId;
-        paperData2.primary_id = formatPrimaryId("arxiv", paperData2.arxivId);
+        paperData2.primary_id = formatPrimaryId$1("arxiv", paperData2.arxivId);
       }
       return paperData2;
     }
@@ -830,7 +893,91 @@ function initMultiSourceSupport(context = {}) {
   };
 }
 
-// background.js
+class Logger {
+  constructor(name) {
+    this.name = name;
+  }
+  info(message, ...args) {
+    console.log(`[INFO] ${this.name}: ${message}`, ...args);
+  }
+  warning(message, ...args) {
+    console.warn(`[WARNING] ${this.name}: ${message}`, ...args);
+  }
+  error(message, ...args) {
+    console.error(`[ERROR] ${this.name}: ${message}`, ...args);
+  }
+  debug(message, ...args) {
+    console.debug(`[DEBUG] ${this.name}: ${message}`, ...args);
+  }
+}
+const loguru = {
+  getLogger: (name) => new Logger(name)
+};
+
+const logger$2 = loguru.getLogger("PluginRegistry");
+class PluginRegistry {
+  constructor() {
+    this.plugins = /* @__PURE__ */ new Map();
+  }
+  register(plugin) {
+    if (this.plugins.has(plugin.id)) {
+      logger$2.warning(`Plugin with ID ${plugin.id} already registered, overwriting`);
+    }
+    this.plugins.set(plugin.id, plugin);
+    logger$2.info(`Registered plugin: ${plugin.name} (${plugin.id})`);
+  }
+  getAll() {
+    return Array.from(this.plugins.values());
+  }
+  get(id) {
+    return this.plugins.get(id);
+  }
+  findForUrl(url) {
+    for (const plugin of this.plugins.values()) {
+      for (const pattern of plugin.urlPatterns) {
+        if (pattern.test(url)) {
+          const id = plugin.extractId(url);
+          if (id) {
+            return { plugin, id };
+          }
+        }
+      }
+    }
+    return null;
+  }
+}
+const pluginRegistry = new PluginRegistry();
+
+const registry = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
+  __proto__: null,
+  pluginRegistry
+}, Symbol.toStringTag, { value: 'Module' }));
+
+const logger$1 = loguru.getLogger("PluginLoader");
+async function loadBuiltinPlugins() {
+  logger$1.info("Loading built-in plugins");
+  try {
+    await Promise.all([
+      __vitePreload(() => import('./assets/arxiv_plugin-Br5PaNkc.js'),true?[]:void 0),
+      __vitePreload(() => import('./assets/semantic_scholar_plugin-CyBKvLW0.js'),true?[]:void 0)
+      // Add more plugins here as they're implemented
+    ]);
+    logger$1.info(`Loaded ${pluginRegistry.getAll().length} plugins`);
+  } catch (error) {
+    logger$1.error("Error loading plugins", error);
+  }
+}
+async function initializePluginSystem() {
+  logger$1.info("Initializing plugin system");
+  await loadBuiltinPlugins();
+  const plugins = pluginRegistry.getAll();
+  logger$1.info(`Initialized ${plugins.length} plugins:`);
+  plugins.forEach((plugin) => {
+    logger$1.info(`- ${plugin.name} (${plugin.id}) v${plugin.version}`);
+  });
+}
+
+const logger = loguru.getLogger('Background');
 
 let githubToken = '';
 let githubRepo = '';
@@ -913,6 +1060,79 @@ class ReadingSession {
     }
 }
 
+// Enhanced reading session that works with all paper sources
+class EnhancedReadingSession {
+  constructor(paperData, config) {
+    // Use primary_id as the canonical identifier
+    this.paperId = paperData.primary_id;
+    this.paperData = paperData;
+    
+    // Generate unique session ID
+    this.sessionId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    
+    // Initialize timing data
+    this.startTime = new Date();
+    this.activeTime = 0;
+    this.idleTime = 0;
+    this.lastActiveTime = new Date();
+    this.isTracking = true;
+    this.config = config;
+    this.endTime = null;
+    this.finalizedData = null;
+  }
+  
+  update() {
+    if (this.isTracking && !this.finalizedData) {
+      const now = new Date();
+      const timeSinceLastActive = now.getTime() - this.lastActiveTime.getTime();
+      
+      if (timeSinceLastActive < this.config.idleThreshold) {
+        this.activeTime += timeSinceLastActive;
+      } else {
+        this.idleTime += timeSinceLastActive;
+      }
+      
+      this.lastActiveTime = now;
+    }
+  }
+  
+  finalize() {
+    if (this.finalizedData) {
+      return this.finalizedData;
+    }
+ 
+    this.update();
+    this.isTracking = false;
+    this.endTime = new Date();
+    const totalElapsed = this.endTime.getTime() - this.startTime.getTime();
+ 
+    if (this.activeTime >= this.config.minSessionDuration) {
+      this.finalizedData = {
+        session_id: this.sessionId,
+        duration_seconds: Math.round(this.activeTime / 1000),
+        idle_seconds: Math.round(this.idleTime / 1000),
+        start_time: this.startTime.toISOString(),
+        end_time: this.endTime.toISOString(),
+        total_elapsed_seconds: Math.round(totalElapsed / 1000)
+      };
+      return this.finalizedData;
+    }
+    return null;
+  }
+  
+  getMetadata() {
+    return {
+      sourceType: this.paperData.source,
+      paperId: this.paperId,
+      title: this.paperData.title,
+      sessionId: this.sessionId,
+      startTime: this.startTime.toISOString(),
+      activeSeconds: Math.round(this.activeTime / 1000),
+      idleSeconds: Math.round(this.idleTime / 1000)
+    };
+  }
+}
+
 // Load credentials and configuration when extension starts
 async function loadCredentials() {
     const items = await chrome.storage.sync.get(['githubToken', 'githubRepo']);
@@ -993,8 +1213,26 @@ chrome.storage.onChanged.addListener(async (changes) => {
     }
 });
 
+// Initialize the extension
+async function initialize() {
+  logger.info('Initializing extension');
+  
+  // Load credentials and config
+  await loadCredentials();
+  
+  // Initialize plugin system
+  await initializePluginSystem();
+  
+  // Set up listeners for tab changes
+  await setupListeners();
+  
+  logger.info('Extension initialized');
+}
+
 // Initialize credentials
-loadCredentials();
+initialize().catch(error => {
+  logger.error('Initialization failed', error);
+});
 
 // Message passing between background and popup
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
@@ -1039,6 +1277,94 @@ async function handleUpdateRating(rating, sendResponse) {
         console.error('Error updating rating:', error);
         sendResponse({ success: false, error: error.message });
     }
+}
+
+// Set up event listeners using plugin system
+async function setupListeners() {
+  // Get all supported hosts from plugins
+  const { pluginRegistry } = await __vitePreload(async () => { const { pluginRegistry } = await Promise.resolve().then(() => registry);return { pluginRegistry }},true?void 0:void 0);
+  const plugins = pluginRegistry.getAll();
+  
+  // Create host patterns from all plugins
+  const hostPatterns = [];
+  
+  for (const plugin of plugins) {
+    // Extract domain from first pattern as a simple approach
+    // A more robust approach would parse all patterns
+    const pattern = plugin.urlPatterns[0].toString();
+    const match = pattern.match(/([a-zA-Z0-9.-]+)\\\.org/);
+    if (match) {
+      hostPatterns.push({ hostSuffix: `${match[1]}.org` });
+    }
+  }
+  
+  // Set up navigation listener with all hosts
+  chrome.webNavigation.onCompleted.addListener(async (details) => {
+    logger.info(`Navigation detected: ${details.url}`);
+    
+    // Get tab info
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tabs.length > 0 && tabs[0].id === details.tabId) {
+      // Use enhanced handler with plugin system
+      handleTabChangeWithPlugins(tabs[0]);
+    }
+  }, { url: hostPatterns });
+  
+  // Also listen for tab activation
+  chrome.tabs.onActivated.addListener(async (activeInfo) => {
+    const tab = await chrome.tabs.get(activeInfo.tabId);
+    handleTabChangeWithPlugins(tab);
+  });
+  
+  // Listen for tab updates
+  chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+    if (changeInfo.status === 'complete') {
+      handleTabChangeWithPlugins(tab);
+    }
+  });
+}
+
+// Handle tab changes with plugin system
+async function handleTabChangeWithPlugins(tab) {
+  if (!tab.url) return;
+  
+  // Check if this is a paper URL using the plugin system
+  const sourceInfo = MultiSourceDetector.detect(tab.url);
+  
+  if (!sourceInfo) {
+    logger.info('Not a recognized paper page, ending current session');
+    await endCurrentSession();
+    return;
+  }
+  
+  // End any existing session
+  if (currentSession) {
+    logger.info('Ending existing session before starting new one');
+    await endCurrentSession();
+  }
+  
+  // Process the paper URL
+  logger.info(`Processing paper URL: ${tab.url}`);
+  const paperData = await MultiSourceDetector.processUrl(tab.url, processArxivUrl);
+  
+  if (paperData) {
+    logger.info(`Starting new session for: ${paperData.primary_id}`);
+    
+    // Store current paper data
+    currentPaperData = paperData;
+    
+    // Create a new reading session
+    currentSession = new EnhancedReadingSession(paperData, sessionConfig);
+    
+    const metadata = currentSession.getMetadata();
+    logger.info('New session created:', metadata);
+    
+    // Start tracking reading time
+    startActivityTracking();
+    
+    // Create or update paper in GitHub
+    await createGithubIssue(paperData);
+  }
 }
 
 // Tab and window management
@@ -1183,25 +1509,25 @@ async function enhancedCreateReadingEvent(paperData, sessionData) {
     }
 
     try {
-        // Determine which ID to use for logging
-        const paperIdForLogging = paperData.arxivId || 
-                            (paperData.source && paperData.sourceId ? 
-                            paperData.sourceId : 
-                            null);
+        // Use primary_id for storage
+        const paperId = paperData.primary_id || 
+                    (paperData.source && paperData.sourceId ? 
+                      formatPrimaryId(paperData.source, paperData.sourceId) : 
+                      (paperData.arxivId || null));
         
-        if (!paperIdForLogging) {
+        if (!paperId) {
             console.error('No valid paper ID found for logging');
             return;
         }
         
         await paperManager.logReadingSession(
-            paperIdForLogging,
+            paperId,
             sessionData,
             paperData
         );
         
         console.log('Reading session logged:', {
-            paperId: paperIdForLogging,
+            paperId: paperId,
             sessionId: sessionData.session_id,
             activeTime: sessionData.duration_seconds,
             idleTime: sessionData.idle_seconds,
@@ -1395,4 +1721,6 @@ function initializeDebugObjects() {
 
     console.log('Debug objects registered, access via __DEBUG__ in service worker console');
 }
+
+export { loguru as l, pluginRegistry as p };
 //# sourceMappingURL=background.bundle.js.map
