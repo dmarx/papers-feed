@@ -1,0 +1,474 @@
+---
+File: extension/papers/plugins/loader.ts
+---
+// extension/papers/plugins/loader.ts
+
+import { loguru } from '../../utils/logger';
+import { pluginRegistry } from './registry';
+
+// Import plugins directly (static import)
+import * as plugins from './sources/index';
+
+const logger = loguru.getLogger('PluginLoader');
+
+/**
+ * Load all built-in source plugins
+ */
+export async function loadBuiltinPlugins(): Promise<void> {
+  logger.info('Loading built-in plugins');
+  
+  try {
+    // Plugins are already loaded via the static import
+    // This is just to check if they were properly registered
+    const pluginCount = pluginRegistry.getAll().length;
+    
+    if (pluginCount === 0) {
+      logger.warning('No plugins were registered. Check plugin registration.');
+    } else {
+      logger.info(`${pluginCount} plugins are registered.`);
+    }
+  } catch (error) {
+    logger.error('Error loading plugins', error);
+    // Log detailed error information for debugging
+    if (error instanceof Error) {
+      logger.error(`Plugin loading error: ${error.message}`);
+      if (error.stack) {
+        logger.error(`Stack trace: ${error.stack}`);
+      }
+    }
+  }
+}
+
+/**
+ * Initialize the plugin system
+ */
+export async function initializePluginSystem(): Promise<void> {
+  logger.info('Initializing plugin system');
+  
+  await loadBuiltinPlugins();
+  
+  // Log loaded plugins
+  const plugins = pluginRegistry.getAll();
+  logger.info(`Initialized ${plugins.length} plugins:`);
+  
+  plugins.forEach(plugin => {
+    logger.info(`- ${plugin.name} (${plugin.id}) v${plugin.version}`);
+  });
+}
+
+
+
+---
+File: extension/papers/plugins/registry.ts
+---
+// extension/papers/plugins/registry.ts
+
+import { SourcePlugin } from './source_plugin';
+import { loguru } from '../../utils/logger';
+
+const logger = loguru.getLogger('PluginRegistry');
+
+class PluginRegistry {
+  private plugins: Map<string, SourcePlugin> = new Map();
+  
+  register(plugin: SourcePlugin): void {
+    if (this.plugins.has(plugin.id)) {
+      logger.warning(`Plugin with ID ${plugin.id} already registered, overwriting`);
+    }
+    this.plugins.set(plugin.id, plugin);
+    logger.info(`Registered plugin: ${plugin.name} (${plugin.id})`);
+  }
+  
+  getAll(): SourcePlugin[] {
+    return Array.from(this.plugins.values());
+  }
+  
+  get(id: string): SourcePlugin | undefined {
+    return this.plugins.get(id);
+  }
+  
+  findForUrl(url: string): { plugin: SourcePlugin; id: string } | null {
+    for (const plugin of this.plugins.values()) {
+      for (const pattern of plugin.urlPatterns) {
+        if (pattern.test(url)) {
+          const id = plugin.extractId(url);
+          if (id) {
+            return { plugin, id };
+          }
+        }
+      }
+    }
+    return null;
+  }
+}
+
+// Export singleton instance
+export const pluginRegistry = new PluginRegistry();
+
+
+
+---
+File: extension/papers/plugins/source_plugin.ts
+---
+// extension/papers/plugins/source_plugin.ts
+
+import { UnifiedPaperData } from '../types';
+
+export interface SourcePlugin {
+  // Basic info
+  id: string;               // Unique source identifier
+  name: string;             // Display name
+  description: string;      // Description
+  version: string;          // Version
+  
+  // URL detection
+  urlPatterns: RegExp[];    // Patterns to match URLs
+  extractId: (url: string) => string | null;  // Extract ID from URL
+  
+  // Metadata extraction
+  extractMetadata: (document: Document, url: string) => Promise<Partial<UnifiedPaperData>>;
+  
+  // Optional API support
+  hasApi?: boolean;
+  fetchApiData?: (id: string) => Promise<Partial<UnifiedPaperData>>;
+  
+  // UI customization
+  color?: string;           // Brand color
+  icon?: string;            // Icon or emoji
+  
+  // Storage format customization
+  formatId?: (id: string) => string; // Format ID for storage
+}
+
+
+
+---
+File: extension/papers/plugins/sources/arxiv_plugin.ts
+---
+// extension/papers/plugins/sources/arxiv_plugin.ts
+
+import { SourcePlugin } from '../source_plugin';
+import { UnifiedPaperData } from '../../types';
+import { loguru } from '../../../utils/logger';
+import { parseXML } from '../../../utils/worker_safe_parser';
+
+const logger = loguru.getLogger('ArXivPlugin');
+
+export const arxivPlugin: SourcePlugin = {
+  id: 'arxiv',
+  name: 'arXiv',
+  description: 'Support for arXiv papers',
+  version: '1.0.0',
+  
+  urlPatterns: [
+    /arxiv\.org\/abs\/([0-9.]+)(v[0-9]+)?/,
+    /arxiv\.org\/pdf\/([0-9.]+)(v[0-9]+)?\.pdf/,
+    /arxiv\.org\/[a-z]+\/([0-9.]+)(v[0-9]+)?/
+  ],
+  
+  extractId(url: string): string | null {
+    for (const pattern of this.urlPatterns) {
+      const match = url.match(pattern);
+      if (match) {
+        // Include version if available
+        return match[1] + (match[2] || '');
+      }
+    }
+    return null;
+  },
+  
+  async extractMetadata(document: Document, url: string): Promise<Partial<UnifiedPaperData>> {
+    logger.info(`Extracting metadata from ${url}`);
+    
+    try {
+      // Extract from page metadata
+      const getMetaContent = (selector: string): string | undefined => {
+        const element = document.querySelector(selector);
+        return element && 'content' in element ? 
+          (element as HTMLMetaElement).content : undefined;
+      };
+      
+      // Try to extract title and authors
+      let title = document.querySelector('.title')?.textContent?.trim();
+      if (title?.startsWith('Title:')) {
+        title = title.substring(6).trim();
+      }
+      
+      // Extract authors
+      let authors = '';
+      const authorElements = document.querySelectorAll('.authors a');
+      if (authorElements.length > 0) {
+        authors = Array.from(authorElements)
+          .map(el => el.textContent?.trim())
+          .filter(Boolean)
+          .join(', ');
+      }
+      
+      // Extract abstract
+      let abstract = document.querySelector('.abstract')?.textContent?.trim();
+      if (abstract?.startsWith('Abstract:')) {
+        abstract = abstract.substring(9).trim();
+      }
+      
+      // Extract categories
+      const categories: string[] = [];
+      const categoryElements = document.querySelectorAll('.subjects .tag');
+      categoryElements.forEach(el => {
+        const text = el.textContent?.trim();
+        if (text) categories.push(text);
+      });
+      
+      return {
+        title: title || '',
+        authors: authors || '',
+        abstract: abstract || '',
+        arxiv_tags: categories
+      };
+    } catch (error) {
+      logger.error('Error extracting metadata from arXiv page', error);
+      return {};
+    }
+  },
+  
+  hasApi: true,
+  
+  async fetchApiData(id: string): Promise<Partial<UnifiedPaperData>> {
+    logger.info(`Fetching API data for arXiv:${id}`);
+    
+    try {
+      const apiUrl = `https://export.arxiv.org/api/query?id_list=${id}`;
+      
+      // Use self.fetch (available in service worker) instead of window.fetch
+      const response = await self.fetch(apiUrl);
+      
+      if (!response.ok) {
+        throw new Error(`API error: ${response.status}`);
+      }
+      
+      const text = await response.text();
+      
+      // Use the worker-safe XML parser
+      const parser = parseXML(text);
+      
+      // Extract entry data
+      const entryContent = parser.getEntry();
+      
+      // Extract title
+      const title = parser.getTagContent('title');
+      
+      // Extract authors using the author parser
+      const authorsList = parser.getAuthor();
+      const authors = authorsList.join(', ');
+      
+      // Extract summary
+      const abstract = parser.getTagContent('summary');
+      
+      // Extract categories using the categories parser
+      const categories = parser.getCategories();
+      
+      // Extract published date
+      const published = parser.getPublishedDate();
+      
+      return {
+        title,
+        authors,
+        abstract,
+        arxiv_tags: categories,
+        published_date: published
+      };
+    } catch (error) {
+      logger.error('Error fetching arXiv API data', error);
+      return {};
+    }
+  },
+  
+  color: '#B31B1B',
+  icon: '📝',
+  
+  formatId(id: string): string {
+    return `arxiv.${id}`;
+  }
+};
+
+// Register the plugin
+import { pluginRegistry } from '../registry';
+pluginRegistry.register(arxivPlugin);
+
+
+
+---
+File: extension/papers/plugins/sources/index.ts
+---
+// extension/papers/plugins/sources/index.ts
+// Static imports of all plugins to avoid dynamic imports in service worker
+
+// Import and re-export all plugins
+export * from './arxiv_plugin';
+export * from './semantic_scholar_plugin';
+// Add future plugins here
+
+
+
+---
+File: extension/papers/plugins/sources/semantic_scholar_plugin.ts
+---
+// extension/papers/plugins/sources/semantic_scholar_plugin.ts
+
+import { SourcePlugin } from '../source_plugin';
+import { UnifiedPaperData } from '../../types';
+import { loguru } from '../../../utils/logger';
+
+const logger = loguru.getLogger('SemanticScholarPlugin');
+
+export const semanticScholarPlugin: SourcePlugin = {
+  id: 'semanticscholar',
+  name: 'Semantic Scholar',
+  description: 'Support for Semantic Scholar papers',
+  version: '1.0.0',
+  
+  urlPatterns: [
+    /semanticscholar\.org\/paper\/([a-f0-9]+)/,
+    /s2-research\.org\/papers\/([a-f0-9]+)/
+  ],
+  
+  extractId(url: string): string | null {
+    for (const pattern of this.urlPatterns) {
+      const match = url.match(pattern);
+      if (match) {
+        return match[1];
+      }
+    }
+    return null;
+  },
+  
+  async extractMetadata(document: Document, url: string): Promise<Partial<UnifiedPaperData>> {
+    logger.info(`Extracting metadata from ${url}`);
+    
+    try {
+      const getMetaContent = (selector: string): string | undefined => {
+        const element = document.querySelector(selector);
+        return element && 'content' in element ? 
+          (element as HTMLMetaElement).content : undefined;
+      };
+      
+      // Extract from meta tags
+      const title = getMetaContent('meta[name="citation_title"]') || 
+                   getMetaContent('meta[property="og:title"]') ||
+                   document.title;
+      
+      // Try to get authors - S2 has specific author elements
+      let authors = '';
+      const authorElements = document.querySelectorAll('[data-test-id="author-list"] a');
+      if (authorElements.length > 0) {
+        authors = Array.from(authorElements)
+          .map(el => el.textContent?.trim())
+          .filter(Boolean)
+          .join(', ');
+      } else {
+        authors = getMetaContent('meta[name="citation_author"]') || '';
+      }
+      
+      // Get abstract
+      let abstract = getMetaContent('meta[name="description"]') || 
+                    getMetaContent('meta[property="og:description"]');
+      
+      if (!abstract) {
+        const abstractEl = document.querySelector('[data-test-id="abstract-text"]') ||
+                          document.querySelector('.abstract');
+        abstract = abstractEl?.textContent?.trim();
+      }
+      
+      // Extract citation count if available
+      let citations: number | undefined;
+      const citationEl = document.querySelector('[data-test-id="citation-count"]');
+      if (citationEl) {
+        const citText = citationEl.textContent;
+        if (citText) {
+          const match = citText.match(/(\d+)/);
+          if (match) {
+            citations = parseInt(match[1], 10);
+          }
+        }
+      }
+      
+      // Extract DOI if available
+      const doi = getMetaContent('meta[name="citation_doi"]');
+      
+      return {
+        title: title || '',
+        authors: authors || '',
+        abstract: abstract || '',
+        source_specific_metadata: {
+          citations: citations,
+          // Any other S2-specific metadata
+        },
+        identifiers: doi ? { doi } : undefined
+      };
+    } catch (error) {
+      logger.error('Error extracting metadata from Semantic Scholar page', error);
+      return {};
+    }
+  },
+  
+  hasApi: true,
+  
+  async fetchApiData(id: string): Promise<Partial<UnifiedPaperData>> {
+    logger.info(`Fetching API data for S2:${id}`);
+    
+    try {
+      const apiUrl = `https://api.semanticscholar.org/v1/paper/${id}`;
+      // Use self.fetch for service worker environment
+      const response = await self.fetch(apiUrl);
+      
+      if (!response.ok) {
+        throw new Error(`API error: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      
+      // Extract fields from API response
+      const authors = data.authors ? 
+        data.authors.map((author: any) => author.name).join(', ') : '';
+      
+      // Create the paper data object
+      const paperData: Partial<UnifiedPaperData> = {
+        title: data.title || '',
+        authors,
+        abstract: data.abstract || '',
+        source_specific_metadata: {
+          citations: data.citations,
+          // Any other S2-specific metadata
+        },
+        published_date: data.year ? `${data.year}` : undefined,
+        identifiers: {}
+      };
+      
+      // Add identifiers
+      if (data.doi) {
+        paperData.identifiers!.doi = data.doi;
+      }
+      
+      if (data.arxivId) {
+        paperData.identifiers!.arxiv = data.arxivId;
+      }
+      
+      return paperData;
+    } catch (error) {
+      logger.error('Error fetching Semantic Scholar API data', error);
+      return {};
+    }
+  },
+  
+  color: '#2e7d32',
+  icon: '📊',
+  
+  formatId(id: string): string {
+    return `s2.${id}`;
+  }
+};
+
+// Register the plugin
+import { pluginRegistry } from '../registry';
+pluginRegistry.register(semanticScholarPlugin);
+
+
