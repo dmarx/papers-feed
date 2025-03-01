@@ -120,7 +120,10 @@ export const semanticScholarPlugin: SourcePlugin = {
         title: data.title || '',
         authors,
         abstract: data.abstract || '',
-        citations: data.citationCount,
+        source_specific_metadata: {
+          citations: data.citations,
+          // Any other S2-specific metadata
+        },
         published_date: data.year ? `${data.year}` : undefined,
         identifiers: {}
       };
