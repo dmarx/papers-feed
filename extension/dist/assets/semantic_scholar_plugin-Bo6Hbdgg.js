@@ -71,7 +71,7 @@ const semanticScholarPlugin = {
     logger.info(`Fetching API data for S2:${id}`);
     try {
       const apiUrl = `https://api.semanticscholar.org/v1/paper/${id}`;
-      const response = await fetch(apiUrl);
+      const response = await self.fetch(apiUrl);
       if (!response.ok) {
         throw new Error(`API error: ${response.status}`);
       }
@@ -109,4 +109,4 @@ const semanticScholarPlugin = {
 pluginRegistry.register(semanticScholarPlugin);
 
 export { semanticScholarPlugin };
-//# sourceMappingURL=semantic_scholar_plugin-CyBKvLW0.js.map
+//# sourceMappingURL=semantic_scholar_plugin-Bo6Hbdgg.js.map

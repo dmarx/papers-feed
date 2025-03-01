@@ -959,12 +959,18 @@ async function loadBuiltinPlugins() {
   try {
     await Promise.all([
       __vitePreload(() => import('./assets/arxiv_plugin-DBe7C14h.js'),true?[]:void 0),
-      __vitePreload(() => import('./assets/semantic_scholar_plugin-CyBKvLW0.js'),true?[]:void 0)
+      __vitePreload(() => import('./assets/semantic_scholar_plugin-Bo6Hbdgg.js'),true?[]:void 0)
       // Add more plugins here as they're implemented
     ]);
     logger$1.info(`Loaded ${pluginRegistry.getAll().length} plugins`);
   } catch (error) {
     logger$1.error("Error loading plugins", error);
+    if (error instanceof Error) {
+      logger$1.error(`Plugin loading error: ${error.message}`);
+      if (error.stack) {
+        logger$1.error(`Stack trace: ${error.stack}`);
+      }
+    }
   }
 }
 async function initializePluginSystem() {
