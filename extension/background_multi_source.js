@@ -2,7 +2,7 @@
 // Extension to support multiple paper sources
 
 import { MultiSourceDetector } from './papers/detector';
-import { processPaperUrl as processUrl, enhancePaperData } from './papers/process_paper_url';
+import { processPaperUrl as processUrl } from './papers/process_paper_url';
 import { loguru } from './utils/logger';
 
 const logger = loguru.getLogger('MultiSourceSupport');
@@ -22,72 +22,6 @@ let externalContext = {
 
 // Track URLs that are being processed to avoid duplicates
 const pendingUrls = new Set();
-
-/**
- * Extracts metadata from the current page if possible
- * 
- * @param {number} tabId - ID of the current tab
- * @returns {Promise<Object|null>} - Extracted metadata or null
- */
-async function extractMetadataFromPage(tabId) {
-  try {
-    const result = await chrome.scripting.executeScript({
-      target: { tabId: tabId },
-      func: () => {
-        try {
-          // Helper function to safely get content from meta tags
-          const getMetaContent = (selector) => {
-            const element = document.querySelector(selector);
-            return element && 'content' in element ? 
-              element.content : undefined;
-          };
-
-          // Try to extract from common meta tags first
-          const metadata = {
-            title: getMetaContent('meta[name="citation_title"]') ||
-                   getMetaContent('meta[property="og:title"]') ||
-                   document.title,
-            authors: getMetaContent('meta[name="citation_author"]') ||
-                     getMetaContent('meta[name="citation_authors"]') ||
-                     getMetaContent('meta[name="author"]'),
-            abstract: getMetaContent('meta[name="description"]') ||
-                      getMetaContent('meta[property="og:description"]') ||
-                      getMetaContent('meta[name="citation_abstract"]'),
-            published_date: getMetaContent('meta[name="citation_publication_date"]') ||
-                            getMetaContent('meta[name="citation_date"]'),
-            doi: getMetaContent('meta[name="citation_doi"]')
-          };
-          
-          // If metadata not found in meta tags, try common page elements
-          if (!metadata.title) {
-            const h1 = document.querySelector('h1');
-            if (h1 && h1.textContent) metadata.title = h1.textContent.trim();
-          }
-          
-          if (!metadata.abstract) {
-            const abstractEl = document.querySelector('.abstract') || 
-                              document.querySelector('#abstract') ||
-                              document.querySelector('[class*="abstract"]');
-            if (abstractEl && abstractEl.textContent) metadata.abstract = abstractEl.textContent.trim();
-          }
-          
-          return metadata;
-        } catch (e) {
-          console.error('Error extracting metadata:', e);
-          return null;
-        }
-      }
-    });
-    
-    if (result && result[0] && result[0].result) {
-      return result[0].result;
-    }
-  } catch (error) {
-    logger.error('Error executing script:', error);
-  }
-  
-  return null;
-}
 
 /**
  * Enhanced version of processArxivUrl that supports multiple sources
@@ -178,97 +112,6 @@ async function processPaperUrl(url) {
 }
 
 /**
- * Enhanced tab change handler for multiple sources
- * 
- * @param {Object} tab - Current tab data
- * @param {Function} originalHandler - Original handler for legacy support
- */
-async function enhancedHandleTabChange(tab, originalHandler) {
-  if (!tab || !tab.url) {
-    return;
-  }
-  
-  const url = tab.url;
-  
-  // Prevent duplicate processing
-  if (pendingUrls.has(url)) {
-    logger.info(`URL already being processed in enhancedHandleTabChange: ${url}`);
-    return;
-  }
-  
-  // Mark URL as being processed
-  pendingUrls.add(url);
-  
-  try {
-    // Use detector to identify paper source
-    const sourceInfo = MultiSourceDetector.detect(url);
-    const isPaperUrl = !!sourceInfo;
-    
-    logger.info(`Tab change detected:`, { isPaperUrl, url, sourceInfo });
-    
-    if (!isPaperUrl) {
-      logger.info('Not a recognized paper page, ending current session');
-      
-      // End current session if available
-      if (externalContext.endCurrentSession) {
-        await externalContext.endCurrentSession();
-      }
-      return;
-    }
-    
-    // For arXiv papers, use the original handler for full compatibility
-    if (sourceInfo.type === 'arxiv' && originalHandler) {
-      return originalHandler(tab);
-    }
-    
-    // For other sources, end any existing session
-    if (externalContext.endCurrentSession) {
-      await externalContext.endCurrentSession();
-    }
-    
-    logger.info('Processing paper URL for new session');
-    const paperData = await processPaperUrl(url);
-    
-    if (paperData) {
-      // Use appropriate ID based on availability
-      const trackingId = paperData.arxivId || paperData.sourceId;
-      
-      logger.info(`Starting new session for: ${trackingId}`);
-      
-      if (externalContext.ReadingSession && externalContext.sessionConfig) {
-        // Create a new session
-        const currentSession = new externalContext.ReadingSession(trackingId, externalContext.sessionConfig);
-        const metadata = currentSession.getMetadata();
-        logger.info('New session created:', metadata);
-        
-        // Set the current paper data
-        if (externalContext.setCurrentPaperData) {
-          externalContext.setCurrentPaperData(paperData);
-        }
-        
-        // Start tracking activity
-        if (externalContext.startActivityTracking) {
-          externalContext.startActivityTracking();
-        }
-        
-        // Return the paper data
-        return paperData;
-      }
-    }
-    
-    return null;
-  } catch (error) {
-    logger.error(`Error in enhanced tab change handler: ${error}`);
-    return null;
-  } finally {
-    // Remove URL from pending after a delay
-    setTimeout(() => {
-      pendingUrls.delete(url);
-    }, 500);
-  }
-}
-
-/**
  * Initialize the multi-source support
  * 
  * @param {Object} context - External functions from background script
@@ -285,7 +128,6 @@ export function initMultiSourceSupport(context = {}) {
   
   // Return overrides that can be applied to the main module
   return {
-    processPaperUrl,
-    enhancedHandleTabChange
+    processPaperUrl
   };
 }
