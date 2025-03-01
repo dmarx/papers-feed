@@ -90,7 +90,9 @@ export const arxivPlugin: SourcePlugin = {
     
     try {
       const apiUrl = `https://export.arxiv.org/api/query?id_list=${id}`;
-      const response = await fetch(apiUrl);
+      
+      // Use self.fetch instead of window.fetch for service worker compatibility
+      const response = await self.fetch(apiUrl);
       
       if (!response.ok) {
         throw new Error(`API error: ${response.status}`);
