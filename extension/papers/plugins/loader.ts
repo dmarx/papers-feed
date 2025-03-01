@@ -12,17 +12,23 @@ export async function loadBuiltinPlugins(): Promise<void> {
   logger.info('Loading built-in plugins');
   
   try {
-    // Import all plugins
-    // In a real implementation, we might do this dynamically
+    // Import plugins directly to ensure they're properly bundled
     await Promise.all([
       import('./sources/arxiv_plugin'),
-      import('./sources/semantic_scholar_plugin'),
+      import('./sources/semantic_scholar_plugin')
       // Add more plugins here as they're implemented
     ]);
     
     logger.info(`Loaded ${pluginRegistry.getAll().length} plugins`);
   } catch (error) {
     logger.error('Error loading plugins', error);
+    // Log detailed error information for debugging
+    if (error instanceof Error) {
+      logger.error(`Plugin loading error: ${error.message}`);
+      if (error.stack) {
+        logger.error(`Stack trace: ${error.stack}`);
+      }
+    }
   }
 }
 
