@@ -32,7 +32,7 @@ class GitHubRepoMirror:
         token: str,
         source_repo: str,
         target_repo: str,
-        wait_on_rate_limit: bool = True
+        #3wait_on_rate_limit: bool = True
     ):
         """
         Initialize with GitHub credentials and repository info.
@@ -54,7 +54,7 @@ class GitHubRepoMirror:
             retry=3,
             # Only wait on rate limit if explicitly requested
             # This prevents hanging indefinitely by default
-            wait_for_rate_limit_reset=wait_on_rate_limit
+            #wait_for_rate_limit_reset=wait_on_rate_limit
         )
         
         # Get repository objects
@@ -348,7 +348,7 @@ def mirror_repository(
     copy_reactions: bool = True,
     min_issue_number: int | None = None,
     max_issue_number: int | None = None,
-    wait_on_rate_limit: bool = True
+    #wait_on_rate_limit: bool = True
 ):
     """
     Mirror issues, comments, labels and reactions from source to target repository.
@@ -396,7 +396,7 @@ def mirror_repository(
         token=token,
         source_repo=source_repo,
         target_repo=target_repo,
-        wait_on_rate_limit=wait_on_rate_limit
+        #wait_on_rate_limit=wait_on_rate_limit
     )
     
     # Copy all labels first
