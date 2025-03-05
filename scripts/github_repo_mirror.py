@@ -45,7 +45,7 @@ class GitHubRepoMirror:
         """
         self.source_repo_name = source_repo
         self.target_repo_name = target_repo
-        self.wait_on_rate_limit = wait_on_rate_limit
+        #self.wait_on_rate_limit = wait_on_rate_limit
         
         # Initialize GitHub client
         self.github = Github(
