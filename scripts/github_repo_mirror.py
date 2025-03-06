@@ -296,12 +296,12 @@ class GitHubRepoMirror:
 
 
 def mirror_repository(
-    clear_target_labels: bool = True,
+    clear_target_labels: bool = False,
     token: str = None,
     source_repo: str = "dmarx/papers-feed",
     target_repo: str = "dmarx/papers-feed-dev",
-    issue_range_start: int = 1000,
-    issue_range_end: int = 1075,
+    issue_range_start: int = None,
+    issue_range_end: int = None,
 ):
     """
     Mirror issues, comments, labels and reactions from source to target repository.
