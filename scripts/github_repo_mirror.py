@@ -225,7 +225,7 @@ class GitHubRepoMirror:
             target_label = self._create_label_if_not_exists(
                 label_name=label.name,
                 label_color=label.color,
-                description=label.description or ""
+                label_description=label.description or ""
             )
             target_issue.add_to_labels(target_label)
             
