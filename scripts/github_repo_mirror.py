@@ -263,6 +263,12 @@ class GitHubRepoMirror:
         
         # Process each issue
         for source_issue in source_issues:
+            if source_issue.pull_request is not None:
+                logger.info(f"Skipping issue #{source_issue.number}: PR.")
+                continue
+            if not source_issue.body:
+                logger.info(f"Skipping issue #{source_issue.number}: empty issue body.")
+                continue
             created_issue = self.copy_issue(source_issue.number)
             created_issues.append(created_issue)
             
