@@ -8,7 +8,7 @@ or to clean labels from all issues in a repository.
 
 import os
 import sys
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import fire
 from github import Github, GithubException
@@ -245,10 +245,14 @@ class GitHubRepoMirror:
         
         return target_issue
 
-    def copy_all_issues(self) -> List[Issue]:
+    def copy_all_issues(self, issue_range_start: int = None, issue_range_end: int = None) -> List[Issue]:
         """
-        Copy all issues from source to target repository.
+        Copy all issues from source to target repository, optionally within a specific issue number range.
         
+        Args:
+            issue_range_start: Optional starting issue number to copy (inclusive)
+            issue_range_end: Optional ending issue number to copy (inclusive)
+            
         Returns:
             List of created issues in the target repository
         """
@@ -263,12 +267,23 @@ class GitHubRepoMirror:
         
         # Process each issue
         for source_issue in source_issues:
+            # Skip issues outside the specified range if ranges are provided
+            if issue_range_start is not None and source_issue.number < issue_range_start:
+                logger.debug(f"Skipping issue #{source_issue.number}: Below range start.")
+                continue
+                
+            if issue_range_end is not None and source_issue.number > issue_range_end:
+                logger.info(f"Reached end of specified issue range (#{issue_range_end}), exiting.")
+                break
+                
             if source_issue.pull_request is not None:
                 logger.info(f"Skipping issue #{source_issue.number}: PR.")
                 continue
+                
             if not source_issue.body:
                 logger.info(f"Skipping issue #{source_issue.number}: empty issue body.")
                 continue
+                
             created_issue = self.copy_issue(source_issue.number)
             created_issues.append(created_issue)
             
@@ -285,6 +300,8 @@ def mirror_repository(
     token: str = None,
     source_repo: str = "dmarx/papers-feed",
     target_repo: str = "dmarx/papers-feed-dev",
+    issue_range_start: int = 1000,
+    issue_range_end: int = 1075,
 ):
     """
     Mirror issues, comments, labels and reactions from source to target repository.
@@ -295,6 +312,8 @@ def mirror_repository(
         token: GitHub token (or use DEV_REPO_TOKEN environment variable)
         source_repo: Source repository in format "owner/repo"
         target_repo: Target repository in format "owner/repo"
+        issue_range_start: Optional starting issue number to copy (inclusive)
+        issue_range_end: Optional ending issue number to copy (inclusive)
     """
     # Use provided token or get from environment
     token = token or os.environ.get("DEV_REPO_TOKEN")
@@ -319,9 +338,13 @@ def mirror_repository(
         logger.info("Clearing all labels from issues in target repository")
         mirror.clear_all_issue_labels()
     
-    # Copy all issues from source to target
-    logger.info(f"Mirroring from {source_repo} to {target_repo}")
-    mirror.copy_all_issues()
+    # Copy all issues from source to target, with optional range limits
+    range_info = ""
+    if issue_range_start is not None or issue_range_end is not None:
+        range_info = f" (issues {issue_range_start or 'start'} to {issue_range_end or 'end'})"
+    
+    logger.info(f"Mirroring from {source_repo} to {target_repo}{range_info}")
+    mirror.copy_all_issues(issue_range_start, issue_range_end)
     logger.info("Repository mirroring completed.")
 
 
