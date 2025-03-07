@@ -369,7 +369,8 @@ export class PaperManager {
       }
       throw error;
     }
-
+  }
+  
   /**
    * Get total reading time for a paper
    */
