@@ -79,14 +79,15 @@ export const semanticScholarPlugin: SourcePlugin = {
       
       // Extract DOI if available
       const doi = getMetaContent('meta[name="citation_doi"]');
+      const published_date = getMetaContent('meta[name="citation_publication_date"]');
       
       return {
         title: title || '',
         authors: authors || '',
         abstract: abstract || '',
         source_specific_metadata: {
-          citations: citations,
-          // Any other S2-specific metadata
+          citations,
+          published_date: published_date || ''
         },
         identifiers: doi ? { doi } : undefined
       };
@@ -123,9 +124,8 @@ export const semanticScholarPlugin: SourcePlugin = {
         abstract: data.abstract || '',
         source_specific_metadata: {
           citations: data.citations,
-          // Any other S2-specific metadata
+          published_date: data.year ? `${data.year}` : undefined,
         },
-        published_date: data.year ? `${data.year}` : undefined,
         identifiers: {}
       };
       
