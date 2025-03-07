@@ -5,7 +5,7 @@ import { loadSessionConfig, getConfigurationInMs } from './config/session.js';
 import { ReadingSessionData } from './papers/types';
 // Added imports for multi-source support
 import { MultiSourceDetector } from './papers/detector';
-import { getLegacyId } from './papers/source_utils';
+import { formatPrimaryId } from './papers/source_utils';
 import { initMultiSourceSupport } from './background_multi_source';
 import { initializePluginSystem } from './papers/plugins/loader';
 import { loguru } from './utils/logger';
@@ -21,86 +21,21 @@ let sessionConfig = null;
 let paperManager = null;
 
 // Store references to functions that will be enhanced
-let originalHandleTabChange = null;
 let originalProcessArxivUrl = null;
-let enhancedTabChangeHandler = null;
 let enhancedProcessPaperUrl = null;
 
 // Debounce mechanism to avoid multiple creations of the same paper
 const pendingUrls = new Set();
 const pendingPaperCreations = new Map();
 
-class ReadingSession {
-    constructor(arxivId, config) {
-       this.arxivId = arxivId;
-       this.sessionId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-       this.startTime = new Date();
-       this.activeTime = 0;
-       this.idleTime = 0;
-       this.lastActiveTime = new Date();
-       this.isTracking = true;
-       this.config = config;
-       this.endTime = null;
-       this.finalizedData = null;
-    }
-    
-    update() {
-       if (this.isTracking && !this.finalizedData) {
-           const now = new Date();
-           const timeSinceLastActive = now.getTime() - this.lastActiveTime.getTime();
-           
-           if (timeSinceLastActive < this.config.idleThreshold) {
-               this.activeTime += timeSinceLastActive;
-           } else {
-               this.idleTime += timeSinceLastActive;
-           }
-           
-           this.lastActiveTime = now;
-       }
-    }
-    
-    finalize() {
-       if (this.finalizedData) {
-           return this.finalizedData;
-       }
-    
-       this.update();
-       this.isTracking = false;
-       this.endTime = new Date();
-       const totalElapsed = this.endTime.getTime() - this.startTime.getTime();
-    
-       if (this.activeTime >= this.config.minSessionDuration) {
-           this.finalizedData = {
-               session_id: this.sessionId,
-               duration_seconds: Math.round(this.activeTime / 1000),
-               idle_seconds: Math.round(this.idleTime / 1000),
-               start_time: this.startTime.toISOString(),
-               end_time: this.endTime.toISOString(),
-               total_elapsed_seconds: Math.round(totalElapsed / 1000)
-           };
-           return this.finalizedData;
-       }
-       return null;
-    }
-    
-    end() {
-       return this.finalize();
-    }
-    
-    getMetadata() {
-       return {
-           sessionId: this.sessionId,
-           startTime: this.startTime.toISOString(),
-           activeSeconds: Math.round(this.activeTime / 1000),
-           idleSeconds: Math.round(this.idleTime / 1000)
-       };
-    }
-}
-
-// Enhanced reading session that works with all paper sources
+// Enhanced reading session for modern format
 class EnhancedReadingSession {
   constructor(paperData, config) {
     // Use primary_id as the canonical identifier
+    if (!paperData.primary_id) {
+      throw new Error('Paper data must include primary_id');
+    }
+    
     this.paperId = paperData.primary_id;
     this.paperData = paperData;
     
@@ -197,23 +132,21 @@ async function loadCredentials() {
 
 // Initialize multi-source support
 function enhancedInitialization() {
-    // Save original functions for compatibility
-    originalHandleTabChange = handleTabChange;
+    // Save original function for compatibility
     originalProcessArxivUrl = processArxivUrl;
     
     // Initialize multi-source support with explicit context binding
     const { processPaperUrl, enhancedHandleTabChange } = initMultiSourceSupport({
         createGithubIssue,       // Pass createGithubIssue function to background_multi_source
         endCurrentSession,       // Pass endCurrentSession function
-        ReadingSession,          // Pass ReadingSession class
+        EnhancedReadingSession,  // Pass EnhancedReadingSession class
         sessionConfig,           // Pass sessionConfig
         startActivityTracking,   // Pass startActivityTracking function
         setCurrentPaperData,     // New helper function to set current paper data
         processArxivUrl          // Pass the original arXiv processor
     });
     
-    // Store enhanced functions
-    enhancedTabChangeHandler = enhancedHandleTabChange;
+    // Store enhanced function
     enhancedProcessPaperUrl = processPaperUrl;
     
     // Debug information
@@ -306,7 +239,8 @@ async function handleUpdateRating(rating, sendResponse) {
     }
 
     try {
-        const paperId = currentPaperData.arxivId || currentPaperData.sourceId;
+        // Always use primary_id for rating updates
+        const paperId = currentPaperData.primary_id;
         await paperManager.updateRating(paperId, rating, currentPaperData);
         currentPaperData.rating = rating;
         sendResponse({ success: true });
@@ -491,7 +425,7 @@ async function processUnifiedPaperUrl(url) {
     
     // If paper data was extracted, create or update in GitHub
     if (paperData) {
-      logger.info(`Paper data extracted, creating GitHub issue for: ${paperData.primary_id || paperData.arxivId}`);
+      logger.info(`Paper data extracted, creating GitHub issue for: ${paperData.primary_id}`);
       try {
         await createGithubIssue(paperData);
       } catch (error) {
@@ -533,7 +467,7 @@ async function handleTabChangeWithPlugins(tab) {
   // Process the paper URL
   logger.info(`Processing paper URL: ${tab.url}`);
   
-  // Use sourceInfo to get paper data rather than going through processUnifiedPaperUrl again
+  // Use sourceInfo to get paper data
   let paperData;
   
   if (sourceInfo.type === 'arxiv' && originalProcessArxivUrl) {
@@ -567,7 +501,7 @@ async function handleTabChangeWithPlugins(tab) {
     startActivityTracking();
     
     // Create GitHub issue
-    logger.info(`Creating GitHub issue for: ${paperData.primary_id || paperData.arxivId}`);
+    logger.info(`Creating GitHub issue for: ${paperData.primary_id}`);
     try {
       await createGithubIssue(paperData);
     } catch (error) {
@@ -576,39 +510,12 @@ async function handleTabChangeWithPlugins(tab) {
   }
 }
 
-// Original handleTabChange function (kept for backward compatibility)
-async function handleTabChange(tab) {
-    const isArxiv = tab.url?.includes('arxiv.org/');
-    console.log('Tab change detected:', { isArxiv, url: tab.url });
-    
-    if (!isArxiv) {
-        console.log('Not an arXiv page, ending current session');
-        await endCurrentSession();
-        return;
-    }
-
-    if (currentSession) {
-        console.log('Ending existing session before starting new one');
-        await endCurrentSession();
-    }
-
-    console.log('Processing arXiv URL for new session');
-    currentPaperData = await processArxivUrl(tab.url);
-    if (currentPaperData) {
-        console.log('Starting new session for:', currentPaperData.arxivId);
-        currentSession = new ReadingSession(currentPaperData.arxivId, sessionConfig);
-        const metadata = currentSession.getMetadata();
-        console.log('New session created:', metadata);
-        startActivityTracking();
-    }
-}
-
 async function endCurrentSession() {
     if (currentSession && currentPaperData) {
-        console.log('Ending session for:', currentPaperData.arxivId || currentPaperData.sourceId);
+        logger.info(`Ending session for: ${currentPaperData.primary_id}`);
         const sessionData = currentSession.finalize();
         if (sessionData) {
-            console.log('Creating reading event:', sessionData);
+            logger.info('Creating reading event:', sessionData);
             await enhancedCreateReadingEvent(currentPaperData, sessionData);
         }
         currentSession = null;
@@ -646,16 +553,13 @@ async function enhancedCreateReadingEvent(paperData, sessionData) {
     }
 
     try {
-        // Use primary_id for storage
-        const paperId = paperData.primary_id || 
-                    (paperData.source && paperData.sourceId ? 
-                      formatPrimaryId(paperData.source, paperData.sourceId) : 
-                      (paperData.arxivId || null));
-        
-        if (!paperId) {
-            console.error('No valid paper ID found for logging');
+        // Always use primary_id for storage
+        if (!paperData.primary_id) {
+            logger.error('Paper data missing primary_id. This should not happen.');
             return;
         }
+        
+        const paperId = paperData.primary_id;
         
         await paperManager.logReadingSession(
             paperId,
@@ -663,7 +567,7 @@ async function enhancedCreateReadingEvent(paperData, sessionData) {
             paperData
         );
         
-        console.log('Reading session logged:', {
+        logger.info('Reading session logged:', {
             paperId: paperId,
             sessionId: sessionData.session_id,
             activeTime: sessionData.duration_seconds,
@@ -672,7 +576,7 @@ async function enhancedCreateReadingEvent(paperData, sessionData) {
         });
         
     } catch (error) {
-        console.error('Error logging reading session:', error);
+        logger.error('Error logging reading session:', error);
     }
 }
 
@@ -683,22 +587,24 @@ async function createGithubIssue(paperData) {
         return null;
     }
 
-    // Create a unique ID for this paper
-    const paperUniqueId = paperData.primary_id || 
-                        paperData.arxivId || 
-                        (paperData.source && paperData.sourceId ? 
-                            `${paperData.source}:${paperData.sourceId}` : 
-                            null);
-    
-    if (!paperUniqueId) {
-        logger.error('Cannot create paper - no valid identifier');
-        return null;
+    // Ensure paper has primary_id
+    if (!paperData.primary_id) {
+        if (paperData.source && paperData.sourceId) {
+            paperData.primary_id = formatPrimaryId(paperData.source, paperData.sourceId);
+        } else if (paperData.arxivId) {
+            paperData.source = 'arxiv';
+            paperData.sourceId = paperData.arxivId;
+            paperData.primary_id = formatPrimaryId('arxiv', paperData.arxivId);
+        } else {
+            logger.error('Cannot create paper - no valid identifier');
+            return null;
+        }
     }
     
     try {
-        logger.info(`Creating/getting paper issue: ${paperUniqueId}`);
+        logger.info(`Creating/getting paper issue: ${paperData.primary_id}`);
         const existingPaper = await paperManager.getOrCreatePaper(paperData);
-        logger.info(`Paper metadata stored/retrieved: ${existingPaper.arxivId || existingPaper.sourceId || existingPaper.primary_id}`);
+        logger.info(`Paper metadata stored/retrieved: ${existingPaper.primary_id}`);
         return existingPaper;
     } catch (error) {
         logger.error(`Error handling paper metadata: ${error}`, error);
@@ -712,20 +618,30 @@ async function handleAnnotationUpdate(type, data) {
     }
 
     try {
+        // Ensure we have a valid paper ID
+        let paperId = data.paperId;
+        
+        // Convert to new format if needed
+        if (!paperId.includes('.')) {
+            logger.warning(`Legacy ID format detected in annotation: ${paperId}`);
+            paperId = formatPrimaryId('arxiv', paperId);
+        }
+        
         const paperData = data.title ? {
             title: data.title,
-            source: data.source
+            source: data.source,
+            primary_id: paperId
         } : undefined;
 
         if (type === 'vote') {
             await paperManager.updateRating(
-                data.paperId,
+                paperId,
                 data.vote,
                 paperData
             );
         } else {
             await paperManager.logAnnotation(
-                data.paperId,
+                paperId,
                 'notes',
                 data.notes,
                 paperData
@@ -803,6 +719,7 @@ async function parseXMLText(xmlText) {
     }
 }
 
+// Process arXiv URL, but enhanced to add standardized fields
 async function processArxivUrl(url) {
     console.log('Processing URL:', url);
     
@@ -838,8 +755,12 @@ async function processArxivUrl(url) {
             return null;
         }
         
+        // Build paper data with new format fields
         const paperData = {
             arxivId,
+            source: 'arxiv',
+            sourceId: arxivId,
+            primary_id: formatPrimaryId('arxiv', arxivId),
             url,
             title: parsed.title,
             authors: parsed.authors.join(", "),
