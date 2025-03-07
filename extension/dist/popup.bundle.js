@@ -22,17 +22,23 @@ function updateUI(paperData) {
   const statusElement = document.getElementById("status");
   const sourceElement = document.getElementById("paperSource");
   if (paperData) {
-    titleElement.textContent = paperData.title || paperData.arxivId || paperData.sourceId || "Untitled Paper";
+    if (!paperData.primary_id) {
+      console.warn("Paper data missing primary_id:", paperData);
+      if (paperData.source && paperData.sourceId) {
+        paperData.primary_id = formatPrimaryId(paperData.source, paperData.sourceId);
+      } else if (paperData.arxivId) {
+        paperData.source = "arxiv";
+        paperData.sourceId = paperData.arxivId;
+        paperData.primary_id = formatPrimaryId("arxiv", paperData.arxivId);
+      }
+    }
+    titleElement.textContent = paperData.title || paperData.sourceId || "Untitled Paper";
     authorsElement.textContent = paperData.authors || "";
     if (paperData.source) {
       sourceElement.textContent = getSourceLabel(paperData.source);
       sourceElement.classList.remove("hidden");
       sourceElement.className = "paper-source";
       sourceElement.classList.add(`source-${paperData.source}`);
-    } else if (paperData.arxivId) {
-      sourceElement.textContent = "arXiv";
-      sourceElement.classList.remove("hidden");
-      sourceElement.className = "paper-source source-arxiv";
     } else {
       sourceElement.classList.add("hidden");
     }
@@ -52,6 +58,20 @@ function updateUI(paperData) {
     document.getElementById("thumbsUp").disabled = true;
     document.getElementById("thumbsDown").disabled = true;
   }
+}
+function formatPrimaryId(source, id) {
+  const prefixes = {
+    "arxiv": "arxiv",
+    "semanticscholar": "s2",
+    "doi": "doi",
+    "acm": "doi",
+    // ACM also uses DOIs
+    "openreview": "openreview",
+    "default": "generic"
+  };
+  const sourcePrefix = prefixes[source] || prefixes.default;
+  const safeId = id.replace(/\//g, "_").replace(/:/g, ".").replace(/\s/g, "_").replace(/\\/g, "_");
+  return `${sourcePrefix}.${safeId}`;
 }
 function isPaperUrl(url) {
   return url.includes("arxiv.org/") || url.includes("semanticscholar.org/paper/") || url.includes("doi.org/") || url.includes("dl.acm.org/doi/") || url.includes("openreview.net/forum");

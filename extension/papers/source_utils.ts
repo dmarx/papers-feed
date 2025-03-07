@@ -1,5 +1,5 @@
 // extension/papers/source_utils.ts
-// Utilities for supporting multiple paper sources while maintaining compatibility
+// Utilities for supporting multiple paper sources with new format only
 
 import { SourceInfo } from './types';
 
@@ -118,12 +118,11 @@ export function parseId(prefixedId: string): { type: string; id: string } {
 }
 
 /**
- * Get a legacy-compatible ID (for backward compatibility)
- * 
- * @param {string} primaryId - The primary ID (can be prefixed or legacy)
- * @returns {string} Legacy-compatible ID
+ * @deprecated Use primary_id directly
+ * Legacy function maintained only for migration support
  */
 export function getLegacyId(primaryId: string): string {
+  console.warn('getLegacyId is deprecated. Use primary_id directly.');
   // If there's no prefix, assume it's already a legacy ID
   if (!primaryId.includes('.')) {
     return primaryId;
@@ -167,10 +166,10 @@ export function detectSourceFromUrl(url: string): SourceInfo | null {
 }
 
 /**
- * Checks if a string is in the new prefixed format
+ * Checks if a string is in the required prefixed format
  * 
  * @param {string} id - ID to check
- * @returns {boolean} True if the ID is in the new format
+ * @returns {boolean} True if the ID is in the correct format
  */
 export function isNewFormat(id: string): boolean {
   // Check if it has a valid prefix

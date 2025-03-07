@@ -5,14 +5,14 @@ import type { Json } from 'gh-store-client';
  * Paper metadata with multi-source support
  */
 export type PaperMetadata = {
-  // Legacy fields (for backward compatibility)
+  // Multi-source fields (required)
+  primary_id: string;  // {source}.{id} format
+  source: string;      // Source type (arxiv, doi, semanticscholar, etc.)
+  sourceId: string;    // Original ID from the source
+  
+  // Legacy fields (deprecated - for backward compatibility only)
   arxivId?: string;
   arxiv_tags?: string[];
-  
-  // Multi-source fields
-  primary_id?: string;  // {source}:{id} format
-  source?: string;      // Source type (arxiv, doi, semanticscholar, etc.)
-  sourceId?: string;    // Original ID from the source
   
   // Common fields
   url: string;
@@ -103,11 +103,12 @@ export type SourceInfo = {
 }
 
 /**
- * Extended reading session with multi-source support
+ * Reading session with unified multi-source support
  */
-export class MultiSourceReadingSession {
-  // In legacy version, this was arxivId
+export class EnhancedReadingSession {
+  // Required fields
   paperId: string;
+  paperData: Record<string, any>;
   sessionId: string;
   startTime: Date;
   activeTime: number;
@@ -118,8 +119,13 @@ export class MultiSourceReadingSession {
   endTime: Date | null;
   finalizedData: ReadingSessionData | null;
   
-  constructor(paperId: string, config: any) {
-    this.paperId = paperId;
+  constructor(paperData: Record<string, any>, config: any) {
+    if (!paperData.primary_id) {
+      throw new Error('Paper data must include primary_id');
+    }
+    
+    this.paperId = paperData.primary_id;
+    this.paperData = paperData;
     this.sessionId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
     this.startTime = new Date();
     this.activeTime = 0;
@@ -131,7 +137,6 @@ export class MultiSourceReadingSession {
     this.finalizedData = null;
   }
   
-  // Rest of the methods remain the same as ReadingSession
   update() {
     if (this.isTracking && !this.finalizedData) {
       const now = new Date();
@@ -177,6 +182,9 @@ export class MultiSourceReadingSession {
   
   getMetadata() {
     return {
+      sourceType: this.paperData.source,
+      paperId: this.paperId,
+      title: this.paperData.title,
       sessionId: this.sessionId,
       startTime: this.startTime.toISOString(),
       activeSeconds: Math.round(this.activeTime / 1000),
@@ -185,8 +193,11 @@ export class MultiSourceReadingSession {
   }
 }
 
-// extension/papers/types.ts
+// The legacy MultiSourceReadingSession is removed as it's replaced by EnhancedReadingSession
 
+/**
+ * Unified paper data structure
+ */
 export interface UnifiedPaperData {
   // Core fields required for all sources
   primary_id: string;  // Standardized ID format: {source}.{id}
@@ -199,45 +210,15 @@ export interface UnifiedPaperData {
   timestamp: string;   // When the paper was first tracked
   rating: string;      // User rating (thumbsup, thumbsdown, novote)
   
-  // Legacy support fields
-  arxivId?: string;            // For backward compatibility
-  published_date?: string;     // Publication date
-  arxiv_tags?: string[];       // ArXiv categories
-  
-  // Source-specific fields
+  // Cross-reference identifiers
   // Fix for TS2411: Using string index signature
-  // doi?: string;                // DOI string for DOI and ACM sources
-  identifiers?: {              // Cross-reference identifiers
-    // original: string;          // Original ID from the source
-    // url: string;               // Canonical URL
-    // arxiv?: string;            // ArXiv ID
-    // doi?: string;              // DOI reference
-    // s2?: string;               // Semantic Scholar ID
-    // acm?: string;              // ACM ID
-    // openreview?: string;       // OpenReview ID
+  identifiers?: {
     [key: string]: string;     // Other identifier types
- };
- 
- // // Metadata fields
- // citations?: number;          // Citation count
- // journal?: string;            // Journal name
- // conference?: string;         // Conference name
- // volume?: string;             // Journal volume
- // issue?: string;              // Journal issue
- // pages?: string;              // Page numbers
- // publisher?: string;          // Publisher name
- 
- // Custom source-specific fields
- // conferenceInfo?: {           // Enhanced conference information
- //   name: string;              // Conference name
- //   year: number;              // Year
- //   location: string;          // Location
- //   abbreviation?: string;     // Conference abbreviation (e.g., "ICLR")
- // };
- 
- // Allow for extension with string indexing
- // Fix for TS2411: Using string index signature
- source_specific_metadata?: {
-  [key: string]: any;
- };
+  };
+  
+  // Source-specific metadata
+  // Fix for TS2411: Using string index signature
+  source_specific_metadata?: {
+    [key: string]: any;
+  };
 }

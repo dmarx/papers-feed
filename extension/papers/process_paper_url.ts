@@ -3,6 +3,7 @@
 
 import { MultiSourceDetector } from './detector';
 import { SourceInfo } from './types';
+import { formatPrimaryId } from './source_utils';
 
 /**
  * Metadata extracted from a paper page
@@ -192,9 +193,8 @@ export async function processPaperUrl(
   const sourceInfo: SourceInfo | null = MultiSourceDetector.detect(url);
   
   if (!sourceInfo) {
-    console.log('No paper source detected, falling back to arXiv-only processing');
-    // Try the original arXiv processor as fallback
-    return processArxivUrl ? processArxivUrl(url) : null;
+    console.log('No paper source detected');
+    return null;
   }
   
   const { type: sourceType, id: sourceId, primary_id } = sourceInfo;
@@ -218,7 +218,7 @@ export async function processPaperUrl(
   let paperData: any = {
     source: sourceType,
     sourceId: sourceId,
-    primary_id: primary_id,
+    primary_id: primary_id, // The standardized format ID
     url: url,
     timestamp: new Date().toISOString(),
     rating: 'novote'
@@ -352,7 +352,6 @@ export async function enhancePaperData(paperData: any): Promise<any> {
         }
         
         if (additionalData.arxivId) {
-          paperData.arxivId = additionalData.arxivId;
           paperData.identifiers.arxiv = additionalData.arxivId;
         }
         

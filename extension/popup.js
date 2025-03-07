@@ -1,5 +1,5 @@
 // popup.js
-// Enhanced to support multiple paper sources
+// Enhanced to support multiple paper sources with new ID format
 
 /**
  * Get paper data from background script
@@ -41,8 +41,22 @@ function updateUI(paperData) {
   const sourceElement = document.getElementById('paperSource');
 
   if (paperData) {
+    // Validate the data has primary_id (shouldn't happen but we check anyway)
+    if (!paperData.primary_id) {
+      console.warn('Paper data missing primary_id:', paperData);
+      if (paperData.source && paperData.sourceId) {
+        // Build primary_id from components
+        paperData.primary_id = formatPrimaryId(paperData.source, paperData.sourceId);
+      } else if (paperData.arxivId) {
+        // Legacy fallback
+        paperData.source = 'arxiv';
+        paperData.sourceId = paperData.arxivId;
+        paperData.primary_id = formatPrimaryId('arxiv', paperData.arxivId);
+      }
+    }
+    
     // Set paper details
-    titleElement.textContent = paperData.title || paperData.arxivId || paperData.sourceId || 'Untitled Paper';
+    titleElement.textContent = paperData.title || paperData.sourceId || 'Untitled Paper';
     authorsElement.textContent = paperData.authors || '';
     
     // Set source information
@@ -53,11 +67,6 @@ function updateUI(paperData) {
       // Add source-specific class for styling
       sourceElement.className = 'paper-source';
       sourceElement.classList.add(`source-${paperData.source}`);
-    } else if (paperData.arxivId) {
-      // Legacy support
-      sourceElement.textContent = 'arXiv';
-      sourceElement.classList.remove('hidden');
-      sourceElement.className = 'paper-source source-arxiv';
     } else {
       sourceElement.classList.add('hidden');
     }
@@ -84,6 +93,36 @@ function updateUI(paperData) {
     document.getElementById('thumbsUp').disabled = true;
     document.getElementById('thumbsDown').disabled = true;
   }
+}
+
+/**
+ * Format a source-specific ID into a universal primary ID format
+ * @param {string} source Source type (e.g. 'arxiv', 'doi')
+ * @param {string} id Original source-specific identifier
+ * @returns {string} Formatted primary ID
+ */
+function formatPrimaryId(source, id) {
+  // Source prefixes match the ones in source_utils.ts
+  const prefixes = {
+    'arxiv': 'arxiv',
+    'semanticscholar': 's2',
+    'doi': 'doi',
+    'acm': 'doi',  // ACM also uses DOIs
+    'openreview': 'openreview',
+    'default': 'generic'
+  };
+  
+  // Use source-specific prefixes
+  const sourcePrefix = prefixes[source] || prefixes.default;
+  
+  // Sanitize the ID by replacing problematic characters
+  const safeId = id
+    .replace(/\//g, '_')
+    .replace(/:/g, '.')
+    .replace(/\s/g, '_')
+    .replace(/\\/g, '_');
+  
+  return `${sourcePrefix}.${safeId}`;
 }
 
 /**
