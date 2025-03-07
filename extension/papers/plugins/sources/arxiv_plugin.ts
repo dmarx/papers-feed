@@ -75,7 +75,10 @@ export const arxivPlugin: SourcePlugin = {
         title: title || '',
         authors: authors || '',
         abstract: abstract || '',
-        arxiv_tags: categories
+        source_specific_metadata: {
+          arxiv_tags: categories,
+          published_date: '' // Will be filled by API if available
+        }
       };
     } catch (error) {
       logger.error('Error extracting metadata from arXiv page', error);
@@ -126,8 +129,10 @@ export const arxivPlugin: SourcePlugin = {
         title,
         authors,
         abstract,
-        arxiv_tags: categories,
-        published_date: published
+        source_specific_metadata: {
+          arxiv_tags: categories,
+          published_date: published
+        }
       };
     } catch (error) {
       logger.error('Error fetching arXiv API data', error);
