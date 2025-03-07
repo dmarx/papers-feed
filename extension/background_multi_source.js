@@ -4,6 +4,7 @@
 import { MultiSourceDetector } from './papers/detector';
 import { processPaperUrl as processUrl, enhancePaperData } from './papers/process_paper_url';
 import { loguru } from './utils/logger';
+import { formatPrimaryId, isNewFormat } from './papers/source_utils';
 
 const logger = loguru.getLogger('MultiSourceSupport');
 
@@ -13,7 +14,7 @@ const logger = loguru.getLogger('MultiSourceSupport');
 let externalContext = {
   createGithubIssue: null,
   endCurrentSession: null,
-  ReadingSession: null,
+  EnhancedReadingSession: null,
   sessionConfig: null,
   startActivityTracking: null,
   setCurrentPaperData: null,
@@ -130,11 +131,11 @@ async function processPaperUrl(url) {
     if (sourceType === 'arxiv' && externalContext.processArxivUrl) {
       const paperData = await externalContext.processArxivUrl(url);
       
-      // Enhance with multi-source fields if successful
+      // Ensure it has all required fields
       if (paperData) {
-        paperData.source = 'arxiv';
-        paperData.sourceId = paperData.arxivId;
-        paperData.primary_id = primary_id;
+        if (!paperData.source) paperData.source = 'arxiv';
+        if (!paperData.sourceId) paperData.sourceId = paperData.arxivId;
+        if (!paperData.primary_id) paperData.primary_id = primary_id;
       }
       
       return paperData;
@@ -230,14 +231,12 @@ async function enhancedHandleTabChange(tab, originalHandler) {
     const paperData = await processPaperUrl(url);
     
     if (paperData) {
-      // Use appropriate ID based on availability
-      const trackingId = paperData.arxivId || paperData.sourceId;
+      logger.info(`Starting new session for: ${paperData.primary_id}`);
       
-      logger.info(`Starting new session for: ${trackingId}`);
-      
-      if (externalContext.ReadingSession && externalContext.sessionConfig) {
-        // Create a new session
-        const currentSession = new externalContext.ReadingSession(trackingId, externalContext.sessionConfig);
+      if (externalContext.EnhancedReadingSession && externalContext.sessionConfig) {
+        // Create a new session with the updated EnhancedReadingSession class
+        // which requires paperData instead of just an ID
+        const currentSession = new externalContext.EnhancedReadingSession(paperData, externalContext.sessionConfig);
         const metadata = currentSession.getMetadata();
         logger.info('New session created:', metadata);
         
