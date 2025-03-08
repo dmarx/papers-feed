@@ -215,7 +215,7 @@ const renderPaperRow = (paper) => {
             <td class="col-arxiv-id">
                 <a href="${paper.url}" class="arxiv-id" onclick="event.stopPropagation()" 
                    style="background-color: ${bgColor}">
-                    ${paper.arxivId}
+                    ${paper.arxivId || paper.id}
                 </a>
             </td>
             <td class="col-title" title="${paper.title}">${paper.title}</td>
