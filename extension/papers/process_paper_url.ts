@@ -1,9 +1,144 @@
-// extension/papers/process_paper_url.ts
-// Process paper URLs from multiple sources
+/**
+ * Enhance paper data with additional metadata from APIs
+ * 
+ * @param {any} paperData - Basic paper data
+ * @returns {Promise<any>} Enhanced paper data
+ */
+export async function enhancePaperData(paperData: any): Promise<any> {
+  if (!paperData.source || !paperData.sourceId) {
+    return paperData;
+  }
+  
+  try {
+    // Try to get additional metadata
+    const additionalData = await fetchAdditionalMetadata(
+      paperData.source,
+      paperData.sourceId
+    );
+    
+    if (additionalData) {
+      // Check if we have a plugin for this source
+      const plugin = pluginRegistry.get(paperData.source);
+      
+      if (plugin) {
+        // The plugin API already handled this in fetchAdditionalMetadata
+        // Just add source info
+        return {
+          ...paperData,
+          ...additionalData,
+          source: paperData.source,
+          sourceId: paperData.sourceId,
+          primary_id: paperData.primary_id
+        };
+      }
+      
+      // Source-specific data enhancement
+      if (paperData.source === 'semanticscholar') {
+        // Update with S2 data
+        if (!paperData.title && additionalData.title) {
+          paperData.title = additionalData.title;
+        }
+        
+        if (!paperData.abstract && additionalData.abstract) {
+          paperData.abstract = additionalData.abstract;
+        }
+        
+        if (!paperData.authors && additionalData.authors) {
+          paperData.authors = additionalData.authors
+            .map((author: any) => author.name)
+            .join(', ');
+        }
+        
+        // Add identifiers
+        if (additionalData.doi) {
+          paperData.doi = additionalData.doi;
+          paperData.identifiers.doi = additionalData.doi;
+        }
+        
+        if (additionalData.arxivId) {
+          paperData.identifiers.arxiv = additionalData.arxivId;
+        }
+        
+        // Add citation count
+        if (additionalData.citationCount) {
+          paperData.citations = additionalData.citationCount;
+        }
+      } else if (paperData.source === 'doi') {
+        // Update with CrossRef data
+        if (!paperData.title && additionalData.title) {
+          paperData.title = additionalData.title;
+        }
+        
+        if (!paperData.authors && additionalData.author) {
+          paperData.authors = additionalData.author
+            .map((author: any) => {
+              if (author.given && author.family) {
+                return `${author.given} ${author.family}`;
+              }
+              return author.name || '';
+            })
+            .filter(Boolean)
+            .join(', ');
+        }
+        
+        // Add publication date
+        if (!paperData.published_date && additionalData.created) {
+          const date = new Date(additionalData.created['date-time']);
+          paperData.published_date = date.toISOString().split('T')[0];
+        }
+      } else if (paperData.source === 'openreview') {
+        // Update with OpenReview data
+        if (additionalData.notes && additionalData.notes.length > 0) {
+          const note = additionalData.notes[0];
+          
+          if (note.content) {
+            if (!paperData.title && note.content.title) {
+              paperData.title = note.content.title;
+            }
+            
+            if (!paperData.abstract && note.content.abstract) {
+              paperData.abstract = note.content.abstract;
+            }
+            
+            if (!paperData.authors && note.content.authors) {
+              if (Array.isArray(note.content.authors)) {
+                paperData.authors = note.content.authors.join(', ');
+              } else {
+                paperData.authors = note.content.authors;
+              }
+            }
+            
+            // Add venue information
+            if (note.venue) {
+              paperData.venue = note.venue;
+            }
+            
+            // Add specific OpenReview metadata
+            paperData.source_specific_metadata = {
+              forum_id: note.forum || note.id,
+              invitation: note.invitation,
+              creation_date: note.cdate ? new Date(note.cdate).toISOString() : undefined,
+              publication_date: note.pdate ? new Date(note.pdate).toISOString() : undefined
+            };
+          }
+        }
+      }
+    }
+  } catch (error) {
+    logger.error('Error enhancing paper data:', error);
+  }
+  
+  return paperData;
+}// extension/papers/process_paper_url.ts
+// Process paper URLs from multiple sources with plugin system integration
 
 import { MultiSourceDetector } from './detector';
 import { SourceInfo } from './types';
 import { formatPrimaryId } from './source_utils';
+import { pluginRegistry } from './plugins/registry';
+import { loguru } from '../utils/logger';
+
+const logger = loguru.getLogger('PaperProcessor');
 
 /**
  * Metadata extracted from a paper page
@@ -124,16 +259,28 @@ async function extractMetadataFromPage(tabId: number): Promise<PageMetadata | nu
 
           // OpenReview specific extraction
           if (window.location.href.includes('openreview.net')) {
-            // Try to extract authors
-            const authorElements = document.querySelectorAll('.note_content_field:contains("Authors") + .note_content_value');
-            if (authorElements.length > 0 && authorElements[0].textContent) {
-              metadata.authors = authorElements[0].textContent.trim();
+            // Try to extract authors from meta tags or DOM
+            if (!metadata.authors) {
+              const authorElements = document.querySelectorAll('meta[name="citation_author"]');
+              if (authorElements.length > 0) {
+                metadata.authors = Array.from(authorElements)
+                  .map(el => (el as HTMLMetaElement).content)
+                  .filter(Boolean)
+                  .join(', ');
+              } else {
+                const authorEl = document.querySelector('.signatures, .author, .authors');
+                if (authorEl && authorEl.textContent) {
+                  metadata.authors = authorEl.textContent.trim();
+                }
+              }
             }
-
-            // Try to extract abstract
-            const abstractElements = document.querySelectorAll('.note_content_field:contains("Abstract") + .note_content_value');
-            if (abstractElements.length > 0 && abstractElements[0].textContent) {
-              metadata.abstract = abstractElements[0].textContent.trim();
+            
+            // Try to extract abstract from meta tags or DOM
+            if (!metadata.abstract) {
+              const abstractEl = document.querySelector('strong.note-content-field:contains("Abstract") ~ span.note-content-value');
+              if (abstractEl && abstractEl.textContent) {
+                metadata.abstract = abstractEl.textContent.trim();
+              }
             }
           }
           
@@ -170,10 +317,42 @@ async function extractMetadataFromPage(tabId: number): Promise<PageMetadata | nu
       return metadata;
     }
   } catch (error) {
-    console.error('Error executing metadata extraction script:', error);
+    logger.error('Error executing metadata extraction script:', error);
   }
   
   return null;
+}
+
+/**
+ * Helper function to find the appropriate plugin for a URL
+ * 
+ * @param {string} url - URL to process
+ * @returns {Object|null} - Source information or null
+ */
+function findPluginForUrl(url: string): (SourceInfo & { plugin?: any }) | null {
+  // First try using the plugin registry
+  const plugins = pluginRegistry.getAll();
+  
+  for (const plugin of plugins) {
+    for (const pattern of plugin.urlPatterns) {
+      const match = url.match(pattern);
+      if (match) {
+        const id = plugin.extractId(url);
+        if (id) {
+          return {
+            type: plugin.id,
+            id: id,
+            primary_id: plugin.formatId ? plugin.formatId(id) : formatPrimaryId(plugin.id, id),
+            url,
+            plugin: plugin
+          };
+        }
+      }
+    }
+  }
+  
+  // Fallback to legacy detector if no plugin match
+  return MultiSourceDetector.detect(url);
 }
 
 /**
@@ -187,20 +366,45 @@ export async function processPaperUrl(
   url: string, 
   processArxivUrl?: (url: string) => Promise<any>
 ): Promise<any | null> {
-  console.log('Processing URL for multiple sources:', url);
+  logger.info('Processing URL for multiple sources:', url);
   
   // Detect source and ID from URL
-  const sourceInfo: SourceInfo | null = MultiSourceDetector.detect(url);
+  const sourceInfo = findPluginForUrl(url);
   
   if (!sourceInfo) {
-    console.log('No paper source detected');
+    logger.info('No paper source detected');
     return null;
   }
   
   const { type: sourceType, id: sourceId, primary_id } = sourceInfo;
-  console.log(`Detected ${sourceType} paper with ID: ${sourceId}`);
+  logger.info(`Detected ${sourceType} paper with ID: ${sourceId}`);
   
-  // For arXiv papers, use the original processor for compatibility
+  // First try using plugin if available
+  if (sourceInfo.plugin) {
+    const plugin = sourceInfo.plugin;
+    
+    // Try to use plugin's API
+    if (plugin.hasApi && plugin.fetchApiData) {
+      try {
+        logger.info(`Using ${plugin.id} plugin API`);
+        const apiData = await plugin.fetchApiData(sourceId);
+        if (Object.keys(apiData).length > 0) {
+          // Add required source information
+          return {
+            ...apiData,
+            source: plugin.id,
+            sourceId,
+            primary_id,
+            url
+          };
+        }
+      } catch (error) {
+        logger.error(`Error using plugin API: ${error}`);
+      }
+    }
+  }
+  
+  // For arXiv papers, use the original processor for compatibility if no plugin data
   if (sourceType === 'arxiv' && processArxivUrl) {
     const paperData = await processArxivUrl(url);
     
@@ -252,7 +456,7 @@ export async function processPaperUrl(
       paperData.title = `${sourceType.toUpperCase()} Paper: ${sourceId}`;
     }
   } catch (error) {
-    console.error('Error extracting metadata:', error);
+    logger.error('Error extracting metadata:', error);
     // If there's any error in metadata extraction, use a default title
     paperData.title = `${sourceType.toUpperCase()} Paper: ${sourceId}`;
   }
@@ -271,7 +475,7 @@ export async function processPaperUrl(
     paperData.identifiers.s2 = sourceId;
   }
   
-  console.log('Processed paper data:', paperData);
+  logger.info('Processed paper data:', paperData);
   return paperData;
 }
 
@@ -287,6 +491,19 @@ export async function fetchAdditionalMetadata(
   sourceType: string,
   sourceId: string
 ): Promise<any | null> {
+  // First check if we have a plugin for this source
+  const plugin = pluginRegistry.get(sourceType);
+  
+  if (plugin && plugin.hasApi && plugin.fetchApiData) {
+    try {
+      logger.info(`Using ${plugin.id} plugin API for additional metadata`);
+      return await plugin.fetchApiData(sourceId);
+    } catch (error) {
+      logger.error(`Error fetching metadata via plugin API: ${error}`);
+    }
+  }
+
+  // Fall back to built-in API fetchers
   try {
     // Source-specific API calls
     if (sourceType === 'semanticscholar') {
@@ -302,91 +519,16 @@ export async function fetchAdditionalMetadata(
         const data = await response.json();
         return data.message;
       }
-    }
-  } catch (error) {
-    console.error(`Error fetching additional metadata for ${sourceType}:${sourceId}:`, error);
-  }
-  
-  return null;
-}
-
-/**
- * Enhance paper data with additional metadata from APIs
- * 
- * @param {any} paperData - Basic paper data
- * @returns {Promise<any>} Enhanced paper data
- */
-export async function enhancePaperData(paperData: any): Promise<any> {
-  if (!paperData.source || !paperData.sourceId) {
-    return paperData;
-  }
-  
-  try {
-    const additionalData = await fetchAdditionalMetadata(
-      paperData.source,
-      paperData.sourceId
-    );
-    
-    if (additionalData) {
-      // Source-specific data enhancement
-      if (paperData.source === 'semanticscholar') {
-        // Update with S2 data
-        if (!paperData.title && additionalData.title) {
-          paperData.title = additionalData.title;
-        }
-        
-        if (!paperData.abstract && additionalData.abstract) {
-          paperData.abstract = additionalData.abstract;
-        }
-        
-        if (!paperData.authors && additionalData.authors) {
-          paperData.authors = additionalData.authors
-            .map((author: any) => author.name)
-            .join(', ');
-        }
-        
-        // Add identifiers
-        if (additionalData.doi) {
-          paperData.doi = additionalData.doi;
-          paperData.identifiers.doi = additionalData.doi;
-        }
-        
-        if (additionalData.arxivId) {
-          paperData.identifiers.arxiv = additionalData.arxivId;
-        }
-        
-        // Add citation count
-        if (additionalData.citationCount) {
-          paperData.citations = additionalData.citationCount;
-        }
-      } else if (paperData.source === 'doi') {
-        // Update with CrossRef data
-        if (!paperData.title && additionalData.title) {
-          paperData.title = additionalData.title;
-        }
-        
-        if (!paperData.authors && additionalData.author) {
-          paperData.authors = additionalData.author
-            .map((author: any) => {
-              if (author.given && author.family) {
-                return `${author.given} ${author.family}`;
-              }
-              return author.name || '';
-            })
-            .filter(Boolean)
-            .join(', ');
-        }
-        
-        // Add publication date
-        if (!paperData.published_date && additionalData.created) {
-          const date = new Date(additionalData.created['date-time']);
-          paperData.published_date = date.toISOString().split('T')[0];
-        }
+    } else if (sourceType === 'openreview') {
+      // OpenReview API
+      const response = await fetch(`https://api.openreview.net/notes?id=${sourceId}`);
+      if (response.ok) {
+        return await response.json();
       }
     }
   } catch (error) {
-    console.error('Error enhancing paper data:', error);
+    logger.error(`Error fetching additional metadata for ${sourceType}:${sourceId}:`, error);
   }
   
-  return paperData;
+  return null;
 }

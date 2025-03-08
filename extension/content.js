@@ -553,6 +553,101 @@ const observer = new MutationObserver((mutations) => {
     });
 });
 
+// OpenReview content script integration for content.js
+
+// This should be added to the content.js file after the existing paper source processing code
+
+/**
+ * Process OpenReview links on any webpage
+ * This adds tracking buttons for OpenReview papers
+ */
+function processOpenReviewLinks() {
+  // Find all OpenReview paper links
+  document.querySelectorAll('a[href*="openreview.net/forum"], a[href*="openreview.net/pdf"]').forEach(link => {
+    // Skip already processed links
+    if (link.classList.contains('paper-processed')) return;
+    link.classList.add('paper-processed');
+    
+    // Extract paper ID from URL
+    const match = link.href.match(/id=([a-zA-Z0-9_\-]+)/);
+    if (!match) return;
+    
+    const paperId = match[1];
+    
+    // Create annotator button with OpenReview styling
+    const annotator = document.createElement('span');
+    annotator.className = 'paper-annotator annotator-openreview';
+    annotator.title = 'Track this OpenReview paper';
+    
+    // Add click handler
+    annotator.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      
+      // If popup is already showing this paper, hide it
+      if (activePopup && activePopup.paperId === paperId) {
+        activePopup.parentElement?.remove();
+        activePopup = null;
+        return;
+      }
+      
+      // Close any existing popup
+      if (activePopup) {
+        activePopup.parentElement?.remove();
+      }
+      
+      // Create popup for this paper
+      const popup = await createPopup('openreview', paperId, link.textContent?.trim());
+      
+      // Create wrapper and add popup to it
+      const wrapper = createPopupWrapper();
+      wrapper.appendChild(popup);
+      
+      // Position popup relative to annotator
+      const annotatorRect = annotator.getBoundingClientRect();
+      const available_width = window.innerWidth - annotatorRect.left;
+      
+      if (available_width < 320) { // if not enough space on right
+        popup.style.right = '0';  // align to right edge
+        popup.style.left = 'auto';
+      } else {
+        popup.style.left = '0';
+      }
+      popup.style.top = `${annotatorRect.height + 5}px`;
+      
+      // Add to page and store reference
+      annotator.parentNode.insertBefore(wrapper, annotator.nextSibling);
+      activePopup = popup;
+    });
+    
+    // Add to page
+    link.parentNode.insertBefore(annotator, link.nextSibling);
+  });
+}
+
+// Add OpenReview to initial link processing
+function addOpenReviewToInitialProcessing() {
+  // Add OpenReview links to the initial processing
+  const originalProcessInitialLinks = processInitialLinks;
+  
+  processInitialLinks = function() {
+    // Call the original function
+    originalProcessInitialLinks();
+    
+    // Process OpenReview links
+    processOpenReviewLinks();
+  };
+  
+  // Run it once to process existing links
+  processOpenReviewLinks();
+}
+
+// Run the integration
+addOpenReviewToInitialProcessing();
+
+// Make sure the observer also processes OpenReview links
+// This should already be handled if you're using a generic link processing approach
+
 // Configure and start the observer
 observer.observe(document.body, {
     childList: true,

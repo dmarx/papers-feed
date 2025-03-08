@@ -8,6 +8,8 @@ import { MultiSourceDetector } from './papers/detector';
 import { formatPrimaryId } from './papers/source_utils';
 import { initMultiSourceSupport } from './background_multi_source';
 import { initializePluginSystem } from './papers/plugins/loader';
+import { pluginRegistry } from './papers/plugins/registry';
+
 import { loguru } from './utils/logger';
 
 const logger = loguru.getLogger('Background');
@@ -224,8 +226,85 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             .catch(error => sendResponse({ success: false, error: error.message }));
         return true; // Will respond asynchronously
     }
+    // Add a dedicated handler for track paper requests from content scripts
+    else if (request.type === 'trackPaper') {
+        console.log('Track paper requested:', request);
+        handleTrackPaper(request)
+            .then(response => sendResponse(response))
+            .catch(error => sendResponse({ success: false, error: error.message }));
+        return true; // Will respond asynchronously
+    }
     return true;
 });
+
+// Handle track paper request from content script
+async function handleTrackPaper(request) {
+    if (!paperManager) {
+        throw new Error('Paper manager not initialized');
+    }
+
+    try {
+        // Process the paper URL based on its source
+        let paperData;
+        
+        // Use the plugin system to process the URL if possible
+        const plugin = pluginRegistry.get(request.source);
+        if (plugin) {
+            logger.info(`Using ${plugin.name} plugin to process paper`);
+            
+            // Extract ID using the plugin
+            const id = plugin.extractId(request.url);
+            
+            if (!id) {
+                throw new Error(`Could not extract ID from URL: ${request.url}`);
+            }
+            
+            // Try to use the plugin's API if available
+            if (plugin.hasApi && plugin.fetchApiData) {
+                try {
+                    paperData = await plugin.fetchApiData(id);
+                    // Add required source information
+                    paperData.source = request.source;
+                    paperData.sourceId = id;
+                    paperData.primary_id = plugin.formatId ? plugin.formatId(id) : formatPrimaryId(request.source, id);
+                    paperData.url = request.url;
+                } catch (error) {
+                    logger.error(`Error using plugin API: ${error}`);
+                }
+            }
+            
+            // Fall back to enhanced process paper URL if API failed
+            if (!paperData && enhancedProcessPaperUrl) {
+                paperData = await enhancedProcessPaperUrl(request.url);
+            }
+        } else if (request.source === 'arxiv' && originalProcessArxivUrl) {
+            // Special case for arXiv
+            paperData = await originalProcessArxivUrl(request.url);
+            
+            // Add multi-source fields
+            if (paperData) {
+                paperData.source = 'arxiv';
+                paperData.sourceId = paperData.arxivId;
+                paperData.primary_id = formatPrimaryId('arxiv', paperData.arxivId);
+            }
+        } else if (enhancedProcessPaperUrl) {
+            // Try the generic processor as a fallback
+            paperData = await enhancedProcessPaperUrl(request.url);
+        }
+        
+        if (!paperData) {
+            throw new Error(`Could not process paper: ${request.url}`);
+        }
+        
+        // Create GitHub issue for the paper
+        await createGithubIssue(paperData);
+        
+        return { success: true, paperData };
+    } catch (error) {
+        logger.error(`Error tracking paper: ${error}`);
+        throw error;
+    }
+}
 
 async function handleUpdateRating(rating, sendResponse) {
     if (!paperManager) {
@@ -255,30 +334,46 @@ async function setupListeners() {
   logger.info('Setting up unified event listeners');
   
   // Get all supported hosts from plugins
-  const { pluginRegistry } = await import('./papers/plugins/registry');
   const plugins = pluginRegistry.getAll();
   
   // Create host patterns from all plugins
   const hostPatterns = [];
   
   for (const plugin of plugins) {
-    // Extract domain from first pattern as a simple approach
-    const pattern = plugin.urlPatterns[0].toString();
-    const match = pattern.match(/([a-zA-Z0-9.-]+)\\\.org/);
-    if (match) {
-      hostPatterns.push({ hostSuffix: `${match[1]}.org` });
+    // Add all the plugin URL patterns if possible
+    try {
+      // Extract domain patterns from the plugin's URL patterns
+      for (const pattern of plugin.urlPatterns) {
+        const patternStr = pattern.toString();
+        // Extract domain from pattern - this is a simplified approach
+        const match = patternStr.match(/([a-zA-Z0-9.-]+)\\?\.([a-zA-Z]+)/);
+        if (match) {
+          const domain = match[1];
+          const tld = match[2];
+          hostPatterns.push({ hostSuffix: `${domain}.${tld}` });
+        }
+      }
+    } catch (err) {
+      logger.error(`Error processing plugin URL patterns: ${err}`);
     }
   }
   
-  // CONSOLIDATED LISTENER: Set up a single navigation listener with all hosts
-  chrome.webNavigation.onCompleted.addListener(handleUnifiedNavigation, { 
-    url: [
+  // Add default patterns if we couldn't extract from plugins
+  if (hostPatterns.length === 0) {
+    hostPatterns.push(
       { hostSuffix: 'arxiv.org' },
       { hostSuffix: 'semanticscholar.org' },
       { hostSuffix: 'doi.org' },
       { hostSuffix: 'dl.acm.org' },
       { hostSuffix: 'openreview.net' }
-    ]
+    );
+  }
+  
+  logger.info(`Setting up navigation listener with patterns: ${JSON.stringify(hostPatterns)}`);
+  
+  // CONSOLIDATED LISTENER: Set up a single navigation listener with all hosts
+  chrome.webNavigation.onCompleted.addListener(handleUnifiedNavigation, { 
+    url: hostPatterns
   });
   
   // CONSOLIDATED LISTENER: Set up a single tab activation listener
@@ -385,6 +480,32 @@ async function handleUnifiedTabUpdate(tabId, changeInfo, tab) {
   }
 }
 
+// Helper function to find the appropriate plugin for a URL
+function findPluginForUrl(url) {
+  // First try using the plugin registry
+  const plugins = pluginRegistry.getAll();
+  
+  for (const plugin of plugins) {
+    for (const pattern of plugin.urlPatterns) {
+      const match = url.match(pattern);
+      if (match) {
+        const id = plugin.extractId(url);
+        if (id) {
+          return {
+            type: plugin.id,
+            id: id,
+            primary_id: plugin.formatId ? plugin.formatId(id) : formatPrimaryId(plugin.id, id),
+            plugin: plugin
+          };
+        }
+      }
+    }
+  }
+  
+  // Fallback to legacy detector if no plugin match
+  return MultiSourceDetector.detect(url);
+}
+
 // Unified paper URL processor with debouncing
 async function processUnifiedPaperUrl(url) {
   logger.info(`Processing paper URL: ${url}`);
@@ -449,8 +570,8 @@ async function processUnifiedPaperUrl(url) {
 async function handleTabChangeWithPlugins(tab) {
   if (!tab.url) return;
   
-  // Check if this is a paper URL using the plugin system
-  const sourceInfo = MultiSourceDetector.detect(tab.url);
+  // Find the appropriate plugin or source info
+  const sourceInfo = findPluginForUrl(tab.url);
   
   if (!sourceInfo) {
     logger.info('Not a recognized paper page, ending current session');
@@ -470,19 +591,46 @@ async function handleTabChangeWithPlugins(tab) {
   // Use sourceInfo to get paper data
   let paperData;
   
-  if (sourceInfo.type === 'arxiv' && originalProcessArxivUrl) {
-    // Use original arXiv processor for compatibility
-    paperData = await originalProcessArxivUrl(tab.url);
+  // If we have a plugin, try to use it
+  if (sourceInfo.plugin) {
+    const plugin = sourceInfo.plugin;
     
-    // Enhance with source fields
-    if (paperData) {
-      paperData.source = 'arxiv';
-      paperData.sourceId = paperData.arxivId;
-      paperData.primary_id = sourceInfo.primary_id;
+    // Try to use the plugin's API if available
+    if (plugin.hasApi && plugin.fetchApiData) {
+      try {
+        logger.info(`Using ${plugin.id} plugin API for tab`);
+        const apiData = await plugin.fetchApiData(sourceInfo.id);
+        if (Object.keys(apiData).length > 0) {
+          paperData = {
+            ...apiData,
+            source: plugin.id,
+            sourceId: sourceInfo.id,
+            primary_id: sourceInfo.primary_id,
+            url: tab.url
+          };
+        }
+      } catch (error) {
+        logger.error(`Error using plugin API for tab: ${error}`);
+      }
     }
-  } else if (enhancedProcessPaperUrl) {
-    // Use enhanced processor for other sources
-    paperData = await enhancedProcessPaperUrl(tab.url);
+  }
+  
+  // Fall back to legacy processors if needed
+  if (!paperData) {
+    if (sourceInfo.type === 'arxiv' && originalProcessArxivUrl) {
+      // Use original arXiv processor for compatibility
+      paperData = await originalProcessArxivUrl(tab.url);
+      
+      // Enhance with source fields
+      if (paperData) {
+        paperData.source = 'arxiv';
+        paperData.sourceId = paperData.arxivId;
+        paperData.primary_id = sourceInfo.primary_id;
+      }
+    } else if (enhancedProcessPaperUrl) {
+      // Use enhanced processor for other sources
+      paperData = await enhancedProcessPaperUrl(tab.url);
+    }
   }
   
   if (paperData) {

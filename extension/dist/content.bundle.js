@@ -421,6 +421,54 @@ const observer = new MutationObserver((mutations) => {
     });
   });
 });
+function processOpenReviewLinks() {
+  document.querySelectorAll('a[href*="openreview.net/forum"], a[href*="openreview.net/pdf"]').forEach((link) => {
+    if (link.classList.contains("paper-processed")) return;
+    link.classList.add("paper-processed");
+    const match = link.href.match(/id=([a-zA-Z0-9_\-]+)/);
+    if (!match) return;
+    const paperId = match[1];
+    const annotator = document.createElement("span");
+    annotator.className = "paper-annotator annotator-openreview";
+    annotator.title = "Track this OpenReview paper";
+    annotator.addEventListener("click", async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (activePopup && activePopup.paperId === paperId) {
+        activePopup.parentElement?.remove();
+        activePopup = null;
+        return;
+      }
+      if (activePopup) {
+        activePopup.parentElement?.remove();
+      }
+      const popup = await createPopup("openreview", paperId, link.textContent?.trim());
+      const wrapper = createPopupWrapper();
+      wrapper.appendChild(popup);
+      const annotatorRect = annotator.getBoundingClientRect();
+      const available_width = self.innerWidth - annotatorRect.left;
+      if (available_width < 320) {
+        popup.style.right = "0";
+        popup.style.left = "auto";
+      } else {
+        popup.style.left = "0";
+      }
+      popup.style.top = `${annotatorRect.height + 5}px`;
+      annotator.parentNode.insertBefore(wrapper, annotator.nextSibling);
+      activePopup = popup;
+    });
+    link.parentNode.insertBefore(annotator, link.nextSibling);
+  });
+}
+function addOpenReviewToInitialProcessing() {
+  const originalProcessInitialLinks = processInitialLinks;
+  processInitialLinks = function() {
+    originalProcessInitialLinks();
+    processOpenReviewLinks();
+  };
+  processOpenReviewLinks();
+}
+addOpenReviewToInitialProcessing();
 observer.observe(document.body, {
   childList: true,
   subtree: true
