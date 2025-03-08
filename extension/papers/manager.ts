@@ -1,33 +1,32 @@
 // extension/papers/manager.ts
+// Simplified PaperManager that uses a consistent approach for all paper sources
+
 import { GitHubStoreClient } from 'gh-store-client';
 import type { Json } from 'gh-store-client';
 import { 
   type PaperMetadata, 
   type InteractionLog, 
   type Interaction,
-  type ReadingSessionData,
-  isInteractionLog
+  type ReadingSessionData
 } from './types';
-import { formatPrimaryId, isNewFormat, parseId } from './source_utils';
+import { formatPrimaryId, isNewFormat } from './source_utils';
 import { loguru } from '../utils/logger';
 
 const logger = loguru.getLogger('PaperManager');
 
 /**
  * Checks if data is an interaction log
- * @param data - Data to check
- * @returns Whether data is an interaction log
  */
-const isInteractionLogJs = (data: any): boolean => {
+function isInteractionLog(data: any): data is InteractionLog {
   return typeof data === "object" && 
          data !== null && 
          typeof data.paper_id === "string" && 
          Array.isArray(data.interactions);
-};
+}
 
 export class PaperManager {
   private client: GitHubStoreClient;
-  // Add creation locks for concurrency control
+  // Concurrency control locks
   private creationLocks = new Map<string, Promise<any>>();
   
   constructor(client: GitHubStoreClient) {
@@ -42,12 +41,6 @@ export class PaperManager {
     if (!paperData.primary_id) {
       if (paperData.source && paperData.sourceId) {
         paperData.primary_id = formatPrimaryId(paperData.source, paperData.sourceId);
-      } else if (paperData.arxivId) {
-        // Legacy handling - convert to new format
-        paperData.source = 'arxiv';
-        paperData.sourceId = paperData.arxivId;
-        paperData.primary_id = formatPrimaryId('arxiv', paperData.arxivId);
-        logger.warning(`Legacy arxivId format detected. Converted to primary_id: ${paperData.primary_id}`);
       } else {
         throw new Error("Invalid paper data: missing primary_id and cannot generate it");
       }
@@ -62,23 +55,6 @@ export class PaperManager {
       const data = obj.data as Record<string, any>;
       
       logger.info(`Found existing paper: ${objectId}`);
-      
-      // Ensure existing data has primary_id
-      if (!data.primary_id) {
-        // This should only happen for legacy papers
-        const enhancedData = {
-          ...data,
-          source: paperData.source || 'arxiv',
-          sourceId: paperData.sourceId || data.arxivId,
-          primary_id: paperData.primary_id
-        };
-        
-        // Update the object with enhanced data
-        logger.info(`Updating legacy paper with new format fields: ${objectId}`);
-        await this.client.updateObject(objectId, enhancedData);
-        return enhancedData;
-      }
-      
       return data;
     } catch (error) {
       if (error instanceof Error && error.message.includes("No object found")) {
@@ -95,28 +71,20 @@ export class PaperManager {
           rating: 'novote'
         };
         
-        // For arXiv, maintain backward compatibility fields
-        if (paperData.source === 'arxiv') {
-          defaultPaperData.arxivId = paperData.sourceId;
-          defaultPaperData.arxiv_tags = paperData.arxiv_tags || [];
-          defaultPaperData.published_date = paperData.published_date || '';
-        } else {
-          // For other sources, add source-specific identifiers
-          defaultPaperData.identifiers = {
-            original: paperData.sourceId,
-            url: paperData.url
-          };
-          
-          // Add cross-references if available
-          if (paperData.arxivId) {
-            defaultPaperData.identifiers.arxiv = paperData.arxivId;
-          }
-          if (paperData.doi) {
-            defaultPaperData.identifiers.doi = paperData.doi;
-          }
-          if (paperData.s2Id) {
-            defaultPaperData.identifiers.s2 = paperData.s2Id;
-          }
+        // Add source-specific data directly
+        if (paperData.source_specific_metadata) {
+          defaultPaperData.source_specific_metadata = paperData.source_specific_metadata;
+        }
+        
+        // Always add identifiers object
+        defaultPaperData.identifiers = {
+          original: paperData.sourceId,
+          url: paperData.url
+        };
+        
+        // Add cross-references if available
+        if (paperData.doi) {
+          defaultPaperData.identifiers.doi = paperData.doi;
         }
         
         logger.info(`Creating new paper object: ${objectId}`);
@@ -138,10 +106,10 @@ export class PaperManager {
    * Get or create an interaction log
    */
   private async getOrCreateInteractionLog(paperId: string): Promise<InteractionLog> {
-    // Ensure paperId is in the new format
+    // Ensure we have a standard format ID
     if (!isNewFormat(paperId)) {
-      logger.warning(`Legacy format paperId detected: ${paperId}. This is deprecated.`);
       paperId = formatPrimaryId('arxiv', paperId);
+      logger.warning(`Converted legacy ID to: ${paperId}`);
     }
     
     const objectId = `interactions:${paperId}`;
@@ -156,13 +124,10 @@ export class PaperManager {
     const creationPromise = (async () => {
       try {
         const obj = await this.client.getObject(objectId);
-        const data = obj.data as unknown;
+        const data = obj.data;
         
-        // Use TypeScript type guard if available, otherwise JS version
-        if (typeof isInteractionLog === 'function' ? 
-            isInteractionLog(data) : 
-            isInteractionLogJs(data)) {
-          return data as InteractionLog;
+        if (isInteractionLog(data)) {
+          return data;
         }
         
         throw new Error('Invalid interaction log format');
@@ -173,12 +138,6 @@ export class PaperManager {
             paper_id: paperId,
             interactions: []
           };
-          
-          // Check for legacy arxiv ID format
-          const { type, id } = parseId(paperId);
-          if (type === 'arxiv') {
-            newLog.legacy_id = id;
-          }
           
           logger.info(`Creating new interaction log: ${objectId}`);
           await this.client.createObject(objectId, newLog);
@@ -207,19 +166,14 @@ export class PaperManager {
     session: ReadingSessionData,
     paperData?: any
   ): Promise<void> {
-    // Ensure paperId is in the new format
+    // Ensure we have a standard format ID
     if (!isNewFormat(paperId)) {
-      logger.warning(`Legacy format paperId detected: ${paperId}. Converting to new format.`);
       paperId = formatPrimaryId('arxiv', paperId);
+      logger.warning(`Converted legacy ID to: ${paperId}`);
       
-      // If paperData provided but without primary_id, add it
+      // If paperData provided, ensure it has primary_id
       if (paperData && !paperData.primary_id) {
-        paperData = {
-          ...paperData,
-          source: 'arxiv',
-          sourceId: paperData.arxivId || paperId.split('.')[1],
-          primary_id: paperId
-        };
+        paperData.primary_id = paperId;
       }
     }
 
@@ -245,19 +199,14 @@ export class PaperManager {
     value: Json,
     paperData?: any
   ): Promise<void> {
-    // Ensure paperId is in the new format
+    // Ensure we have a standard format ID
     if (!isNewFormat(paperId)) {
-      logger.warning(`Legacy format paperId detected: ${paperId}. Converting to new format.`);
       paperId = formatPrimaryId('arxiv', paperId);
+      logger.warning(`Converted legacy ID to: ${paperId}`);
       
-      // If paperData provided but without primary_id, add it
+      // If paperData provided, ensure it has primary_id
       if (paperData && !paperData.primary_id) {
-        paperData = {
-          ...paperData,
-          source: 'arxiv',
-          sourceId: paperData.arxivId || paperId.split('.')[1],
-          primary_id: paperId
-        };
+        paperData.primary_id = paperId;
       }
     }
 
@@ -282,19 +231,14 @@ export class PaperManager {
     rating: string,
     paperData?: any
   ): Promise<void> {
-    // Ensure paperId is in the new format
+    // Ensure we have a standard format ID
     if (!isNewFormat(paperId)) {
-      logger.warning(`Legacy format paperId detected: ${paperId}. Converting to new format.`);
       paperId = formatPrimaryId('arxiv', paperId);
+      logger.warning(`Converted legacy ID to: ${paperId}`);
       
-      // If paperData provided but without primary_id, add it
+      // If paperData provided, ensure it has primary_id
       if (paperData && !paperData.primary_id) {
-        paperData = {
-          ...paperData,
-          source: 'arxiv',
-          sourceId: paperData.arxivId || paperId.split('.')[1],
-          primary_id: paperId
-        };
+        paperData.primary_id = paperId;
       }
     }
 
@@ -323,7 +267,7 @@ export class PaperManager {
     const log = await this.getOrCreateInteractionLog(paperId);
     log.interactions.push(interaction);
     
-    // Store with the new format ID
+    // Store with the standard format ID
     const objectId = `interactions:${paperId}`;
     await this.client.updateObject(objectId, log);
   }
@@ -339,10 +283,10 @@ export class PaperManager {
       endTime?: Date;
     } = {}
   ): Promise<Interaction[]> {
-    // Ensure paperId is in the new format
+    // Ensure we have a standard format ID
     if (!isNewFormat(paperId)) {
-      logger.warning(`Legacy format paperId detected: ${paperId}. Converting to new format.`);
       paperId = formatPrimaryId('arxiv', paperId);
+      logger.warning(`Converted legacy ID to: ${paperId}`);
     }
     
     try {
@@ -375,16 +319,14 @@ export class PaperManager {
    * Get total reading time for a paper
    */
   async getPaperReadingTime(paperId: string): Promise<number> {
-    // Ensure paperId is in the new format
+    // Ensure we have a standard format ID
     if (!isNewFormat(paperId)) {
-      logger.warning(`Legacy format paperId detected: ${paperId}. Converting to new format.`);
       paperId = formatPrimaryId('arxiv', paperId);
+      logger.warning(`Converted legacy ID to: ${paperId}`);
     }
     
     const interactions = await this.getInteractions(paperId, { type: 'reading_session' });
     return interactions.reduce((total, i) => {
-      logger.info('Calculating from interaction:', i);
-      
       const data = i.data;
       if (typeof data === 'object' && data !== null && 'duration_seconds' in data) {
         return total + (data.duration_seconds as number);
@@ -397,10 +339,10 @@ export class PaperManager {
    * Get paper history
    */
   async getPaperHistory(paperId: string): Promise<Json[]> {
-    // Ensure paperId is in the new format
+    // Ensure we have a standard format ID
     if (!isNewFormat(paperId)) {
-      logger.warning(`Legacy format paperId detected: ${paperId}. Converting to new format.`);
       paperId = formatPrimaryId('arxiv', paperId);
+      logger.warning(`Converted legacy ID to: ${paperId}`);
     }
     
     const objectId = `paper:${paperId}`;
