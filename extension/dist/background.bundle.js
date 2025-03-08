@@ -1,10 +1,5 @@
 var d=class{constructor(e={}){this.cache=new Map,this.maxSize=e.maxSize??1e3,this.ttl=e.ttl??1e3*60*60,this.accessOrder=[];}get(e){let s=this.cache.get(e);if(s){if(Date.now()-s.lastAccessed>this.ttl){this.cache.delete(e),this.removeFromAccessOrder(e);return}return s.lastAccessed=Date.now(),this.updateAccessOrder(e),s.issueNumber}}set(e,s,t){if(this.cache.size>=this.maxSize&&!this.cache.has(e)){let r=this.accessOrder[this.accessOrder.length-1];r&&(this.cache.delete(r),this.removeFromAccessOrder(r));}this.cache.set(e,{issueNumber:s,lastAccessed:Date.now(),createdAt:t.createdAt,updatedAt:t.updatedAt}),this.updateAccessOrder(e);}remove(e){this.cache.delete(e),this.removeFromAccessOrder(e);}clear(){this.cache.clear(),this.accessOrder=[];}getStats(){return {size:this.cache.size,maxSize:this.maxSize,ttl:this.ttl}}shouldRefresh(e,s){let t=this.cache.get(e);return t?s>t.updatedAt:true}updateAccessOrder(e){this.removeFromAccessOrder(e),this.accessOrder.unshift(e);}removeFromAccessOrder(e){let s=this.accessOrder.indexOf(e);s>-1&&this.accessOrder.splice(s,1);}};var l="0.3.2";var f=class{constructor(e,s,t={}){this.token=e,this.repo=s,this.config={baseLabel:t.baseLabel??"stored-object",uidPrefix:t.uidPrefix??"UID:",reactions:{processed:t.reactions?.processed??"+1",initialState:t.reactions?.initialState??"rocket"}},this.cache=new d(t.cache);}async fetchFromGitHub(e,s={}){let t=new URL(`https://api.github.com/repos/${this.repo}${e}`);s.params&&(Object.entries(s.params).forEach(([i,a])=>{t.searchParams.append(i,a);}),delete s.params);let r=await fetch(t.toString(),{...s,headers:{Authorization:`token ${this.token}`,Accept:"application/vnd.github.v3+json",...s.headers}});if(!r.ok)throw new Error(`GitHub API error: ${r.status}`);return r.json()}createCommentPayload(e,s){let t={_data:e,_meta:{client_version:l,timestamp:new Date().toISOString(),update_mode:"append"}};return s&&(t.type=s),t}async getObject(e){let s=this.cache.get(e),t;if(s)try{t=await this.fetchFromGitHub(`/issues/${s}`),this._verifyIssueLabels(t,e)||(this.cache.remove(e),t=void 0);}catch{this.cache.remove(e);}if(!t){let c=await this.fetchFromGitHub("/issues",{method:"GET",params:{labels:[this.config.baseLabel,`${this.config.uidPrefix}${e}`].join(","),state:"closed"}});if(!c||c.length===0)throw new Error(`No object found with ID: ${e}`);t=c[0];}if(!t?.body)throw new Error(`Invalid issue data received for ID: ${e}`);let r=JSON.parse(t.body),i=new Date(t.created_at),a=new Date(t.updated_at);return this.cache.set(e,t.number,{createdAt:i,updatedAt:a}),{meta:{objectId:e,label:`${this.config.uidPrefix}${e}`,createdAt:i,updatedAt:a,version:await this._getVersion(t.number)},data:r}}async createObject(e,s){let t=`${this.config.uidPrefix}${e}`,r=await this.fetchFromGitHub("/issues",{method:"POST",body:JSON.stringify({title:`Stored Object: ${e}`,body:JSON.stringify(s,null,2),labels:[this.config.baseLabel,t]})});this.cache.set(e,r.number,{createdAt:new Date(r.created_at),updatedAt:new Date(r.updated_at)});let i=this.createCommentPayload(s,"initial_state"),a=await this.fetchFromGitHub(`/issues/${r.number}/comments`,{method:"POST",body:JSON.stringify({body:JSON.stringify(i,null,2)})});return await this.fetchFromGitHub(`/issues/comments/${a.id}/reactions`,{method:"POST",body:JSON.stringify({content:this.config.reactions.processed})}),await this.fetchFromGitHub(`/issues/comments/${a.id}/reactions`,{method:"POST",body:JSON.stringify({content:this.config.reactions.initialState})}),await this.fetchFromGitHub(`/issues/${r.number}`,{method:"PATCH",body:JSON.stringify({state:"closed"})}),{meta:{objectId:e,label:t,createdAt:new Date(r.created_at),updatedAt:new Date(r.updated_at),version:1},data:s}}_verifyIssueLabels(e,s){let t=new Set([this.config.baseLabel,`${this.config.uidPrefix}${s}`]);return e.labels.some(r=>t.has(r.name))}async updateObject(e,s){let t=await this.fetchFromGitHub("/issues",{method:"GET",params:{labels:[this.config.baseLabel,`${this.config.uidPrefix}${e}`].join(","),state:"all"}});if(!t||t.length===0)throw new Error(`No object found with ID: ${e}`);let r=t[0],i=this.createCommentPayload(s);return await this.fetchFromGitHub(`/issues/${r.number}/comments`,{method:"POST",body:JSON.stringify({body:JSON.stringify(i,null,2)})}),await this.fetchFromGitHub(`/issues/${r.number}`,{method:"PATCH",body:JSON.stringify({state:"open"})}),this.getObject(e)}async listAll(){let e=await this.fetchFromGitHub("/issues",{method:"GET",params:{labels:this.config.baseLabel,state:"closed"}}),s={};for(let t of e)if(!t.labels.some(r=>r.name==="archived"))try{let r=this._getObjectIdFromLabels(t),i=JSON.parse(t.body),a={objectId:r,label:r,createdAt:new Date(t.created_at),updatedAt:new Date(t.updated_at),version:await this._getVersion(t.number)};s[r]={meta:a,data:i};}catch{continue}return s}async listUpdatedSince(e){let s=await this.fetchFromGitHub("/issues",{method:"GET",params:{labels:this.config.baseLabel,state:"closed",since:e.toISOString()}}),t={};for(let r of s)if(!r.labels.some(i=>i.name==="archived"))try{let i=this._getObjectIdFromLabels(r),a=JSON.parse(r.body),n=new Date(r.updated_at);if(n>e){let c={objectId:i,label:i,createdAt:new Date(r.created_at),updatedAt:n,version:await this._getVersion(r.number)};t[i]={meta:c,data:a};}}catch{continue}return t}async getObjectHistory(e){let s=await this.fetchFromGitHub("/issues",{method:"GET",params:{labels:[this.config.baseLabel,`${this.config.uidPrefix}${e}`].join(","),state:"all"}});if(!s||s.length===0)throw new Error(`No object found with ID: ${e}`);let t=s[0],r=await this.fetchFromGitHub(`/issues/${t.number}/comments`),i=[];for(let a of r)try{let n=JSON.parse(a.body),c="update",m,b={client_version:"legacy",timestamp:a.created_at,update_mode:"append"};typeof n=="object"?"_data"in n?(c=n.type||"update",m=n._data,b=n._meta||b):"type"in n&&n.type==="initial_state"?(c="initial_state",m=n.data):m=n:m=n,i.push({timestamp:a.created_at,type:c,data:m,commentId:a.id});}catch{continue}return i}async _getVersion(e){return (await this.fetchFromGitHub(`/issues/${e}/comments`)).length+1}_getObjectIdFromLabels(e){for(let s of e.labels)if(s.name!==this.config.baseLabel&&s.name.startsWith(this.config.uidPrefix))return s.name.slice(this.config.uidPrefix.length);throw new Error(`No UID label found with prefix ${this.config.uidPrefix}`)}};
 
-const isInteractionLog = (data) => {
-  const log = data;
-  return typeof log === "object" && log !== null && typeof log.paper_id === "string" && Array.isArray(log.interactions);
-};
-
 class Logger {
   constructor(name) {
     this.name = name;
@@ -77,33 +72,6 @@ function formatPrimaryId(source, id) {
   const safeId = id.replace(/\//g, "_").replace(/:/g, ".").replace(/\s/g, "_").replace(/\\/g, "_");
   return `${sourcePrefix}.${safeId}`;
 }
-function parseId(prefixedId) {
-  const [prefix, ...idParts] = prefixedId.split(".");
-  const id = idParts.join(".");
-  const plugins = pluginRegistry.getAll();
-  for (const plugin of plugins) {
-    if (plugin.formatId) {
-      const sampleId = plugin.formatId("test");
-      const samplePrefix = sampleId.split(".")[0];
-      if (samplePrefix === prefix) {
-        return {
-          type: plugin.id,
-          id
-        };
-      }
-    }
-  }
-  const prefixToSource = {
-    "arxiv": "arxiv",
-    "s2": "semanticscholar",
-    "doi": "doi",
-    "openreview": "openreview"
-  };
-  return {
-    type: prefixToSource[prefix] || "generic",
-    id: prefix === "doi" ? id.replace(/_/g, "/") : id
-  };
-}
 function isNewFormat(id) {
   const validPrefixes = Object.values(SOURCE_PREFIXES).map((prefix) => `${prefix}.`);
   validPrefixes.push("generic.");
@@ -111,12 +79,12 @@ function isNewFormat(id) {
 }
 
 const logger$2 = loguru.getLogger("PaperManager");
-const isInteractionLogJs = (data) => {
+function isInteractionLog(data) {
   return typeof data === "object" && data !== null && typeof data.paper_id === "string" && Array.isArray(data.interactions);
-};
+}
 class PaperManager {
   constructor(client) {
-    // Add creation locks for concurrency control
+    // Concurrency control locks
     this.creationLocks = /* @__PURE__ */ new Map();
     this.client = client;
   }
@@ -127,11 +95,6 @@ class PaperManager {
     if (!paperData.primary_id) {
       if (paperData.source && paperData.sourceId) {
         paperData.primary_id = formatPrimaryId(paperData.source, paperData.sourceId);
-      } else if (paperData.arxivId) {
-        paperData.source = "arxiv";
-        paperData.sourceId = paperData.arxivId;
-        paperData.primary_id = formatPrimaryId("arxiv", paperData.arxivId);
-        logger$2.warning(`Legacy arxivId format detected. Converted to primary_id: ${paperData.primary_id}`);
       } else {
         throw new Error("Invalid paper data: missing primary_id and cannot generate it");
       }
@@ -142,17 +105,6 @@ class PaperManager {
       const obj = await this.client.getObject(objectId);
       const data = obj.data;
       logger$2.info(`Found existing paper: ${objectId}`);
-      if (!data.primary_id) {
-        const enhancedData = {
-          ...data,
-          source: paperData.source || "arxiv",
-          sourceId: paperData.sourceId || data.arxivId,
-          primary_id: paperData.primary_id
-        };
-        logger$2.info(`Updating legacy paper with new format fields: ${objectId}`);
-        await this.client.updateObject(objectId, enhancedData);
-        return enhancedData;
-      }
       return data;
     } catch (error) {
       if (error instanceof Error && error.message.includes("No object found")) {
@@ -167,24 +119,15 @@ class PaperManager {
           timestamp: (/* @__PURE__ */ new Date()).toISOString(),
           rating: "novote"
         };
-        if (paperData.source === "arxiv") {
-          defaultPaperData.arxivId = paperData.sourceId;
-          defaultPaperData.arxiv_tags = paperData.arxiv_tags || [];
-          defaultPaperData.published_date = paperData.published_date || "";
-        } else {
-          defaultPaperData.identifiers = {
-            original: paperData.sourceId,
-            url: paperData.url
-          };
-          if (paperData.arxivId) {
-            defaultPaperData.identifiers.arxiv = paperData.arxivId;
-          }
-          if (paperData.doi) {
-            defaultPaperData.identifiers.doi = paperData.doi;
-          }
-          if (paperData.s2Id) {
-            defaultPaperData.identifiers.s2 = paperData.s2Id;
-          }
+        if (paperData.source_specific_metadata) {
+          defaultPaperData.source_specific_metadata = paperData.source_specific_metadata;
+        }
+        defaultPaperData.identifiers = {
+          original: paperData.sourceId,
+          url: paperData.url
+        };
+        if (paperData.doi) {
+          defaultPaperData.identifiers.doi = paperData.doi;
         }
         logger$2.info(`Creating new paper object: ${objectId}`);
         try {
@@ -205,8 +148,8 @@ class PaperManager {
    */
   async getOrCreateInteractionLog(paperId) {
     if (!isNewFormat(paperId)) {
-      logger$2.warning(`Legacy format paperId detected: ${paperId}. This is deprecated.`);
       paperId = formatPrimaryId("arxiv", paperId);
+      logger$2.warning(`Converted legacy ID to: ${paperId}`);
     }
     const objectId = `interactions:${paperId}`;
     if (this.creationLocks.has(objectId)) {
@@ -217,7 +160,7 @@ class PaperManager {
       try {
         const obj = await this.client.getObject(objectId);
         const data = obj.data;
-        if (typeof isInteractionLog === "function" ? isInteractionLog(data) : isInteractionLogJs(data)) {
+        if (isInteractionLog(data)) {
           return data;
         }
         throw new Error("Invalid interaction log format");
@@ -227,10 +170,6 @@ class PaperManager {
             paper_id: paperId,
             interactions: []
           };
-          const { type, id } = parseId(paperId);
-          if (type === "arxiv") {
-            newLog.legacy_id = id;
-          }
           logger$2.info(`Creating new interaction log: ${objectId}`);
           await this.client.createObject(objectId, newLog);
           return newLog;
@@ -250,15 +189,10 @@ class PaperManager {
    */
   async logReadingSession(paperId, session, paperData) {
     if (!isNewFormat(paperId)) {
-      logger$2.warning(`Legacy format paperId detected: ${paperId}. Converting to new format.`);
       paperId = formatPrimaryId("arxiv", paperId);
+      logger$2.warning(`Converted legacy ID to: ${paperId}`);
       if (paperData && !paperData.primary_id) {
-        paperData = {
-          ...paperData,
-          source: "arxiv",
-          sourceId: paperData.arxivId || paperId.split(".")[1],
-          primary_id: paperId
-        };
+        paperData.primary_id = paperId;
       }
     }
     if (paperData) {
@@ -275,15 +209,10 @@ class PaperManager {
    */
   async logAnnotation(paperId, key, value, paperData) {
     if (!isNewFormat(paperId)) {
-      logger$2.warning(`Legacy format paperId detected: ${paperId}. Converting to new format.`);
       paperId = formatPrimaryId("arxiv", paperId);
+      logger$2.warning(`Converted legacy ID to: ${paperId}`);
       if (paperData && !paperData.primary_id) {
-        paperData = {
-          ...paperData,
-          source: "arxiv",
-          sourceId: paperData.arxivId || paperId.split(".")[1],
-          primary_id: paperId
-        };
+        paperData.primary_id = paperId;
       }
     }
     if (paperData) {
@@ -300,15 +229,10 @@ class PaperManager {
    */
   async updateRating(paperId, rating, paperData) {
     if (!isNewFormat(paperId)) {
-      logger$2.warning(`Legacy format paperId detected: ${paperId}. Converting to new format.`);
       paperId = formatPrimaryId("arxiv", paperId);
+      logger$2.warning(`Converted legacy ID to: ${paperId}`);
       if (paperData && !paperData.primary_id) {
-        paperData = {
-          ...paperData,
-          source: "arxiv",
-          sourceId: paperData.arxivId || paperId.split(".")[1],
-          primary_id: paperId
-        };
+        paperData.primary_id = paperId;
       }
     }
     const paper = await this.getOrCreatePaper(paperData || { primary_id: paperId });
@@ -337,8 +261,8 @@ class PaperManager {
    */
   async getInteractions(paperId, options = {}) {
     if (!isNewFormat(paperId)) {
-      logger$2.warning(`Legacy format paperId detected: ${paperId}. Converting to new format.`);
       paperId = formatPrimaryId("arxiv", paperId);
+      logger$2.warning(`Converted legacy ID to: ${paperId}`);
     }
     try {
       const log = await this.getOrCreateInteractionLog(paperId);
@@ -367,12 +291,11 @@ class PaperManager {
    */
   async getPaperReadingTime(paperId) {
     if (!isNewFormat(paperId)) {
-      logger$2.warning(`Legacy format paperId detected: ${paperId}. Converting to new format.`);
       paperId = formatPrimaryId("arxiv", paperId);
+      logger$2.warning(`Converted legacy ID to: ${paperId}`);
     }
     const interactions = await this.getInteractions(paperId, { type: "reading_session" });
     return interactions.reduce((total, i) => {
-      logger$2.info("Calculating from interaction:", i);
       const data = i.data;
       if (typeof data === "object" && data !== null && "duration_seconds" in data) {
         return total + data.duration_seconds;
@@ -385,8 +308,8 @@ class PaperManager {
    */
   async getPaperHistory(paperId) {
     if (!isNewFormat(paperId)) {
-      logger$2.warning(`Legacy format paperId detected: ${paperId}. Converting to new format.`);
       paperId = formatPrimaryId("arxiv", paperId);
+      logger$2.warning(`Converted legacy ID to: ${paperId}`);
     }
     const objectId = `paper:${paperId}`;
     return this.client.getObjectHistory(objectId);
