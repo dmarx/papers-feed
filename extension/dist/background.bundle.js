@@ -1,71 +1,3 @@
-const scriptRel = function detectScriptRel() {
-  const relList = typeof document !== "undefined" && document.createElement("link").relList;
-  return relList && relList.supports && relList.supports("modulepreload") ? "modulepreload" : "preload";
-}();
-const assetsURL = function(dep) {
-  return "/" + dep;
-};
-const seen = {};
-const __vitePreload = function preload(baseModule, deps, importerUrl) {
-  let promise = Promise.resolve();
-  if (true && deps && deps.length > 0) {
-    document.getElementsByTagName("link");
-    const cspNonceMeta = document.querySelector(
-      "meta[property=csp-nonce]"
-    );
-    const cspNonce = cspNonceMeta?.nonce || cspNonceMeta?.getAttribute("nonce");
-    promise = Promise.allSettled(
-      deps.map((dep) => {
-        dep = assetsURL(dep);
-        if (dep in seen) return;
-        seen[dep] = true;
-        const isCss = dep.endsWith(".css");
-        const cssSelector = isCss ? '[rel="stylesheet"]' : "";
-        if (document.querySelector(`link[href="${dep}"]${cssSelector}`)) {
-          return;
-        }
-        const link = document.createElement("link");
-        link.rel = isCss ? "stylesheet" : scriptRel;
-        if (!isCss) {
-          link.as = "script";
-        }
-        link.crossOrigin = "";
-        link.href = dep;
-        if (cspNonce) {
-          link.setAttribute("nonce", cspNonce);
-        }
-        document.head.appendChild(link);
-        if (isCss) {
-          return new Promise((res, rej) => {
-            link.addEventListener("load", res);
-            link.addEventListener(
-              "error",
-              () => rej(new Error(`Unable to preload CSS for ${dep}`))
-            );
-          });
-        }
-      })
-    );
-  }
-  function handlePreloadError(err) {
-    const e = new Event("vite:preloadError", {
-      cancelable: true
-    });
-    e.payload = err;
-    self.dispatchEvent(e);
-    if (!e.defaultPrevented) {
-      throw err;
-    }
-  }
-  return promise.then((res) => {
-    for (const item of res || []) {
-      if (item.status !== "rejected") continue;
-      handlePreloadError(item.reason);
-    }
-    return baseModule().catch(handlePreloadError);
-  });
-};
-
 var d=class{constructor(e={}){this.cache=new Map,this.maxSize=e.maxSize??1e3,this.ttl=e.ttl??1e3*60*60,this.accessOrder=[];}get(e){let s=this.cache.get(e);if(s){if(Date.now()-s.lastAccessed>this.ttl){this.cache.delete(e),this.removeFromAccessOrder(e);return}return s.lastAccessed=Date.now(),this.updateAccessOrder(e),s.issueNumber}}set(e,s,t){if(this.cache.size>=this.maxSize&&!this.cache.has(e)){let r=this.accessOrder[this.accessOrder.length-1];r&&(this.cache.delete(r),this.removeFromAccessOrder(r));}this.cache.set(e,{issueNumber:s,lastAccessed:Date.now(),createdAt:t.createdAt,updatedAt:t.updatedAt}),this.updateAccessOrder(e);}remove(e){this.cache.delete(e),this.removeFromAccessOrder(e);}clear(){this.cache.clear(),this.accessOrder=[];}getStats(){return {size:this.cache.size,maxSize:this.maxSize,ttl:this.ttl}}shouldRefresh(e,s){let t=this.cache.get(e);return t?s>t.updatedAt:true}updateAccessOrder(e){this.removeFromAccessOrder(e),this.accessOrder.unshift(e);}removeFromAccessOrder(e){let s=this.accessOrder.indexOf(e);s>-1&&this.accessOrder.splice(s,1);}};var l="0.3.2";var f=class{constructor(e,s,t={}){this.token=e,this.repo=s,this.config={baseLabel:t.baseLabel??"stored-object",uidPrefix:t.uidPrefix??"UID:",reactions:{processed:t.reactions?.processed??"+1",initialState:t.reactions?.initialState??"rocket"}},this.cache=new d(t.cache);}async fetchFromGitHub(e,s={}){let t=new URL(`https://api.github.com/repos/${this.repo}${e}`);s.params&&(Object.entries(s.params).forEach(([i,a])=>{t.searchParams.append(i,a);}),delete s.params);let r=await fetch(t.toString(),{...s,headers:{Authorization:`token ${this.token}`,Accept:"application/vnd.github.v3+json",...s.headers}});if(!r.ok)throw new Error(`GitHub API error: ${r.status}`);return r.json()}createCommentPayload(e,s){let t={_data:e,_meta:{client_version:l,timestamp:new Date().toISOString(),update_mode:"append"}};return s&&(t.type=s),t}async getObject(e){let s=this.cache.get(e),t;if(s)try{t=await this.fetchFromGitHub(`/issues/${s}`),this._verifyIssueLabels(t,e)||(this.cache.remove(e),t=void 0);}catch{this.cache.remove(e);}if(!t){let c=await this.fetchFromGitHub("/issues",{method:"GET",params:{labels:[this.config.baseLabel,`${this.config.uidPrefix}${e}`].join(","),state:"closed"}});if(!c||c.length===0)throw new Error(`No object found with ID: ${e}`);t=c[0];}if(!t?.body)throw new Error(`Invalid issue data received for ID: ${e}`);let r=JSON.parse(t.body),i=new Date(t.created_at),a=new Date(t.updated_at);return this.cache.set(e,t.number,{createdAt:i,updatedAt:a}),{meta:{objectId:e,label:`${this.config.uidPrefix}${e}`,createdAt:i,updatedAt:a,version:await this._getVersion(t.number)},data:r}}async createObject(e,s){let t=`${this.config.uidPrefix}${e}`,r=await this.fetchFromGitHub("/issues",{method:"POST",body:JSON.stringify({title:`Stored Object: ${e}`,body:JSON.stringify(s,null,2),labels:[this.config.baseLabel,t]})});this.cache.set(e,r.number,{createdAt:new Date(r.created_at),updatedAt:new Date(r.updated_at)});let i=this.createCommentPayload(s,"initial_state"),a=await this.fetchFromGitHub(`/issues/${r.number}/comments`,{method:"POST",body:JSON.stringify({body:JSON.stringify(i,null,2)})});return await this.fetchFromGitHub(`/issues/comments/${a.id}/reactions`,{method:"POST",body:JSON.stringify({content:this.config.reactions.processed})}),await this.fetchFromGitHub(`/issues/comments/${a.id}/reactions`,{method:"POST",body:JSON.stringify({content:this.config.reactions.initialState})}),await this.fetchFromGitHub(`/issues/${r.number}`,{method:"PATCH",body:JSON.stringify({state:"closed"})}),{meta:{objectId:e,label:t,createdAt:new Date(r.created_at),updatedAt:new Date(r.updated_at),version:1},data:s}}_verifyIssueLabels(e,s){let t=new Set([this.config.baseLabel,`${this.config.uidPrefix}${s}`]);return e.labels.some(r=>t.has(r.name))}async updateObject(e,s){let t=await this.fetchFromGitHub("/issues",{method:"GET",params:{labels:[this.config.baseLabel,`${this.config.uidPrefix}${e}`].join(","),state:"all"}});if(!t||t.length===0)throw new Error(`No object found with ID: ${e}`);let r=t[0],i=this.createCommentPayload(s);return await this.fetchFromGitHub(`/issues/${r.number}/comments`,{method:"POST",body:JSON.stringify({body:JSON.stringify(i,null,2)})}),await this.fetchFromGitHub(`/issues/${r.number}`,{method:"PATCH",body:JSON.stringify({state:"open"})}),this.getObject(e)}async listAll(){let e=await this.fetchFromGitHub("/issues",{method:"GET",params:{labels:this.config.baseLabel,state:"closed"}}),s={};for(let t of e)if(!t.labels.some(r=>r.name==="archived"))try{let r=this._getObjectIdFromLabels(t),i=JSON.parse(t.body),a={objectId:r,label:r,createdAt:new Date(t.created_at),updatedAt:new Date(t.updated_at),version:await this._getVersion(t.number)};s[r]={meta:a,data:i};}catch{continue}return s}async listUpdatedSince(e){let s=await this.fetchFromGitHub("/issues",{method:"GET",params:{labels:this.config.baseLabel,state:"closed",since:e.toISOString()}}),t={};for(let r of s)if(!r.labels.some(i=>i.name==="archived"))try{let i=this._getObjectIdFromLabels(r),a=JSON.parse(r.body),n=new Date(r.updated_at);if(n>e){let c={objectId:i,label:i,createdAt:new Date(r.created_at),updatedAt:n,version:await this._getVersion(r.number)};t[i]={meta:c,data:a};}}catch{continue}return t}async getObjectHistory(e){let s=await this.fetchFromGitHub("/issues",{method:"GET",params:{labels:[this.config.baseLabel,`${this.config.uidPrefix}${e}`].join(","),state:"all"}});if(!s||s.length===0)throw new Error(`No object found with ID: ${e}`);let t=s[0],r=await this.fetchFromGitHub(`/issues/${t.number}/comments`),i=[];for(let a of r)try{let n=JSON.parse(a.body),c="update",m,b={client_version:"legacy",timestamp:a.created_at,update_mode:"append"};typeof n=="object"?"_data"in n?(c=n.type||"update",m=n._data,b=n._meta||b):"type"in n&&n.type==="initial_state"?(c="initial_state",m=n.data):m=n:m=n,i.push({timestamp:a.created_at,type:c,data:m,commentId:a.id});}catch{continue}return i}async _getVersion(e){return (await this.fetchFromGitHub(`/issues/${e}/comments`)).length+1}_getObjectIdFromLabels(e){for(let s of e.labels)if(s.name!==this.config.baseLabel&&s.name.startsWith(this.config.uidPrefix))return s.name.slice(this.config.uidPrefix.length);throw new Error(`No UID label found with prefix ${this.config.uidPrefix}`)}};
 
 const isInteractionLog = (data) => {
@@ -969,11 +901,6 @@ class PluginRegistry {
 }
 const pluginRegistry = new PluginRegistry();
 
-const registry = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
-  __proto__: null,
-  pluginRegistry
-}, Symbol.toStringTag, { value: 'Module' }));
-
 const logger$1 = loguru.getLogger("PluginLoader");
 async function loadBuiltinPlugins() {
   logger$1.info("Loading built-in plugins");
@@ -1160,9 +1087,60 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     console.log("Annotation update requested:", request.annotationType, request.data);
     handleAnnotationUpdate(request.annotationType, request.data).then((response) => sendResponse(response)).catch((error) => sendResponse({ success: false, error: error.message }));
     return true;
+  } else if (request.type === "trackPaper") {
+    console.log("Track paper requested:", request);
+    handleTrackPaper(request).then((response) => sendResponse(response)).catch((error) => sendResponse({ success: false, error: error.message }));
+    return true;
   }
   return true;
 });
+async function handleTrackPaper(request) {
+  if (!paperManager) {
+    throw new Error("Paper manager not initialized");
+  }
+  try {
+    let paperData;
+    const plugin = pluginRegistry.get(request.source);
+    if (plugin) {
+      logger.info(`Using ${plugin.name} plugin to process paper`);
+      const id = plugin.extractId(request.url);
+      if (!id) {
+        throw new Error(`Could not extract ID from URL: ${request.url}`);
+      }
+      if (plugin.hasApi && plugin.fetchApiData) {
+        try {
+          paperData = await plugin.fetchApiData(id);
+          paperData.source = request.source;
+          paperData.sourceId = id;
+          paperData.primary_id = plugin.formatId ? plugin.formatId(id) : formatPrimaryId(request.source, id);
+          paperData.url = request.url;
+        } catch (error) {
+          logger.error(`Error using plugin API: ${error}`);
+        }
+      }
+      if (!paperData && enhancedProcessPaperUrl) {
+        paperData = await enhancedProcessPaperUrl(request.url);
+      }
+    } else if (request.source === "arxiv" && originalProcessArxivUrl) {
+      paperData = await originalProcessArxivUrl(request.url);
+      if (paperData) {
+        paperData.source = "arxiv";
+        paperData.sourceId = paperData.arxivId;
+        paperData.primary_id = formatPrimaryId("arxiv", paperData.arxivId);
+      }
+    } else if (enhancedProcessPaperUrl) {
+      paperData = await enhancedProcessPaperUrl(request.url);
+    }
+    if (!paperData) {
+      throw new Error(`Could not process paper: ${request.url}`);
+    }
+    await createGithubIssue(paperData);
+    return { success: true, paperData };
+  } catch (error) {
+    logger.error(`Error tracking paper: ${error}`);
+    throw error;
+  }
+}
 async function handleUpdateRating(rating, sendResponse) {
   if (!paperManager) {
     sendResponse({ success: false, error: "Paper manager not initialized" });
@@ -1184,24 +1162,35 @@ async function handleUpdateRating(rating, sendResponse) {
 }
 async function setupListeners() {
   logger.info("Setting up unified event listeners");
-  const { pluginRegistry } = await __vitePreload(async () => { const { pluginRegistry } = await Promise.resolve().then(() => registry);return { pluginRegistry }},true?void 0:void 0);
   const plugins = pluginRegistry.getAll();
   const hostPatterns = [];
   for (const plugin of plugins) {
-    const pattern = plugin.urlPatterns[0].toString();
-    const match = pattern.match(/([a-zA-Z0-9.-]+)\\\.org/);
-    if (match) {
-      hostPatterns.push({ hostSuffix: `${match[1]}.org` });
+    try {
+      for (const pattern of plugin.urlPatterns) {
+        const patternStr = pattern.toString();
+        const match = patternStr.match(/([a-zA-Z0-9.-]+)\\?\.([a-zA-Z]+)/);
+        if (match) {
+          const domain = match[1];
+          const tld = match[2];
+          hostPatterns.push({ hostSuffix: `${domain}.${tld}` });
+        }
+      }
+    } catch (err) {
+      logger.error(`Error processing plugin URL patterns: ${err}`);
     }
   }
-  chrome.webNavigation.onCompleted.addListener(handleUnifiedNavigation, {
-    url: [
+  if (hostPatterns.length === 0) {
+    hostPatterns.push(
       { hostSuffix: "arxiv.org" },
       { hostSuffix: "semanticscholar.org" },
       { hostSuffix: "doi.org" },
       { hostSuffix: "dl.acm.org" },
       { hostSuffix: "openreview.net" }
-    ]
+    );
+  }
+  logger.info(`Setting up navigation listener with patterns: ${JSON.stringify(hostPatterns)}`);
+  chrome.webNavigation.onCompleted.addListener(handleUnifiedNavigation, {
+    url: hostPatterns
   });
   chrome.tabs.onActivated.addListener(handleUnifiedTabActivation);
   chrome.tabs.onUpdated.addListener(handleUnifiedTabUpdate);
@@ -1277,6 +1266,26 @@ async function handleUnifiedTabUpdate(tabId, changeInfo, tab) {
     }, 500);
   }
 }
+function findPluginForUrl(url) {
+  const plugins = pluginRegistry.getAll();
+  for (const plugin of plugins) {
+    for (const pattern of plugin.urlPatterns) {
+      const match = url.match(pattern);
+      if (match) {
+        const id = plugin.extractId(url);
+        if (id) {
+          return {
+            type: plugin.id,
+            id,
+            primary_id: plugin.formatId ? plugin.formatId(id) : formatPrimaryId(plugin.id, id),
+            plugin
+          };
+        }
+      }
+    }
+  }
+  return MultiSourceDetector.detect(url);
+}
 async function processUnifiedPaperUrl(url) {
   logger.info(`Processing paper URL: ${url}`);
   if (pendingUrls.has(url)) {
@@ -1321,7 +1330,7 @@ async function processUnifiedPaperUrl(url) {
 }
 async function handleTabChangeWithPlugins(tab) {
   if (!tab.url) return;
-  const sourceInfo = MultiSourceDetector.detect(tab.url);
+  const sourceInfo = findPluginForUrl(tab.url);
   if (!sourceInfo) {
     logger.info("Not a recognized paper page, ending current session");
     await endCurrentSession();
@@ -1333,15 +1342,37 @@ async function handleTabChangeWithPlugins(tab) {
   }
   logger.info(`Processing paper URL: ${tab.url}`);
   let paperData;
-  if (sourceInfo.type === "arxiv" && originalProcessArxivUrl) {
-    paperData = await originalProcessArxivUrl(tab.url);
-    if (paperData) {
-      paperData.source = "arxiv";
-      paperData.sourceId = paperData.arxivId;
-      paperData.primary_id = sourceInfo.primary_id;
+  if (sourceInfo.plugin) {
+    const plugin = sourceInfo.plugin;
+    if (plugin.hasApi && plugin.fetchApiData) {
+      try {
+        logger.info(`Using ${plugin.id} plugin API for tab`);
+        const apiData = await plugin.fetchApiData(sourceInfo.id);
+        if (Object.keys(apiData).length > 0) {
+          paperData = {
+            ...apiData,
+            source: plugin.id,
+            sourceId: sourceInfo.id,
+            primary_id: sourceInfo.primary_id,
+            url: tab.url
+          };
+        }
+      } catch (error) {
+        logger.error(`Error using plugin API for tab: ${error}`);
+      }
     }
-  } else if (enhancedProcessPaperUrl) {
-    paperData = await enhancedProcessPaperUrl(tab.url);
+  }
+  if (!paperData) {
+    if (sourceInfo.type === "arxiv" && originalProcessArxivUrl) {
+      paperData = await originalProcessArxivUrl(tab.url);
+      if (paperData) {
+        paperData.source = "arxiv";
+        paperData.sourceId = paperData.arxivId;
+        paperData.primary_id = sourceInfo.primary_id;
+      }
+    } else if (enhancedProcessPaperUrl) {
+      paperData = await enhancedProcessPaperUrl(tab.url);
+    }
   }
   if (paperData) {
     logger.info(`Starting new session for: ${paperData.primary_id}`);
