@@ -1,19 +1,15 @@
-// background.js
+// background.js - Consolidated with multi-source support
 import { GitHubStoreClient } from 'gh-store-client';
 import { PaperManager } from './papers/manager';
 import { loadSessionConfig, getConfigurationInMs } from './config/session.js';
-import { ReadingSessionData } from './papers/types';
-// Added imports for multi-source support
-import { MultiSourceDetector } from './papers/detector';
 import { formatPrimaryId } from './papers/source_utils';
-import { initMultiSourceSupport } from './background_multi_source';
 import { initializePluginSystem } from './papers/plugins/loader';
 import { pluginRegistry } from './papers/plugins/registry';
-
 import { loguru } from './utils/logger';
 
 const logger = loguru.getLogger('Background');
 
+// Global state
 let githubToken = '';
 let githubRepo = '';
 let currentPaperData = null;
@@ -22,13 +18,8 @@ let activityInterval = null;
 let sessionConfig = null;
 let paperManager = null;
 
-// Store references to functions that will be enhanced
-let originalProcessArxivUrl = null;
-let enhancedProcessPaperUrl = null;
-
 // Debounce mechanism to avoid multiple creations of the same paper
 const pendingUrls = new Set();
-const pendingPaperCreations = new Map();
 
 // Enhanced reading session for modern format
 class EnhancedReadingSession {
@@ -109,80 +100,48 @@ class EnhancedReadingSession {
 
 // Load credentials and configuration when extension starts
 async function loadCredentials() {
-    const items = await chrome.storage.sync.get(['githubToken', 'githubRepo']);
-    githubToken = items.githubToken || '';
-    githubRepo = items.githubRepo || '';
-    console.log('Credentials loaded:', { hasToken: !!githubToken, hasRepo: !!githubRepo });
-    
-    // Initialize paper manager if we have credentials
-    if (githubToken && githubRepo) {
-        const githubClient = new GitHubStoreClient(githubToken, githubRepo);
-        paperManager = new PaperManager(githubClient);
-        console.log('Paper manager initialized');
-    }
-    
-    // Load session configuration
-    sessionConfig = getConfigurationInMs(await loadSessionConfig());
-    console.log('Session configuration loaded:', sessionConfig);
-
-    // Initialize multi-source support
-    enhancedInitialization();
-    
-    // Initialize debug objects after everything is loaded
-    initializeDebugObjects();
-}
-
-// Initialize multi-source support
-function enhancedInitialization() {
-    // Save original function for compatibility
-    originalProcessArxivUrl = processArxivUrl;
-    
-    // Initialize multi-source support with explicit context binding
-    const { processPaperUrl, enhancedHandleTabChange } = initMultiSourceSupport({
-        createGithubIssue,       // Pass createGithubIssue function to background_multi_source
-        endCurrentSession,       // Pass endCurrentSession function
-        EnhancedReadingSession,  // Pass EnhancedReadingSession class
-        sessionConfig,           // Pass sessionConfig
-        startActivityTracking,   // Pass startActivityTracking function
-        setCurrentPaperData,     // New helper function to set current paper data
-        processArxivUrl          // Pass the original arXiv processor
-    });
-    
-    // Store enhanced function
-    enhancedProcessPaperUrl = processPaperUrl;
-    
-    // Debug information
-    console.log('Multi-source paper support initialized');
-}
-
-// Helper function to set current paper data
-function setCurrentPaperData(data) {
-    currentPaperData = data;
-    return currentPaperData;
+  const items = await chrome.storage.sync.get(['githubToken', 'githubRepo']);
+  githubToken = items.githubToken || '';
+  githubRepo = items.githubRepo || '';
+  logger.info('Credentials loaded:', { hasToken: !!githubToken, hasRepo: !!githubRepo });
+  
+  // Initialize paper manager if we have credentials
+  if (githubToken && githubRepo) {
+    const githubClient = new GitHubStoreClient(githubToken, githubRepo);
+    paperManager = new PaperManager(githubClient);
+    logger.info('Paper manager initialized');
+  }
+  
+  // Load session configuration
+  sessionConfig = getConfigurationInMs(await loadSessionConfig());
+  logger.info('Session configuration loaded:', sessionConfig);
+  
+  // Initialize debug objects
+  initializeDebugObjects();
 }
 
 // Listen for credential changes
 chrome.storage.onChanged.addListener(async (changes) => {
-    console.log('Storage changes detected:', Object.keys(changes));
-    if (changes.githubToken) {
-        githubToken = changes.githubToken.newValue;
+  logger.info('Storage changes detected:', Object.keys(changes));
+  if (changes.githubToken) {
+    githubToken = changes.githubToken.newValue;
+  }
+  if (changes.githubRepo) {
+    githubRepo = changes.githubRepo.newValue;
+  }
+  if (changes.sessionConfig) {
+    sessionConfig = getConfigurationInMs(changes.sessionConfig.newValue);
+    logger.info('Session configuration updated:', sessionConfig);
+  }
+  
+  // Reinitialize paper manager if credentials changed
+  if (changes.githubToken || changes.githubRepo) {
+    if (githubToken && githubRepo) {
+      const githubClient = new GitHubStoreClient(githubToken, githubRepo);
+      paperManager = new PaperManager(githubClient);
+      logger.info('Paper manager reinitialized');
     }
-    if (changes.githubRepo) {
-        githubRepo = changes.githubRepo.newValue;
-    }
-    if (changes.sessionConfig) {
-        sessionConfig = getConfigurationInMs(changes.sessionConfig.newValue);
-        console.log('Session configuration updated:', sessionConfig);
-    }
-    
-    // Reinitialize paper manager if credentials changed
-    if (changes.githubToken || changes.githubRepo) {
-        if (githubToken && githubRepo) {
-            const githubClient = new GitHubStoreClient(githubToken, githubRepo);
-            paperManager = new PaperManager(githubClient);
-            console.log('Paper manager reinitialized');
-        }
-    }
+  }
 });
 
 // Initialize the extension
@@ -201,132 +160,130 @@ async function initialize() {
   logger.info('Extension initialized');
 }
 
-// Initialize credentials
+// Initialize extension
 initialize().catch(error => {
   logger.error('Initialization failed', error);
 });
 
-// Message passing between background and popup
+// Message passing between background and popup/content scripts
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-    console.log('Message received:', request);
-    
-    if (request.type === 'getCurrentPaper') {
-        console.log('Popup requested current paper:', currentPaperData);
-        sendResponse(currentPaperData);
-    }
-    else if (request.type === 'updateRating') {
-        console.log('Rating update requested:', request.rating);
-        handleUpdateRating(request.rating, sendResponse);
-        return true; // Will respond asynchronously
-    }
-    else if (request.type === 'updateAnnotation') {
-        console.log('Annotation update requested:', request.annotationType, request.data);
-        handleAnnotationUpdate(request.annotationType, request.data)
-            .then(response => sendResponse(response))
-            .catch(error => sendResponse({ success: false, error: error.message }));
-        return true; // Will respond asynchronously
-    }
-    // Add a dedicated handler for track paper requests from content scripts
-    else if (request.type === 'trackPaper') {
-        console.log('Track paper requested:', request);
-        handleTrackPaper(request)
-            .then(response => sendResponse(response))
-            .catch(error => sendResponse({ success: false, error: error.message }));
-        return true; // Will respond asynchronously
-    }
-    return true;
+  logger.info('Message received:', request);
+  
+  if (request.type === 'getCurrentPaper') {
+    logger.info('Popup requested current paper:', currentPaperData);
+    sendResponse(currentPaperData);
+  }
+  else if (request.type === 'updateRating') {
+    logger.info('Rating update requested:', request.rating);
+    handleUpdateRating(request.rating, sendResponse);
+    return true; // Will respond asynchronously
+  }
+  else if (request.type === 'updateAnnotation') {
+    logger.info('Annotation update requested:', request.annotationType, request.data);
+    handleAnnotationUpdate(request.annotationType, request.data)
+      .then(response => sendResponse(response))
+      .catch(error => sendResponse({ success: false, error: error.message }));
+    return true; // Will respond asynchronously
+  }
+  // Add a dedicated handler for track paper requests from content scripts
+  else if (request.type === 'trackPaper') {
+    logger.info('Track paper requested:', request);
+    handleTrackPaper(request)
+      .then(response => sendResponse(response))
+      .catch(error => sendResponse({ success: false, error: error.message }));
+    return true; // Will respond asynchronously
+  }
+  return true;
 });
 
 // Handle track paper request from content script
 async function handleTrackPaper(request) {
-    if (!paperManager) {
-        throw new Error('Paper manager not initialized');
-    }
+  if (!paperManager) {
+    throw new Error('Paper manager not initialized');
+  }
 
-    try {
-        // Process the paper URL based on its source
-        let paperData;
-        
-        // Use the plugin system to process the URL if possible
-        const plugin = pluginRegistry.get(request.source);
-        if (plugin) {
-            logger.info(`Using ${plugin.name} plugin to process paper`);
-            
-            // Extract ID using the plugin
-            const id = plugin.extractId(request.url);
-            
-            if (!id) {
-                throw new Error(`Could not extract ID from URL: ${request.url}`);
-            }
-            
-            // Try to use the plugin's API if available
-            if (plugin.hasApi && plugin.fetchApiData) {
-                try {
-                    paperData = await plugin.fetchApiData(id);
-                    // Add required source information
-                    paperData.source = request.source;
-                    paperData.sourceId = id;
-                    paperData.primary_id = plugin.formatId ? plugin.formatId(id) : formatPrimaryId(request.source, id);
-                    paperData.url = request.url;
-                } catch (error) {
-                    logger.error(`Error using plugin API: ${error}`);
-                }
-            }
-            
-            // Fall back to enhanced process paper URL if API failed
-            if (!paperData && enhancedProcessPaperUrl) {
-                paperData = await enhancedProcessPaperUrl(request.url);
-            }
-        } else if (request.source === 'arxiv' && originalProcessArxivUrl) {
-            // Special case for arXiv
-            paperData = await originalProcessArxivUrl(request.url);
-            
-            // Add multi-source fields
-            if (paperData) {
-                paperData.source = 'arxiv';
-                paperData.sourceId = paperData.arxivId;
-                paperData.primary_id = formatPrimaryId('arxiv', paperData.arxivId);
-            }
-        } else if (enhancedProcessPaperUrl) {
-            // Try the generic processor as a fallback
-            paperData = await enhancedProcessPaperUrl(request.url);
+  try {
+    // Process the paper URL based on its source
+    let paperData;
+    
+    // Use the plugin system to process the URL if possible
+    const plugin = pluginRegistry.get(request.source);
+    if (plugin) {
+      logger.info(`Using ${plugin.name} plugin to process paper`);
+      
+      // Extract ID using the plugin
+      const id = plugin.extractId(request.url);
+      
+      if (!id) {
+        throw new Error(`Could not extract ID from URL: ${request.url}`);
+      }
+      
+      // Try to use the plugin's API if available
+      if (plugin.hasApi && plugin.fetchApiData) {
+        try {
+          paperData = await plugin.fetchApiData(id);
+          // Add required source information
+          paperData.source = request.source;
+          paperData.sourceId = id;
+          paperData.primary_id = plugin.formatId ? plugin.formatId(id) : formatPrimaryId(request.source, id);
+          paperData.url = request.url;
+        } catch (error) {
+          logger.error(`Error using plugin API: ${error}`);
         }
-        
-        if (!paperData) {
-            throw new Error(`Could not process paper: ${request.url}`);
-        }
-        
-        // Create GitHub issue for the paper
-        await createGithubIssue(paperData);
-        
-        return { success: true, paperData };
-    } catch (error) {
-        logger.error(`Error tracking paper: ${error}`);
-        throw error;
+      }
     }
+    
+    // Fall back to basic paper data if API failed
+    if (!paperData) {
+      // Get the ID using the plugin if available
+      const id = plugin ? plugin.extractId(request.url) : request.id;
+      paperData = {
+        source: request.source,
+        sourceId: id,
+        primary_id: plugin && plugin.formatId ? 
+          plugin.formatId(id) : formatPrimaryId(request.source, id),
+        url: request.url,
+        title: request.title || `${request.source.toUpperCase()} Paper: ${id}`,
+        timestamp: new Date().toISOString(),
+        rating: 'novote'
+      };
+    }
+    
+    if (!paperData) {
+      throw new Error(`Could not process paper: ${request.url}`);
+    }
+    
+    // Create GitHub issue for the paper
+    await createGithubIssue(paperData);
+    
+    return { success: true, paperData };
+  } catch (error) {
+    logger.error(`Error tracking paper: ${error}`);
+    throw error;
+  }
 }
 
 async function handleUpdateRating(rating, sendResponse) {
-    if (!paperManager) {
-        sendResponse({ success: false, error: 'Paper manager not initialized' });
-        return;
-    }
+  if (!paperManager) {
+    sendResponse({ success: false, error: 'Paper manager not initialized' });
+    return;
+  }
 
-    if (!currentPaperData) {
-        sendResponse({ success: false, error: 'No current paper' });
-        return;
-    }
+  if (!currentPaperData) {
+    sendResponse({ success: false, error: 'No current paper' });
+    return;
+  }
 
-    try {
-        // Always use primary_id for rating updates
-        const paperId = currentPaperData.primary_id;
-        await paperManager.updateRating(paperId, rating, currentPaperData);
-        currentPaperData.rating = rating;
-        sendResponse({ success: true });
-    } catch (error) {
-        console.error('Error updating rating:', error);
-        sendResponse({ success: false, error: error.message });
-    }
+  try {
+    // Always use primary_id for rating updates
+    const paperId = currentPaperData.primary_id;
+    await paperManager.updateRating(paperId, rating, currentPaperData);
+    currentPaperData.rating = rating;
+    sendResponse({ success: true });
+  } catch (error) {
+    logger.error('Error updating rating:', error);
+    sendResponse({ success: false, error: error.message });
+  }
 }
 
 // Consolidated setup for all navigation and tab listeners
@@ -392,6 +349,32 @@ async function setupListeners() {
   logger.info('All event listeners initialized');
 }
 
+// Helper function to find the appropriate plugin for a URL
+function findPluginForUrl(url) {
+  // First try using the plugin registry
+  const plugins = pluginRegistry.getAll();
+  
+  for (const plugin of plugins) {
+    for (const pattern of plugin.urlPatterns) {
+      const match = url.match(pattern);
+      if (match) {
+        const id = plugin.extractId(url);
+        if (id) {
+          return {
+            type: plugin.id,
+            id: id,
+            primary_id: plugin.formatId ? plugin.formatId(id) : formatPrimaryId(plugin.id, id),
+            plugin: plugin
+          };
+        }
+      }
+    }
+  }
+  
+  // No plugin match
+  return null;
+}
+
 // Unified handlers for navigation and tab events
 async function handleUnifiedNavigation(details) {
   logger.info(`Unified navigation handler: ${details.url}`);
@@ -406,10 +389,12 @@ async function handleUnifiedNavigation(details) {
   pendingUrls.add(details.url);
   
   try {
-    // Check if this is a paper URL
-    const sourceInfo = MultiSourceDetector.detect(details.url);
+    // Get the appropriate plugin for this URL
+    const sourceInfo = findPluginForUrl(details.url);
+    
     if (!sourceInfo) {
       logger.info('Not a recognized paper URL');
+      pendingUrls.delete(details.url);
       return;
     }
     
@@ -422,7 +407,7 @@ async function handleUnifiedNavigation(details) {
       await handleTabChangeWithPlugins(tabs[0]);
     } else {
       // Process URL but don't start a session
-      const paperData = await processUnifiedPaperUrl(details.url);
+      const paperData = await processPaperUrl(details.url);
       if (paperData) {
         logger.info(`Processed paper data: ${paperData.title}`);
       }
@@ -480,39 +465,13 @@ async function handleUnifiedTabUpdate(tabId, changeInfo, tab) {
   }
 }
 
-// Helper function to find the appropriate plugin for a URL
-function findPluginForUrl(url) {
-  // First try using the plugin registry
-  const plugins = pluginRegistry.getAll();
-  
-  for (const plugin of plugins) {
-    for (const pattern of plugin.urlPatterns) {
-      const match = url.match(pattern);
-      if (match) {
-        const id = plugin.extractId(url);
-        if (id) {
-          return {
-            type: plugin.id,
-            id: id,
-            primary_id: plugin.formatId ? plugin.formatId(id) : formatPrimaryId(plugin.id, id),
-            plugin: plugin
-          };
-        }
-      }
-    }
-  }
-  
-  // Fallback to legacy detector if no plugin match
-  return MultiSourceDetector.detect(url);
-}
-
-// Unified paper URL processor with debouncing
-async function processUnifiedPaperUrl(url) {
+// Process a paper URL with plugin system
+async function processPaperUrl(url) {
   logger.info(`Processing paper URL: ${url}`);
   
   // Skip if URL is already being processed
   if (pendingUrls.has(url)) {
-    logger.info(`URL already being processed in processUnifiedPaperUrl: ${url}`);
+    logger.info(`URL already being processed in processPaperUrl: ${url}`);
     return null;
   }
   
@@ -520,8 +479,9 @@ async function processUnifiedPaperUrl(url) {
   pendingUrls.add(url);
   
   try {
-    // Check source type
-    const sourceInfo = MultiSourceDetector.detect(url);
+    // Find the appropriate plugin or source info
+    const sourceInfo = findPluginForUrl(url);
+    
     if (!sourceInfo) {
       logger.info('Not a recognized paper URL in processor');
       return null;
@@ -529,19 +489,79 @@ async function processUnifiedPaperUrl(url) {
     
     // Process based on source type
     let paperData;
-    if (sourceInfo.type === 'arxiv' && originalProcessArxivUrl) {
-      // Use original arXiv processor for compatibility
-      paperData = await originalProcessArxivUrl(url);
+    
+    if (sourceInfo.plugin) {
+      // Use plugin if available
+      const plugin = sourceInfo.plugin;
       
-      // Enhance with source fields
-      if (paperData) {
-        paperData.source = 'arxiv';
-        paperData.sourceId = paperData.arxivId;
-        paperData.primary_id = sourceInfo.primary_id;
+      // Try to use the plugin's API if available
+      if (plugin.hasApi && plugin.fetchApiData) {
+        try {
+          logger.info(`Using ${plugin.id} plugin API to process paper`);
+          const apiData = await plugin.fetchApiData(sourceInfo.id);
+          if (Object.keys(apiData).length > 0) {
+            paperData = {
+              ...apiData,
+              source: plugin.id,
+              sourceId: sourceInfo.id,
+              primary_id: sourceInfo.primary_id,
+              url: url
+            };
+          }
+        } catch (error) {
+          logger.error(`Error using plugin API: ${error}`);
+        }
       }
-    } else if (enhancedProcessPaperUrl) {
-      // Use enhanced processor for other sources
-      paperData = await enhancedProcessPaperUrl(url);
+      
+      // If API failed, try to extract from the page DOM if we have a tab ID
+      if (!paperData) {
+        try {
+          logger.info(`Attempting DOM extraction for ${plugin.id}`);
+          const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+          if (tabs.length > 0 && tabs[0].id) {
+            const tabId = tabs[0].id;
+            
+            // Execute script to get HTML document
+            const script = await chrome.scripting.executeScript({
+              target: { tabId },
+              func: () => document.documentElement.outerHTML
+            });
+            
+            if (script && script[0] && script[0].result) {
+              // Create DOM document from HTML
+              const parser = new DOMParser();
+              const doc = parser.parseFromString(script[0].result, 'text/html');
+              
+              // Use plugin to extract metadata
+              const metadata = await plugin.extractMetadata(doc, url);
+              if (metadata && Object.keys(metadata).length > 0) {
+                paperData = {
+                  ...metadata,
+                  source: plugin.id,
+                  sourceId: sourceInfo.id,
+                  primary_id: sourceInfo.primary_id,
+                  url: url
+                };
+              }
+            }
+          }
+        } catch (error) {
+          logger.error(`Error extracting from DOM: ${error}`);
+        }
+      }
+    }
+    
+    // If we still don't have paper data, create a basic record
+    if (!paperData) {
+      paperData = {
+        source: sourceInfo.type,
+        sourceId: sourceInfo.id,
+        primary_id: sourceInfo.primary_id,
+        url: url,
+        title: `${sourceInfo.type.toUpperCase()} Paper: ${sourceInfo.id}`,
+        timestamp: new Date().toISOString(),
+        rating: 'novote'
+      };
     }
     
     // If paper data was extracted, create or update in GitHub
@@ -588,50 +608,8 @@ async function handleTabChangeWithPlugins(tab) {
   // Process the paper URL
   logger.info(`Processing paper URL: ${tab.url}`);
   
-  // Use sourceInfo to get paper data
-  let paperData;
-  
-  // If we have a plugin, try to use it
-  if (sourceInfo.plugin) {
-    const plugin = sourceInfo.plugin;
-    
-    // Try to use the plugin's API if available
-    if (plugin.hasApi && plugin.fetchApiData) {
-      try {
-        logger.info(`Using ${plugin.id} plugin API for tab`);
-        const apiData = await plugin.fetchApiData(sourceInfo.id);
-        if (Object.keys(apiData).length > 0) {
-          paperData = {
-            ...apiData,
-            source: plugin.id,
-            sourceId: sourceInfo.id,
-            primary_id: sourceInfo.primary_id,
-            url: tab.url
-          };
-        }
-      } catch (error) {
-        logger.error(`Error using plugin API for tab: ${error}`);
-      }
-    }
-  }
-  
-  // Fall back to legacy processors if needed
-  if (!paperData) {
-    if (sourceInfo.type === 'arxiv' && originalProcessArxivUrl) {
-      // Use original arXiv processor for compatibility
-      paperData = await originalProcessArxivUrl(tab.url);
-      
-      // Enhance with source fields
-      if (paperData) {
-        paperData.source = 'arxiv';
-        paperData.sourceId = paperData.arxivId;
-        paperData.primary_id = sourceInfo.primary_id;
-      }
-    } else if (enhancedProcessPaperUrl) {
-      // Use enhanced processor for other sources
-      paperData = await enhancedProcessPaperUrl(tab.url);
-    }
-  }
+  // Get paper data using the plugin system
+  const paperData = await processPaperUrl(tab.url);
   
   if (paperData) {
     logger.info(`Starting new session for: ${paperData.primary_id}`);
@@ -659,284 +637,156 @@ async function handleTabChangeWithPlugins(tab) {
 }
 
 async function endCurrentSession() {
-    if (currentSession && currentPaperData) {
-        logger.info(`Ending session for: ${currentPaperData.primary_id}`);
-        const sessionData = currentSession.finalize();
-        if (sessionData) {
-            logger.info('Creating reading event:', sessionData);
-            await enhancedCreateReadingEvent(currentPaperData, sessionData);
-        }
-        currentSession = null;
-        currentPaperData = null;
-        stopActivityTracking();
+  if (currentSession && currentPaperData) {
+    logger.info(`Ending session for: ${currentPaperData.primary_id}`);
+    const sessionData = currentSession.finalize();
+    if (sessionData) {
+      logger.info('Creating reading event:', sessionData);
+      await createReadingEvent(currentPaperData, sessionData);
     }
+    currentSession = null;
+    currentPaperData = null;
+    stopActivityTracking();
+  }
 }
 
 function startActivityTracking() {
-    if (!activityInterval) {
-        console.log('Starting activity tracking');
-        activityInterval = setInterval(() => {
-            if (currentSession) {
-                currentSession.update();
-            }
-        }, sessionConfig.activityUpdateInterval);
-    }
+  if (!activityInterval) {
+    logger.info('Starting activity tracking');
+    activityInterval = setInterval(() => {
+      if (currentSession) {
+        currentSession.update();
+      }
+    }, sessionConfig.activityUpdateInterval);
+  }
 }
 
 function stopActivityTracking() {
-    if (activityInterval) {
-        clearInterval(activityInterval);
-        activityInterval = null;
-    }
+  if (activityInterval) {
+    clearInterval(activityInterval);
+    activityInterval = null;
+  }
 }
 
-// Enhanced createReadingEvent function for multi-source support
-async function enhancedCreateReadingEvent(paperData, sessionData) {
-    if (!paperManager || !paperData) {
-        console.error('Missing required data for creating reading event:', {
-            hasPaperManager: !!paperManager,
-            hasPaperData: !!paperData
-        });
-        return;
-    }
+// Create reading event function for all sources
+async function createReadingEvent(paperData, sessionData) {
+  if (!paperManager || !paperData) {
+    logger.error('Missing required data for creating reading event:', {
+      hasPaperManager: !!paperManager,
+      hasPaperData: !!paperData
+    });
+    return;
+  }
 
-    try {
-        // Always use primary_id for storage
-        if (!paperData.primary_id) {
-            logger.error('Paper data missing primary_id. This should not happen.');
-            return;
-        }
-        
-        const paperId = paperData.primary_id;
-        
-        await paperManager.logReadingSession(
-            paperId,
-            sessionData,
-            paperData
-        );
-        
-        logger.info('Reading session logged:', {
-            paperId: paperId,
-            sessionId: sessionData.session_id,
-            activeTime: sessionData.duration_seconds,
-            idleTime: sessionData.idle_seconds,
-            totalTime: sessionData.total_elapsed_seconds
-        });
-        
-    } catch (error) {
-        logger.error('Error logging reading session:', error);
-    }
-}
-
-// Direct GitHub issue creation function
-async function createGithubIssue(paperData) {
-    if (!paperManager) {
-        logger.error('Paper manager not initialized');
-        return null;
-    }
-
-    // Ensure paper has primary_id
+  try {
+    // Always use primary_id for storage
     if (!paperData.primary_id) {
-        if (paperData.source && paperData.sourceId) {
-            paperData.primary_id = formatPrimaryId(paperData.source, paperData.sourceId);
-        } else if (paperData.arxivId) {
-            paperData.source = 'arxiv';
-            paperData.sourceId = paperData.arxivId;
-            paperData.primary_id = formatPrimaryId('arxiv', paperData.arxivId);
-        } else {
-            logger.error('Cannot create paper - no valid identifier');
-            return null;
-        }
+      logger.error('Paper data missing primary_id. This should not happen.');
+      return;
     }
     
-    try {
-        logger.info(`Creating/getting paper issue: ${paperData.primary_id}`);
-        const existingPaper = await paperManager.getOrCreatePaper(paperData);
-        logger.info(`Paper metadata stored/retrieved: ${existingPaper.primary_id}`);
-        return existingPaper;
-    } catch (error) {
-        logger.error(`Error handling paper metadata: ${error}`, error);
-        return null;
+    const paperId = paperData.primary_id;
+    
+    await paperManager.logReadingSession(
+      paperId,
+      sessionData,
+      paperData
+    );
+    
+    logger.info('Reading session logged:', {
+      paperId: paperId,
+      sessionId: sessionData.session_id,
+      activeTime: sessionData.duration_seconds,
+      idleTime: sessionData.idle_seconds,
+      totalTime: sessionData.total_elapsed_seconds
+    });
+    
+  } catch (error) {
+    logger.error('Error logging reading session:', error);
+  }
+}
+
+// GitHub issue creation function
+async function createGithubIssue(paperData) {
+  if (!paperManager) {
+    logger.error('Paper manager not initialized');
+    return null;
+  }
+
+  // Ensure paper has primary_id
+  if (!paperData.primary_id) {
+    if (paperData.source && paperData.sourceId) {
+      paperData.primary_id = formatPrimaryId(paperData.source, paperData.sourceId);
+    } else {
+      logger.error('Cannot create paper - no valid identifier');
+      return null;
     }
+  }
+  
+  try {
+    logger.info(`Creating/getting paper issue: ${paperData.primary_id}`);
+    const existingPaper = await paperManager.getOrCreatePaper(paperData);
+    logger.info(`Paper metadata stored/retrieved: ${existingPaper.primary_id}`);
+    return existingPaper;
+  } catch (error) {
+    logger.error(`Error handling paper metadata: ${error}`, error);
+    return null;
+  }
 }
 
 async function handleAnnotationUpdate(type, data) {
-    if (!paperManager) {
-        throw new Error('Paper manager not initialized');
-    }
+  if (!paperManager) {
+    throw new Error('Paper manager not initialized');
+  }
 
-    try {
-        // Ensure we have a valid paper ID
-        let paperId = data.paperId;
-        
-        // Convert to new format if needed
-        if (!paperId.includes('.')) {
-            logger.warning(`Legacy ID format detected in annotation: ${paperId}`);
-            paperId = formatPrimaryId('arxiv', paperId);
-        }
-        
-        const paperData = data.title ? {
-            title: data.title,
-            source: data.source,
-            primary_id: paperId
-        } : undefined;
-
-        if (type === 'vote') {
-            await paperManager.updateRating(
-                paperId,
-                data.vote,
-                paperData
-            );
-        } else {
-            await paperManager.logAnnotation(
-                paperId,
-                'notes',
-                data.notes,
-                paperData
-            );
-        }
-
-        return { success: true };
-    } catch (error) {
-        console.error('Error logging interaction:', error);
-        throw error;
-    }
-}
-
-async function parseXMLText(xmlText) {
-    console.log('Parsing XML response...');
-    try {
-        const getTagContent = (tag, text) => {
-            const entryRegex = /<entry>([\s\S]*?)<\/entry>/;
-            const entryMatch = text.match(entryRegex);
-            
-            if (entryMatch) {
-                const entryContent = entryMatch[1];
-                const regex = new RegExp(`<${tag}[^>]*>(.*?)</${tag}>`, 's');
-                const match = entryContent.match(regex);
-                return match ? match[1].trim() : '';
-            }
-            return '';
-        };
-        
-        const getAuthors = (text) => {
-            const authors = [];
-            const regex = /<author>[^]*?<name>([^]*?)<\/name>[^]*?<\/author>/g;
-            let match;
-            while (match = regex.exec(text)) {
-                authors.push(match[1].trim());
-            }
-            return authors;
-        };
-
-        const getCategories = (text) => {
-            const categories = new Set();
-            
-            const primaryMatch = text.match(/<arxiv:primary_category[^>]*term="([^"]+)"/);
-            if (primaryMatch) {
-                categories.add(primaryMatch[1]);
-            }
-            
-            const categoryRegex = /<category[^>]*term="([^"]+)"/g;
-            let match;
-            while (match = categoryRegex.exec(text)) {
-                categories.add(match[1]);
-            }
-            
-            return Array.from(categories);
-        };
-
-        const getPublishedDate = (text) => {
-            const match = text.match(/<published>([^<]+)<\/published>/);
-            return match ? match[1].trim() : null;
-        };
-
-        const parsed = {
-            title: getTagContent('title', xmlText),
-            summary: getTagContent('summary', xmlText),
-            authors: getAuthors(xmlText),
-            published_date: getPublishedDate(xmlText),
-            arxiv_tags: getCategories(xmlText)
-        };
-        
-        console.log('Parsed XML:', parsed);
-        return parsed;
-    } catch (error) {
-        console.error('Error parsing XML:', error);
-        return null;
-    }
-}
-
-// Process arXiv URL, but enhanced to add standardized fields
-async function processArxivUrl(url) {
-    console.log('Processing URL:', url);
+  try {
+    // Ensure we have a valid paper ID
+    let paperId = data.paperId;
     
-    let arxivId = null;
-    const match = url.match(/arxiv\.org\/(abs|pdf|html)\/([0-9.]+)/);
-    if (match) {
-        arxivId = match[2];
+    // Convert to new format if needed
+    if (!paperId.includes('.')) {
+      logger.warning(`Legacy ID format detected in annotation: ${paperId}`);
+      paperId = formatPrimaryId('arxiv', paperId);
     }
     
-    if (!arxivId) {
-        console.log('No arXiv ID found in URL');
-        return null;
+    const paperData = data.title ? {
+      title: data.title,
+      source: data.source,
+      primary_id: paperId
+    } : undefined;
+
+    if (type === 'vote') {
+      await paperManager.updateRating(
+        paperId,
+        data.vote,
+        paperData
+      );
+    } else {
+      await paperManager.logAnnotation(
+        paperId,
+        'notes',
+        data.notes,
+        paperData
+      );
     }
-    
-    console.log('Found arXiv ID:', arxivId);
-    
-    try {
-        const apiUrl = `https://export.arxiv.org/api/query?id_list=${arxivId}`;
-        console.log('Fetching from arXiv API:', apiUrl);
-        
-        const response = await fetch(apiUrl);
-        console.log('API response status:', response.status);
-        
-        if (!response.ok) {
-            throw new Error(`ArXiv API error: ${response.status}`);
-        }
-        
-        const text = await response.text();
-        const parsed = await parseXMLText(text);
-        
-        if (!parsed) {
-            console.log('Failed to parse API response');
-            return null;
-        }
-        
-        // Build paper data with new format fields
-        const paperData = {
-            arxivId,
-            source: 'arxiv',
-            sourceId: arxivId,
-            primary_id: formatPrimaryId('arxiv', arxivId),
-            url,
-            title: parsed.title,
-            authors: parsed.authors.join(", "),
-            abstract: parsed.summary,
-            timestamp: new Date().toISOString(),
-            rating: 'novote',
-            published_date: parsed.published_date,
-            arxiv_tags: parsed.arxiv_tags
-        };
-        
-        console.log('Paper data processed:', paperData);
-        return paperData;
-    } catch (error) {
-        console.error('Error processing arXiv URL:', error);
-        return null;
-    }
+
+    return { success: true };
+  } catch (error) {
+    logger.error('Error logging interaction:', error);
+    throw error;
+  }
 }
 
 // Initialize debug objects in service worker scope
 function initializeDebugObjects() {
-    // Don't use window in service worker context
-    self.__DEBUG__ = {
-        get paperManager() { return paperManager; },
-        getGithubClient: () => paperManager?.client,
-        getCurrentPaper: () => currentPaperData,
-        getCurrentSession: () => currentSession,
-        getConfig: () => sessionConfig
-    };
+  // Don't use window in service worker context
+  self.__DEBUG__ = {
+    get paperManager() { return paperManager; },
+    getGithubClient: () => paperManager?.client,
+    getCurrentPaper: () => currentPaperData,
+    getCurrentSession: () => currentSession,
+    getConfig: () => sessionConfig
+  };
 
-    console.log('Debug objects registered, access via __DEBUG__ in service worker console');
+  logger.info('Debug objects registered, access via __DEBUG__ in service worker console');
 }
