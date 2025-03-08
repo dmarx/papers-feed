@@ -1,22 +1,12 @@
-// Consolidation Plan for OpenReview Functionality
-
-/**
- * 1. Enhanced OpenReview Plugin
- * 
- * The OpenReview plugin should handle all aspects of interacting with OpenReview:
- * - URL detection and ID extraction
- * - API data fetching
- * - DOM extraction as fallback
- * - Custom styling and UI elements
- * - Specific processing needs
- */
-
 // extension/papers/plugins/sources/openreview_plugin.ts
+
 import { SourcePlugin } from '../source_plugin';
 import { UnifiedPaperData } from '../../types';
 import { loguru } from '../../../utils/logger';
 
-// Add any OpenReview-specific types here
+const logger = loguru.getLogger('OpenReviewPlugin');
+
+// Types for OpenReview API responses
 interface OpenReviewNote {
   id: string;
   forum: string;
@@ -40,8 +30,8 @@ interface OpenReviewRating {
 export const openreviewPlugin: SourcePlugin = {
   id: 'openreview',
   name: 'OpenReview',
-  description: 'Support for OpenReview papers and conferences',
-  version: '2.0.0',
+  description: 'Support for OpenReview papers',
+  version: '1.1.0',
   
   urlPatterns: [
     /openreview\.net\/forum\?id=([a-zA-Z0-9_\-]+)/,
@@ -58,56 +48,27 @@ export const openreviewPlugin: SourcePlugin = {
     return null;
   },
   
-  /**
-   * Process a paper URL from OpenReview
-   * This encapsulates behavior that might have been in processPaperUrl.ts
-   */
-  async processUrl(url: string): Promise<Partial<UnifiedPaperData> | null> {
-    const id = this.extractId(url);
-    if (!id) return null;
-    
-    // First try API
-    try {
-      const apiData = await this.fetchApiData(id);
-      if (Object.keys(apiData).length > 0) {
-        return {
-          ...apiData,
-          source: 'openreview',
-          sourceId: id,
-          primary_id: this.formatId(id),
-          url: url
-        };
-      }
-    } catch (error) {
-      loguru.getLogger('OpenReviewPlugin').error(`API fetch failed: ${error}`);
-      // Continue to DOM extraction
-    }
-    
-    // If API fails, rely on DOM extraction which will be performed later
-    return {
-      source: 'openreview',
-      sourceId: id,
-      primary_id: this.formatId(id),
-      url: url,
-      title: `OpenReview Paper: ${id}`
-    };
-  },
-  
   async extractMetadata(document: Document, url: string): Promise<Partial<UnifiedPaperData>> {
-    const logger = loguru.getLogger('OpenReviewPlugin');
     logger.info(`Extracting metadata from OpenReview page: ${url}`);
     
     try {
+      // Extract paper ID from URL
+      const paperId = this.extractId(url);
+      if (!paperId) {
+        logger.warning(`Could not extract paper ID from URL: ${url}`);
+        return { title: 'Unknown OpenReview Paper', url };
+      }
+      
       // First priority: Extract from meta tags (most reliable)
       const getMetaContent = (name: string): string | undefined => {
         const element = document.querySelector(`meta[name="${name}"]`);
-        return element ? element.getAttribute('content') : undefined;
+        return element ? element.getAttribute('content') || undefined : undefined;
       };
       
       // Get all citation_author meta tags
       const authorElements = document.querySelectorAll('meta[name="citation_author"]');
       const authors = Array.from(authorElements)
-        .map(el => el.getAttribute('content'))
+        .map(el => el.getAttribute('content') || '')
         .filter(Boolean)
         .join(', ');
       
@@ -138,7 +99,7 @@ export const openreviewPlugin: SourcePlugin = {
         };
         
         // Extract the submission title if not found in meta
-        const domTitle = document.querySelector('.note_content_title, .note-content-title')?.textContent?.trim();
+        const domTitle = document.querySelector('.note_content_title, .note-content-title')?.textContent?.trim() || '';
         
         // Extract authors if not found in meta
         let domAuthors = '';
@@ -148,13 +109,13 @@ export const openreviewPlugin: SourcePlugin = {
         }
         
         // Extract abstract if not found in meta
-        const domAbstract = getContentFieldValue('Abstract');
+        const domAbstract = getContentFieldValue('Abstract') || '';
         
         // Extract keywords
-        const keywords = getContentFieldValue('Keywords');
+        const keywords = getContentFieldValue('Keywords') || '';
         
         // Extract TL;DR summary
-        const tldr = getContentFieldValue('TL;DR');
+        const tldr = getContentFieldValue('TL;DR') || '';
         
         // Extract venue information
         let venue = '';
@@ -217,7 +178,7 @@ export const openreviewPlugin: SourcePlugin = {
       
       // Construct the source-specific metadata
       const sourceSpecificMetadata: Record<string, any> = {
-        forum_id: this.extractId(url) || '',
+        forum_id: paperId,
         conference: conferenceTitle || domData.venue || '',
         pdf_url: pdfUrl || '',
         publication_date: publicationDate || '',
@@ -244,7 +205,7 @@ export const openreviewPlugin: SourcePlugin = {
       });
       
       return {
-        title: title || domData.domTitle || '',
+        title: title || domData.domTitle || `OpenReview Paper: ${paperId}`,
         authors: authors || domData.domAuthors || '',
         abstract: abstract || domData.domAbstract || '',
         url: url,
@@ -262,7 +223,6 @@ export const openreviewPlugin: SourcePlugin = {
   hasApi: true,
   
   async fetchApiData(id: string): Promise<Partial<UnifiedPaperData>> {
-    const logger = loguru.getLogger('OpenReviewPlugin');
     logger.info(`Fetching OpenReview API data for ID: ${id}`);
     
     try {
@@ -285,7 +245,7 @@ export const openreviewPlugin: SourcePlugin = {
       }
       
       // Extract the note data
-      const note: OpenReviewNote = data.notes[0];
+      const note = data.notes[0] as OpenReviewNote;
       const content = note.content || {};
       
       // Extract basic metadata
@@ -381,105 +341,6 @@ export const openreviewPlugin: SourcePlugin = {
       return {};
     }
   },
-
-  /**
-   * Custom content script functionality for OpenReview pages
-   * This can be injected by the plugin system when on OpenReview pages
-   */
-  getContentScriptCode(): string {
-    return `
-      // OpenReview specific content script functionality
-      (function() {
-        console.log('OpenReview plugin content script loaded');
-        
-        // Add custom styling for OpenReview annotations
-        const style = document.createElement('style');
-        style.textContent = \`
-          .openreview-annotator {
-            margin-left: 8px;
-            padding: 2px 6px;
-            background-color: #6d4c41;
-            color: white;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 0.8em;
-          }
-          
-          .openreview-popup-header {
-            font-weight: bold;
-            border-bottom: 1px solid #eee;
-            padding-bottom: 8px;
-            margin-bottom: 8px;
-          }
-        \`;
-        document.head.appendChild(style);
-        
-        // Add annotators to paper links
-        function processOpenReviewLinks() {
-          const links = document.querySelectorAll('a[href*="openreview.net/forum"], a[href*="openreview.net/pdf"]');
-          
-          links.forEach(link => {
-            if (link.classList.contains('processed-link')) return;
-            link.classList.add('processed-link');
-            
-            // Create annotator button
-            const annotator = document.createElement('span');
-            annotator.className = 'openreview-annotator';
-            annotator.textContent = 'Track';
-            annotator.title = 'Track this OpenReview paper';
-            
-            // Add click handler
-            annotator.addEventListener('click', (e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              
-              // Extract paper ID from URL
-              const url = link.href;
-              const match = url.match(/id=([a-zA-Z0-9_\\-]+)/);
-              if (!match) return;
-              
-              const paperId = match[1];
-              
-              // Send message to background script
-              chrome.runtime.sendMessage({
-                type: 'trackPaper',
-                source: 'openreview',
-                url: url,
-                id: paperId
-              });
-            });
-            
-            // Add to page
-            link.insertAdjacentElement('afterend', annotator);
-          });
-        }
-        
-        // Initial processing
-        processOpenReviewLinks();
-        
-        // Set up observer for dynamically added content
-        const observer = new MutationObserver((mutations) => {
-          let shouldProcess = false;
-          
-          for (const mutation of mutations) {
-            if (mutation.addedNodes.length) {
-              shouldProcess = true;
-              break;
-            }
-          }
-          
-          if (shouldProcess) {
-            processOpenReviewLinks();
-          }
-        });
-        
-        observer.observe(document.body, {
-          childList: true,
-          subtree: true
-        });
-      })();
-    `;
-  },
   
   color: '#6d4c41',
   icon: '📋',
@@ -492,26 +353,3 @@ export const openreviewPlugin: SourcePlugin = {
 // Register the plugin
 import { pluginRegistry } from '../registry';
 pluginRegistry.register(openreviewPlugin);
-
-/**
- * 2. Changes to remove OpenReview-specific code from other files
- * 
- * Identify and refactor or remove OpenReview-specific code from the following files:
- */
-
-// In papers/source_utils.ts:
-// Remove the OpenReview-specific entries from SOURCE_TYPES and references elsewhere
-
-// In papers/process_paper_url.ts:
-// Remove OpenReview-specific handling and defer to the plugin system
-
-// In papers/detector.ts:
-// Remove OpenReview-specific detection code and use the plugin registry instead
-
-// In content.js:
-// Remove OpenReview-specific selectors and styling
-// The plugin system should handle injecting custom content scripts when needed
-
-// In background.js:
-// Remove hardcoded OpenReview handling
-// Use the plugin system to delegate processing
