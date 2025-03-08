@@ -262,6 +262,57 @@ export class PaperManager {
       }
     }
 
+    // Log the session as interaction
+    try {
+      debugLogger.info(`Adding reading session interaction for ${paperId}`);
+      await this.addInteraction(paperId, {
+        type: "reading_session",
+        timestamp: new Date().toISOString(),
+        data: session
+      });
+      debugLogger.info(`Successfully added reading session interaction for ${paperId}`);
+    } catch (error) {
+      debugLogger.error(`Error adding reading session interaction: ${error}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Log an annotation for a paper
+   */
+  async logAnnotation(
+    paperId: string,
+    key: string,
+    value: Json,
+    paperData?: any
+  ): Promise<void> {
+    debugLogger.info(`logAnnotation called for ${paperId}, key=${key}`);
+    
+    // Ensure we have a standard format ID
+    if (!isNewFormat(paperId)) {
+      const oldId = paperId;
+      paperId = formatPrimaryId('arxiv', paperId);
+      debugLogger.warning(`Converting legacy ID in logAnnotation: ${oldId} -> ${paperId}`);
+      
+      // If paperData provided, ensure it has primary_id
+      if (paperData && !paperData.primary_id) {
+        debugLogger.info(`Updating paperData.primary_id to ${paperId}`);
+        paperData.primary_id = paperId;
+      }
+    }
+
+    // Ensure paper exists with proper data
+    if (paperData) {
+      debugLogger.info(`Ensuring paper exists: ${paperId}`);
+      try {
+        await this.getOrCreatePaper(paperData);
+        debugLogger.info(`Paper exists or was created: ${paperId}`);
+      } catch (error) {
+        debugLogger.error(`Error ensuring paper exists: ${error}`);
+        throw error;
+      }
+    }
+
     // Log the annotation as interaction
     try {
       debugLogger.info(`Adding annotation interaction for ${paperId}, key=${key}`);
@@ -466,54 +517,3 @@ export class PaperManager {
     }
   }
 }
-      }
-    }
-
-    // Ensure paper exists with proper data
-    if (paperData) {
-      debugLogger.info(`Ensuring paper exists: ${paperId}`);
-      try {
-        await this.getOrCreatePaper(paperData);
-        debugLogger.info(`Paper exists or was created: ${paperId}`);
-      } catch (error) {
-        debugLogger.error(`Error ensuring paper exists: ${error}`);
-        throw error;
-      }
-    }
-
-    // Log the session as interaction
-    try {
-      debugLogger.info(`Adding reading session interaction for ${paperId}`);
-      await this.addInteraction(paperId, {
-        type: "reading_session",
-        timestamp: new Date().toISOString(),
-        data: session
-      });
-      debugLogger.info(`Successfully added reading session interaction for ${paperId}`);
-    } catch (error) {
-      debugLogger.error(`Error adding reading session interaction: ${error}`);
-      throw error;
-    }
-  }
-
-  /**
-   * Log an annotation for a paper
-   */
-  async logAnnotation(
-    paperId: string,
-    key: string,
-    value: Json,
-    paperData?: any
-  ): Promise<void> {
-    debugLogger.info(`logAnnotation called for ${paperId}, key=${key}`);
-    
-    // Ensure we have a standard format ID
-    if (!isNewFormat(paperId)) {
-      const oldId = paperId;
-      paperId = formatPrimaryId('arxiv', paperId);
-      debugLogger.warning(`Converting legacy ID in logAnnotation: ${oldId} -> ${paperId}`);
-      
-      // If paperData provided, ensure it has primary_id
-      if (paperData && !paperData.primary_id) {
-        debugLogger.info(`Updating paperData.primary_id to ${paperId}`);
-        paperData.primary_id = paperId;
