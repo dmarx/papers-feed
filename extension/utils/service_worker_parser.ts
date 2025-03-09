@@ -5,6 +5,14 @@ import { loguru } from './logger';
 
 const logger = loguru.getLogger('ServiceWorkerParser');
 
+// Define types for our lightweight DOM elements
+interface LightDOMElement {
+  textContent?: string;
+  content?: string;
+  innerHTML?: string;
+  getAttribute: (attr: string) => string | null;
+}
+
 /**
  * Create a simplified document-like object from HTML string for plugins to use
  * This is a workaround for service workers that don't have access to the DOM
@@ -17,7 +25,7 @@ export function createServiceWorkerDOM(htmlString: string): any {
     _html: htmlString,
     
     // Simplified querySelector that uses regex
-    querySelector(selector: string): any {
+    querySelector(selector: string): LightDOMElement | null {
       try {
         // Very basic selector support - optimize for common cases
         
@@ -59,7 +67,8 @@ export function createServiceWorkerDOM(htmlString: string): any {
             const match = new RegExp(`<meta[^>]*name=["']${metaName}["'][^>]*content=["']([^"']*)["'][^>]*>`, 'i').exec(htmlString);
             if (match) {
               return {
-                content: match[1]
+                content: match[1],
+                getAttribute: (_attr: string) => null
               };
             }
           }
@@ -70,7 +79,8 @@ export function createServiceWorkerDOM(htmlString: string): any {
             const match = new RegExp(`<meta[^>]*property=["']${propName}["'][^>]*content=["']([^"']*)["'][^>]*>`, 'i').exec(htmlString);
             if (match) {
               return {
-                content: match[1]
+                content: match[1],
+                getAttribute: (_attr: string) => null
               };
             }
           }
@@ -101,20 +111,21 @@ export function createServiceWorkerDOM(htmlString: string): any {
     },
     
     // Simplified querySelectorAll that uses regex
-    querySelectorAll(selector: string): any[] {
+    querySelectorAll(selector: string): LightDOMElement[] {
       try {
-        const results = [];
+        const results: LightDOMElement[] = [];
         
         // Handle class selectors
         if (selector.startsWith('.')) {
           const className = selector.substring(1);
           const regex = new RegExp(`class=["'][^"']*${className}[^"']*["'][^>]*>(.*?)<`, 'gis');
-          let match;
+          let match: RegExpExecArray | null;
           while ((match = regex.exec(htmlString)) !== null) {
+            const capturedText = match[0];
             results.push({
               textContent: match[1].replace(/<[^>]*>/g, ''),
               getAttribute: (attr: string) => {
-                const attrMatch = new RegExp(`class=["'][^"']*${className}[^"']*["'][^>]*${attr}=["']([^"']*)["']`, 'i').exec(match[0]);
+                const attrMatch = new RegExp(`class=["'][^"']*${className}[^"']*["'][^>]*${attr}=["']([^"']*)["']`, 'i').exec(capturedText);
                 return attrMatch ? attrMatch[1] : null;
               }
             });
@@ -128,10 +139,11 @@ export function createServiceWorkerDOM(htmlString: string): any {
           if (nameMatch) {
             const metaName = nameMatch[1];
             const regex = new RegExp(`<meta[^>]*name=["']${metaName}["'][^>]*content=["']([^"']*)["'][^>]*>`, 'gi');
-            let match;
+            let match: RegExpExecArray | null;
             while ((match = regex.exec(htmlString)) !== null) {
               results.push({
-                content: match[1]
+                content: match[1],
+                getAttribute: (_attr: string) => null
               });
             }
             return results;
@@ -143,13 +155,14 @@ export function createServiceWorkerDOM(htmlString: string): any {
         if (tagMatch) {
           const tagName = tagMatch[1].toLowerCase();
           const regex = new RegExp(`<${tagName}[^>]*>(.*?)</${tagName}>`, 'gis');
-          let match;
+          let match: RegExpExecArray | null;
           while ((match = regex.exec(htmlString)) !== null) {
+            const capturedText = match[0];
             results.push({
               textContent: match[1].replace(/<[^>]*>/g, ''),
               innerHTML: match[1],
               getAttribute: (attr: string) => {
-                const attrMatch = new RegExp(`<${tagName}[^>]*${attr}=["']([^"']*)["'][^>]*>`, 'i').exec(match[0]);
+                const attrMatch = new RegExp(`<${tagName}[^>]*${attr}=["']([^"']*)["'][^>]*>`, 'i').exec(capturedText);
                 return attrMatch ? attrMatch[1] : null;
               }
             });
@@ -165,15 +178,15 @@ export function createServiceWorkerDOM(htmlString: string): any {
     },
     
     // For convenience
-    getElementById(id: string): any {
+    getElementById(id: string): LightDOMElement | null {
       return this.querySelector(`#${id}`);
     },
     
-    getElementsByClassName(className: string): any[] {
+    getElementsByClassName(className: string): LightDOMElement[] {
       return this.querySelectorAll(`.${className}`);
     },
     
-    getElementsByTagName(tagName: string): any[] {
+    getElementsByTagName(tagName: string): LightDOMElement[] {
       return this.querySelectorAll(tagName);
     }
   };
