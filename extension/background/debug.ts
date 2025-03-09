@@ -1,7 +1,6 @@
 // extension/background/debug.ts - Debug utilities for service worker
 
 import { loguru } from "../utils/logger";
-import { Logger } from "../utils/logger-types";
 import { urlDetectionService } from '../papers/detection_service';
 import { getPluginInitializationState } from '../papers/plugins/loader';
 import credentialManager from './credential_manager';
@@ -58,7 +57,7 @@ export function initializeDebugObjects(enhancedServices?: EnhancedServices): voi
 
     logger.info('Debug objects registered, access via __DEBUG__ in service worker console');
   } else {
-    logger.info('Debug objects not initialized: service worker context not detected');
+    logger.warning('Debug objects not initialized: service worker context not detected');
   }
 }
 
