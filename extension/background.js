@@ -8,6 +8,14 @@ import { initializePluginSystem } from './papers/plugins/loader';
 import { pluginRegistry } from './papers/plugins/registry';
 import { loguru } from './utils/logger';
 
+// Import the new enhanced services
+import { 
+  initializeEnhancedServices, 
+  processNavigation,
+  processTab,
+  fullyProcessUrl 
+} from './background_integration';
+
 const logger = loguru.getLogger('Background');
 
 // Global state
@@ -145,15 +153,15 @@ chrome.storage.onChanged.addListener(async (changes) => {
   }
 });
 
-// Initialize the extension
+// Update the initialize function to include the enhanced services
 async function initialize() {
   logger.info('Initializing extension');
   
   // Load credentials and config
   await loadCredentials();
   
-  // Initialize plugin system
-  await initializePluginSystem();
+  // Initialize enhanced services (includes plugin system)
+  await initializeEnhancedServices();
   
   // Set up listeners for tab changes
   await setupListeners();
@@ -197,61 +205,37 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   return true;
 });
 
-// Handle track paper request from content script
+// Replace the handleTrackPaper function
 async function handleTrackPaper(request) {
   if (!paperManager) {
     throw new Error('Paper manager not initialized');
   }
 
   try {
-    // Process the paper URL based on its source
+    // Process the paper URL using enhanced services
     let paperData;
     
-    // Use the plugin system to process the URL if possible
-    const plugin = pluginRegistry.get(request.source);
-    if (plugin) {
-      logger.info(`Using ${plugin.name} plugin to process paper`);
-      
-      // Extract ID using the plugin
-      const id = plugin.extractId(request.url);
-      
-      if (!id) {
-        throw new Error(`Could not extract ID from URL: ${request.url}`);
-      }
-      
-      // Try to use the plugin's API if available
-      if (plugin.hasApi && plugin.fetchApiData) {
-        try {
-          paperData = await plugin.fetchApiData(id);
-          // Add required source information
-          paperData.source = request.source;
-          paperData.sourceId = id;
-          paperData.primary_id = plugin.formatId ? plugin.formatId(id) : formatPrimaryId(request.source, id);
-          paperData.url = request.url;
-        } catch (error) {
-          logger.error(`Error using plugin API: ${error}`);
-        }
-      }
-    }
-    
-    // Fall back to basic paper data if API failed
-    if (!paperData) {
-      // Get the ID using the plugin if available
-      const id = plugin ? plugin.extractId(request.url) : request.id;
+    if (request.url) {
+      // If it's a URL, use fullyProcessUrl
+      paperData = await fullyProcessUrl(request.url);
+    } else if (request.source && request.id) {
+      // If it's just source and ID, create basic data
+      const primary_id = formatPrimaryId(request.source, request.id);
       paperData = {
         source: request.source,
-        sourceId: id,
-        primary_id: plugin && plugin.formatId ? 
-          plugin.formatId(id) : formatPrimaryId(request.source, id),
-        url: request.url,
-        title: request.title || `${request.source.toUpperCase()} Paper: ${id}`,
+        sourceId: request.id,
+        primary_id: primary_id,
+        url: request.url || '',
+        title: request.title || `${request.source.toUpperCase()} Paper: ${request.id}`,
         timestamp: new Date().toISOString(),
         rating: 'novote'
       };
+    } else {
+      throw new Error('Invalid request: missing URL or source/id');
     }
     
     if (!paperData) {
-      throw new Error(`Could not process paper: ${request.url}`);
+      throw new Error(`Could not process paper: ${request.url || request.id}`);
     }
     
     // Create GitHub issue for the paper
@@ -389,50 +373,35 @@ function findPluginForUrl(url) {
   return null;
 }
 
-// Unified handlers for navigation and tab events
+// Replace the handleUnifiedNavigation function
 async function handleUnifiedNavigation(details) {
   logger.info(`Unified navigation handler: ${details.url}`);
   
-  // Skip if URL is already being processed to avoid duplicates
-  if (pendingUrls.has(details.url)) {
-    logger.info(`URL already being processed, skipping: ${details.url}`);
-    return;
-  }
-  
   try {
-    // Mark URL as being processed
-    pendingUrls.add(details.url);
-    
-    // Get the appropriate plugin for this URL
-    const sourceInfo = findPluginForUrl(details.url);
+    // Use enhanced detection service
+    const sourceInfo = await processNavigation(details);
     
     if (!sourceInfo) {
       logger.info('Not a recognized paper URL');
-      pendingUrls.delete(details.url);
       return;
     }
     
     logger.info(`Detected paper: ${sourceInfo.type}:${sourceInfo.id}`);
     
-    // Get tab info to determine if it's the active tab
+    // Check if tab is active
     const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
     if (tabs.length > 0 && tabs[0].id === details.tabId) {
       // This is the active tab, handle as tab change
       await handleTabChangeWithPlugins(tabs[0]);
     } else {
       // Process URL but don't start a session
-      const paperData = await processPaperUrl(details.url);
+      const paperData = await fullyProcessUrl(details.url);
       if (paperData) {
         logger.info(`Processed paper data: ${paperData.title}`);
       }
     }
   } catch (error) {
     logger.error(`Error in navigation handler: ${error}`);
-  } finally {
-    // Remove URL from pending after a delay to prevent immediate reprocessing
-    setTimeout(() => {
-      pendingUrls.delete(details.url);
-    }, 500);
   }
 }
 
@@ -482,151 +451,40 @@ async function handleUnifiedTabUpdate(tabId, changeInfo, tab) {
   }
 }
 
-// Process a paper URL with plugin system
+// Replace the processPaperUrl function
 async function processPaperUrl(url) {
   logger.info(`Processing paper URL: ${url}`);
   
-  // Skip if URL is already being processed
-  if (pendingUrls.has(url)) {
-    logger.info(`URL already being processed in processPaperUrl: ${url}`);
-    return null;
-  }
-  
   try {
-    // Mark URL as being processed
-    pendingUrls.add(url);
-    
-    // Find the appropriate plugin or source info
-    const sourceInfo = findPluginForUrl(url);
-    
-    if (!sourceInfo) {
-      logger.info('Not a recognized paper URL in processor');
-      return null;
-    }
-    
-    // Process based on source type
-    let paperData;
-    
-    if (sourceInfo.plugin) {
-      // Use plugin if available
-      const plugin = sourceInfo.plugin;
-      
-      // Try to use the plugin's API if available
-      if (plugin.hasApi && plugin.fetchApiData) {
-        try {
-          logger.info(`Using ${plugin.id} plugin API to process paper`);
-          const apiData = await plugin.fetchApiData(sourceInfo.id);
-          if (apiData && Object.keys(apiData).length > 0) {
-            paperData = {
-              ...apiData,
-              source: plugin.id,
-              sourceId: sourceInfo.id,
-              primary_id: sourceInfo.primary_id,
-              url: url
-            };
-          }
-        } catch (error) {
-          logger.error(`Error using plugin API: ${error}`);
-        }
-      }
-      
-      // If API failed, try to extract from the page DOM if we have a tab ID
-      if (!paperData) {
-        try {
-          logger.info(`Attempting DOM extraction for ${plugin.id}`);
-          const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-          if (tabs.length > 0 && tabs[0].id) {
-            const tabId = tabs[0].id;
-            
-            // Execute script to get HTML document
-            const script = await chrome.scripting.executeScript({
-              target: { tabId },
-              func: () => document.documentElement.outerHTML
-            });
-            
-            if (script && script[0] && script[0].result) {
-              // Create DOM document from HTML
-              const parser = new DOMParser();
-              const doc = parser.parseFromString(script[0].result, 'text/html');
-              
-              // Use plugin to extract metadata
-              const metadata = await plugin.extractMetadata(doc, url);
-              if (metadata && Object.keys(metadata).length > 0) {
-                paperData = {
-                  ...metadata,
-                  source: plugin.id,
-                  sourceId: sourceInfo.id,
-                  primary_id: sourceInfo.primary_id,
-                  url: url
-                };
-              }
-            }
-          }
-        } catch (error) {
-          logger.error(`Error extracting from DOM: ${error}`);
-        }
-      }
-    }
-    
-    // If we still don't have paper data, create a basic record
-    if (!paperData) {
-      paperData = {
-        source: sourceInfo.type,
-        sourceId: sourceInfo.id,
-        primary_id: sourceInfo.primary_id,
-        url: url,
-        title: `${sourceInfo.type.toUpperCase()} Paper: ${sourceInfo.id}`,
-        timestamp: new Date().toISOString(),
-        rating: 'novote'
-      };
-    }
-    
-    // If paper data was extracted, create or update in GitHub
-    if (paperData) {
-      logger.info(`Paper data extracted, creating GitHub issue for: ${paperData.primary_id}`);
-      try {
-        await createGithubIssue(paperData);
-      } catch (error) {
-        logger.error(`Error creating GitHub issue: ${error}`);
-      }
-    }
-    
-    return paperData;
+    // Use the enhanced services for full processing
+    return await fullyProcessUrl(url);
   } catch (error) {
     logger.error(`Error processing paper URL: ${error}`);
     return null;
-  } finally {
-    // Remove URL from pending after a delay
-    setTimeout(() => {
-      pendingUrls.delete(url);
-    }, 500);
   }
 }
 
-// Handle tab changes with plugin system
+// Replace the handleTabChangeWithPlugins function
 async function handleTabChangeWithPlugins(tab) {
   if (!tab.url) return;
   
-  // Find the appropriate plugin or source info
-  const sourceInfo = findPluginForUrl(tab.url);
+  // Use enhanced detection service
+  const sourceInfo = await processTab(tab);
   
   if (!sourceInfo) {
     logger.info('Not a recognized paper page, ending current session');
     await endCurrentSession();
     return;
   }
-  
   // End any existing session
   if (currentSession) {
     logger.info('Ending existing session before starting new one');
     await endCurrentSession();
   }
-  
-  // Process the paper URL
+
+  // Process the paper URL with full metadata extraction
   logger.info(`Processing paper URL: ${tab.url}`);
-  
-  // Get paper data using the plugin system
-  const paperData = await processPaperUrl(tab.url);
+  const paperData = await fullyProcessUrl(tab.url, tab.id);
   
   if (paperData) {
     logger.info(`Starting new session for: ${paperData.primary_id}`);
@@ -652,6 +510,7 @@ async function handleTabChangeWithPlugins(tab) {
     }
   }
 }
+
 
 async function endCurrentSession() {
   if (currentSession && currentPaperData) {
