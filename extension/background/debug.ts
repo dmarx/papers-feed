@@ -1,4 +1,4 @@
-// extension/background/debug.js - Debug utilities for service worker
+// extension/background/debug.ts - Debug utilities for service worker
 
 import { loguru } from "../utils/logger";
 import { urlDetectionService } from '../papers/detection_service';
@@ -8,13 +8,25 @@ import sessionManager from './session_manager';
 
 const logger = loguru.getLogger('Debug');
 
+interface EnhancedServices {
+  handleUrl?: (url: string) => Promise<any>;
+  [key: string]: any;
+}
+
+// Extend self interface for debug objects
+declare global {
+  interface ServiceWorkerGlobalScope {
+    __DEBUG__?: any;
+  }
+}
+
 /**
  * Initialize debug objects in service worker scope
- * @param {Object} enhancedServices - Enhanced services object
+ * @param {EnhancedServices} enhancedServices - Enhanced services object
  */
-export function initializeDebugObjects(enhancedServices) {
+export function initializeDebugObjects(enhancedServices?: EnhancedServices): void {
   // Use self for service worker context
-  if (typeof self !== 'undefined' && 'self' in globalThis) {
+  if (typeof self !== 'undefined') {
     self.__DEBUG__ = {
       // Paper manager
       get paperManager() { 
