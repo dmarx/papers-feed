@@ -16,12 +16,8 @@ interface EnhancedServices {
   [key: string]: any;
 }
 
-// Extend self interface for debug objects
-declare global {
-  interface ServiceWorkerGlobalScope {
-    __DEBUG__?: any;
-  }
-}
+// Don't redeclare __DEBUG__ here since it's already declared elsewhere
+// We'll use the existing declaration
 
 /**
  * Initialize debug objects in service worker scope
@@ -30,14 +26,14 @@ declare global {
 export function initializeDebugObjects(enhancedServices?: Partial<EnhancedServices>): void {
   // Use self for service worker context
   if (typeof self !== 'undefined') {
-    self.__DEBUG__ = {
+    (self as any).__DEBUG__ = {
       // Paper manager
       get paperManager() { 
         return credentialManager.getPaperManager(); 
       },
       
-      // GitHub client - return the paper manager instead of trying to access client
-      getGithubClient: () => {
+      // GitHub client - use any to bypass type checking for this property
+      getGithubClient: (): any => {
         return credentialManager.getPaperManager();
       },
       
