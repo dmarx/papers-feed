@@ -828,12 +828,76 @@ const openreviewPlugin = {
         logger$4.warning(`Could not extract paper ID from URL: ${url}`);
         return { title: "Unknown OpenReview Paper", url };
       }
+      const isServiceWorker = typeof document !== "object" || !document.querySelector || typeof document.querySelector !== "function";
+      if (isServiceWorker) {
+        logger$4.info("Service worker context detected, using service worker DOM parser");
+        const htmlContent = typeof document === "string" ? document : document.innerHTML || document.outerHTML || "";
+        const swDOM = createServiceWorkerDOM(htmlContent);
+        const getMetaContent2 = (name) => {
+          const element = swDOM.querySelector(`meta[name="${name}"]`);
+          return element ? element.getAttribute("content") : void 0;
+        };
+        const authorElements2 = swDOM.querySelectorAll('meta[name="citation_author"]');
+        let authors2 = "";
+        if (authorElements2.length > 0) {
+          const authorTexts = [];
+          authorElements2.forEach((el) => {
+            const content = el.getAttribute("content");
+            if (content) authorTexts.push(content);
+          });
+          authors2 = authorTexts.join(", ");
+        }
+        const title2 = getMetaContent2("citation_title") || swDOM.querySelector("title")?.textContent?.replace(" | OpenReview", "") || "";
+        const abstract2 = getMetaContent2("citation_abstract");
+        const publicationDate2 = getMetaContent2("citation_online_date");
+        const conferenceTitle2 = getMetaContent2("citation_conference_title");
+        const pdfUrl2 = getMetaContent2("citation_pdf_url");
+        const domTitle = swDOM.querySelector(".note_content_title, .note-content-title")?.textContent?.trim() || "";
+        let domAuthors = "";
+        const authorEl = swDOM.querySelector(".signatures, .author, .authors");
+        if (authorEl && authorEl.textContent) {
+          domAuthors = authorEl.textContent.trim();
+        }
+        let domAbstract = "";
+        const abstractEl = swDOM.querySelector(".note-content-field, .note_content_field");
+        if (abstractEl && abstractEl.textContent?.includes("Abstract")) {
+          const valueEl = swDOM.querySelector(".note-content-value, .note_content_value");
+          if (valueEl && valueEl.textContent) {
+            domAbstract = valueEl.textContent.trim();
+          }
+        }
+        const sourceSpecificMetadata2 = {
+          forum_id: paperId,
+          conference: conferenceTitle2 || "",
+          pdf_url: pdfUrl2 || ""
+        };
+        Object.keys(sourceSpecificMetadata2).forEach((key) => {
+          if (sourceSpecificMetadata2[key] === "" || sourceSpecificMetadata2[key] === null || sourceSpecificMetadata2[key] === void 0 || Array.isArray(sourceSpecificMetadata2[key]) && sourceSpecificMetadata2[key].length === 0 || typeof sourceSpecificMetadata2[key] === "object" && Object.keys(sourceSpecificMetadata2[key]).length === 0) {
+            delete sourceSpecificMetadata2[key];
+          }
+        });
+        return {
+          title: title2 || domTitle || `OpenReview Paper: ${paperId}`,
+          authors: authors2 || domAuthors || "",
+          abstract: abstract2 || domAbstract || "",
+          url,
+          source_specific_metadata: sourceSpecificMetadata2
+        };
+      }
       const getMetaContent = (name) => {
         const element = document.querySelector(`meta[name="${name}"]`);
         return element ? element.getAttribute("content") || void 0 : void 0;
       };
       const authorElements = document.querySelectorAll('meta[name="citation_author"]');
-      const authors = Array.from(authorElements).map((el) => el.getAttribute("content") || "").filter(Boolean).join(", ");
+      let authors = "";
+      if (authorElements.length > 0) {
+        const authorTexts = [];
+        authorElements.forEach((el) => {
+          const content = el.getAttribute("content");
+          if (content) authorTexts.push(content);
+        });
+        authors = authorTexts.join(", ");
+      }
       const title = getMetaContent("citation_title") || document.title.replace(" | OpenReview", "");
       const abstract = getMetaContent("citation_abstract");
       const publicationDate = getMetaContent("citation_online_date");
@@ -843,8 +907,9 @@ const openreviewPlugin = {
         const getContentFieldValue = (fieldName) => {
           const fields = Array.from(document.querySelectorAll(".note-content-field, .note_content_field"));
           for (const field of fields) {
-            if (field.textContent?.includes(fieldName)) {
-              const valueEl = field.nextElementSibling || field.parentElement?.querySelector(".note-content-value, .note_content_value");
+            const fieldElement = field;
+            if (fieldElement.textContent?.includes(fieldName)) {
+              const valueEl = fieldElement.nextElementSibling || fieldElement.parentElement?.querySelector(".note-content-value, .note_content_value");
               if (valueEl && valueEl.textContent) {
                 return valueEl.textContent.trim();
               }
