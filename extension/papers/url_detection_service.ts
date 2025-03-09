@@ -207,7 +207,10 @@ class URLDetectionService {
    * @param {string} url URL 
    * @param {DetectedSourceInfo} info Detection info
    */
+  // In extension/papers/url_detection_service.ts
   private addToCache(url: string, info: DetectedSourceInfo): void {
+    if (!url) return; // Add this check
+    
     // Implement LRU cache eviction if needed
     if (this.detectionCache.size >= this.maxCacheSize) {
       // Remove oldest entry (first key)
