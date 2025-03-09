@@ -63,12 +63,3 @@ interface PaperMetadata {
   primary_id?: string;
   [key: string]: any;
 }
-
-/**
- * Enhanced HTMLElement with paper properties for popups
- */
-interface PaperPopupElement extends HTMLElement {
-  paperSource?: string;
-  paperId?: string;
-  primary_id?: string;
-}
