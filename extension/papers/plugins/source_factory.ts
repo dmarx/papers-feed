@@ -1,7 +1,7 @@
 // extension/papers/plugins/source_factory.ts
 // Factory to simplify creation of new source plugins
 
-import { SourcePlugin } from './source_plugin';
+import { SourcePlugin, MetadataQualityResult } from './source_plugin';
 import { pluginRegistry } from './registry';
 import { UnifiedPaperData } from '../types';
 import { loguru } from '../../utils/logger';
@@ -17,11 +17,19 @@ export interface SourcePluginConfig {
   urlPatterns: RegExp[];
   color?: string;
   icon?: string;
-  hasApi?: boolean;
+  
+  // Core functionality
   idExtractor: (url: string) => string | null;
-  metadataExtractor: (document: Document, url: string) => Promise<Partial<UnifiedPaperData>>;
+  formatId: (id: string) => string;
+  
+  // Content script extractor function as a string
+  contentScriptExtractorCode: string;
+  
+  // Service worker operations
   apiDataFetcher?: (id: string) => Promise<Partial<UnifiedPaperData>>;
-  formatId?: (id: string) => string;
+  
+  // Optional custom quality evaluation
+  evaluateMetadataQuality?: (paperData: Partial<UnifiedPaperData>) => MetadataQualityResult;
 }
 
 /**
@@ -49,7 +57,7 @@ export class SourcePluginFactory {
       icon: config.icon,
       hasApi: !!config.apiDataFetcher,
       
-      // Standard implementation of extractId
+      // ID extraction function
       extractId: (url: string): string | null => {
         try {
           return config.idExtractor(url);
@@ -59,17 +67,57 @@ export class SourcePluginFactory {
         }
       },
       
-      // Standard implementation of extractMetadata
-      extractMetadata: async (document: Document, url: string): Promise<Partial<UnifiedPaperData>> => {
+      // Content script extraction code provider
+      getContentScriptExtractor: (): string => {
+        return config.contentScriptExtractorCode;
+      },
+      
+      // Default metadata quality evaluation method
+      evaluateMetadataQuality: (paperData: Partial<UnifiedPaperData>): MetadataQualityResult => {
         try {
-          const metadata = await config.metadataExtractor(document, url);
-          this.logger.info(`Extracted metadata for ${config.id}: ${metadata.title || 'Untitled'}`);
-          return metadata;
+          // Define required fields for different quality levels
+          const essentialFields = ['title', 'primary_id', 'url'];
+          const standardFields = [...essentialFields, 'authors'];
+          const completeFields = [...standardFields, 'abstract', 'timestamp'];
+          
+          // Check which fields are missing
+          const missingEssential = essentialFields.filter(field => 
+            !paperData[field] || paperData[field] === '');
+          
+          const missingStandard = standardFields.filter(field => 
+            !paperData[field] || paperData[field] === '');
+          
+          const missingComplete = completeFields.filter(field => 
+            !paperData[field] || paperData[field] === '');
+          
+          // Calculate quality level
+          let quality: 'minimal' | 'partial' | 'complete';
+          
+          if (missingEssential.length > 0) {
+            quality = 'minimal';
+          } else if (missingComplete.length > 0) {
+            quality = 'partial';
+          } else {
+            quality = 'complete';
+          }
+          
+          return {
+            quality,
+            missingFields: missingComplete,
+            hasEssentialFields: missingEssential.length === 0
+          };
         } catch (error) {
-          this.logger.error(`Error extracting metadata for ${config.id}:`, error);
-          return {};
+          this.logger.error(`Error evaluating metadata quality: ${error}`);
+          return {
+            quality: 'minimal',
+            missingFields: ['error'],
+            hasEssentialFields: false
+          };
         }
-      }
+      },
+      
+      // ID formatting function
+      formatId: config.formatId
     };
     
     // Add API data fetcher if provided
@@ -86,41 +134,15 @@ export class SourcePluginFactory {
       };
     }
     
-    // Add formatId if provided
-    if (config.formatId) {
-      plugin.formatId = config.formatId;
+    // Override the default quality evaluation if provided
+    if (config.evaluateMetadataQuality) {
+      plugin.evaluateMetadataQuality = config.evaluateMetadataQuality;
     }
     
     // Register the plugin
     pluginRegistry.register(plugin);
     
     return plugin;
-  }
-  
-  /**
-   * Create a basic plugin from minimal configuration
-   * 
-   * @param id Plugin ID
-   * @param name Display name
-   * @param urlPatterns URL patterns to match
-   * @param idExtractor Function to extract ID from URL
-   * @returns The created plugin
-   */
-  createBasicPlugin(
-    id: string,
-    name: string,
-    urlPatterns: RegExp[],
-    idExtractor: (url: string) => string | null
-  ): SourcePlugin {
-    return this.createPlugin({
-      id,
-      name,
-      description: `Support for ${name} papers`,
-      version: '1.0.0',
-      urlPatterns,
-      idExtractor,
-      metadataExtractor: async () => ({})
-    });
   }
 }
 
