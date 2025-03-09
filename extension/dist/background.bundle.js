@@ -1,112 +1,5 @@
 var d=class{constructor(e={}){this.cache=new Map,this.maxSize=e.maxSize??1e3,this.ttl=e.ttl??1e3*60*60,this.accessOrder=[];}get(e){let s=this.cache.get(e);if(s){if(Date.now()-s.lastAccessed>this.ttl){this.cache.delete(e),this.removeFromAccessOrder(e);return}return s.lastAccessed=Date.now(),this.updateAccessOrder(e),s.issueNumber}}set(e,s,t){if(this.cache.size>=this.maxSize&&!this.cache.has(e)){let r=this.accessOrder[this.accessOrder.length-1];r&&(this.cache.delete(r),this.removeFromAccessOrder(r));}this.cache.set(e,{issueNumber:s,lastAccessed:Date.now(),createdAt:t.createdAt,updatedAt:t.updatedAt}),this.updateAccessOrder(e);}remove(e){this.cache.delete(e),this.removeFromAccessOrder(e);}clear(){this.cache.clear(),this.accessOrder=[];}getStats(){return {size:this.cache.size,maxSize:this.maxSize,ttl:this.ttl}}shouldRefresh(e,s){let t=this.cache.get(e);return t?s>t.updatedAt:true}updateAccessOrder(e){this.removeFromAccessOrder(e),this.accessOrder.unshift(e);}removeFromAccessOrder(e){let s=this.accessOrder.indexOf(e);s>-1&&this.accessOrder.splice(s,1);}};var l="0.3.2";var f=class{constructor(e,s,t={}){this.token=e,this.repo=s,this.config={baseLabel:t.baseLabel??"stored-object",uidPrefix:t.uidPrefix??"UID:",reactions:{processed:t.reactions?.processed??"+1",initialState:t.reactions?.initialState??"rocket"}},this.cache=new d(t.cache);}async fetchFromGitHub(e,s={}){let t=new URL(`https://api.github.com/repos/${this.repo}${e}`);s.params&&(Object.entries(s.params).forEach(([i,a])=>{t.searchParams.append(i,a);}),delete s.params);let r=await fetch(t.toString(),{...s,headers:{Authorization:`token ${this.token}`,Accept:"application/vnd.github.v3+json",...s.headers}});if(!r.ok)throw new Error(`GitHub API error: ${r.status}`);return r.json()}createCommentPayload(e,s){let t={_data:e,_meta:{client_version:l,timestamp:new Date().toISOString(),update_mode:"append"}};return s&&(t.type=s),t}async getObject(e){let s=this.cache.get(e),t;if(s)try{t=await this.fetchFromGitHub(`/issues/${s}`),this._verifyIssueLabels(t,e)||(this.cache.remove(e),t=void 0);}catch{this.cache.remove(e);}if(!t){let c=await this.fetchFromGitHub("/issues",{method:"GET",params:{labels:[this.config.baseLabel,`${this.config.uidPrefix}${e}`].join(","),state:"closed"}});if(!c||c.length===0)throw new Error(`No object found with ID: ${e}`);t=c[0];}if(!t?.body)throw new Error(`Invalid issue data received for ID: ${e}`);let r=JSON.parse(t.body),i=new Date(t.created_at),a=new Date(t.updated_at);return this.cache.set(e,t.number,{createdAt:i,updatedAt:a}),{meta:{objectId:e,label:`${this.config.uidPrefix}${e}`,createdAt:i,updatedAt:a,version:await this._getVersion(t.number)},data:r}}async createObject(e,s){let t=`${this.config.uidPrefix}${e}`,r=await this.fetchFromGitHub("/issues",{method:"POST",body:JSON.stringify({title:`Stored Object: ${e}`,body:JSON.stringify(s,null,2),labels:[this.config.baseLabel,t]})});this.cache.set(e,r.number,{createdAt:new Date(r.created_at),updatedAt:new Date(r.updated_at)});let i=this.createCommentPayload(s,"initial_state"),a=await this.fetchFromGitHub(`/issues/${r.number}/comments`,{method:"POST",body:JSON.stringify({body:JSON.stringify(i,null,2)})});return await this.fetchFromGitHub(`/issues/comments/${a.id}/reactions`,{method:"POST",body:JSON.stringify({content:this.config.reactions.processed})}),await this.fetchFromGitHub(`/issues/comments/${a.id}/reactions`,{method:"POST",body:JSON.stringify({content:this.config.reactions.initialState})}),await this.fetchFromGitHub(`/issues/${r.number}`,{method:"PATCH",body:JSON.stringify({state:"closed"})}),{meta:{objectId:e,label:t,createdAt:new Date(r.created_at),updatedAt:new Date(r.updated_at),version:1},data:s}}_verifyIssueLabels(e,s){let t=new Set([this.config.baseLabel,`${this.config.uidPrefix}${s}`]);return e.labels.some(r=>t.has(r.name))}async updateObject(e,s){let t=await this.fetchFromGitHub("/issues",{method:"GET",params:{labels:[this.config.baseLabel,`${this.config.uidPrefix}${e}`].join(","),state:"all"}});if(!t||t.length===0)throw new Error(`No object found with ID: ${e}`);let r=t[0],i=this.createCommentPayload(s);return await this.fetchFromGitHub(`/issues/${r.number}/comments`,{method:"POST",body:JSON.stringify({body:JSON.stringify(i,null,2)})}),await this.fetchFromGitHub(`/issues/${r.number}`,{method:"PATCH",body:JSON.stringify({state:"open"})}),this.getObject(e)}async listAll(){let e=await this.fetchFromGitHub("/issues",{method:"GET",params:{labels:this.config.baseLabel,state:"closed"}}),s={};for(let t of e)if(!t.labels.some(r=>r.name==="archived"))try{let r=this._getObjectIdFromLabels(t),i=JSON.parse(t.body),a={objectId:r,label:r,createdAt:new Date(t.created_at),updatedAt:new Date(t.updated_at),version:await this._getVersion(t.number)};s[r]={meta:a,data:i};}catch{continue}return s}async listUpdatedSince(e){let s=await this.fetchFromGitHub("/issues",{method:"GET",params:{labels:this.config.baseLabel,state:"closed",since:e.toISOString()}}),t={};for(let r of s)if(!r.labels.some(i=>i.name==="archived"))try{let i=this._getObjectIdFromLabels(r),a=JSON.parse(r.body),n=new Date(r.updated_at);if(n>e){let c={objectId:i,label:i,createdAt:new Date(r.created_at),updatedAt:n,version:await this._getVersion(r.number)};t[i]={meta:c,data:a};}}catch{continue}return t}async getObjectHistory(e){let s=await this.fetchFromGitHub("/issues",{method:"GET",params:{labels:[this.config.baseLabel,`${this.config.uidPrefix}${e}`].join(","),state:"all"}});if(!s||s.length===0)throw new Error(`No object found with ID: ${e}`);let t=s[0],r=await this.fetchFromGitHub(`/issues/${t.number}/comments`),i=[];for(let a of r)try{let n=JSON.parse(a.body),c="update",m,b={client_version:"legacy",timestamp:a.created_at,update_mode:"append"};typeof n=="object"?"_data"in n?(c=n.type||"update",m=n._data,b=n._meta||b):"type"in n&&n.type==="initial_state"?(c="initial_state",m=n.data):m=n:m=n,i.push({timestamp:a.created_at,type:c,data:m,commentId:a.id});}catch{continue}return i}async _getVersion(e){return (await this.fetchFromGitHub(`/issues/${e}/comments`)).length+1}_getObjectIdFromLabels(e){for(let s of e.labels)if(s.name!==this.config.baseLabel&&s.name.startsWith(this.config.uidPrefix))return s.name.slice(this.config.uidPrefix.length);throw new Error(`No UID label found with prefix ${this.config.uidPrefix}`)}};
 
-const isInteractionLog = (data) => {
-  const log = data;
-  return typeof log === "object" && log !== null && typeof log.paper_id === "string" && Array.isArray(log.interactions);
-};
-
-const SOURCE_TYPES = {
-  "arxiv": {
-    prefix: "arxiv",
-    url_patterns: [
-      /arxiv\.org\/(abs|pdf|html)\/([0-9.]+)/,
-      /arxiv\.org\/abs\/([0-9.]+)(v[0-9]+)?/
-    ],
-    id_extractors: [
-      (match) => match[2],
-      (match) => match[1] + (match[2] || "")
-    ],
-    id_format: /[0-9]{4}\.[0-9]{4,5}(v[0-9]+)?/
-  },
-  "semanticscholar": {
-    prefix: "s2",
-    url_patterns: [
-      /semanticscholar\.org\/paper\/([a-f0-9]+)/,
-      /s2-research\.org\/papers\/([a-f0-9]+)/
-    ],
-    id_extractors: [
-      (match) => match[1],
-      (match) => match[1]
-    ],
-    id_format: /[a-f0-9]{40}/
-  },
-  "doi": {
-    prefix: "doi",
-    url_patterns: [
-      /doi\.org\/(10\.[0-9.]+\/[a-zA-Z0-9._\-/:()\[\]]+)/
-    ],
-    id_extractors: [
-      (match) => match[1]
-    ],
-    id_format: /10\.[0-9.]+\/[a-zA-Z0-9._\-/:()\[\]]+/
-  },
-  "acm": {
-    prefix: "doi",
-    // ACM uses DOIs
-    url_patterns: [
-      /dl\.acm\.org\/doi\/(10\.[0-9.]+\/[a-zA-Z0-9._\-/:()\[\]]+)/
-    ],
-    id_extractors: [
-      (match) => match[1]
-    ],
-    id_format: /10\.[0-9.]+\/[a-zA-Z0-9._\-/:()\[\]]+/
-  },
-  "openreview": {
-    prefix: "openreview",
-    url_patterns: [
-      /openreview\.net\/forum\?id=([a-zA-Z0-9_\-]+)/,
-      // Add support for PDF links on OpenReview
-      /openreview\.net\/pdf\?id=([a-zA-Z0-9_\-]+)/
-    ],
-    id_extractors: [
-      (match) => match[1],
-      (match) => match[1]
-    ],
-    id_format: /[a-zA-Z0-9_\-]+/
-  }
-};
-function formatPrimaryId(source, id) {
-  const sourcePrefix = SOURCE_TYPES[source]?.prefix || "generic";
-  const safeId = id.replace(/\//g, "_").replace(/:/g, ".").replace(/\s/g, "_").replace(/\\/g, "_");
-  return `${sourcePrefix}.${safeId}`;
-}
-function parseId(prefixedId) {
-  const [prefix, ...idParts] = prefixedId.split(".");
-  const id = idParts.join(".");
-  const prefixToSource = {
-    "arxiv": "arxiv",
-    "s2": "semanticscholar",
-    "doi": "doi",
-    "openreview": "openreview"
-  };
-  return {
-    type: prefixToSource[prefix] || "generic",
-    id: prefix === "doi" ? id.replace(/_/g, "/") : id
-  };
-}
-function detectSourceFromUrl(url) {
-  for (const [sourceType, definition] of Object.entries(SOURCE_TYPES)) {
-    for (let i = 0; i < definition.url_patterns.length; i++) {
-      const match = url.match(definition.url_patterns[i]);
-      if (match) {
-        const id = definition.id_extractors[i](match);
-        return {
-          type: sourceType,
-          id,
-          primary_id: formatPrimaryId(sourceType, id),
-          url
-        };
-      }
-    }
-  }
-  return null;
-}
-function isNewFormat(id) {
-  const validPrefixes = Object.values(SOURCE_TYPES).map((def) => `${def.prefix}.`);
-  validPrefixes.push("generic.");
-  return validPrefixes.some((prefix) => id.startsWith(prefix));
-}
-
 class Logger {
   constructor(name) {
     this.name = name;
@@ -128,13 +21,89 @@ const loguru = {
   getLogger: (name) => new Logger(name)
 };
 
-const logger$5 = loguru.getLogger("PaperManager");
-const isInteractionLogJs = (data) => {
+const logger$9 = loguru.getLogger("PluginRegistry");
+const debugLogger = loguru.getLogger("PluginRegistryDebug");
+class PluginRegistry {
+  constructor() {
+    this.plugins = /* @__PURE__ */ new Map();
+  }
+  register(plugin) {
+    debugLogger.info(`Registering plugin: ${plugin.id} (${plugin.name})`);
+    if (!plugin.id || typeof plugin.id !== "string") {
+      debugLogger.error(`Plugin missing valid id: ${JSON.stringify(plugin)}`);
+      return;
+    }
+    if (!Array.isArray(plugin.urlPatterns) || plugin.urlPatterns.length === 0) {
+      debugLogger.warning(`Plugin ${plugin.id} has no URL patterns`);
+    }
+    if (!plugin.extractId || typeof plugin.extractId !== "function") {
+      debugLogger.error(`Plugin ${plugin.id} missing required extractId method`);
+      return;
+    }
+    if (this.plugins.has(plugin.id)) {
+      debugLogger.warning(`Plugin with ID ${plugin.id} already registered, overwriting`);
+      logger$9.warning(`Plugin with ID ${plugin.id} already registered, overwriting`);
+    }
+    this.plugins.set(plugin.id, plugin);
+    debugLogger.info(`Successfully registered plugin: ${plugin.name} (${plugin.id})`);
+    debugLogger.info(`Plugin capabilities: hasApi=${!!plugin.hasApi}, formatId=${!!plugin.formatId}`);
+    logger$9.info(`Registered plugin: ${plugin.name} (${plugin.id})`);
+  }
+  getAll() {
+    debugLogger.info(`Getting all plugins, currently ${this.plugins.size} registered`);
+    return Array.from(this.plugins.values());
+  }
+  get(id) {
+    debugLogger.info(`Looking up plugin by id: ${id}`);
+    const plugin = this.plugins.get(id);
+    if (!plugin) {
+      debugLogger.warning(`No plugin found with id: ${id}`);
+    } else {
+      debugLogger.info(`Found plugin: ${plugin.name} (${plugin.id})`);
+    }
+    return plugin;
+  }
+  findForUrl(url) {
+    debugLogger.info(`Finding plugin for URL: ${url}`);
+    for (const plugin of this.plugins.values()) {
+      debugLogger.info(`Testing URL against plugin: ${plugin.id}`);
+      for (const pattern of plugin.urlPatterns) {
+        debugLogger.info(`Testing pattern: ${pattern.toString()}`);
+        if (pattern.test(url)) {
+          debugLogger.info(`URL matches pattern for plugin: ${plugin.id}`);
+          const id = plugin.extractId(url);
+          if (id) {
+            debugLogger.info(`Successfully extracted ID: ${id}`);
+            return { plugin, id };
+          } else {
+            debugLogger.warning(`Pattern matched but failed to extract ID`);
+          }
+        }
+      }
+    }
+    debugLogger.warning(`No plugin found for URL: ${url}`);
+    return null;
+  }
+}
+const pluginRegistry = new PluginRegistry();
+debugLogger.info("PluginRegistry singleton instance created");
+
+function formatPrimaryId(source, id) {
+  const plugin = pluginRegistry.get(source);
+  if (plugin && plugin.formatId) {
+    return plugin.formatId(id);
+  }
+  const safeId = id.replace(/\//g, "_").replace(/:/g, ".").replace(/\s/g, "_").replace(/\\/g, "_");
+  return `${source}.${safeId}`;
+}
+
+const logger$8 = loguru.getLogger("PaperManager");
+function isInteractionLog(data) {
   return typeof data === "object" && data !== null && typeof data.paper_id === "string" && Array.isArray(data.interactions);
-};
+}
 class PaperManager {
   constructor(client) {
-    // Add creation locks for concurrency control
+    // Concurrency control locks
     this.creationLocks = /* @__PURE__ */ new Map();
     this.client = client;
   }
@@ -145,32 +114,16 @@ class PaperManager {
     if (!paperData.primary_id) {
       if (paperData.source && paperData.sourceId) {
         paperData.primary_id = formatPrimaryId(paperData.source, paperData.sourceId);
-      } else if (paperData.arxivId) {
-        paperData.source = "arxiv";
-        paperData.sourceId = paperData.arxivId;
-        paperData.primary_id = formatPrimaryId("arxiv", paperData.arxivId);
-        logger$5.warning(`Legacy arxivId format detected. Converted to primary_id: ${paperData.primary_id}`);
       } else {
         throw new Error("Invalid paper data: missing primary_id and cannot generate it");
       }
     }
     const objectId = `paper:${paperData.primary_id}`;
-    logger$5.info(`Getting or creating paper: ${objectId}`);
+    logger$8.info(`Getting or creating paper: ${objectId}`);
     try {
       const obj = await this.client.getObject(objectId);
       const data = obj.data;
-      logger$5.info(`Found existing paper: ${objectId}`);
-      if (!data.primary_id) {
-        const enhancedData = {
-          ...data,
-          source: paperData.source || "arxiv",
-          sourceId: paperData.sourceId || data.arxivId,
-          primary_id: paperData.primary_id
-        };
-        logger$5.info(`Updating legacy paper with new format fields: ${objectId}`);
-        await this.client.updateObject(objectId, enhancedData);
-        return enhancedData;
-      }
+      logger$8.info(`Found existing paper: ${objectId}`);
       return data;
     } catch (error) {
       if (error instanceof Error && error.message.includes("No object found")) {
@@ -185,36 +138,27 @@ class PaperManager {
           timestamp: (/* @__PURE__ */ new Date()).toISOString(),
           rating: "novote"
         };
-        if (paperData.source === "arxiv") {
-          defaultPaperData.arxivId = paperData.sourceId;
-          defaultPaperData.arxiv_tags = paperData.arxiv_tags || [];
-          defaultPaperData.published_date = paperData.published_date || "";
-        } else {
-          defaultPaperData.identifiers = {
-            original: paperData.sourceId,
-            url: paperData.url
-          };
-          if (paperData.arxivId) {
-            defaultPaperData.identifiers.arxiv = paperData.arxivId;
-          }
-          if (paperData.doi) {
-            defaultPaperData.identifiers.doi = paperData.doi;
-          }
-          if (paperData.s2Id) {
-            defaultPaperData.identifiers.s2 = paperData.s2Id;
-          }
+        if (paperData.source_specific_metadata) {
+          defaultPaperData.source_specific_metadata = paperData.source_specific_metadata;
         }
-        logger$5.info(`Creating new paper object: ${objectId}`);
+        defaultPaperData.identifiers = {
+          original: paperData.sourceId,
+          url: paperData.url
+        };
+        if (paperData.doi) {
+          defaultPaperData.identifiers.doi = paperData.doi;
+        }
+        logger$8.info(`Creating new paper object: ${objectId}`);
         try {
           await this.client.createObject(objectId, defaultPaperData);
-          logger$5.info(`Successfully created paper: ${objectId}`);
+          logger$8.info(`Successfully created paper: ${objectId}`);
           return defaultPaperData;
         } catch (createError) {
-          logger$5.error(`Error creating paper object: ${createError}`);
+          logger$8.error(`Error creating paper object: ${createError}`);
           throw createError;
         }
       }
-      logger$5.error(`Error in getOrCreatePaper: ${error}`);
+      logger$8.error(`Error in getOrCreatePaper: ${error}`);
       throw error;
     }
   }
@@ -222,20 +166,16 @@ class PaperManager {
    * Get or create an interaction log
    */
   async getOrCreateInteractionLog(paperId) {
-    if (!isNewFormat(paperId)) {
-      logger$5.warning(`Legacy format paperId detected: ${paperId}. This is deprecated.`);
-      paperId = formatPrimaryId("arxiv", paperId);
-    }
     const objectId = `interactions:${paperId}`;
     if (this.creationLocks.has(objectId)) {
-      logger$5.info(`Waiting for existing creation of interaction log: ${objectId}`);
+      logger$8.info(`Waiting for existing creation of interaction log: ${objectId}`);
       return this.creationLocks.get(objectId);
     }
     const creationPromise = (async () => {
       try {
         const obj = await this.client.getObject(objectId);
         const data = obj.data;
-        if (typeof isInteractionLog === "function" ? isInteractionLog(data) : isInteractionLogJs(data)) {
+        if (isInteractionLog(data)) {
           return data;
         }
         throw new Error("Invalid interaction log format");
@@ -245,11 +185,7 @@ class PaperManager {
             paper_id: paperId,
             interactions: []
           };
-          const { type, id } = parseId(paperId);
-          if (type === "arxiv") {
-            newLog.legacy_id = id;
-          }
-          logger$5.info(`Creating new interaction log: ${objectId}`);
+          logger$8.info(`Creating new interaction log: ${objectId}`);
           await this.client.createObject(objectId, newLog);
           return newLog;
         }
@@ -267,19 +203,10 @@ class PaperManager {
    * Log a reading session for a paper
    */
   async logReadingSession(paperId, session, paperData) {
-    if (!isNewFormat(paperId)) {
-      logger$5.warning(`Legacy format paperId detected: ${paperId}. Converting to new format.`);
-      paperId = formatPrimaryId("arxiv", paperId);
-      if (paperData && !paperData.primary_id) {
-        paperData = {
-          ...paperData,
-          source: "arxiv",
-          sourceId: paperData.arxivId || paperId.split(".")[1],
-          primary_id: paperId
-        };
-      }
-    }
     if (paperData) {
+      if (!paperData.primary_id) {
+        paperData.primary_id = paperId;
+      }
       await this.getOrCreatePaper(paperData);
     }
     await this.addInteraction(paperId, {
@@ -292,19 +219,10 @@ class PaperManager {
    * Log an annotation for a paper
    */
   async logAnnotation(paperId, key, value, paperData) {
-    if (!isNewFormat(paperId)) {
-      logger$5.warning(`Legacy format paperId detected: ${paperId}. Converting to new format.`);
-      paperId = formatPrimaryId("arxiv", paperId);
-      if (paperData && !paperData.primary_id) {
-        paperData = {
-          ...paperData,
-          source: "arxiv",
-          sourceId: paperData.arxivId || paperId.split(".")[1],
-          primary_id: paperId
-        };
-      }
-    }
     if (paperData) {
+      if (!paperData.primary_id) {
+        paperData.primary_id = paperId;
+      }
       await this.getOrCreatePaper(paperData);
     }
     await this.addInteraction(paperId, {
@@ -317,18 +235,6 @@ class PaperManager {
    * Update a paper's rating
    */
   async updateRating(paperId, rating, paperData) {
-    if (!isNewFormat(paperId)) {
-      logger$5.warning(`Legacy format paperId detected: ${paperId}. Converting to new format.`);
-      paperId = formatPrimaryId("arxiv", paperId);
-      if (paperData && !paperData.primary_id) {
-        paperData = {
-          ...paperData,
-          source: "arxiv",
-          sourceId: paperData.arxivId || paperId.split(".")[1],
-          primary_id: paperId
-        };
-      }
-    }
     const paper = await this.getOrCreatePaper(paperData || { primary_id: paperId });
     const objectId = `paper:${paperId}`;
     await this.client.updateObject(objectId, {
@@ -354,10 +260,6 @@ class PaperManager {
    * Get interactions for a paper
    */
   async getInteractions(paperId, options = {}) {
-    if (!isNewFormat(paperId)) {
-      logger$5.warning(`Legacy format paperId detected: ${paperId}. Converting to new format.`);
-      paperId = formatPrimaryId("arxiv", paperId);
-    }
     try {
       const log = await this.getOrCreateInteractionLog(paperId);
       let interactions = log.interactions;
@@ -384,13 +286,8 @@ class PaperManager {
    * Get total reading time for a paper
    */
   async getPaperReadingTime(paperId) {
-    if (!isNewFormat(paperId)) {
-      logger$5.warning(`Legacy format paperId detected: ${paperId}. Converting to new format.`);
-      paperId = formatPrimaryId("arxiv", paperId);
-    }
     const interactions = await this.getInteractions(paperId, { type: "reading_session" });
     return interactions.reduce((total, i) => {
-      logger$5.info("Calculating from interaction:", i);
       const data = i.data;
       if (typeof data === "object" && data !== null && "duration_seconds" in data) {
         return total + data.duration_seconds;
@@ -402,10 +299,6 @@ class PaperManager {
    * Get paper history
    */
   async getPaperHistory(paperId) {
-    if (!isNewFormat(paperId)) {
-      logger$5.warning(`Legacy format paperId detected: ${paperId}. Converting to new format.`);
-      paperId = formatPrimaryId("arxiv", paperId);
-    }
     const objectId = `paper:${paperId}`;
     return this.client.getObjectHistory(objectId);
   }
@@ -440,546 +333,1239 @@ function getConfigurationInMs(config) {
     };
 }
 
-class MultiSourceDetector {
-  /**
-   * Detect paper source and metadata from URL
-   * 
-   * @param {string} url - URL to analyze
-   * @returns {SourceInfo|null} Paper source information or null if not detected
-   */
-  static detect(url) {
-    return detectSourceFromUrl(url);
+function parseXML(xmlText) {
+  return {
+    getTagContent(tag, content) {
+      const searchText = content || xmlText;
+      const regex = new RegExp(`<${tag}[^>]*>(.*?)</${tag}>`, "s");
+      const match = searchText.match(regex);
+      return match ? match[1].trim() : "";
+    },
+    getAll(tag) {
+      const result = [];
+      const regex = new RegExp(`<${tag}[^>]*>(.*?)</${tag}>`, "gs");
+      let match;
+      while ((match = regex.exec(xmlText)) !== null) {
+        result.push(match[1].trim());
+      }
+      return result;
+    },
+    getAttribute(tag, attr) {
+      const result = [];
+      const regex = new RegExp(`<${tag}[^>]*${attr}="([^"]+)"`, "g");
+      let match;
+      while ((match = regex.exec(xmlText)) !== null) {
+        result.push(match[1]);
+      }
+      return result;
+    },
+    getEntry(text) {
+      const searchText = text || xmlText;
+      const entryRegex = /<entry>([\s\S]*?)<\/entry>/;
+      const entryMatch = searchText.match(entryRegex);
+      return entryMatch ? entryMatch[1] : "";
+    },
+    getAuthor(text) {
+      const searchText = text || xmlText;
+      const authors = [];
+      const regex = /<author>[^]*?<name>([^]*?)<\/name>[^]*?<\/author>/g;
+      let match;
+      while (match = regex.exec(searchText)) {
+        authors.push(match[1].trim());
+      }
+      return authors;
+    },
+    getCategories(text) {
+      const searchText = text || xmlText;
+      const categories = /* @__PURE__ */ new Set();
+      const primaryMatch = searchText.match(/<arxiv:primary_category[^>]*term="([^"]+)"/);
+      if (primaryMatch) {
+        categories.add(primaryMatch[1]);
+      }
+      const categoryRegex = /<category[^>]*term="([^"]+)"/g;
+      let match;
+      while (match = categoryRegex.exec(searchText)) {
+        categories.add(match[1]);
+      }
+      return Array.from(categories);
+    },
+    getPublishedDate(text) {
+      const searchText = text || xmlText;
+      const match = searchText.match(/<published>([^<]+)<\/published>/);
+      return match ? match[1].trim() : "";
+    }
+  };
+}
+
+const logger$7 = loguru.getLogger("ServiceWorkerParser");
+function createServiceWorkerDOM(htmlString) {
+  const dom = {
+    _html: htmlString,
+    // Simplified querySelector that uses regex
+    querySelector(selector) {
+      try {
+        if (selector.startsWith("#")) {
+          const idName = selector.substring(1);
+          const match = new RegExp(`id=["']${idName}["'][^>]*>(.*?)<`, "is").exec(htmlString);
+          if (match) {
+            return {
+              textContent: match[1].replace(/<[^>]*>/g, ""),
+              getAttribute: (attr) => {
+                const attrMatch = new RegExp(`id=["']${idName}["'][^>]*${attr}=["']([^"']*)["']`, "i").exec(htmlString);
+                return attrMatch ? attrMatch[1] : null;
+              }
+            };
+          }
+        }
+        if (selector.startsWith(".")) {
+          const className = selector.substring(1);
+          const match = new RegExp(`class=["'][^"']*${className}[^"']*["'][^>]*>(.*?)<`, "is").exec(htmlString);
+          if (match) {
+            return {
+              textContent: match[1].replace(/<[^>]*>/g, ""),
+              getAttribute: (attr) => {
+                const attrMatch = new RegExp(`class=["'][^"']*${className}[^"']*["'][^>]*${attr}=["']([^"']*)["']`, "i").exec(htmlString);
+                return attrMatch ? attrMatch[1] : null;
+              }
+            };
+          }
+        }
+        if (selector.includes("meta[")) {
+          const nameMatch = /meta\[name=["']([^"']*)["']\]/.exec(selector);
+          if (nameMatch) {
+            const metaName = nameMatch[1];
+            const match = new RegExp(`<meta[^>]*name=["']${metaName}["'][^>]*content=["']([^"']*)["'][^>]*>`, "i").exec(htmlString);
+            if (match) {
+              return {
+                content: match[1],
+                getAttribute: (_attr) => null
+              };
+            }
+          }
+          const propertyMatch = /meta\[property=["']([^"']*)["']\]/.exec(selector);
+          if (propertyMatch) {
+            const propName = propertyMatch[1];
+            const match = new RegExp(`<meta[^>]*property=["']${propName}["'][^>]*content=["']([^"']*)["'][^>]*>`, "i").exec(htmlString);
+            if (match) {
+              return {
+                content: match[1],
+                getAttribute: (_attr) => null
+              };
+            }
+          }
+        }
+        const tagMatch = /^([a-zA-Z0-9]+)/.exec(selector);
+        if (tagMatch) {
+          const tagName = tagMatch[1].toLowerCase();
+          const match = new RegExp(`<${tagName}[^>]*>(.*?)</${tagName}>`, "is").exec(htmlString);
+          if (match) {
+            return {
+              textContent: match[1].replace(/<[^>]*>/g, ""),
+              getAttribute: (attr) => {
+                const attrMatch = new RegExp(`<${tagName}[^>]*${attr}=["']([^"']*)["'][^>]*>`, "i").exec(htmlString);
+                return attrMatch ? attrMatch[1] : null;
+              }
+            };
+          }
+        }
+        return null;
+      } catch (error) {
+        logger$7.error(`Error in service worker DOM querySelector: ${error}`);
+        return null;
+      }
+    },
+    // Simplified querySelectorAll that uses regex
+    querySelectorAll(selector) {
+      try {
+        const results = [];
+        if (selector.startsWith(".")) {
+          const className = selector.substring(1);
+          const regex = new RegExp(`class=["'][^"']*${className}[^"']*["'][^>]*>(.*?)<`, "gis");
+          let match;
+          while ((match = regex.exec(htmlString)) !== null) {
+            const capturedText = match[0];
+            results.push({
+              textContent: match[1].replace(/<[^>]*>/g, ""),
+              getAttribute: (attr) => {
+                const attrMatch = new RegExp(`class=["'][^"']*${className}[^"']*["'][^>]*${attr}=["']([^"']*)["']`, "i").exec(capturedText);
+                return attrMatch ? attrMatch[1] : null;
+              }
+            });
+          }
+          return results;
+        }
+        if (selector.includes("meta[")) {
+          const nameMatch = /meta\[name=["']([^"']*)["']\]/.exec(selector);
+          if (nameMatch) {
+            const metaName = nameMatch[1];
+            const regex = new RegExp(`<meta[^>]*name=["']${metaName}["'][^>]*content=["']([^"']*)["'][^>]*>`, "gi");
+            let match;
+            while ((match = regex.exec(htmlString)) !== null) {
+              results.push({
+                content: match[1],
+                getAttribute: (_attr) => null
+              });
+            }
+            return results;
+          }
+        }
+        const tagMatch = /^([a-zA-Z0-9]+)/.exec(selector);
+        if (tagMatch) {
+          const tagName = tagMatch[1].toLowerCase();
+          const regex = new RegExp(`<${tagName}[^>]*>(.*?)</${tagName}>`, "gis");
+          let match;
+          while ((match = regex.exec(htmlString)) !== null) {
+            const capturedText = match[0];
+            results.push({
+              textContent: match[1].replace(/<[^>]*>/g, ""),
+              innerHTML: match[1],
+              getAttribute: (attr) => {
+                const attrMatch = new RegExp(`<${tagName}[^>]*${attr}=["']([^"']*)["'][^>]*>`, "i").exec(capturedText);
+                return attrMatch ? attrMatch[1] : null;
+              }
+            });
+          }
+          return results;
+        }
+        return results;
+      } catch (error) {
+        logger$7.error(`Error in service worker DOM querySelectorAll: ${error}`);
+        return [];
+      }
+    },
+    // For convenience
+    getElementById(id) {
+      return this.querySelector(`#${id}`);
+    },
+    getElementsByClassName(className) {
+      return this.querySelectorAll(`.${className}`);
+    },
+    getElementsByTagName(tagName) {
+      return this.querySelectorAll(tagName);
+    }
+  };
+  return dom;
+}
+
+const logger$6 = loguru.getLogger("ArXivPlugin");
+const arxivPlugin = {
+  id: "arxiv",
+  name: "arXiv",
+  description: "Support for arXiv papers",
+  version: "1.0.0",
+  urlPatterns: [
+    /arxiv\.org\/abs\/([0-9.]+)(v[0-9]+)?/,
+    /arxiv\.org\/pdf\/([0-9.]+)(v[0-9]+)?\.pdf/,
+    /arxiv\.org\/[a-z]+\/([0-9.]+)(v[0-9]+)?/
+  ],
+  extractId(url) {
+    for (const pattern of this.urlPatterns) {
+      const match = url.match(pattern);
+      if (match) {
+        return match[1] + (match[2] || "");
+      }
+    }
+    return null;
+  },
+  async extractMetadata(document, url) {
+    logger$6.info(`Extracting metadata from ${url}`);
+    try {
+      const isServiceWorker = typeof document !== "object" || !document.querySelector || typeof document.querySelector !== "function";
+      if (isServiceWorker) {
+        logger$6.info("Service worker context detected, using service worker DOM parser");
+        const htmlContent = typeof document === "string" ? document : document.innerHTML || document.outerHTML || "";
+        const swDOM = createServiceWorkerDOM(htmlContent);
+        let title2 = swDOM.querySelector(".title")?.textContent?.trim();
+        if (title2?.startsWith("Title:")) {
+          title2 = title2.substring(6).trim();
+        }
+        let authors2 = "";
+        const authorElements2 = swDOM.querySelectorAll(".authors a");
+        if (authorElements2.length > 0) {
+          const authorTexts = [];
+          authorElements2.forEach((el) => {
+            const text = el.textContent?.trim();
+            if (text) authorTexts.push(text);
+          });
+          authors2 = authorTexts.join(", ");
+        }
+        let abstract2 = swDOM.querySelector(".abstract")?.textContent?.trim();
+        if (abstract2?.startsWith("Abstract:")) {
+          abstract2 = abstract2.substring(9).trim();
+        }
+        const categories2 = [];
+        const categoryElements2 = swDOM.querySelectorAll(".subjects .tag");
+        categoryElements2.forEach((el) => {
+          const text = el.textContent?.trim();
+          if (text) categories2.push(text);
+        });
+        return {
+          title: title2 || "",
+          authors: authors2 || "",
+          abstract: abstract2 || "",
+          source_specific_metadata: {
+            arxiv_tags: categories2,
+            published_date: ""
+            // Will be filled by API if available
+          }
+        };
+      }
+      const getMetaContent = (selector) => {
+        const element = document.querySelector(selector);
+        return element && "content" in element ? element.content : void 0;
+      };
+      let title = document.querySelector(".title")?.textContent?.trim();
+      if (title?.startsWith("Title:")) {
+        title = title.substring(6).trim();
+      }
+      let authors = "";
+      const authorElements = document.querySelectorAll(".authors a");
+      if (authorElements.length > 0) {
+        const authorTexts = [];
+        authorElements.forEach((el) => {
+          const text = el.textContent?.trim();
+          if (text) authorTexts.push(text);
+        });
+        authors = authorTexts.join(", ");
+      }
+      let abstract = document.querySelector(".abstract")?.textContent?.trim();
+      if (abstract?.startsWith("Abstract:")) {
+        abstract = abstract.substring(9).trim();
+      }
+      const categories = [];
+      const categoryElements = document.querySelectorAll(".subjects .tag");
+      categoryElements.forEach((el) => {
+        const text = el.textContent?.trim();
+        if (text) categories.push(text);
+      });
+      return {
+        title: title || "",
+        authors: authors || "",
+        abstract: abstract || "",
+        source_specific_metadata: {
+          arxiv_tags: categories,
+          published_date: ""
+          // Will be filled by API if available
+        }
+      };
+    } catch (error) {
+      logger$6.error("Error extracting metadata from arXiv page", error);
+      return {};
+    }
+  },
+  hasApi: true,
+  async fetchApiData(id) {
+    logger$6.info(`Fetching API data for arXiv:${id}`);
+    try {
+      const apiUrl = `https://export.arxiv.org/api/query?id_list=${id}`;
+      const response = await self.fetch(apiUrl);
+      if (!response.ok) {
+        throw new Error(`API error: ${response.status}`);
+      }
+      const text = await response.text();
+      const parser = parseXML(text);
+      const entryContent = parser.getEntry();
+      const title = parser.getTagContent("title");
+      const authorsList = parser.getAuthor();
+      const authors = authorsList.join(", ");
+      const abstract = parser.getTagContent("summary");
+      const categories = parser.getCategories();
+      const published = parser.getPublishedDate();
+      return {
+        title,
+        authors,
+        abstract,
+        source_specific_metadata: {
+          arxiv_tags: categories,
+          published_date: published
+        }
+      };
+    } catch (error) {
+      logger$6.error("Error fetching arXiv API data", error);
+      return {};
+    }
+  },
+  color: "#B31B1B",
+  icon: "📝",
+  formatId(id) {
+    return `arxiv.${id}`;
+  }
+};
+pluginRegistry.register(arxivPlugin);
+
+const logger$5 = loguru.getLogger("SemanticScholarPlugin");
+const semanticScholarPlugin = {
+  id: "semanticscholar",
+  name: "Semantic Scholar",
+  description: "Support for Semantic Scholar papers",
+  version: "1.0.0",
+  urlPatterns: [
+    /semanticscholar\.org\/paper\/([a-f0-9]+)/,
+    /s2-research\.org\/papers\/([a-f0-9]+)/
+  ],
+  extractId(url) {
+    for (const pattern of this.urlPatterns) {
+      const match = url.match(pattern);
+      if (match) {
+        return match[1];
+      }
+    }
+    return null;
+  },
+  async extractMetadata(document, url) {
+    logger$5.info(`Extracting metadata from ${url}`);
+    try {
+      const getMetaContent = (selector) => {
+        const element = document.querySelector(selector);
+        return element && "content" in element ? element.content : void 0;
+      };
+      const title = getMetaContent('meta[name="citation_title"]') || getMetaContent('meta[property="og:title"]') || document.title;
+      let authors = "";
+      const authorElements = document.querySelectorAll('[data-test-id="author-list"] a');
+      if (authorElements.length > 0) {
+        authors = Array.from(authorElements).map((el) => el.textContent?.trim()).filter(Boolean).join(", ");
+      } else {
+        authors = getMetaContent('meta[name="citation_author"]') || "";
+      }
+      let abstract = getMetaContent('meta[name="description"]') || getMetaContent('meta[property="og:description"]');
+      if (!abstract) {
+        const abstractEl = document.querySelector('[data-test-id="abstract-text"]') || document.querySelector(".abstract");
+        abstract = abstractEl?.textContent?.trim();
+      }
+      let citations;
+      const citationEl = document.querySelector('[data-test-id="citation-count"]');
+      if (citationEl) {
+        const citText = citationEl.textContent;
+        if (citText) {
+          const match = citText.match(/(\d+)/);
+          if (match) {
+            citations = parseInt(match[1], 10);
+          }
+        }
+      }
+      const doi = getMetaContent('meta[name="citation_doi"]');
+      const published_date = getMetaContent('meta[name="citation_publication_date"]');
+      return {
+        title: title || "",
+        authors: authors || "",
+        abstract: abstract || "",
+        source_specific_metadata: {
+          citations,
+          published_date: published_date || ""
+        },
+        identifiers: doi ? { doi } : void 0
+      };
+    } catch (error) {
+      logger$5.error("Error extracting metadata from Semantic Scholar page", error);
+      return {};
+    }
+  },
+  hasApi: true,
+  async fetchApiData(id) {
+    logger$5.info(`Fetching API data for S2:${id}`);
+    try {
+      const apiUrl = `https://api.semanticscholar.org/v1/paper/${id}`;
+      const response = await self.fetch(apiUrl);
+      if (!response.ok) {
+        throw new Error(`API error: ${response.status}`);
+      }
+      const data = await response.json();
+      const authors = data.authors ? data.authors.map((author) => author.name).join(", ") : "";
+      const paperData = {
+        title: data.title || "",
+        authors,
+        abstract: data.abstract || "",
+        source_specific_metadata: {
+          citations: data.citations,
+          published_date: data.year ? `${data.year}` : void 0
+        },
+        identifiers: {}
+      };
+      if (data.doi) {
+        paperData.identifiers.doi = data.doi;
+      }
+      if (data.arxivId) {
+        paperData.identifiers.arxiv = data.arxivId;
+      }
+      return paperData;
+    } catch (error) {
+      logger$5.error("Error fetching Semantic Scholar API data", error);
+      return {};
+    }
+  },
+  color: "#2e7d32",
+  icon: "📊",
+  formatId(id) {
+    return `s2.${id}`;
+  }
+};
+pluginRegistry.register(semanticScholarPlugin);
+
+const logger$4 = loguru.getLogger("OpenReviewPlugin");
+const openreviewPlugin = {
+  id: "openreview",
+  name: "OpenReview",
+  description: "Support for OpenReview papers",
+  version: "1.1.0",
+  urlPatterns: [
+    /openreview\.net\/forum\?id=([a-zA-Z0-9_\-]+)/,
+    /openreview\.net\/pdf\?id=([a-zA-Z0-9_\-]+)/
+  ],
+  extractId(url) {
+    for (const pattern of this.urlPatterns) {
+      const match = url.match(pattern);
+      if (match) {
+        return match[1];
+      }
+    }
+    return null;
+  },
+  async extractMetadata(document, url) {
+    logger$4.info(`Extracting metadata from OpenReview page: ${url}`);
+    try {
+      const paperId = this.extractId(url);
+      if (!paperId) {
+        logger$4.warning(`Could not extract paper ID from URL: ${url}`);
+        return { title: "Unknown OpenReview Paper", url };
+      }
+      const isServiceWorker = typeof document !== "object" || !document.querySelector || typeof document.querySelector !== "function";
+      if (isServiceWorker) {
+        logger$4.info("Service worker context detected, using service worker DOM parser");
+        const htmlContent = typeof document === "string" ? document : document.innerHTML || document.outerHTML || "";
+        const swDOM = createServiceWorkerDOM(htmlContent);
+        const getMetaContent2 = (name) => {
+          const element = swDOM.querySelector(`meta[name="${name}"]`);
+          return element ? element.getAttribute("content") : void 0;
+        };
+        const authorElements2 = swDOM.querySelectorAll('meta[name="citation_author"]');
+        let authors2 = "";
+        if (authorElements2.length > 0) {
+          const authorTexts = [];
+          authorElements2.forEach((el) => {
+            const content = el.getAttribute("content");
+            if (content) authorTexts.push(content);
+          });
+          authors2 = authorTexts.join(", ");
+        }
+        const title2 = getMetaContent2("citation_title") || swDOM.querySelector("title")?.textContent?.replace(" | OpenReview", "") || "";
+        const abstract2 = getMetaContent2("citation_abstract");
+        const publicationDate2 = getMetaContent2("citation_online_date");
+        const conferenceTitle2 = getMetaContent2("citation_conference_title");
+        const pdfUrl2 = getMetaContent2("citation_pdf_url");
+        const domTitle = swDOM.querySelector(".note_content_title, .note-content-title")?.textContent?.trim() || "";
+        let domAuthors = "";
+        const authorEl = swDOM.querySelector(".signatures, .author, .authors");
+        if (authorEl && authorEl.textContent) {
+          domAuthors = authorEl.textContent.trim();
+        }
+        let domAbstract = "";
+        const abstractEl = swDOM.querySelector(".note-content-field, .note_content_field");
+        if (abstractEl && abstractEl.textContent?.includes("Abstract")) {
+          const valueEl = swDOM.querySelector(".note-content-value, .note_content_value");
+          if (valueEl && valueEl.textContent) {
+            domAbstract = valueEl.textContent.trim();
+          }
+        }
+        const sourceSpecificMetadata2 = {
+          forum_id: paperId,
+          conference: conferenceTitle2 || "",
+          pdf_url: pdfUrl2 || ""
+        };
+        Object.keys(sourceSpecificMetadata2).forEach((key) => {
+          if (sourceSpecificMetadata2[key] === "" || sourceSpecificMetadata2[key] === null || sourceSpecificMetadata2[key] === void 0 || Array.isArray(sourceSpecificMetadata2[key]) && sourceSpecificMetadata2[key].length === 0 || typeof sourceSpecificMetadata2[key] === "object" && Object.keys(sourceSpecificMetadata2[key]).length === 0) {
+            delete sourceSpecificMetadata2[key];
+          }
+        });
+        return {
+          title: title2 || domTitle || `OpenReview Paper: ${paperId}`,
+          authors: authors2 || domAuthors || "",
+          abstract: abstract2 || domAbstract || "",
+          url,
+          source_specific_metadata: sourceSpecificMetadata2
+        };
+      }
+      const getMetaContent = (name) => {
+        const element = document.querySelector(`meta[name="${name}"]`);
+        return element ? element.getAttribute("content") || void 0 : void 0;
+      };
+      const authorElements = document.querySelectorAll('meta[name="citation_author"]');
+      let authors = "";
+      if (authorElements.length > 0) {
+        const authorTexts = [];
+        authorElements.forEach((el) => {
+          const content = el.getAttribute("content");
+          if (content) authorTexts.push(content);
+        });
+        authors = authorTexts.join(", ");
+      }
+      const title = getMetaContent("citation_title") || document.title.replace(" | OpenReview", "");
+      const abstract = getMetaContent("citation_abstract");
+      const publicationDate = getMetaContent("citation_online_date");
+      const conferenceTitle = getMetaContent("citation_conference_title");
+      const pdfUrl = getMetaContent("citation_pdf_url");
+      const extractFromDOM = () => {
+        const getContentFieldValue = (fieldName) => {
+          const fields = Array.from(document.querySelectorAll(".note-content-field, .note_content_field"));
+          for (const field of fields) {
+            const fieldElement = field;
+            if (fieldElement.textContent?.includes(fieldName)) {
+              const valueEl = fieldElement.nextElementSibling || fieldElement.parentElement?.querySelector(".note-content-value, .note_content_value");
+              if (valueEl && valueEl.textContent) {
+                return valueEl.textContent.trim();
+              }
+            }
+          }
+          return null;
+        };
+        const domTitle = document.querySelector(".note_content_title, .note-content-title")?.textContent?.trim() || "";
+        let domAuthors = "";
+        const authorEl = document.querySelector(".signatures, .author, .authors");
+        if (authorEl && authorEl.textContent) {
+          domAuthors = authorEl.textContent.trim();
+        }
+        const domAbstract = getContentFieldValue("Abstract") || "";
+        const keywords = getContentFieldValue("Keywords") || "";
+        const tldr = getContentFieldValue("TL;DR") || "";
+        let venue = "";
+        const venueEl = document.querySelector('.item:contains("venue"), .meta_row .item');
+        if (venueEl && venueEl.textContent) {
+          venue = venueEl.textContent.trim();
+        }
+        return {
+          domTitle,
+          domAuthors,
+          domAbstract,
+          keywords,
+          tldr,
+          venue
+        };
+      };
+      const extractReviewInfo = () => {
+        const reviewElements = document.querySelectorAll(".reply-container, .note-reply");
+        const reviewCount = reviewElements.length;
+        let decision = "";
+        const decisionEl = document.querySelector(
+          '.decision, .meta-review, .metareview, [id*="decision"], [class*="decision"]'
+        );
+        if (decisionEl && decisionEl.textContent) {
+          decision = decisionEl.textContent.trim();
+        }
+        const ratings = [];
+        const ratingElements = document.querySelectorAll(".rating, .score, .evaluation");
+        ratingElements.forEach((el) => {
+          const ratingText = el.textContent?.trim();
+          if (ratingText) {
+            const match = ratingText.match(/(.+):\s*(\d+)/);
+            if (match) {
+              ratings.push({ type: match[1].trim(), value: match[2].trim() });
+            } else {
+              ratings.push({ type: "rating", value: ratingText });
+            }
+          }
+        });
+        return {
+          reviewCount,
+          decision,
+          ratings
+        };
+      };
+      const domData = extractFromDOM();
+      const reviewInfo = extractReviewInfo();
+      const sourceSpecificMetadata = {
+        forum_id: paperId,
+        conference: conferenceTitle || domData.venue || "",
+        pdf_url: pdfUrl || "",
+        publication_date: publicationDate || "",
+        tldr: domData.tldr || "",
+        keywords: domData.keywords || "",
+        review_info: {
+          review_count: reviewInfo.reviewCount,
+          decision: reviewInfo.decision,
+          ratings: reviewInfo.ratings
+        }
+      };
+      Object.keys(sourceSpecificMetadata).forEach((key) => {
+        if (sourceSpecificMetadata[key] === "" || sourceSpecificMetadata[key] === null || sourceSpecificMetadata[key] === void 0 || Array.isArray(sourceSpecificMetadata[key]) && sourceSpecificMetadata[key].length === 0 || typeof sourceSpecificMetadata[key] === "object" && Object.keys(sourceSpecificMetadata[key]).length === 0) {
+          delete sourceSpecificMetadata[key];
+        }
+      });
+      return {
+        title: title || domData.domTitle || `OpenReview Paper: ${paperId}`,
+        authors: authors || domData.domAuthors || "",
+        abstract: abstract || domData.domAbstract || "",
+        url,
+        source_specific_metadata: sourceSpecificMetadata
+      };
+    } catch (error) {
+      logger$4.error("Error extracting metadata from OpenReview page", error);
+      return {
+        title: `OpenReview Paper: ${this.extractId(url) || "Unknown"}`,
+        url
+      };
+    }
+  },
+  hasApi: true,
+  async fetchApiData(id) {
+    logger$4.info(`Fetching OpenReview API data for ID: ${id}`);
+    try {
+      const apiUrl = `https://api.openreview.net/notes?id=${id}`;
+      const response = await fetch(apiUrl);
+      if (!response.ok) {
+        throw new Error(`API error: ${response.status}`);
+      }
+      const data = await response.json();
+      if (!data.notes || data.notes.length === 0) {
+        logger$4.warning(`No note found for ID: ${id}`);
+        return {};
+      }
+      const note = data.notes[0];
+      const content = note.content || {};
+      const title = content.title || "";
+      const authors = Array.isArray(content.authors) ? content.authors.join(", ") : content.authors || "";
+      const abstract = content.abstract || "";
+      const sourceSpecificMetadata = {
+        forum_id: id,
+        venue: note.venue || "",
+        venueid: note.venueid || "",
+        invitation: note.invitation || "",
+        creation_date: note.cdate ? new Date(note.cdate).toISOString() : "",
+        publication_date: note.pdate ? new Date(note.pdate).toISOString() : "",
+        tldr: content.TL_DR || content["TL;DR"] || "",
+        keywords: content.keywords || ""
+      };
+      try {
+        const forumApiUrl = `https://api.openreview.net/notes?forum=${id}`;
+        const forumResponse = await fetch(forumApiUrl);
+        if (forumResponse.ok) {
+          const forumData = await forumResponse.json();
+          const replies = forumData.notes.filter((n) => n.id !== id);
+          if (replies.length > 0) {
+            const reviews = replies.filter(
+              (n) => n.invitation.includes("/Review") || n.invitation.includes("/review") || n.invitation.includes("/evaluation")
+            );
+            const decisions = replies.filter(
+              (n) => n.invitation.includes("/Decision") || n.invitation.includes("/decision") || n.invitation.includes("/Meta_Review") || n.invitation.includes("/meta-review")
+            );
+            sourceSpecificMetadata.review_info = {
+              reviews_count: reviews.length,
+              decisions_count: decisions.length,
+              total_replies: replies.length,
+              // Extract ratings if available
+              ratings: reviews.filter((r) => r.content.rating || r.content.score || r.content.confidence).map((r) => ({
+                rating: r.content.rating || r.content.score || null,
+                confidence: r.content.confidence || null
+              })),
+              // Extract decision text if available
+              decision: decisions.length > 0 ? decisions[0].content.decision || decisions[0].content.recommendation || "" : ""
+            };
+          }
+        }
+      } catch (error) {
+        logger$4.warning(`Error fetching forum data: ${error}`);
+      }
+      Object.keys(sourceSpecificMetadata).forEach((key) => {
+        if (sourceSpecificMetadata[key] === "" || sourceSpecificMetadata[key] === null || sourceSpecificMetadata[key] === void 0 || Array.isArray(sourceSpecificMetadata[key]) && sourceSpecificMetadata[key].length === 0 || typeof sourceSpecificMetadata[key] === "object" && Object.keys(sourceSpecificMetadata[key]).filter((k) => sourceSpecificMetadata[key][k] !== null).length === 0) {
+          delete sourceSpecificMetadata[key];
+        }
+      });
+      return {
+        title,
+        authors,
+        abstract,
+        source_specific_metadata: sourceSpecificMetadata,
+        url: `https://openreview.net/forum?id=${id}`
+      };
+    } catch (error) {
+      logger$4.error(`Error fetching OpenReview API data: ${error}`);
+      return {};
+    }
+  },
+  color: "#6d4c41",
+  icon: "📋",
+  formatId(id) {
+    return `openreview.${id}`;
+  }
+};
+pluginRegistry.register(openreviewPlugin);
+
+const logger$3 = loguru.getLogger("PluginLoader");
+let pluginsInitialized = false;
+let initializationPromise = null;
+function registerCorePlugins() {
+  try {
+    const existingPlugins = pluginRegistry.getAll();
+    if (existingPlugins.length > 0) {
+      logger$3.info(`Found ${existingPlugins.length} plugins already registered`);
+      return;
+    }
+    pluginRegistry.register(arxivPlugin);
+    pluginRegistry.register(semanticScholarPlugin);
+    pluginRegistry.register(openreviewPlugin);
+    const pluginCount = pluginRegistry.getAll().length;
+    logger$3.info(`Registered ${pluginCount} core plugins manually`);
+  } catch (error) {
+    logger$3.error("Error registering core plugins:", error);
+    throw error;
+  }
+}
+async function loadBuiltinPlugins() {
+  logger$3.info("Loading built-in plugins");
+  try {
+    registerCorePlugins();
+    const pluginCount = pluginRegistry.getAll().length;
+    if (pluginCount === 0) {
+      logger$3.warning("No plugins were registered. Attempting emergency direct registration.");
+      try {
+        pluginRegistry.register(arxivPlugin);
+        pluginRegistry.register(semanticScholarPlugin);
+        pluginRegistry.register(openreviewPlugin);
+        const emergencyCount = pluginRegistry.getAll().length;
+        if (emergencyCount > 0) {
+          logger$3.info(`Emergency plugin registration successful: ${emergencyCount} plugins registered`);
+        } else {
+          throw new Error("Failed to register any plugins even with emergency registration");
+        }
+      } catch (emergencyError) {
+        logger$3.error("Emergency plugin registration failed:", emergencyError);
+        throw emergencyError;
+      }
+    } else {
+      logger$3.info(`${pluginCount} plugins are registered`);
+    }
+  } catch (error) {
+    logger$3.error("Error loading plugins", error);
+    if (error instanceof Error) {
+      logger$3.error(`Plugin loading error: ${error.message}`);
+      if (error.stack) {
+        logger$3.error(`Stack trace: ${error.stack}`);
+      }
+    }
+    throw error;
+  }
+}
+async function initializePluginSystem(retries = 3) {
+  if (pluginsInitialized) {
+    return;
+  }
+  if (initializationPromise) {
+    return initializationPromise;
+  }
+  logger$3.info("Initializing plugin system");
+  initializationPromise = (async () => {
+    let attemptCount = 0;
+    let lastError = null;
+    while (attemptCount < retries) {
+      try {
+        await loadBuiltinPlugins();
+        const loadedPlugins = pluginRegistry.getAll();
+        logger$3.info(`Initialized ${loadedPlugins.length} plugins:`);
+        loadedPlugins.forEach((plugin) => {
+          logger$3.info(`- ${plugin.name} (${plugin.id}) v${plugin.version}`);
+        });
+        pluginsInitialized = true;
+        return;
+      } catch (error) {
+        attemptCount++;
+        lastError = error instanceof Error ? error : new Error(String(error));
+        logger$3.warning(`Plugin initialization attempt ${attemptCount} failed: ${lastError.message}`);
+        if (attemptCount < retries) {
+          const delay = Math.pow(2, attemptCount) * 500;
+          logger$3.info(`Retrying plugin initialization in ${delay}ms...`);
+          await new Promise((resolve) => setTimeout(resolve, delay));
+        }
+      }
+    }
+    logger$3.error(`Plugin initialization failed after ${retries} attempts.`);
+    if (lastError) {
+      throw lastError;
+    } else {
+      throw new Error("Plugin initialization failed for unknown reasons");
+    }
+  })();
+  try {
+    await initializationPromise;
+    return;
+  } catch (error) {
+    initializationPromise = null;
+    throw error;
+  }
+}
+function arePluginsInitialized() {
+  return pluginsInitialized;
+}
+function getPluginInitializationState() {
+  return {
+    initialized: pluginsInitialized,
+    initializationInProgress: !!initializationPromise,
+    pluginCount: pluginRegistry.getAll().length
+  };
+}
+
+const logger$2 = loguru.getLogger("URLDetectionService");
+class URLDetectionService {
+  constructor() {
+    // Track URLs being processed to prevent duplicates
+    this.pendingUrls = /* @__PURE__ */ new Set();
+    // Debounce configuration
+    this.debounceTime = 500;
+    // ms
+    this.debounceTimers = /* @__PURE__ */ new Map();
+    // Cache successful detections to avoid repeat processing
+    this.detectionCache = /* @__PURE__ */ new Map();
+    this.maxCacheSize = 100;
+    logger$2.info("URL Detection Service initialized");
   }
   /**
-   * Process a URL to extract paper data
-   * This is an enhanced version of the original processArxivUrl function
-   * 
-   * @param {string} url - URL to process
-   * @param {Function} existingProcessArxivUrl - The original arXiv processing function
-   * @returns {Promise<any|null>} Paper data or null if not detected/processed
+   * Detect paper source from URL
+   * @param {string} url URL to analyze
+   * @returns {Promise<DetectedSourceInfo|null>} Detected source info or null
    */
-  static async processUrl(url, existingProcessArxivUrl) {
-    const sourceInfo = this.detect(url);
-    if (!sourceInfo) {
-      return existingProcessArxivUrl ? existingProcessArxivUrl(url) : null;
+  async detectSource(url) {
+    if (!url) {
+      logger$2.warning("Empty URL provided to detectSource");
+      return null;
     }
-    if (sourceInfo.type === "arxiv" && existingProcessArxivUrl) {
-      const paperData2 = await existingProcessArxivUrl(url);
-      if (paperData2) {
-        paperData2.source = "arxiv";
-        paperData2.sourceId = paperData2.arxivId;
-        paperData2.primary_id = formatPrimaryId("arxiv", paperData2.arxivId);
+    if (this.detectionCache.has(url)) {
+      logger$2.info(`Cache hit for ${url}`);
+      return this.detectionCache.get(url);
+    }
+    if (!arePluginsInitialized()) {
+      logger$2.info("Plugins not initialized, initializing now...");
+      try {
+        await initializePluginSystem();
+      } catch (error) {
+        logger$2.error("Failed to initialize plugins:", error);
+        return null;
       }
-      return paperData2;
     }
-    const { type, id, primary_id } = sourceInfo;
-    const paperData = {
-      source: type,
-      sourceId: id,
-      primary_id,
-      url,
-      title: `${type.toUpperCase()} Paper: ${id}`,
-      // Generic title as placeholder
-      authors: "",
-      abstract: "",
+    if (this.isUrlPending(url)) {
+      logger$2.info(`URL already being processed: ${url}`);
+      return null;
+    }
+    try {
+      this.addPendingUrl(url);
+      const result = pluginRegistry.findForUrl(url);
+      if (result) {
+        const sourceInfo = {
+          type: result.plugin.id,
+          id: result.id,
+          primary_id: result.plugin.formatId ? result.plugin.formatId(result.id) : formatPrimaryId(result.plugin.id, result.id),
+          url,
+          plugin: result.plugin
+        };
+        this.addToCache(url, sourceInfo);
+        logger$2.info(`Detected source using plugin registry: ${sourceInfo.type}:${sourceInfo.id}`);
+        return sourceInfo;
+      }
+      const plugins = pluginRegistry.getAll();
+      for (const plugin of plugins) {
+        for (const pattern of plugin.urlPatterns) {
+          const match = url.match(pattern);
+          if (match) {
+            const id = plugin.extractId(url);
+            if (id) {
+              const sourceInfo = {
+                type: plugin.id,
+                id,
+                primary_id: plugin.formatId ? plugin.formatId(id) : formatPrimaryId(plugin.id, id),
+                url,
+                plugin
+              };
+              this.addToCache(url, sourceInfo);
+              logger$2.info(`Detected source using manual check: ${sourceInfo.type}:${sourceInfo.id}`);
+              return sourceInfo;
+            }
+          }
+        }
+      }
+      logger$2.info(`No matching source found for URL: ${url}`);
+      return null;
+    } finally {
+      this.removePendingUrlWithDelay(url);
+    }
+  }
+  /**
+   * Check if a URL is valid for paper detection
+   * @param {string} url URL to check
+   * @returns {boolean} True if URL is valid
+   */
+  isValidUrl(url) {
+    if (!url || typeof url !== "string") return false;
+    try {
+      new URL(url);
+      const commonDomains = [
+        "arxiv.org",
+        "semanticscholar.org",
+        "doi.org",
+        "dl.acm.org",
+        "openreview.net",
+        "s2-research.org"
+      ];
+      return commonDomains.some((domain) => url.includes(domain));
+    } catch (e) {
+      return false;
+    }
+  }
+  /**
+   * Check if URL is currently being processed
+   * @param {string} url URL to check
+   * @returns {boolean} True if URL is pending
+   */
+  isUrlPending(url) {
+    return this.pendingUrls.has(url);
+  }
+  /**
+   * Add URL to pending set
+   * @param {string} url URL to add
+   */
+  addPendingUrl(url) {
+    this.pendingUrls.add(url);
+  }
+  /**
+   * Remove URL from pending set
+   * @param {string} url URL to remove
+   */
+  removePendingUrl(url) {
+    this.pendingUrls.delete(url);
+    if (this.debounceTimers.has(url)) {
+      clearTimeout(this.debounceTimers.get(url));
+      this.debounceTimers.delete(url);
+    }
+  }
+  /**
+   * Remove URL from pending set after a delay
+   * @param {string} url URL to remove
+   * @param {number} delay Delay in ms (default: debounceTime)
+   */
+  removePendingUrlWithDelay(url, delay) {
+    if (this.debounceTimers.has(url)) {
+      clearTimeout(this.debounceTimers.get(url));
+    }
+    const timer = setTimeout(() => {
+      this.pendingUrls.delete(url);
+      this.debounceTimers.delete(url);
+    }, delay || this.debounceTime);
+    this.debounceTimers.set(url, timer);
+  }
+  /**
+   * Add a successful detection to cache
+   * @param {string} url URL 
+   * @param {DetectedSourceInfo} info Detection info
+   */
+  addToCache(url, info) {
+    if (!url) {
+      logger$2.warning("Attempted to cache with empty URL");
+      return;
+    }
+    if (this.detectionCache.size >= this.maxCacheSize) {
+      const oldestKey = this.detectionCache.keys().next().value;
+      if (oldestKey) {
+        this.detectionCache.delete(oldestKey);
+      }
+    }
+    this.detectionCache.set(url, info);
+  }
+  /**
+   * Clear the detection cache
+   */
+  clearCache() {
+    this.detectionCache.clear();
+  }
+  /**
+   * Reset the service state
+   * Used for testing and emergency recovery
+   */
+  reset() {
+    this.pendingUrls.clear();
+    for (const timer of this.debounceTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.debounceTimers.clear();
+    this.clearCache();
+    logger$2.info("URL Detection Service has been reset");
+  }
+  /**
+   * Get service status information
+   * @returns {Object} Service status
+   */
+  getStatus() {
+    return {
+      pendingUrlsCount: this.pendingUrls.size,
+      activeTimersCount: this.debounceTimers.size,
+      cacheSize: this.detectionCache.size,
+      pluginsInitialized: arePluginsInitialized(),
+      pluginCount: pluginRegistry.getAll().length
+    };
+  }
+}
+const urlDetectionService = new URLDetectionService();
+
+const logger$1 = loguru.getLogger("BackgroundIntegration");
+async function initializeEnhancedServices() {
+  logger$1.info("Initializing enhanced services");
+  try {
+    await initializePluginSystem(3);
+    const pluginState = getPluginInitializationState();
+    logger$1.info("Plugin system initialized:", pluginState);
+    if (typeof self !== "undefined" && "self" in globalThis && "__DEBUG__" in self) {
+      self.__DEBUG__.enhancedServices = {
+        urlDetectionService,
+        getPluginState: getPluginInitializationState,
+        handleUrl: processUrl
+      };
+      logger$1.info("Debug API extended with enhanced services");
+    }
+  } catch (error) {
+    logger$1.error("Failed to initialize enhanced services:", error);
+    throw error;
+  }
+}
+async function processUrl(url) {
+  if (!urlDetectionService.isValidUrl(url)) {
+    logger$1.info(`Invalid or unsupported URL: ${url}`);
+    return null;
+  }
+  try {
+    return await urlDetectionService.detectSource(url);
+  } catch (error) {
+    logger$1.error(`Error processing URL ${url}:`, error);
+    return null;
+  }
+}
+async function processTab(tab) {
+  if (!tab.url) {
+    logger$1.info("Tab has no URL");
+    return null;
+  }
+  return processUrl(tab.url);
+}
+async function processNavigation(details) {
+  if (!details.url) {
+    logger$1.info("Navigation event has no URL");
+    return null;
+  }
+  return processUrl(details.url);
+}
+async function extractMetadataFromSource(sourceInfo) {
+  if (!sourceInfo || !sourceInfo.plugin) {
+    logger$1.info("No valid source info or plugin");
+    return null;
+  }
+  try {
+    if (sourceInfo.plugin.hasApi && sourceInfo.plugin.fetchApiData) {
+      try {
+        logger$1.info(`Using ${sourceInfo.plugin.id} plugin API to extract metadata`);
+        const apiData = await sourceInfo.plugin.fetchApiData(sourceInfo.id);
+        if (apiData && Object.keys(apiData).length > 0) {
+          return {
+            ...apiData,
+            source: sourceInfo.type,
+            sourceId: sourceInfo.id,
+            primary_id: sourceInfo.primary_id,
+            url: sourceInfo.url
+          };
+        }
+      } catch (apiError) {
+        logger$1.error(`Error using plugin API: ${apiError}`);
+      }
+    }
+    return {
+      source: sourceInfo.type,
+      sourceId: sourceInfo.id,
+      primary_id: sourceInfo.primary_id,
+      url: sourceInfo.url,
+      title: `${sourceInfo.type.toUpperCase()} Paper: ${sourceInfo.id}`,
       timestamp: (/* @__PURE__ */ new Date()).toISOString(),
       rating: "novote"
     };
-    return paperData;
-  }
-}
-
-const logger$4 = loguru.getLogger("PluginRegistry");
-class PluginRegistry {
-  constructor() {
-    this.plugins = /* @__PURE__ */ new Map();
-  }
-  register(plugin) {
-    if (this.plugins.has(plugin.id)) {
-      logger$4.warning(`Plugin with ID ${plugin.id} already registered, overwriting`);
-    }
-    this.plugins.set(plugin.id, plugin);
-    logger$4.info(`Registered plugin: ${plugin.name} (${plugin.id})`);
-  }
-  getAll() {
-    return Array.from(this.plugins.values());
-  }
-  get(id) {
-    return this.plugins.get(id);
-  }
-  findForUrl(url) {
-    for (const plugin of this.plugins.values()) {
-      for (const pattern of plugin.urlPatterns) {
-        if (pattern.test(url)) {
-          const id = plugin.extractId(url);
-          if (id) {
-            return { plugin, id };
-          }
-        }
-      }
-    }
+  } catch (error) {
+    logger$1.error(`Error extracting metadata: ${error}`);
     return null;
   }
 }
-const pluginRegistry = new PluginRegistry();
-
-const logger$3 = loguru.getLogger("PaperProcessor");
-async function extractMetadataFromPage(tabId) {
+async function extractMetadataFromDOM(tabId, sourceInfo) {
+  if (!sourceInfo || !sourceInfo.plugin || !sourceInfo.plugin.extractMetadata) {
+    return null;
+  }
   try {
-    const results = await chrome.scripting.executeScript({
+    logger$1.info(`Attempting DOM extraction for ${sourceInfo.type}`);
+    const script = await chrome.scripting.executeScript({
       target: { tabId },
-      func: () => {
+      func: () => document.documentElement.outerHTML
+    });
+    if (script && script[0] && script[0].result) {
+      try {
+        const htmlString = script[0].result;
+        const metadata = await sourceInfo.plugin.extractMetadata({
+          documentElement: { outerHTML: htmlString }
+        }, sourceInfo.url);
+        if (metadata && Object.keys(metadata).length > 0) {
+          return {
+            ...metadata,
+            source: sourceInfo.type,
+            sourceId: sourceInfo.id,
+            primary_id: sourceInfo.primary_id,
+            url: sourceInfo.url
+          };
+        }
+      } catch (parserError) {
+        logger$1.error(`Error parsing HTML in service worker: ${parserError}`);
         try {
-          const getMetaContent = (selector) => {
-            const element = document.querySelector(selector);
-            return element && "content" in element ? element.content : void 0;
-          };
-          const metadata = {
-            title: getMetaContent('meta[name="citation_title"]') || getMetaContent('meta[property="og:title"]') || document.title,
-            authors: getMetaContent('meta[name="citation_author"]') || getMetaContent('meta[name="citation_authors"]') || getMetaContent('meta[name="author"]'),
-            abstract: getMetaContent('meta[name="description"]') || getMetaContent('meta[property="og:description"]') || getMetaContent('meta[name="citation_abstract"]'),
-            published_date: getMetaContent('meta[name="citation_publication_date"]') || getMetaContent('meta[name="citation_date"]'),
-            doi: getMetaContent('meta[name="citation_doi"]'),
-            url: getMetaContent('meta[property="og:url"]') || self.location.href,
-            citations: null
-          };
-          if (!metadata.title) {
-            const h1 = document.querySelector("h1");
-            if (h1 && h1.textContent) metadata.title = h1.textContent.trim();
+          const metadata = await sourceInfo.plugin.extractMetadata(
+            { innerHTML: script[0].result },
+            sourceInfo.url
+          );
+          if (metadata && Object.keys(metadata).length > 0) {
+            return {
+              ...metadata,
+              source: sourceInfo.type,
+              sourceId: sourceInfo.id,
+              primary_id: sourceInfo.primary_id,
+              url: sourceInfo.url
+            };
           }
-          if (!metadata.abstract) {
-            const abstractEl = document.querySelector(".abstract") || document.querySelector("#abstract") || document.querySelector('[class*="abstract"]') || document.querySelector('[id*="abstract"]');
-            if (abstractEl && abstractEl.textContent) metadata.abstract = abstractEl.textContent.trim();
-          }
-          if (!metadata.doi && self.location.href.includes("doi.org")) {
-            const match = self.location.href.match(/doi\.org\/(10\.[0-9.]+\/[^\s&/?#]+[^\s&/?#.:])/);
-            if (match) metadata.doi = match[1];
-          }
-          if (self.location.href.includes("dl.acm.org")) {
-            const citationEl = document.querySelector(".citation-metrics");
-            if (citationEl && citationEl.textContent) {
-              const citText = citationEl.textContent;
-              const citMatch = citText.match(/(\d+)\s+citations/i);
-              if (citMatch) metadata.citations = parseInt(citMatch[1], 10);
-            }
-            if (!metadata.doi) {
-              const doiMatch = self.location.href.match(/dl\.acm\.org\/doi\/(10\.[0-9.]+\/[^\s&/?#]+[^\s&/?#.:])/);
-              if (doiMatch) metadata.doi = doiMatch[1];
-            }
-          }
-          if (self.location.href.includes("semanticscholar.org")) {
-            const citationEl = document.querySelector('[data-test-id="citation-count"]');
-            if (citationEl && citationEl.textContent) {
-              const citText = citationEl.textContent;
-              const citMatch = citText.match(/(\d+)/);
-              if (citMatch) metadata.citations = parseInt(citMatch[1], 10);
-            }
-            const authorElements = document.querySelectorAll('[data-test-id="author-list"] a');
-            if (authorElements.length > 0) {
-              metadata.authors = Array.from(authorElements).map((el) => el.textContent?.trim()).filter(Boolean).join(", ");
-            }
-          }
-          if (self.location.href.includes("openreview.net")) {
-            if (!metadata.authors) {
-              const authorElements = document.querySelectorAll('meta[name="citation_author"]');
-              if (authorElements.length > 0) {
-                metadata.authors = Array.from(authorElements).map((el) => el.content).filter(Boolean).join(", ");
-              } else {
-                const authorEl = document.querySelector(".signatures, .author, .authors");
-                if (authorEl && authorEl.textContent) {
-                  metadata.authors = authorEl.textContent.trim();
-                }
-              }
-            }
-            if (!metadata.abstract) {
-              const abstractEl = document.querySelector('strong.note-content-field:contains("Abstract") ~ span.note-content-value');
-              if (abstractEl && abstractEl.textContent) {
-                metadata.abstract = abstractEl.textContent.trim();
-              }
-            }
-          }
-          return metadata;
-        } catch (e) {
-          console.error("Error extracting metadata:", e);
-          return null;
+        } catch (fallbackError) {
+          logger$1.error(`Error with fallback metadata extraction: ${fallbackError}`);
         }
       }
-    });
-    if (results && results[0] && results[0].result) {
-      const result = results[0].result;
-      const metadata = {
-        title: result.title,
-        authors: result.authors,
-        abstract: result.abstract,
-        published_date: result.published_date,
-        doi: result.doi,
-        url: result.url,
-        citations: result.citations !== null ? result.citations : void 0
-      };
-      return metadata;
     }
   } catch (error) {
-    logger$3.error("Error executing metadata extraction script:", error);
+    logger$1.error(`Error extracting metadata from DOM: ${error}`);
   }
   return null;
 }
-function findPluginForUrl$1(url) {
-  const plugins = pluginRegistry.getAll();
-  for (const plugin of plugins) {
-    for (const pattern of plugin.urlPatterns) {
-      const match = url.match(pattern);
-      if (match) {
-        const id = plugin.extractId(url);
-        if (id) {
-          return {
-            type: plugin.id,
-            id,
-            primary_id: plugin.formatId ? plugin.formatId(id) : formatPrimaryId(plugin.id, id),
-            url,
-            plugin
-          };
-        }
-      }
-    }
-  }
-  return MultiSourceDetector.detect(url);
-}
-async function processPaperUrl$1(url, processArxivUrl) {
-  logger$3.info("Processing URL for multiple sources:", url);
-  const sourceInfo = findPluginForUrl$1(url);
-  if (!sourceInfo) {
-    logger$3.info("No paper source detected");
-    return null;
-  }
-  const { type: sourceType, id: sourceId, primary_id } = sourceInfo;
-  logger$3.info(`Detected ${sourceType} paper with ID: ${sourceId}`);
-  if (sourceInfo.plugin) {
-    const plugin = sourceInfo.plugin;
-    if (plugin.hasApi && plugin.fetchApiData) {
-      try {
-        logger$3.info(`Using ${plugin.id} plugin API`);
-        const apiData = await plugin.fetchApiData(sourceId);
-        if (Object.keys(apiData).length > 0) {
-          return {
-            ...apiData,
-            source: plugin.id,
-            sourceId,
-            primary_id,
-            url
-          };
-        }
-      } catch (error) {
-        logger$3.error(`Error using plugin API: ${error}`);
-      }
-    }
-  }
-  if (sourceType === "arxiv" && processArxivUrl) {
-    const paperData2 = await processArxivUrl(url);
-    if (paperData2) {
-      paperData2.source = "arxiv";
-      paperData2.sourceId = paperData2.arxivId;
-      paperData2.primary_id = primary_id;
-    }
-    return paperData2;
-  }
-  let paperData = {
-    source: sourceType,
-    sourceId,
-    primary_id,
-    // The standardized format ID
-    url,
-    timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-    rating: "novote"
-  };
+async function fullyProcessUrl(url, tabId = null) {
   try {
-    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (tabs.length > 0 && tabs[0].id) {
-      const metadata = await extractMetadataFromPage(tabs[0].id);
-      if (metadata) {
-        paperData.title = metadata.title || `${sourceType.toUpperCase()} Paper: ${sourceId}`;
-        paperData.authors = metadata.authors || "";
-        paperData.abstract = metadata.abstract || "";
-        paperData.published_date = metadata.published_date || "";
-        if (metadata.doi) {
-          paperData.doi = metadata.doi;
-        }
-        if (metadata.citations !== void 0) {
-          paperData.citations = metadata.citations;
-        }
-      } else {
-        paperData.title = `${sourceType.toUpperCase()} Paper: ${sourceId}`;
-      }
-    } else {
-      paperData.title = `${sourceType.toUpperCase()} Paper: ${sourceId}`;
-    }
-  } catch (error) {
-    logger$3.error("Error extracting metadata:", error);
-    paperData.title = `${sourceType.toUpperCase()} Paper: ${sourceId}`;
-  }
-  paperData.identifiers = {
-    original: sourceId,
-    url
-  };
-  if (sourceType === "doi" || sourceType === "acm") {
-    paperData.doi = sourceId;
-    paperData.identifiers.doi = sourceId;
-  } else if (sourceType === "semanticscholar") {
-    paperData.s2Id = sourceId;
-    paperData.identifiers.s2 = sourceId;
-  }
-  logger$3.info("Processed paper data:", paperData);
-  return paperData;
-}
-
-// extension/background_multi_source.js
-// Extension to support multiple paper sources
-
-
-const logger$2 = loguru.getLogger('MultiSourceSupport');
-
-/**
- * Context for external functions provided by the background script
- */
-let externalContext = {
-  createGithubIssue: null,
-  endCurrentSession: null,
-  EnhancedReadingSession: null,
-  sessionConfig: null,
-  startActivityTracking: null,
-  setCurrentPaperData: null,
-  processArxivUrl: null
-};
-
-// Track URLs that are being processed to avoid duplicates
-const pendingUrls$1 = new Set();
-
-/**
- * Enhanced version of processArxivUrl that supports multiple sources
- * 
- * @param {string} url - URL to process
- * @returns {Promise<Object|null>} - Paper data or null
- */
-async function processPaperUrl(url) {
-  logger$2.info(`Multi-source processing for URL: ${url}`);
-  
-  // Prevent duplicate processing
-  if (pendingUrls$1.has(url)) {
-    logger$2.info(`URL already being processed, skipping: ${url}`);
-    return null;
-  }
-  
-  // Mark URL as being processed
-  pendingUrls$1.add(url);
-  
-  try {
-    // Use detector to identify paper source
-    const sourceInfo = MultiSourceDetector.detect(url);
-    
-    // If not a recognized paper URL, exit
+    const sourceInfo = await processUrl(url);
     if (!sourceInfo) {
-      logger$2.info('No recognized paper source detected in URL');
-      
-      // Try legacy arXiv detection as fallback
-      if (externalContext.processArxivUrl) {
-        return externalContext.processArxivUrl(url);
-      }
+      logger$1.info(`No source detected for URL: ${url}`);
       return null;
     }
-    
-    logger$2.info(`Detected paper source: ${sourceInfo.type}:${sourceInfo.id}`);
-    
-    const { type: sourceType, id: sourceId, primary_id } = sourceInfo;
-    
-    // For arXiv, use the existing well-tested processor if available
-    if (sourceType === 'arxiv' && externalContext.processArxivUrl) {
-      const paperData = await externalContext.processArxivUrl(url);
-      
-      // Ensure it has all required fields
-      if (paperData) {
-        if (!paperData.source) paperData.source = 'arxiv';
-        if (!paperData.sourceId) paperData.sourceId = paperData.arxivId;
-        if (!paperData.primary_id) paperData.primary_id = primary_id;
+    logger$1.info(`Detected ${sourceInfo.type} paper: ${sourceInfo.id}`);
+    let paperData = await extractMetadataFromSource(sourceInfo);
+    if (tabId && (!paperData || !paperData.title || paperData.title.includes(sourceInfo.id))) {
+      logger$1.info("API extraction failed or returned minimal data, trying DOM extraction");
+      const domData = await extractMetadataFromDOM(tabId, sourceInfo);
+      if (domData) {
+        paperData = {
+          ...paperData,
+          ...domData,
+          // Ensure critical fields are preserved
+          source: sourceInfo.type,
+          sourceId: sourceInfo.id,
+          primary_id: sourceInfo.primary_id,
+          url: sourceInfo.url
+        };
       }
-      
-      return paperData;
     }
-    
-    // Delegate to the TypeScript implementation in papers/process_paper_url.ts
-    try {
-      const paperData = await processPaperUrl$1(url, externalContext.processArxivUrl);
-      
-      // Store in GitHub if available - but don't await to avoid race conditions
-      if (paperData && externalContext.createGithubIssue) {
-        externalContext.createGithubIssue(paperData).catch(e => {
-          logger$2.error('Error storing paper data in GitHub:', e);
-        });
-      }
-      
-      return paperData;
-    } catch (error) {
-      logger$2.error('Error processing paper URL:', error);
-      
-      // Create basic paper data as fallback
-      return {
-        source: sourceType,
-        sourceId: sourceId,
-        primary_id: primary_id,
-        url: url,
-        title: `${sourceType.toUpperCase()} Paper: ${sourceId}`,
-        timestamp: new Date().toISOString(),
-        rating: 'novote'
-      };
-    }
-  } catch (error) {
-    logger$2.error(`Unexpected error in processPaperUrl: ${error}`);
-    return null;
-  } finally {
-    // Remove URL from pending after a delay to prevent immediate reprocessing
-    setTimeout(() => {
-      pendingUrls$1.delete(url);
-    }, 500);
-  }
-}
-
-/**
- * Enhanced tab change handler for multiple sources
- * 
- * @param {Object} tab - Current tab data
- * @param {Function} originalHandler - Original handler for legacy support
- */
-async function enhancedHandleTabChange(tab, originalHandler) {
-  if (!tab || !tab.url) {
-    return;
-  }
-  
-  const url = tab.url;
-  
-  // Prevent duplicate processing
-  if (pendingUrls$1.has(url)) {
-    logger$2.info(`URL already being processed in enhancedHandleTabChange: ${url}`);
-    return;
-  }
-  
-  // Mark URL as being processed
-  pendingUrls$1.add(url);
-  
-  try {
-    // Use detector to identify paper source
-    const sourceInfo = MultiSourceDetector.detect(url);
-    const isPaperUrl = !!sourceInfo;
-    
-    logger$2.info(`Tab change detected:`, { isPaperUrl, url, sourceInfo });
-    
-    if (!isPaperUrl) {
-      logger$2.info('Not a recognized paper page, ending current session');
-      
-      // End current session if available
-      if (externalContext.endCurrentSession) {
-        await externalContext.endCurrentSession();
-      }
-      return;
-    }
-    
-    // For arXiv papers, use the original handler for full compatibility
-    if (sourceInfo.type === 'arxiv' && originalHandler) {
-      return originalHandler(tab);
-    }
-    
-    // For other sources, end any existing session
-    if (externalContext.endCurrentSession) {
-      await externalContext.endCurrentSession();
-    }
-    
-    logger$2.info('Processing paper URL for new session');
-    const paperData = await processPaperUrl(url);
-    
     if (paperData) {
-      logger$2.info(`Starting new session for: ${paperData.primary_id}`);
-      
-      if (externalContext.EnhancedReadingSession && externalContext.sessionConfig) {
-        // Create a new session with the updated EnhancedReadingSession class
-        // which requires paperData instead of just an ID
-        const currentSession = new externalContext.EnhancedReadingSession(paperData, externalContext.sessionConfig);
-        const metadata = currentSession.getMetadata();
-        logger$2.info('New session created:', metadata);
-        
-        // Set the current paper data
-        if (externalContext.setCurrentPaperData) {
-          externalContext.setCurrentPaperData(paperData);
-        }
-        
-        // Start tracking activity
-        if (externalContext.startActivityTracking) {
-          externalContext.startActivityTracking();
-        }
-        
-        // Return the paper data
-        return paperData;
-      }
+      logger$1.info(`Successfully processed paper: ${paperData.title || paperData.primary_id}`);
     }
-    
-    return null;
+    return paperData;
   } catch (error) {
-    logger$2.error(`Error in enhanced tab change handler: ${error}`);
+    logger$1.error(`Error fully processing URL ${url}:`, error);
     return null;
-  } finally {
-    // Remove URL from pending after a delay
-    setTimeout(() => {
-      pendingUrls$1.delete(url);
-    }, 500);
   }
-}
-
-/**
- * Initialize the multi-source support
- * 
- * @param {Object} context - External functions from background script
- */
-function initMultiSourceSupport(context = {}) {
-  // Store external context
-  externalContext = {
-    ...externalContext,
-    ...context
-  };
-  
-  logger$2.info('Multi-source paper support initialized with context:', 
-    Object.keys(externalContext).filter(k => !!externalContext[k]));
-  
-  // Return overrides that can be applied to the main module
-  return {
-    processPaperUrl,
-    enhancedHandleTabChange
-  };
-}
-
-const logger$1 = loguru.getLogger("PluginLoader");
-async function loadBuiltinPlugins() {
-  logger$1.info("Loading built-in plugins");
-  try {
-    const pluginCount = pluginRegistry.getAll().length;
-    if (pluginCount === 0) {
-      logger$1.warning("No plugins were registered. Check plugin registration.");
-    } else {
-      logger$1.info(`${pluginCount} plugins are registered.`);
-    }
-  } catch (error) {
-    logger$1.error("Error loading plugins", error);
-    if (error instanceof Error) {
-      logger$1.error(`Plugin loading error: ${error.message}`);
-      if (error.stack) {
-        logger$1.error(`Stack trace: ${error.stack}`);
-      }
-    }
-  }
-}
-async function initializePluginSystem() {
-  logger$1.info("Initializing plugin system");
-  await loadBuiltinPlugins();
-  const plugins2 = pluginRegistry.getAll();
-  logger$1.info(`Initialized ${plugins2.length} plugins:`);
-  plugins2.forEach((plugin) => {
-    logger$1.info(`- ${plugin.name} (${plugin.id}) v${plugin.version}`);
-  });
 }
 
 const logger = loguru.getLogger("Background");
@@ -990,8 +1576,6 @@ let currentSession = null;
 let activityInterval = null;
 let sessionConfig = null;
 let paperManager = null;
-let originalProcessArxivUrl = null;
-let enhancedProcessPaperUrl = null;
 const pendingUrls = /* @__PURE__ */ new Set();
 class EnhancedReadingSession {
   constructor(paperData, config) {
@@ -1059,44 +1643,18 @@ async function loadCredentials() {
   const items = await chrome.storage.sync.get(["githubToken", "githubRepo"]);
   githubToken = items.githubToken || "";
   githubRepo = items.githubRepo || "";
-  console.log("Credentials loaded:", { hasToken: !!githubToken, hasRepo: !!githubRepo });
+  logger.info("Credentials loaded:", { hasToken: !!githubToken, hasRepo: !!githubRepo });
   if (githubToken && githubRepo) {
     const githubClient = new f(githubToken, githubRepo);
     paperManager = new PaperManager(githubClient);
-    console.log("Paper manager initialized");
+    logger.info("Paper manager initialized");
   }
   sessionConfig = getConfigurationInMs(await loadSessionConfig());
-  console.log("Session configuration loaded:", sessionConfig);
-  enhancedInitialization();
+  logger.info("Session configuration loaded:", sessionConfig);
   initializeDebugObjects();
 }
-function enhancedInitialization() {
-  originalProcessArxivUrl = processArxivUrl;
-  const { processPaperUrl} = initMultiSourceSupport({
-    createGithubIssue,
-    // Pass createGithubIssue function to background_multi_source
-    endCurrentSession,
-    // Pass endCurrentSession function
-    EnhancedReadingSession,
-    // Pass EnhancedReadingSession class
-    sessionConfig,
-    // Pass sessionConfig
-    startActivityTracking,
-    // Pass startActivityTracking function
-    setCurrentPaperData,
-    // New helper function to set current paper data
-    processArxivUrl
-    // Pass the original arXiv processor
-  });
-  enhancedProcessPaperUrl = processPaperUrl;
-  console.log("Multi-source paper support initialized");
-}
-function setCurrentPaperData(data) {
-  currentPaperData = data;
-  return currentPaperData;
-}
 chrome.storage.onChanged.addListener(async (changes) => {
-  console.log("Storage changes detected:", Object.keys(changes));
+  logger.info("Storage changes detected:", Object.keys(changes));
   if (changes.githubToken) {
     githubToken = changes.githubToken.newValue;
   }
@@ -1105,20 +1663,20 @@ chrome.storage.onChanged.addListener(async (changes) => {
   }
   if (changes.sessionConfig) {
     sessionConfig = getConfigurationInMs(changes.sessionConfig.newValue);
-    console.log("Session configuration updated:", sessionConfig);
+    logger.info("Session configuration updated:", sessionConfig);
   }
   if (changes.githubToken || changes.githubRepo) {
     if (githubToken && githubRepo) {
       const githubClient = new f(githubToken, githubRepo);
       paperManager = new PaperManager(githubClient);
-      console.log("Paper manager reinitialized");
+      logger.info("Paper manager reinitialized");
     }
   }
 });
 async function initialize() {
   logger.info("Initializing extension");
   await loadCredentials();
-  await initializePluginSystem();
+  await initializeEnhancedServices();
   await setupListeners();
   logger.info("Extension initialized");
 }
@@ -1126,20 +1684,20 @@ initialize().catch((error) => {
   logger.error("Initialization failed", error);
 });
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  console.log("Message received:", request);
+  logger.info("Message received:", request);
   if (request.type === "getCurrentPaper") {
-    console.log("Popup requested current paper:", currentPaperData);
+    logger.info("Popup requested current paper:", currentPaperData);
     sendResponse(currentPaperData);
   } else if (request.type === "updateRating") {
-    console.log("Rating update requested:", request.rating);
+    logger.info("Rating update requested:", request.rating);
     handleUpdateRating(request.rating, sendResponse);
     return true;
   } else if (request.type === "updateAnnotation") {
-    console.log("Annotation update requested:", request.annotationType, request.data);
+    logger.info("Annotation update requested:", request.annotationType, request.data);
     handleAnnotationUpdate(request.annotationType, request.data).then((response) => sendResponse(response)).catch((error) => sendResponse({ success: false, error: error.message }));
     return true;
   } else if (request.type === "trackPaper") {
-    console.log("Track paper requested:", request);
+    logger.info("Track paper requested:", request);
     handleTrackPaper(request).then((response) => sendResponse(response)).catch((error) => sendResponse({ success: false, error: error.message }));
     return true;
   }
@@ -1151,42 +1709,27 @@ async function handleTrackPaper(request) {
   }
   try {
     let paperData;
-    const plugin = pluginRegistry.get(request.source);
-    if (plugin) {
-      logger.info(`Using ${plugin.name} plugin to process paper`);
-      const id = plugin.extractId(request.url);
-      if (!id) {
-        throw new Error(`Could not extract ID from URL: ${request.url}`);
-      }
-      if (plugin.hasApi && plugin.fetchApiData) {
-        try {
-          paperData = await plugin.fetchApiData(id);
-          paperData.source = request.source;
-          paperData.sourceId = id;
-          paperData.primary_id = plugin.formatId ? plugin.formatId(id) : formatPrimaryId(request.source, id);
-          paperData.url = request.url;
-        } catch (error) {
-          logger.error(`Error using plugin API: ${error}`);
-        }
-      }
-      if (!paperData && enhancedProcessPaperUrl) {
-        paperData = await enhancedProcessPaperUrl(request.url);
-      }
-    } else if (request.source === "arxiv" && originalProcessArxivUrl) {
-      paperData = await originalProcessArxivUrl(request.url);
-      if (paperData) {
-        paperData.source = "arxiv";
-        paperData.sourceId = paperData.arxivId;
-        paperData.primary_id = formatPrimaryId("arxiv", paperData.arxivId);
-      }
-    } else if (enhancedProcessPaperUrl) {
-      paperData = await enhancedProcessPaperUrl(request.url);
+    if (request.url) {
+      paperData = await fullyProcessUrl(request.url);
+    } else if (request.source && request.id) {
+      const primary_id = formatPrimaryId(request.source, request.id);
+      paperData = {
+        source: request.source,
+        sourceId: request.id,
+        primary_id,
+        url: request.url || "",
+        title: request.title || `${request.source.toUpperCase()} Paper: ${request.id}`,
+        timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+        rating: "novote"
+      };
+    } else {
+      throw new Error("Invalid request: missing URL or source/id");
     }
     if (!paperData) {
-      throw new Error(`Could not process paper: ${request.url}`);
+      throw new Error(`Could not process paper: ${request.url || request.id}`);
     }
-    await createGithubIssue(paperData);
-    return { success: true, paperData };
+    const createdPaper = await createGithubIssue(paperData);
+    return { success: true, paperData: createdPaper };
   } catch (error) {
     logger.error(`Error tracking paper: ${error}`);
     throw error;
@@ -1207,7 +1750,7 @@ async function handleUpdateRating(rating, sendResponse) {
     currentPaperData.rating = rating;
     sendResponse({ success: true });
   } catch (error) {
-    console.error("Error updating rating:", error);
+    logger.error("Error updating rating:", error);
     sendResponse({ success: false, error: error.message });
   }
 }
@@ -1254,13 +1797,8 @@ async function setupListeners() {
 }
 async function handleUnifiedNavigation(details) {
   logger.info(`Unified navigation handler: ${details.url}`);
-  if (pendingUrls.has(details.url)) {
-    logger.info(`URL already being processed, skipping: ${details.url}`);
-    return;
-  }
-  pendingUrls.add(details.url);
   try {
-    const sourceInfo = MultiSourceDetector.detect(details.url);
+    const sourceInfo = await processNavigation(details);
     if (!sourceInfo) {
       logger.info("Not a recognized paper URL");
       return;
@@ -1270,17 +1808,13 @@ async function handleUnifiedNavigation(details) {
     if (tabs.length > 0 && tabs[0].id === details.tabId) {
       await handleTabChangeWithPlugins(tabs[0]);
     } else {
-      const paperData = await processUnifiedPaperUrl(details.url);
+      const paperData = await fullyProcessUrl(details.url);
       if (paperData) {
         logger.info(`Processed paper data: ${paperData.title}`);
       }
     }
   } catch (error) {
     logger.error(`Error in navigation handler: ${error}`);
-  } finally {
-    setTimeout(() => {
-      pendingUrls.delete(details.url);
-    }, 500);
   }
 }
 async function handleUnifiedTabActivation(activeInfo) {
@@ -1290,8 +1824,8 @@ async function handleUnifiedTabActivation(activeInfo) {
     logger.info(`Tab URL empty or already being processed: ${tab.url}`);
     return;
   }
-  pendingUrls.add(tab.url);
   try {
+    pendingUrls.add(tab.url);
     await handleTabChangeWithPlugins(tab);
   } catch (error) {
     logger.error(`Error in tab activation handler: ${error}`);
@@ -1306,8 +1840,8 @@ async function handleUnifiedTabUpdate(tabId, changeInfo, tab) {
     return;
   }
   logger.info(`Unified tab update handler: ${tab.url}`);
-  pendingUrls.add(tab.url);
   try {
+    pendingUrls.add(tab.url);
     await handleTabChangeWithPlugins(tab);
   } catch (error) {
     logger.error(`Error in tab update handler: ${error}`);
@@ -1317,71 +1851,9 @@ async function handleUnifiedTabUpdate(tabId, changeInfo, tab) {
     }, 500);
   }
 }
-function findPluginForUrl(url) {
-  const plugins = pluginRegistry.getAll();
-  for (const plugin of plugins) {
-    for (const pattern of plugin.urlPatterns) {
-      const match = url.match(pattern);
-      if (match) {
-        const id = plugin.extractId(url);
-        if (id) {
-          return {
-            type: plugin.id,
-            id,
-            primary_id: plugin.formatId ? plugin.formatId(id) : formatPrimaryId(plugin.id, id),
-            plugin
-          };
-        }
-      }
-    }
-  }
-  return MultiSourceDetector.detect(url);
-}
-async function processUnifiedPaperUrl(url) {
-  logger.info(`Processing paper URL: ${url}`);
-  if (pendingUrls.has(url)) {
-    logger.info(`URL already being processed in processUnifiedPaperUrl: ${url}`);
-    return null;
-  }
-  pendingUrls.add(url);
-  try {
-    const sourceInfo = MultiSourceDetector.detect(url);
-    if (!sourceInfo) {
-      logger.info("Not a recognized paper URL in processor");
-      return null;
-    }
-    let paperData;
-    if (sourceInfo.type === "arxiv" && originalProcessArxivUrl) {
-      paperData = await originalProcessArxivUrl(url);
-      if (paperData) {
-        paperData.source = "arxiv";
-        paperData.sourceId = paperData.arxivId;
-        paperData.primary_id = sourceInfo.primary_id;
-      }
-    } else if (enhancedProcessPaperUrl) {
-      paperData = await enhancedProcessPaperUrl(url);
-    }
-    if (paperData) {
-      logger.info(`Paper data extracted, creating GitHub issue for: ${paperData.primary_id}`);
-      try {
-        await createGithubIssue(paperData);
-      } catch (error) {
-        logger.error(`Error creating GitHub issue: ${error}`);
-      }
-    }
-    return paperData;
-  } catch (error) {
-    logger.error(`Error processing paper URL: ${error}`);
-    return null;
-  } finally {
-    setTimeout(() => {
-      pendingUrls.delete(url);
-    }, 500);
-  }
-}
 async function handleTabChangeWithPlugins(tab) {
   if (!tab.url) return;
-  const sourceInfo = findPluginForUrl(tab.url);
+  const sourceInfo = await processTab(tab);
   if (!sourceInfo) {
     logger.info("Not a recognized paper page, ending current session");
     await endCurrentSession();
@@ -1392,39 +1864,7 @@ async function handleTabChangeWithPlugins(tab) {
     await endCurrentSession();
   }
   logger.info(`Processing paper URL: ${tab.url}`);
-  let paperData;
-  if (sourceInfo.plugin) {
-    const plugin = sourceInfo.plugin;
-    if (plugin.hasApi && plugin.fetchApiData) {
-      try {
-        logger.info(`Using ${plugin.id} plugin API for tab`);
-        const apiData = await plugin.fetchApiData(sourceInfo.id);
-        if (Object.keys(apiData).length > 0) {
-          paperData = {
-            ...apiData,
-            source: plugin.id,
-            sourceId: sourceInfo.id,
-            primary_id: sourceInfo.primary_id,
-            url: tab.url
-          };
-        }
-      } catch (error) {
-        logger.error(`Error using plugin API for tab: ${error}`);
-      }
-    }
-  }
-  if (!paperData) {
-    if (sourceInfo.type === "arxiv" && originalProcessArxivUrl) {
-      paperData = await originalProcessArxivUrl(tab.url);
-      if (paperData) {
-        paperData.source = "arxiv";
-        paperData.sourceId = paperData.arxivId;
-        paperData.primary_id = sourceInfo.primary_id;
-      }
-    } else if (enhancedProcessPaperUrl) {
-      paperData = await enhancedProcessPaperUrl(tab.url);
-    }
-  }
+  const paperData = await fullyProcessUrl(tab.url, tab.id);
   if (paperData) {
     logger.info(`Starting new session for: ${paperData.primary_id}`);
     currentPaperData = paperData;
@@ -1446,7 +1886,7 @@ async function endCurrentSession() {
     const sessionData = currentSession.finalize();
     if (sessionData) {
       logger.info("Creating reading event:", sessionData);
-      await enhancedCreateReadingEvent(currentPaperData, sessionData);
+      await createReadingEvent(currentPaperData, sessionData);
     }
     currentSession = null;
     currentPaperData = null;
@@ -1455,7 +1895,7 @@ async function endCurrentSession() {
 }
 function startActivityTracking() {
   if (!activityInterval) {
-    console.log("Starting activity tracking");
+    logger.info("Starting activity tracking");
     activityInterval = setInterval(() => {
       if (currentSession) {
         currentSession.update();
@@ -1469,9 +1909,9 @@ function stopActivityTracking() {
     activityInterval = null;
   }
 }
-async function enhancedCreateReadingEvent(paperData, sessionData) {
+async function createReadingEvent(paperData, sessionData) {
   if (!paperManager || !paperData) {
-    console.error("Missing required data for creating reading event:", {
+    logger.error("Missing required data for creating reading event:", {
       hasPaperManager: !!paperManager,
       hasPaperData: !!paperData
     });
@@ -1507,10 +1947,6 @@ async function createGithubIssue(paperData) {
   if (!paperData.primary_id) {
     if (paperData.source && paperData.sourceId) {
       paperData.primary_id = formatPrimaryId(paperData.source, paperData.sourceId);
-    } else if (paperData.arxivId) {
-      paperData.source = "arxiv";
-      paperData.sourceId = paperData.arxivId;
-      paperData.primary_id = formatPrimaryId("arxiv", paperData.arxivId);
     } else {
       logger.error("Cannot create paper - no valid identifier");
       return null;
@@ -1533,8 +1969,9 @@ async function handleAnnotationUpdate(type, data) {
   try {
     let paperId = data.paperId;
     if (!paperId.includes(".")) {
-      logger.warning(`Legacy ID format detected in annotation: ${paperId}`);
-      paperId = formatPrimaryId("arxiv", paperId);
+      const source = data.source || "arxiv";
+      paperId = formatPrimaryId(source, paperId);
+      logger.info(`Converted ID to standardized format: ${paperId}`);
     }
     const paperData = data.title ? {
       title: data.title,
@@ -1557,109 +1994,8 @@ async function handleAnnotationUpdate(type, data) {
     }
     return { success: true };
   } catch (error) {
-    console.error("Error logging interaction:", error);
+    logger.error("Error logging interaction:", error);
     throw error;
-  }
-}
-async function parseXMLText(xmlText) {
-  console.log("Parsing XML response...");
-  try {
-    const getTagContent = (tag, text) => {
-      const entryRegex = /<entry>([\s\S]*?)<\/entry>/;
-      const entryMatch = text.match(entryRegex);
-      if (entryMatch) {
-        const entryContent = entryMatch[1];
-        const regex = new RegExp(`<${tag}[^>]*>(.*?)</${tag}>`, "s");
-        const match = entryContent.match(regex);
-        return match ? match[1].trim() : "";
-      }
-      return "";
-    };
-    const getAuthors = (text) => {
-      const authors = [];
-      const regex = /<author>[^]*?<name>([^]*?)<\/name>[^]*?<\/author>/g;
-      let match;
-      while (match = regex.exec(text)) {
-        authors.push(match[1].trim());
-      }
-      return authors;
-    };
-    const getCategories = (text) => {
-      const categories = /* @__PURE__ */ new Set();
-      const primaryMatch = text.match(/<arxiv:primary_category[^>]*term="([^"]+)"/);
-      if (primaryMatch) {
-        categories.add(primaryMatch[1]);
-      }
-      const categoryRegex = /<category[^>]*term="([^"]+)"/g;
-      let match;
-      while (match = categoryRegex.exec(text)) {
-        categories.add(match[1]);
-      }
-      return Array.from(categories);
-    };
-    const getPublishedDate = (text) => {
-      const match = text.match(/<published>([^<]+)<\/published>/);
-      return match ? match[1].trim() : null;
-    };
-    const parsed = {
-      title: getTagContent("title", xmlText),
-      summary: getTagContent("summary", xmlText),
-      authors: getAuthors(xmlText),
-      published_date: getPublishedDate(xmlText),
-      arxiv_tags: getCategories(xmlText)
-    };
-    console.log("Parsed XML:", parsed);
-    return parsed;
-  } catch (error) {
-    console.error("Error parsing XML:", error);
-    return null;
-  }
-}
-async function processArxivUrl(url) {
-  console.log("Processing URL:", url);
-  let arxivId = null;
-  const match = url.match(/arxiv\.org\/(abs|pdf|html)\/([0-9.]+)/);
-  if (match) {
-    arxivId = match[2];
-  }
-  if (!arxivId) {
-    console.log("No arXiv ID found in URL");
-    return null;
-  }
-  console.log("Found arXiv ID:", arxivId);
-  try {
-    const apiUrl = `https://export.arxiv.org/api/query?id_list=${arxivId}`;
-    console.log("Fetching from arXiv API:", apiUrl);
-    const response = await fetch(apiUrl);
-    console.log("API response status:", response.status);
-    if (!response.ok) {
-      throw new Error(`ArXiv API error: ${response.status}`);
-    }
-    const text = await response.text();
-    const parsed = await parseXMLText(text);
-    if (!parsed) {
-      console.log("Failed to parse API response");
-      return null;
-    }
-    const paperData = {
-      arxivId,
-      source: "arxiv",
-      sourceId: arxivId,
-      primary_id: formatPrimaryId("arxiv", arxivId),
-      url,
-      title: parsed.title,
-      authors: parsed.authors.join(", "),
-      abstract: parsed.summary,
-      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-      rating: "novote",
-      published_date: parsed.published_date,
-      arxiv_tags: parsed.arxiv_tags
-    };
-    console.log("Paper data processed:", paperData);
-    return paperData;
-  } catch (error) {
-    console.error("Error processing arXiv URL:", error);
-    return null;
   }
 }
 function initializeDebugObjects() {
@@ -1672,6 +2008,6 @@ function initializeDebugObjects() {
     getCurrentSession: () => currentSession,
     getConfig: () => sessionConfig
   };
-  console.log("Debug objects registered, access via __DEBUG__ in service worker console");
+  logger.info("Debug objects registered, access via __DEBUG__ in service worker console");
 }
 //# sourceMappingURL=background.bundle.js.map
