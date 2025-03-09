@@ -84,6 +84,45 @@ export const openreviewPlugin: SourcePlugin = {
           return element ? element.getAttribute('content') : undefined;
         };
         
+        // IMPROVED TITLE EXTRACTION: Check multiple sources in order of reliability
+        
+        // 1. First try citation_title meta tag (most reliable)
+        let title = getMetaContent('citation_title');
+        logger.info(`Meta title extraction result: ${title || 'Not found'}`);
+        
+        // 2. If not found, try the document title
+        if (!title) {
+          const titleElement = swDOM.querySelector('title');
+          if (titleElement && titleElement.textContent) {
+            title = titleElement.textContent.replace(' | OpenReview', '').trim();
+            logger.info(`Document title extraction result: ${title || 'Not found'}`);
+          }
+        }
+        
+        // 3. If still not found, try heading elements in the forum-title section
+        if (!title) {
+          const h2Title = swDOM.querySelector('.forum-title h2');
+          if (h2Title && h2Title.textContent) {
+            title = h2Title.textContent.trim();
+            logger.info(`H2 title extraction result: ${title || 'Not found'}`);
+          }
+        }
+        
+        // 4. If still not found, try OG meta tags
+        if (!title) {
+          const ogTitle = swDOM.querySelector('meta[property="og:title"]');
+          if (ogTitle) {
+            title = ogTitle.getAttribute('content');
+            if (title) {
+              // Clean up potential truncation in OG titles (indicated by "...")
+              if (title.endsWith('...')) {
+                title = title.substring(0, title.length - 3);
+              }
+              logger.info(`OG title extraction result: ${title || 'Not found'}`);
+            }
+          }
+        }
+        
         // Get all citation_author meta tags
         const authorElements = swDOM.querySelectorAll('meta[name="citation_author"]');
         let authors = '';
@@ -95,21 +134,6 @@ export const openreviewPlugin: SourcePlugin = {
           });
           authors = authorTexts.join(', ');
         }
-        
-        // Extract title from meta tags first
-        let metaTitle = getMetaContent('citation_title');
-        
-        // If not found in meta tags, try to get from title element
-        let titleElement = swDOM.querySelector('title');
-        let docTitle = titleElement?.textContent || '';
-        
-        // Clean up title from title element (remove " | OpenReview" suffix)
-        if (docTitle) {
-          docTitle = docTitle.replace(' | OpenReview', '').trim();
-        }
-        
-        // Use meta title or document title
-        let title = metaTitle || docTitle || '';
         
         const abstract = getMetaContent('citation_abstract');
         const publicationDate = getMetaContent('citation_online_date');
@@ -214,8 +238,31 @@ export const openreviewPlugin: SourcePlugin = {
           }
         });
         
-        // Fixed title fallback: properly use the available title information
-        const finalTitle = title || domTitle || `OpenReview Paper: ${paperId}`;
+        // Additional logging for debugging title fallback
+        logger.info(`Title before fallback: "${title || 'EMPTY'}"`);
+        logger.info(`DOM title before fallback: "${domTitle || 'EMPTY'}"`);
+        
+        // Fixed title fallback with more aggressive extraction from DOM
+        let finalTitle = title || domTitle;
+        
+        // Last resort title extraction from content if we still don't have a title
+        if (!finalTitle) {
+          // Try to find any element with 'title' in its class name
+          const titleElements = swDOM.querySelectorAll('[class*="title"]');
+          for (const el of titleElements) {
+            if (el.textContent && el.textContent.trim().length > 10) {
+              finalTitle = el.textContent.trim();
+              logger.info(`Last resort title from class: ${finalTitle}`);
+              break;
+            }
+          }
+        }
+        
+        // Only use generic fallback if we absolutely couldn't find a title
+        if (!finalTitle) {
+          finalTitle = `OpenReview Paper: ${paperId}`;
+          logger.info('Using generic fallback title');
+        }
         
         return {
           title: finalTitle,
@@ -246,11 +293,42 @@ export const openreviewPlugin: SourcePlugin = {
       }
       
       // Extract title, abstract, and other metadata from meta tags
-      // FIXED: Explicitly store meta title separately
-      const metaTitle = getMetaContent('citation_title');
-      const docTitle = document.title.replace(' | OpenReview', '').trim();
-      // Use meta title first, fallback to document title
-      let title = metaTitle || docTitle || '';
+      // IMPROVED TITLE EXTRACTION: Check multiple sources in order of reliability
+      
+      // 1. First try citation_title meta tag (most reliable)
+      let title = getMetaContent('citation_title');
+      logger.info(`Meta title extraction result: ${title || 'Not found'}`);
+      
+      // 2. If not found, try the document title
+      if (!title) {
+        title = document.title.replace(' | OpenReview', '').trim();
+        logger.info(`Document title extraction result: ${title || 'Not found'}`);
+      }
+      
+      // 3. If still not found, try heading elements in the forum-title section
+      if (!title) {
+        const h2Title = document.querySelector('.forum-title h2');
+        if (h2Title && h2Title.textContent) {
+          title = h2Title.textContent.trim();
+          logger.info(`H2 title extraction result: ${title || 'Not found'}`);
+        }
+      }
+      
+      // 4. If still not found, try OG meta tags
+      if (!title) {
+        const ogTitle = document.querySelector('meta[property="og:title"]');
+        if (ogTitle) {
+          let ogTitleText = ogTitle.getAttribute('content');
+          if (ogTitleText) {
+            // Clean up potential truncation in OG titles (indicated by "...")
+            if (ogTitleText.endsWith('...')) {
+              ogTitleText = ogTitleText.substring(0, ogTitleText.length - 3);
+            }
+            title = ogTitleText;
+            logger.info(`OG title extraction result: ${title || 'Not found'}`);
+          }
+        }
+      }
       
       const abstract = getMetaContent('citation_abstract');
       const publicationDate = getMetaContent('citation_online_date');
@@ -391,8 +469,31 @@ export const openreviewPlugin: SourcePlugin = {
         }
       });
       
-      // FIXED: properly use the available title information with clear fallback chain
-      const finalTitle = title || domData.domTitle || `OpenReview Paper: ${paperId}`;
+      // Additional logging for debugging title fallback
+      logger.info(`Title before fallback: "${title || 'EMPTY'}"`);
+      logger.info(`DOM title before fallback: "${domData.domTitle || 'EMPTY'}"`);
+      
+      // Fixed title fallback with more aggressive extraction if needed
+      let finalTitle = title || domData.domTitle;
+      
+      // Last resort title extraction from content if we still don't have a title
+      if (!finalTitle) {
+        // Try to find any element with 'title' in its class name
+        const titleElements = document.querySelectorAll('[class*="title"]');
+        for (const el of titleElements) {
+          if (el.textContent && el.textContent.trim().length > 10) {
+            finalTitle = el.textContent.trim();
+            logger.info(`Last resort title from class: ${finalTitle}`);
+            break;
+          }
+        }
+      }
+      
+      // Only use generic fallback if we absolutely couldn't find a title
+      if (!finalTitle) {
+        finalTitle = `OpenReview Paper: ${paperId}`;
+        logger.info('Using generic fallback title');
+      }
       
       return {
         title: finalTitle,
