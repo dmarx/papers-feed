@@ -847,7 +847,13 @@ const openreviewPlugin = {
           });
           authors2 = authorTexts.join(", ");
         }
-        const title2 = getMetaContent2("citation_title") || swDOM.querySelector("title")?.textContent?.replace(" | OpenReview", "") || "";
+        let metaTitle2 = getMetaContent2("citation_title");
+        let titleElement = swDOM.querySelector("title");
+        let docTitle2 = titleElement?.textContent || "";
+        if (docTitle2) {
+          docTitle2 = docTitle2.replace(" | OpenReview", "").trim();
+        }
+        let title2 = metaTitle2 || docTitle2 || "";
         const abstract2 = getMetaContent2("citation_abstract");
         const publicationDate2 = getMetaContent2("citation_online_date");
         const conferenceTitle2 = getMetaContent2("citation_conference_title");
@@ -925,8 +931,9 @@ const openreviewPlugin = {
             delete sourceSpecificMetadata2[key];
           }
         });
+        const finalTitle2 = title2 || domTitle || `OpenReview Paper: ${paperId}`;
         return {
-          title: title2 || domTitle || `OpenReview Paper: ${paperId}`,
+          title: finalTitle2,
           authors: authors2 || domAuthors || "",
           abstract: abstract2 || domAbstract || "",
           url,
@@ -947,7 +954,9 @@ const openreviewPlugin = {
         });
         authors = authorTexts.join(", ");
       }
-      const title = getMetaContent("citation_title") || document.title.replace(" | OpenReview", "");
+      const metaTitle = getMetaContent("citation_title");
+      const docTitle = document.title.replace(" | OpenReview", "").trim();
+      let title = metaTitle || docTitle || "";
       const abstract = getMetaContent("citation_abstract");
       const publicationDate = getMetaContent("citation_online_date");
       const conferenceTitle = getMetaContent("citation_conference_title");
@@ -966,7 +975,11 @@ const openreviewPlugin = {
           }
           return null;
         };
-        const domTitle = document.querySelector(".note_content_title, .note-content-title, .forum-title h2")?.textContent?.trim() || "";
+        let domTitle = "";
+        const titleEl = document.querySelector(".note_content_title, .note-content-title, .forum-title h2");
+        if (titleEl && titleEl.textContent) {
+          domTitle = titleEl.textContent.trim();
+        }
         let domAuthors = "";
         const authorEl = document.querySelector(".signatures, .author, .authors, .forum-authors h3");
         if (authorEl && authorEl.textContent) {
@@ -1042,8 +1055,9 @@ const openreviewPlugin = {
           delete sourceSpecificMetadata[key];
         }
       });
+      const finalTitle = title || domData.domTitle || `OpenReview Paper: ${paperId}`;
       return {
-        title: title || domData.domTitle || `OpenReview Paper: ${paperId}`,
+        title: finalTitle,
         authors: authors || domData.domAuthors || "",
         abstract: abstract || domData.domAbstract || "",
         url,
