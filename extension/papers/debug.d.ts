@@ -1,8 +1,8 @@
 // extension/papers/debug.d.ts
 import { GitHubStoreClient } from 'gh-store-client';
 import { PaperManager } from './manager';
+import { DetectedSourceInfo } from './url_detection_service';
 
-// In extension/papers/debug.d.ts, update the global interface
 declare global {
     interface Window {
         __DEBUG__: {
@@ -14,8 +14,10 @@ declare global {
             enhancedServices?: {
                 urlDetectionService: any;
                 getPluginState: () => any;
-                handleUrl: (url: string) => Promise<any>;
+                handleUrl: (url: string) => Promise<DetectedSourceInfo | null>;
             };
         };
     }
+    
+    const __DEBUG__: Window['__DEBUG__'];
 }
