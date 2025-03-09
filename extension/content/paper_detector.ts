@@ -15,11 +15,7 @@ export interface SourceInfo {
 /**
  * Reference to active popup
  */
-let activePopup: HTMLElement & {
-  paperSource?: string;
-  paperId?: string;
-  primary_id?: string;
-} | null = null;
+let activePopup: HTMLElement | null = null;
 
 /**
  * Format a primary ID properly using a consistent approach
