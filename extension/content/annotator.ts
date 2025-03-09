@@ -230,65 +230,27 @@ function getSourceColor(source: string): string {
  * Initialize annotator module
  */
 export function initializeAnnotator(): void {
-  // Add global CSS for annotators
-  const style = document.createElement('style');
-  style.textContent = `
-    .paper-annotator {
-      display: inline-block;
-      width: 16px;
-      height: 16px;
-      margin-left: 5px;
-      vertical-align: middle;
-      cursor: pointer;
-      background-size: contain;
-      background-repeat: no-repeat;
-      background-position: center;
-      opacity: 0.7;
-      transition: opacity 0.2s ease;
+  console.log('Initializing paper annotator module');
+  
+  // CSS is now imported in index.ts via import './styles.css'
+  // which is more maintainable than injecting it here
+  
+  // Initialize any event listeners or other setup needed
+  document.addEventListener('click', (e) => {
+    // Close popups when clicking outside them
+    if (
+      e.target && 
+      !(e.target as HTMLElement).closest('.paper-popup') && 
+      !(e.target as HTMLElement).closest('.paper-annotator')
+    ) {
+      // Get all popup containers and remove them
+      document.querySelectorAll('.paper-popup-container').forEach(container => {
+        if (container.contains(document.activeElement)) {
+          // Don't remove if it contains the active element (like a focused textarea)
+          return;
+        }
+        container.remove();
+      });
     }
-    
-    .paper-annotator:hover {
-      opacity: 1;
-    }
-    
-    .annotator-arxiv {
-      background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%23B31B1B"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14h-2V9h-2V7h4v10z"/></svg>');
-    }
-    
-    .annotator-semanticscholar {
-      background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%232e7d32"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>');
-    }
-    
-    .annotator-doi, .annotator-acm {
-      background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%230277bd"><path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H8V4h12v12zM10 9h8v2h-8zm0 3h4v2h-4zm0-6h8v2h-8z"/></svg>');
-    }
-    
-    .annotator-openreview {
-      background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%236d4c41"><path d="M20 2H4c-1.1 0-1.99.9-1.99 2L2 22l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-7 9h-2V5h2v6zm0 4h-2v-2h2v2z"/></svg>');
-    }
-    
-    .paper-popup {
-      position: absolute;
-      z-index: 10000;
-      background: white;
-      border: 1px solid #ccc;
-      border-radius: 4px;
-      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-      padding: 12px;
-      width: 300px;
-      max-width: 90vw;
-      font-size: 14px;
-      font-family: system-ui, sans-serif;
-    }
-    
-    .paper-popup-container {
-      position: relative;
-    }
-    
-    .vote-button.active {
-      background: #e0f7fa !important;
-      border-color: #4dd0e1 !important;
-    }
-  `;
-  document.head.appendChild(style);
+  });
 }
