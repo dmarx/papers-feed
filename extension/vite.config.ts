@@ -11,7 +11,8 @@ export default defineConfig({
       input: {
         background: resolve(__dirname, 'background/index.ts'),
         content: resolve(__dirname, 'content/index.ts'),
-        popup: resolve(__dirname, 'popup/index.ts'),
+        popup: resolve(__dirname, 'popup.js')
+        //popup: resolve(__dirname, 'popup/index.ts'),
         //options: resolve(__dirname, 'options/index.ts')
       },
       output: {
