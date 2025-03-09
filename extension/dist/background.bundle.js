@@ -496,7 +496,6 @@ const arxivPlugin = {
     return `arxiv.${id}`;
   }
 };
-pluginRegistry.register(arxivPlugin);
 
 const logger$5 = loguru.getLogger("SemanticScholarPlugin");
 const semanticScholarPlugin = {
