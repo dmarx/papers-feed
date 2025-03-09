@@ -1,4 +1,5 @@
-// extension/papers/plugins/registry.ts - Enhanced registry logging
+// extension/papers/plugins/registry.ts
+// Updated plugin registry with improved logging
 
 import { SourcePlugin } from './source_plugin';
 import { loguru } from '../../utils/logger';
@@ -27,6 +28,16 @@ class PluginRegistry {
       return;
     }
     
+    if (!plugin.getContentScriptExtractor || typeof plugin.getContentScriptExtractor !== 'function') {
+      debugLogger.error(`Plugin ${plugin.id} missing required getContentScriptExtractor method`);
+      return;
+    }
+    
+    if (!plugin.formatId || typeof plugin.formatId !== 'function') {
+      debugLogger.error(`Plugin ${plugin.id} missing required formatId method`);
+      return;
+    }
+    
     if (this.plugins.has(plugin.id)) {
       debugLogger.warning(`Plugin with ID ${plugin.id} already registered, overwriting`);
       logger.warning(`Plugin with ID ${plugin.id} already registered, overwriting`);
@@ -34,7 +45,6 @@ class PluginRegistry {
     
     this.plugins.set(plugin.id, plugin);
     debugLogger.info(`Successfully registered plugin: ${plugin.name} (${plugin.id})`);
-    debugLogger.info(`Plugin capabilities: hasApi=${!!plugin.hasApi}, formatId=${!!plugin.formatId}`);
     logger.info(`Registered plugin: ${plugin.name} (${plugin.id})`);
   }
   
@@ -61,8 +71,6 @@ class PluginRegistry {
       debugLogger.info(`Testing URL against plugin: ${plugin.id}`);
       
       for (const pattern of plugin.urlPatterns) {
-        debugLogger.info(`Testing pattern: ${pattern.toString()}`);
-        
         if (pattern.test(url)) {
           debugLogger.info(`URL matches pattern for plugin: ${plugin.id}`);
           
@@ -84,4 +92,3 @@ class PluginRegistry {
 
 // Export singleton instance
 export const pluginRegistry = new PluginRegistry();
-debugLogger.info('PluginRegistry singleton instance created');
