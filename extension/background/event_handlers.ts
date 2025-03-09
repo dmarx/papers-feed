@@ -1,4 +1,4 @@
-// extension/background/event_handlers.js - Tab and navigation event handlers
+// extension/background/event_handlers.ts - Tab and navigation event handlers
 
 import { loguru } from "../utils/logger";
 import { processNavigation, processTab } from '../papers/detection_service';
@@ -9,10 +9,32 @@ import githubIntegration from './github_integration';
 
 const logger = loguru.getLogger('EventHandlers');
 
+interface NavDetails {
+  tabId: number;
+  url: string;
+  frameId: number;
+  timeStamp: number;
+}
+
+interface HostPattern {
+  hostSuffix?: string;
+  hostEquals?: string;
+  hostPrefix?: string;
+  [key: string]: string | undefined;
+}
+
+type Plugin = {
+  id: string;
+  urlPatterns: RegExp[];
+  [key: string]: any;
+};
+
 /**
  * Manages tab and navigation event handlers
  */
 export class EventHandlers {
+  private pendingUrls: Set<string>;
+
   constructor() {
     this.pendingUrls = new Set();
   }
@@ -21,7 +43,7 @@ export class EventHandlers {
    * Set up all event listeners
    * @returns {Promise<void>}
    */
-  async setupListeners() {
+  async setupListeners(): Promise<void> {
     logger.info('Setting up unified event listeners');
     
     // Get all supported hosts from plugins
@@ -61,11 +83,11 @@ export class EventHandlers {
   /**
    * Build host patterns from plugins
    * @private
-   * @param {Array} plugins - Available plugins
-   * @returns {Array} Host patterns for navigation listener
+   * @param {Plugin[]} plugins - Available plugins
+   * @returns {HostPattern[]} Host patterns for navigation listener
    */
-  _buildHostPatterns(plugins) {
-    const hostPatterns = [];
+  private _buildHostPatterns(plugins: Plugin[]): HostPattern[] {
+    const hostPatterns: HostPattern[] = [];
     
     for (const plugin of plugins) {
       // Add all the plugin URL patterns if possible
@@ -102,10 +124,10 @@ export class EventHandlers {
 
   /**
    * Handle navigation events
-   * @param {Object} details - Navigation details
+   * @param {NavDetails} details - Navigation details
    * @returns {Promise<void>}
    */
-  async handleUnifiedNavigation(details) {
+  async handleUnifiedNavigation(details: NavDetails): Promise<void> {
     logger.info(`Unified navigation handler: ${details.url}`);
     
     try {
@@ -138,10 +160,10 @@ export class EventHandlers {
 
   /**
    * Handle tab activation events
-   * @param {Object} activeInfo - Tab activation info
+   * @param {chrome.tabs.TabActiveInfo} activeInfo - Tab activation info
    * @returns {Promise<void>}
    */
-  async handleUnifiedTabActivation(activeInfo) {
+  async handleUnifiedTabActivation(activeInfo: chrome.tabs.TabActiveInfo): Promise<void> {
     logger.info(`Unified tab activation handler: ${activeInfo.tabId}`);
     const tab = await chrome.tabs.get(activeInfo.tabId);
     
@@ -160,7 +182,7 @@ export class EventHandlers {
       logger.error(`Error in tab activation handler: ${error}`);
     } finally {
       setTimeout(() => {
-        this.pendingUrls.delete(tab.url);
+        if (tab.url) this.pendingUrls.delete(tab.url);
       }, 500);
     }
   }
@@ -168,11 +190,15 @@ export class EventHandlers {
   /**
    * Handle tab update events
    * @param {number} tabId - Tab ID
-   * @param {Object} changeInfo - Change info
-   * @param {Object} tab - Tab object
+   * @param {chrome.tabs.TabChangeInfo} changeInfo - Change info
+   * @param {chrome.tabs.Tab} tab - Tab object
    * @returns {Promise<void>}
    */
-  async handleUnifiedTabUpdate(tabId, changeInfo, tab) {
+  async handleUnifiedTabUpdate(
+    tabId: number, 
+    changeInfo: chrome.tabs.TabChangeInfo, 
+    tab: chrome.tabs.Tab
+  ): Promise<void> {
     if (changeInfo.status !== 'complete' || !tab.url || this.pendingUrls.has(tab.url)) {
       return;
     }
@@ -189,17 +215,17 @@ export class EventHandlers {
       logger.error(`Error in tab update handler: ${error}`);
     } finally {
       setTimeout(() => {
-        this.pendingUrls.delete(tab.url);
+        if (tab.url) this.pendingUrls.delete(tab.url);
       }, 500);
     }
   }
 
   /**
    * Handle tab changes for papers
-   * @param {Object} tab - Tab object
+   * @param {chrome.tabs.Tab} tab - Tab object
    * @returns {Promise<void>}
    */
-  async handleTabChangeWithPlugins(tab) {
+  async handleTabChangeWithPlugins(tab: chrome.tabs.Tab): Promise<void> {
     if (!tab.url) return;
     
     // Use enhanced detection service
@@ -235,9 +261,9 @@ export class EventHandlers {
    * Process a paper URL
    * @param {string} url - Paper URL
    * @param {Object} options - Processing options
-   * @returns {Promise<Object|null>} Paper data or null
+   * @returns {Promise<any|null>} Paper data or null
    */
-  async processPaperUrl(url, options = {}) {
+  async processPaperUrl(url: string, options: {tabId?: number} = {}): Promise<any | null> {
     logger.info(`Processing paper URL: ${url}`);
     
     try {
