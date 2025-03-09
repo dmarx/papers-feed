@@ -1,4 +1,5 @@
-// extension/papers/plugins/loader.ts - Enhanced logging
+// extension/papers/plugins/loader.ts
+// Improved plugin loader with better initialization handling
 
 import { loguru } from '../../utils/logger';
 import { pluginRegistry } from './registry';
@@ -7,199 +8,157 @@ import { pluginRegistry } from './registry';
 import * as plugins from './sources/index';
 
 const logger = loguru.getLogger('PluginLoader');
-const debugLogger = loguru.getLogger('PluginDebug');
+
+// Track plugin initialization state
+let pluginsInitialized = false;
+let initializationPromise: Promise<void> | null = null;
 
 /**
- * Load all built-in source plugins with enhanced logging
+ * Load all built-in source plugins with improved error handling
  */
-export async function loadBuiltinPlugins(): Promise<void> {
+async function loadBuiltinPlugins(): Promise<void> {
   logger.info('Loading built-in plugins');
-  debugLogger.info('=== Starting plugin loading process ===');
   
   try {
-    // Check for imported plugins
-    debugLogger.info('Imported plugin module:', plugins);
-    
     // Plugins are already loaded via the static import
     // This is just to check if they were properly registered
     const pluginCount = pluginRegistry.getAll().length;
     
     if (pluginCount === 0) {
-      debugLogger.error('No plugins were registered. Check plugin registration logic.');
-      debugLogger.info('Plugin registry state:', pluginRegistry);
-      logger.warning('No plugins were registered. Check plugin registration.');
+      logger.warning('No plugins were registered. Attempting emergency registration.');
+      // Emergency fallback - directly import critical plugins
+      try {
+        await import('./sources/arxiv_plugin');
+        await import('./sources/semantic_scholar_plugin');
+        await import('./sources/openreview_plugin');
+        
+        // Check if emergency loading worked
+        const emergencyCount = pluginRegistry.getAll().length;
+        if (emergencyCount > 0) {
+          logger.info(`Emergency plugin loading successful: ${emergencyCount} plugins registered`);
+        } else {
+          throw new Error('Failed to load any plugins even with emergency loading');
+        }
+      } catch (emergencyError) {
+        logger.error('Emergency plugin loading failed:', emergencyError);
+        throw emergencyError;
+      }
     } else {
-      debugLogger.info(`${pluginCount} plugins successfully registered`);
-      const registeredPlugins = pluginRegistry.getAll();
-      debugLogger.info('Registered plugins:');
-      registeredPlugins.forEach(plugin => {
-        debugLogger.info(`- ${plugin.id}: ${plugin.name} (v${plugin.version})`);
-      });
-      
       logger.info(`${pluginCount} plugins are registered.`);
     }
   } catch (error) {
-    debugLogger.error('Error loading plugins', error);
-    if (error instanceof Error) {
-      debugLogger.error(`Stack trace: ${error.stack}`);
-      // Check for module resolution issues
-      if (error.message.includes('Cannot find module')) {
-        debugLogger.error('Module resolution error. Check import paths and build configuration.');
-      }
-    }
-    
     logger.error('Error loading plugins', error);
-  }
-}
-
-/**
- * Initialize the plugin system with enhanced logging
- */
-export async function initializePluginSystem(): Promise<void> {
-  debugLogger.info('=== Initializing plugin system ===');
-  logger.info('Initializing plugin system');
-  
-  try {
-    await loadBuiltinPlugins();
-    
-    // Log loaded plugins in detail
-    const plugins = pluginRegistry.getAll();
-    debugLogger.info(`Initialized ${plugins.length} plugins:`);
-    
-    plugins.forEach(plugin => {
-      debugLogger.info(`Plugin: ${plugin.name} (${plugin.id}) v${plugin.version}`);
-      
-      // Verify required plugin methods
-      if (!plugin.extractId) {
-        debugLogger.error(`Plugin ${plugin.id} is missing required extractId method!`);
-      }
-      
-      if (!plugin.extractMetadata) {
-        debugLogger.error(`Plugin ${plugin.id} is missing required extractMetadata method!`);
-      }
-      
-      // Log URL patterns
-      debugLogger.info(`URL patterns for ${plugin.id}:`);
-      plugin.urlPatterns.forEach(pattern => {
-        debugLogger.info(`- ${pattern.toString()}`);
-      });
-      
-      // Check API capabilities
-      if (plugin.hasApi) {
-        if (plugin.fetchApiData) {
-          debugLogger.info(`Plugin ${plugin.id} has API support`);
-        } else {
-          debugLogger.error(`Plugin ${plugin.id} has hasApi=true but is missing fetchApiData method!`);
-        }
-      }
-      
-      // Check ID formatting
-      if (plugin.formatId) {
-        const testId = 'test123';
-        const formattedId = plugin.formatId(testId);
-        debugLogger.info(`ID format example: ${testId} -> ${formattedId}`);
-      } else {
-        debugLogger.info(`Plugin ${plugin.id} uses default ID formatting`);
-      }
-      
-      logger.info(`- ${plugin.name} (${plugin.id}) v${plugin.version}`);
-    });
-    
-    debugLogger.info('=== Plugin system initialization complete ===');
-  } catch (error) {
-    debugLogger.error('Plugin system initialization failed', error);
+    // Log detailed error information for debugging
     if (error instanceof Error) {
-      debugLogger.error(`Error details: ${error.message}`);
-      debugLogger.error(`Stack trace: ${error.stack}`);
+      logger.error(`Plugin loading error: ${error.message}`);
+      if (error.stack) {
+        logger.error(`Stack trace: ${error.stack}`);
+      }
     }
+    // Rethrow to indicate initialization failure
     throw error;
   }
 }
 
-// extension/papers/plugins/registry.ts - Enhanced registry logging
-
-import { SourcePlugin } from './source_plugin';
-import { loguru } from '../../utils/logger';
-
-const logger = loguru.getLogger('PluginRegistry');
-const debugLogger = loguru.getLogger('PluginRegistryDebug');
-
-class PluginRegistry {
-  private plugins: Map<string, SourcePlugin> = new Map();
-  
-  register(plugin: SourcePlugin): void {
-    debugLogger.info(`Registering plugin: ${plugin.id} (${plugin.name})`);
-    
-    // Validate plugin has required fields
-    if (!plugin.id || typeof plugin.id !== 'string') {
-      debugLogger.error(`Plugin missing valid id: ${JSON.stringify(plugin)}`);
-      return;
-    }
-    
-    if (!Array.isArray(plugin.urlPatterns) || plugin.urlPatterns.length === 0) {
-      debugLogger.warning(`Plugin ${plugin.id} has no URL patterns`);
-    }
-    
-    if (!plugin.extractId || typeof plugin.extractId !== 'function') {
-      debugLogger.error(`Plugin ${plugin.id} missing required extractId method`);
-      return;
-    }
-    
-    if (this.plugins.has(plugin.id)) {
-      debugLogger.warning(`Plugin with ID ${plugin.id} already registered, overwriting`);
-      logger.warning(`Plugin with ID ${plugin.id} already registered, overwriting`);
-    }
-    
-    this.plugins.set(plugin.id, plugin);
-    debugLogger.info(`Successfully registered plugin: ${plugin.name} (${plugin.id})`);
-    debugLogger.info(`Plugin capabilities: hasApi=${!!plugin.hasApi}, formatId=${!!plugin.formatId}`);
-    logger.info(`Registered plugin: ${plugin.name} (${plugin.id})`);
+/**
+ * Initialize the plugin system with retry capability
+ * @param {number} retries Number of retries if initialization fails
+ * @returns {Promise<void>}
+ */
+export async function initializePluginSystem(retries = 3): Promise<void> {
+  // If already initialized, return immediately
+  if (pluginsInitialized) {
+    return;
   }
   
-  getAll(): SourcePlugin[] {
-    debugLogger.info(`Getting all plugins, currently ${this.plugins.size} registered`);
-    return Array.from(this.plugins.values());
+  // If initialization is in progress, return the existing promise
+  if (initializationPromise) {
+    return initializationPromise;
   }
   
-  get(id: string): SourcePlugin | undefined {
-    debugLogger.info(`Looking up plugin by id: ${id}`);
-    const plugin = this.plugins.get(id);
-    if (!plugin) {
-      debugLogger.warning(`No plugin found with id: ${id}`);
-    } else {
-      debugLogger.info(`Found plugin: ${plugin.name} (${plugin.id})`);
-    }
-    return plugin;
-  }
+  // Start initialization
+  logger.info('Initializing plugin system');
   
-  findForUrl(url: string): { plugin: SourcePlugin; id: string } | null {
-    debugLogger.info(`Finding plugin for URL: ${url}`);
+  // Create a new initialization promise
+  initializationPromise = (async () => {
+    let attemptCount = 0;
+    let lastError: Error | null = null;
     
-    for (const plugin of this.plugins.values()) {
-      debugLogger.info(`Testing URL against plugin: ${plugin.id}`);
-      
-      for (const pattern of plugin.urlPatterns) {
-        debugLogger.info(`Testing pattern: ${pattern.toString()}`);
+    // Try initialization with retries
+    while (attemptCount < retries) {
+      try {
+        await loadBuiltinPlugins();
         
-        if (pattern.test(url)) {
-          debugLogger.info(`URL matches pattern for plugin: ${plugin.id}`);
-          
-          const id = plugin.extractId(url);
-          if (id) {
-            debugLogger.info(`Successfully extracted ID: ${id}`);
-            return { plugin, id };
-          } else {
-            debugLogger.warning(`Pattern matched but failed to extract ID`);
-          }
+        // Log loaded plugins
+        const loadedPlugins = pluginRegistry.getAll();
+        logger.info(`Initialized ${loadedPlugins.length} plugins:`);
+        
+        loadedPlugins.forEach(plugin => {
+          logger.info(`- ${plugin.name} (${plugin.id}) v${plugin.version}`);
+        });
+        
+        // Mark as successful
+        pluginsInitialized = true;
+        return;
+      } catch (error) {
+        attemptCount++;
+        lastError = error instanceof Error ? error : new Error(String(error));
+        logger.warning(`Plugin initialization attempt ${attemptCount} failed: ${lastError.message}`);
+        
+        if (attemptCount < retries) {
+          // Wait before retrying
+          const delay = Math.pow(2, attemptCount) * 500; // Exponential backoff
+          logger.info(`Retrying plugin initialization in ${delay}ms...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
         }
       }
     }
     
-    debugLogger.warning(`No plugin found for URL: ${url}`);
-    return null;
+    // If we get here, all retries failed
+    logger.error(`Plugin initialization failed after ${retries} attempts.`);
+    if (lastError) {
+      throw lastError;
+    } else {
+      throw new Error('Plugin initialization failed for unknown reasons');
+    }
+  })();
+  
+  try {
+    await initializationPromise;
+    return;
+  } catch (error) {
+    // Reset the promise so future calls can try again
+    initializationPromise = null;
+    throw error;
   }
 }
 
-// Export singleton instance
-export const pluginRegistry = new PluginRegistry();
-debugLogger.info('PluginRegistry singleton instance created');
+/**
+ * Check if plugins are initialized
+ * @returns {boolean} True if plugins are initialized
+ */
+export function arePluginsInitialized(): boolean {
+  return pluginsInitialized;
+}
+
+/**
+ * Get current plugin initialization state
+ * @returns {Object} Initialization state
+ */
+export function getPluginInitializationState() {
+  return {
+    initialized: pluginsInitialized,
+    initializationInProgress: !!initializationPromise,
+    pluginCount: pluginRegistry.getAll().length
+  };
+}
+
+/**
+ * Manually reset plugin initialization state
+ * Used primarily for testing and emergency recovery
+ */
+export function resetPluginInitialization(): void {
+  pluginsInitialized = false;
+  initializationPromise = null;
+  logger.warning('Plugin initialization state has been reset');
+}
