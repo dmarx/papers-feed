@@ -184,10 +184,11 @@ export const openreviewPlugin: SourcePlugin = {
           // Find the field element that contains the field name
           const fields = Array.from(document.querySelectorAll('.note-content-field, .note_content_field'));
           for (const field of fields) {
-            if (field.textContent?.includes(fieldName)) {
+            const fieldElement = field as Element;
+            if (fieldElement.textContent?.includes(fieldName)) {
               // Get its sibling or parent's next element which contains the value
-              const valueEl = field.nextElementSibling || 
-                             field.parentElement?.querySelector('.note-content-value, .note_content_value');
+              const valueEl = fieldElement.nextElementSibling || 
+                             fieldElement.parentElement?.querySelector('.note-content-value, .note_content_value');
               
               if (valueEl && valueEl.textContent) {
                 return valueEl.textContent.trim();
