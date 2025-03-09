@@ -2,6 +2,12 @@
 
 import { UnifiedPaperData } from '../types';
 
+export interface MetadataQualityResult {
+  quality: 'minimal' | 'partial' | 'complete';
+  missingFields: string[];
+  hasEssentialFields: boolean;
+}
+
 export interface SourcePlugin {
   // Basic info
   id: string;               // Unique source identifier
@@ -13,8 +19,11 @@ export interface SourcePlugin {
   urlPatterns: RegExp[];    // Patterns to match URLs
   extractId: (url: string) => string | null;  // Extract ID from URL
   
-  // Metadata extraction
-  extractMetadata: (document: Document, url: string) => Promise<Partial<UnifiedPaperData>>;
+  // Content script metadata extraction
+  getContentScriptExtractor: () => string;  // Returns extraction code as string
+  
+  // Metadata quality evaluation
+  evaluateMetadataQuality: (paperData: Partial<UnifiedPaperData>) => MetadataQualityResult;
   
   // Optional API support
   hasApi?: boolean;
@@ -25,5 +34,5 @@ export interface SourcePlugin {
   icon?: string;            // Icon or emoji
   
   // Storage format customization
-  formatId?: (id: string) => string; // Format ID for storage
+  formatId: (id: string) => string; // Format ID for storage
 }
