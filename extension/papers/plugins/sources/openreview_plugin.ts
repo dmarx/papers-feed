@@ -33,7 +33,7 @@ export const openreviewPlugin: SourcePlugin = {
   id: 'openreview',
   name: 'OpenReview',
   description: 'Support for OpenReview papers',
-  version: '1.1.0',
+  version: '1.2.0',
   
   urlPatterns: [
     /openreview\.net\/forum\?id=([a-zA-Z0-9_\-]+)/,
@@ -76,7 +76,8 @@ export const openreviewPlugin: SourcePlugin = {
         // Create a lightweight DOM-like object we can query
         const swDOM = createServiceWorkerDOM(htmlContent);
         
-        // Now we can use querySelector-like methods
+        // Now we can use querySelector-like methods to extract metadata from head tags
+        // These are more reliable than trying to parse the body content
         const getMetaContent = (name: string): string | undefined => {
           const element = swDOM.querySelector(`meta[name="${name}"]`);
           return element ? element.getAttribute('content') : undefined;
@@ -96,74 +97,96 @@ export const openreviewPlugin: SourcePlugin = {
         
         // Extract title, abstract, and other metadata from meta tags
         const title = getMetaContent('citation_title') || 
-                      swDOM.querySelector('title')?.textContent?.replace(' | OpenReview', '') || '';
+                     swDOM.querySelector('title')?.textContent?.replace(' | OpenReview', '') || '';
         const abstract = getMetaContent('citation_abstract');
         const publicationDate = getMetaContent('citation_online_date');
         const conferenceTitle = getMetaContent('citation_conference_title');
         const pdfUrl = getMetaContent('citation_pdf_url');
         
-        // Look for OpenReview's specific metadata in the HTML content
+        // Additional metadata extraction from body content 
+        // using more robust pattern matching
         let domTitle = '';
         let domAuthors = '';
         let domAbstract = '';
         let keywords = '';
         let tldr = '';
         let decision = '';
+        let venue = '';
         
-        // More aggressive title extraction
-        const titleRegex = /<h1.*?>(.*?)<\/h1>/i;
-        const titleMatch = htmlContent.match(titleRegex);
-        if (titleMatch && titleMatch[1]) {
-          domTitle = titleMatch[1].replace(/<[^>]*>/g, '').trim();
+        // Try to extract venue information from metadata section
+        const venueElements = swDOM.querySelectorAll('.forum-meta .item');
+        if (venueElements.length > 0) {
+          venueElements.forEach((el: any) => {
+            const text = el.textContent?.trim();
+            if (text && text.includes('Submitted to')) {
+              venue = text.replace('Submitted to', '').trim();
+            }
+          });
         }
         
-        // Extract authors from note content or meta
-        const authorsRegex = /<div[^>]*class="authors"[^>]*>(.*?)<\/div>/is;
-        const authorsMatch = htmlContent.match(authorsRegex);
-        if (authorsMatch && authorsMatch[1]) {
-          domAuthors = authorsMatch[1].replace(/<[^>]*>/g, '').trim();
+        // Extract keywords, abstract, etc. from content fields
+        const contentFields = swDOM.querySelectorAll('.note-content-field');
+        contentFields.forEach((el: any) => {
+          const fieldName = el.textContent?.trim();
+          if (!fieldName) return;
+          
+          const valueEl = el.parentElement?.querySelector('.note-content-value');
+          const value = valueEl?.textContent?.trim();
+          if (!value) return;
+          
+          if (fieldName.includes('Keywords')) {
+            keywords = value;
+          } else if (fieldName.includes('Abstract') && !abstract) {
+            domAbstract = value;
+          } else if (fieldName.includes('TL;DR') || fieldName.includes('TLDR')) {
+            tldr = value;
+          } else if (fieldName.includes('Decision')) {
+            decision = value;
+          }
+        });
+        
+        // Fallback title extraction from h1/h2 elements if meta tags failed
+        if (!title) {
+          const h1 = swDOM.querySelector('h1');
+          if (h1 && h1.textContent) {
+            domTitle = h1.textContent.trim();
+          } else {
+            const h2 = swDOM.querySelector('h2.citation_title');
+            if (h2 && h2.textContent) {
+              domTitle = h2.textContent.trim();
+            } else {
+              const h2Alt = swDOM.querySelector('.forum-title h2');
+              if (h2Alt && h2Alt.textContent) {
+                domTitle = h2Alt.textContent.trim();
+              }
+            }
+          }
         }
         
-        // Extract abstract from note content
-        const abstractRegex = /Abstract:(.*?)(?:<\/div>|<\/p>|<\/span>)/is;
-        const abstractMatch = htmlContent.match(abstractRegex);
-        if (abstractMatch && abstractMatch[1]) {
-          domAbstract = abstractMatch[1].replace(/<[^>]*>/g, '').trim();
-        }
-        
-        // Try to find keywords
-        const keywordsRegex = /Keywords:(.*?)(?:<\/div>|<\/p>|<\/span>)/is;
-        const keywordsMatch = htmlContent.match(keywordsRegex);
-        if (keywordsMatch && keywordsMatch[1]) {
-          keywords = keywordsMatch[1].replace(/<[^>]*>/g, '').trim();
-        }
-        
-        // Try to find TL;DR
-        const tldrRegex = /TL;DR:(.*?)(?:<\/div>|<\/p>|<\/span>)/is;
-        const tldrMatch = htmlContent.match(tldrRegex);
-        if (tldrMatch && tldrMatch[1]) {
-          tldr = tldrMatch[1].replace(/<[^>]*>/g, '').trim();
-        }
-        
-        // Try to find decision
-        const decisionRegex = /Decision:(.*?)(?:<\/div>|<\/p>|<\/span>)/is;
-        const decisionMatch = htmlContent.match(decisionRegex);
-        if (decisionMatch && decisionMatch[1]) {
-          decision = decisionMatch[1].replace(/<[^>]*>/g, '').trim();
+        // Fallback author extraction from specific elements if meta tags failed
+        if (!authors) {
+          const authorDiv = swDOM.querySelector('.forum-authors h3');
+          if (authorDiv && authorDiv.textContent) {
+            domAuthors = authorDiv.textContent.trim();
+          }
         }
         
         // Construct the source-specific metadata with more complete information
         const sourceSpecificMetadata: Record<string, any> = {
           forum_id: paperId,
-          conference: conferenceTitle || '',
+          conference: conferenceTitle || venue || '',
           pdf_url: pdfUrl || '',
           publication_date: publicationDate || '',
           keywords: keywords || '',
-          tldr: tldr || '',
-          review_info: decision ? {
-            decision: decision
-          } : undefined
+          tldr: tldr || ''
         };
+        
+        // Add decision if available
+        if (decision) {
+          sourceSpecificMetadata.review_info = {
+            decision: decision
+          };
+        }
         
         // Filter out empty values
         Object.keys(sourceSpecificMetadata).forEach(key => {
@@ -234,11 +257,11 @@ export const openreviewPlugin: SourcePlugin = {
         };
         
         // Extract the submission title if not found in meta
-        const domTitle = document.querySelector('.note_content_title, .note-content-title')?.textContent?.trim() || '';
+        const domTitle = document.querySelector('.note_content_title, .note-content-title, .forum-title h2')?.textContent?.trim() || '';
         
         // Extract authors if not found in meta
         let domAuthors = '';
-        const authorEl = document.querySelector('.signatures, .author, .authors');
+        const authorEl = document.querySelector('.signatures, .author, .authors, .forum-authors h3');
         if (authorEl && authorEl.textContent) {
           domAuthors = authorEl.textContent.trim();
         }
@@ -250,13 +273,17 @@ export const openreviewPlugin: SourcePlugin = {
         const keywords = getContentFieldValue('Keywords') || '';
         
         // Extract TL;DR summary
-        const tldr = getContentFieldValue('TL;DR') || '';
+        const tldr = getContentFieldValue('TL;DR') || getContentFieldValue('TLDR') || '';
         
         // Extract venue information
         let venue = '';
-        const venueEl = document.querySelector('.item:contains("venue"), .meta_row .item');
-        if (venueEl && venueEl.textContent) {
-          venue = venueEl.textContent.trim();
+        const venueItems = document.querySelectorAll('.forum-meta .item');
+        for (const item of venueItems) {
+          const text = item.textContent?.trim();
+          if (text && text.includes('Submitted to')) {
+            venue = text.replace('Submitted to', '').trim();
+            break;
+          }
         }
         
         return {
@@ -361,132 +388,186 @@ export const openreviewPlugin: SourcePlugin = {
     logger.info(`Fetching OpenReview API data for ID: ${id}`);
     
     try {
-      // OpenReview public API endpoint - try forum endpoint first, then notes
-      // The 404 error suggests the direct note query isn't working
-      logger.info(`Trying forum endpoint first for ID: ${id}`);
+      // First try the direct PDF url
+      const pdfUrl = `https://openreview.net/pdf?id=${id}`;
+      
+      // API attempts - we'll try multiple approaches
+      let note: OpenReviewNote | null = null;
+      let reviewsData: any = null;
+      
+      // Try approach 1: Forum endpoint
+      logger.info(`Trying forum endpoint for ID: ${id}`);
       const forumApiUrl = `https://api.openreview.net/notes?forum=${id}`;
-      
-      // Fetch note data from forum API
       const forumResponse = await fetch(forumApiUrl);
-      let note: OpenReviewNote; // Declare note variable outside the conditional blocks
       
-      if (!forumResponse.ok) {
-        // If forum API fails, try the notes endpoint as fallback
-        logger.info(`Forum endpoint failed, trying notes endpoint for ID: ${id}`);
+      if (forumResponse.ok) {
+        const data = await forumResponse.json();
+        reviewsData = data; // Store this for review extraction later
+        
+        // Check if we got valid data
+        if (data.notes && data.notes.length > 0) {
+          // Find the main paper (should be the note with ID matching the forum ID)
+          const mainNote = data.notes.find((n: any) => n.id === id || n.forum === id);
+          
+          if (mainNote) {
+            note = mainNote as OpenReviewNote;
+          } else {
+            // If we can't find the main note, just use the first one
+            note = data.notes[0] as OpenReviewNote;
+          }
+        } else {
+          logger.warning(`No notes found in forum for ID: ${id}`);
+        }
+      }
+      
+      // Try approach 2: Direct ID endpoint if forum approach failed
+      if (!note) {
+        logger.info(`Forum approach failed, trying direct ID endpoint for: ${id}`);
         const notesApiUrl = `https://api.openreview.net/notes?id=${id}`;
         
         const notesResponse = await fetch(notesApiUrl);
-        if (!notesResponse.ok) {
-          throw new Error(`API error: ${notesResponse.status}`);
+        if (notesResponse.ok) {
+          const data = await notesResponse.json();
+          
+          // Check if we got valid data
+          if (data.notes && data.notes.length > 0) {
+            note = data.notes[0] as OpenReviewNote;
+          } else {
+            logger.warning(`No note found for ID: ${id}`);
+          }
+        } else {
+          logger.warning(`API error for notes endpoint: ${notesResponse.status}`);
         }
-        
-        const data = await notesResponse.json();
-        
-        // Check if we got valid data
-        if (!data.notes || data.notes.length === 0) {
-          logger.warning(`No note found for ID: ${id}`);
-          return {};
-        }
-        
-        // Extract the note data
-        note = data.notes[0] as OpenReviewNote;
-      } else {
-        // Process forum response
-        const data = await forumResponse.json();
-        
-        // Check if we got valid data
-        if (!data.notes || data.notes.length === 0) {
-          logger.warning(`No notes found in forum for ID: ${id}`);
-          return {};
-        }
-        
-        // Find the main paper (should be the note with ID matching the forum ID)
-        const mainNote = data.notes.find((n: any) => n.id === id || n.forum === id);
-        
-        if (!mainNote) {
-          logger.warning(`Main note not found in forum data for ID: ${id}`);
-          return {};
-        }
-        
-        // Extract the note data
-        note = mainNote as OpenReviewNote;
       }
       
+      // Fallback with minimal data if both API approaches failed
+      if (!note) {
+        // Construct minimal metadata with the URL and ID
+        return {
+          title: `OpenReview Paper: ${id}`,
+          url: `https://openreview.net/forum?id=${id}`,
+          source_specific_metadata: {
+            forum_id: id,
+            pdf_url: pdfUrl
+          }
+        };
+      }
+      
+      // Process the note data we found
       const content = note.content || {};
       
       // Extract basic metadata
-      const title = content.title || '';
-      const authors = Array.isArray(content.authors) ? content.authors.join(', ') : content.authors || '';
-      const abstract = content.abstract || '';
+      // Handle different content structures - newer OpenReview notes have value objects
+      const getContentValue = (field: string): any => {
+        if (!content[field]) return '';
+        return typeof content[field] === 'object' && 'value' in content[field] 
+          ? content[field].value 
+          : content[field];
+      };
+      
+      const title = getContentValue('title') || '';
+      
+      // Handle authors which could be in different formats
+      let authors = '';
+      const authorsData = getContentValue('authors');
+      if (Array.isArray(authorsData)) {
+        authors = authorsData.join(', ');
+      } else if (typeof authorsData === 'string') {
+        authors = authorsData;
+      }
+      
+      const abstract = getContentValue('abstract') || '';
+      const keywords = getContentValue('keywords') || '';
+      const tldr = getContentValue('TL;DR') || getContentValue('TLDR') || '';
       
       // Construct source-specific metadata
       const sourceSpecificMetadata: Record<string, any> = {
         forum_id: id,
-        venue: note.venue || '',
-        venueid: note.venueid || '',
-        invitation: note.invitation || '',
+        venue: getContentValue('venue') || note.venue || '',
+        venueid: getContentValue('venueid') || note.venueid || '',
+        pdf_url: pdfUrl,
+        keywords: Array.isArray(keywords) ? keywords.join(', ') : keywords,
+        tldr: tldr,
         creation_date: note.cdate ? new Date(note.cdate).toISOString() : '',
-        publication_date: note.pdate ? new Date(note.pdate).toISOString() : '',
-        tldr: content.TL_DR || content['TL;DR'] || '',
-        keywords: content.keywords || '',
+        publication_date: note.pdate ? new Date(note.pdate).toISOString() : ''
       };
       
-      // If we used the forum endpoint already, we already have review data
-      // If not, try to get reviews/comments
-      let reviewsData: any = null;
-      try {
-        if (forumResponse.ok) {
-          // We already have the forum data
-          reviewsData = await forumResponse.json();
-        } else {
-          // Fetch forum data (includes replies/reviews)
-          const forumApiUrl = `https://api.openreview.net/notes?forum=${id}`;
-          const forumResponse = await fetch(forumApiUrl);
-          if (forumResponse.ok) {
-            reviewsData = await forumResponse.json();
-          }
-        }
+      // Extract review information if we have review data
+      if (reviewsData && reviewsData.notes && reviewsData.notes.length > 1) {
+        // Filter out the main note to get just the replies
+        const replies = reviewsData.notes.filter((n: OpenReviewNote) => n.id !== id && n.id !== note?.id);
         
-        if (reviewsData) {
-          // Extract reviews and comments
-          const replies = reviewsData.notes.filter((n: OpenReviewNote) => n.id !== id);
+        if (replies.length > 0) {
+          // Find review notes based on invitation patterns
+          const reviews = replies.filter((n: OpenReviewNote) => 
+            n.invitation.includes('/Review') || 
+            n.invitation.includes('/review') || 
+            n.invitation.includes('/evaluation')
+          );
           
-          if (replies.length > 0) {
-            // Find review notes
-            const reviews = replies.filter((n: OpenReviewNote) => 
-              n.invitation.includes('/Review') || 
-              n.invitation.includes('/review') || 
-              n.invitation.includes('/evaluation')
-            );
-            
-            // Find meta-review/decision notes
-            const decisions = replies.filter((n: OpenReviewNote) => 
-              n.invitation.includes('/Decision') || 
-              n.invitation.includes('/decision') || 
-              n.invitation.includes('/Meta_Review') || 
-              n.invitation.includes('/meta-review')
-            );
-            
-            sourceSpecificMetadata.review_info = {
-              reviews_count: reviews.length,
-              decisions_count: decisions.length,
-              total_replies: replies.length,
-              // Extract ratings if available
-              ratings: reviews
-                .filter((r: OpenReviewNote) => r.content.rating || r.content.score || r.content.confidence)
-                .map((r: OpenReviewNote) => ({
-                  rating: r.content.rating || r.content.score || null,
-                  confidence: r.content.confidence || null,
-                } as OpenReviewRating)),
-              // Extract decision text if available
-              decision: decisions.length > 0 ? 
-                (decisions[0].content.decision || decisions[0].content.recommendation || '') : ''
+          // Find meta-review/decision notes
+          const decisions = replies.filter((n: OpenReviewNote) => 
+            n.invitation.includes('/Decision') || 
+            n.invitation.includes('/decision') || 
+            n.invitation.includes('/Meta_Review') || 
+            n.invitation.includes('/meta-review')
+          );
+          
+          // Create review info object
+          sourceSpecificMetadata.review_info = {
+            reviews_count: reviews.length,
+            decisions_count: decisions.length,
+            total_replies: replies.length
+          };
+          
+          // Extract ratings if available
+          if (reviews.length > 0) {
+            const ratings = reviews
+              .filter((r: OpenReviewNote) => {
+                const content = r.content || {};
+                return content.rating || content.score || content.confidence || 
+                      (content.rating && content.rating.value) || 
+                      (content.score && content.score.value);
+              })
+              .map((r: OpenReviewNote) => {
+                const content = r.content || {};
+                const getRatingValue = (field: string) => {
+                  if (!content[field]) return null;
+                  return typeof content[field] === 'object' && 'value' in content[field]
+                    ? content[field].value
+                    : content[field];
+                };
+                
+                return {
+                  rating: getRatingValue('rating') || getRatingValue('score') || null,
+                  confidence: getRatingValue('confidence') || null
+                } as OpenReviewRating;
+              });
+              
+            if (ratings.length > 0) {
+              sourceSpecificMetadata.review_info.ratings = ratings;
+            }
+          }
+          
+          // Extract decision text if available
+          if (decisions.length > 0) {
+            const decisionContent = decisions[0].content || {};
+            const getDecisionValue = (field: string) => {
+              if (!decisionContent[field]) return null;
+              return typeof decisionContent[field] === 'object' && 'value' in decisionContent[field]
+                ? decisionContent[field].value
+                : decisionContent[field];
             };
+            
+            const decision = getDecisionValue('decision') || 
+                            getDecisionValue('recommendation') || 
+                            getDecisionValue('metareview') || '';
+                            
+            if (decision) {
+              sourceSpecificMetadata.review_info.decision = decision;
+            }
           }
         }
-      } catch (error) {
-        logger.warning(`Error fetching forum data: ${error}`);
-        // Continue without forum data
       }
       
       // Filter out empty values
@@ -512,7 +593,15 @@ export const openreviewPlugin: SourcePlugin = {
       };
     } catch (error) {
       logger.error(`Error fetching OpenReview API data: ${error}`);
-      return {};
+      // Return minimal data on error
+      return {
+        title: `OpenReview Paper: ${id}`,
+        url: `https://openreview.net/forum?id=${id}`,
+        source_specific_metadata: {
+          forum_id: id,
+          pdf_url: `https://openreview.net/pdf?id=${id}`
+        }
+      };
     }
   },
   
