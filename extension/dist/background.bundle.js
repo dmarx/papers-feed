@@ -806,7 +806,7 @@ const openreviewPlugin = {
   id: "openreview",
   name: "OpenReview",
   description: "Support for OpenReview papers",
-  version: "1.1.0",
+  version: "1.2.0",
   urlPatterns: [
     /openreview\.net\/forum\?id=([a-zA-Z0-9_\-]+)/,
     /openreview\.net\/pdf\?id=([a-zA-Z0-9_\-]+)/
@@ -858,47 +858,68 @@ const openreviewPlugin = {
         let keywords = "";
         let tldr = "";
         let decision = "";
-        const titleRegex = /<h1.*?>(.*?)<\/h1>/i;
-        const titleMatch = htmlContent.match(titleRegex);
-        if (titleMatch && titleMatch[1]) {
-          domTitle = titleMatch[1].replace(/<[^>]*>/g, "").trim();
+        let venue = "";
+        const venueElements = swDOM.querySelectorAll(".forum-meta .item");
+        if (venueElements.length > 0) {
+          venueElements.forEach((el) => {
+            const text = el.textContent?.trim();
+            if (text && text.includes("Submitted to")) {
+              venue = text.replace("Submitted to", "").trim();
+            }
+          });
         }
-        const authorsRegex = /<div[^>]*class="authors"[^>]*>(.*?)<\/div>/is;
-        const authorsMatch = htmlContent.match(authorsRegex);
-        if (authorsMatch && authorsMatch[1]) {
-          domAuthors = authorsMatch[1].replace(/<[^>]*>/g, "").trim();
+        const contentFields = swDOM.querySelectorAll(".note-content-field");
+        contentFields.forEach((el) => {
+          const fieldName = el.textContent?.trim();
+          if (!fieldName) return;
+          const valueEl = el.parentElement?.querySelector(".note-content-value");
+          const value = valueEl?.textContent?.trim();
+          if (!value) return;
+          if (fieldName.includes("Keywords")) {
+            keywords = value;
+          } else if (fieldName.includes("Abstract") && !abstract2) {
+            domAbstract = value;
+          } else if (fieldName.includes("TL;DR") || fieldName.includes("TLDR")) {
+            tldr = value;
+          } else if (fieldName.includes("Decision")) {
+            decision = value;
+          }
+        });
+        if (!title2) {
+          const h1 = swDOM.querySelector("h1");
+          if (h1 && h1.textContent) {
+            domTitle = h1.textContent.trim();
+          } else {
+            const h2 = swDOM.querySelector("h2.citation_title");
+            if (h2 && h2.textContent) {
+              domTitle = h2.textContent.trim();
+            } else {
+              const h2Alt = swDOM.querySelector(".forum-title h2");
+              if (h2Alt && h2Alt.textContent) {
+                domTitle = h2Alt.textContent.trim();
+              }
+            }
+          }
         }
-        const abstractRegex = /Abstract:(.*?)(?:<\/div>|<\/p>|<\/span>)/is;
-        const abstractMatch = htmlContent.match(abstractRegex);
-        if (abstractMatch && abstractMatch[1]) {
-          domAbstract = abstractMatch[1].replace(/<[^>]*>/g, "").trim();
-        }
-        const keywordsRegex = /Keywords:(.*?)(?:<\/div>|<\/p>|<\/span>)/is;
-        const keywordsMatch = htmlContent.match(keywordsRegex);
-        if (keywordsMatch && keywordsMatch[1]) {
-          keywords = keywordsMatch[1].replace(/<[^>]*>/g, "").trim();
-        }
-        const tldrRegex = /TL;DR:(.*?)(?:<\/div>|<\/p>|<\/span>)/is;
-        const tldrMatch = htmlContent.match(tldrRegex);
-        if (tldrMatch && tldrMatch[1]) {
-          tldr = tldrMatch[1].replace(/<[^>]*>/g, "").trim();
-        }
-        const decisionRegex = /Decision:(.*?)(?:<\/div>|<\/p>|<\/span>)/is;
-        const decisionMatch = htmlContent.match(decisionRegex);
-        if (decisionMatch && decisionMatch[1]) {
-          decision = decisionMatch[1].replace(/<[^>]*>/g, "").trim();
+        if (!authors2) {
+          const authorDiv = swDOM.querySelector(".forum-authors h3");
+          if (authorDiv && authorDiv.textContent) {
+            domAuthors = authorDiv.textContent.trim();
+          }
         }
         const sourceSpecificMetadata2 = {
           forum_id: paperId,
-          conference: conferenceTitle2 || "",
+          conference: conferenceTitle2 || venue || "",
           pdf_url: pdfUrl2 || "",
           publication_date: publicationDate2 || "",
           keywords: keywords || "",
-          tldr: tldr || "",
-          review_info: decision ? {
-            decision
-          } : void 0
+          tldr: tldr || ""
         };
+        if (decision) {
+          sourceSpecificMetadata2.review_info = {
+            decision
+          };
+        }
         Object.keys(sourceSpecificMetadata2).forEach((key) => {
           if (sourceSpecificMetadata2[key] === "" || sourceSpecificMetadata2[key] === null || sourceSpecificMetadata2[key] === void 0 || Array.isArray(sourceSpecificMetadata2[key]) && sourceSpecificMetadata2[key].length === 0 || typeof sourceSpecificMetadata2[key] === "object" && Object.keys(sourceSpecificMetadata2[key]).length === 0) {
             delete sourceSpecificMetadata2[key];
@@ -945,19 +966,23 @@ const openreviewPlugin = {
           }
           return null;
         };
-        const domTitle = document.querySelector(".note_content_title, .note-content-title")?.textContent?.trim() || "";
+        const domTitle = document.querySelector(".note_content_title, .note-content-title, .forum-title h2")?.textContent?.trim() || "";
         let domAuthors = "";
-        const authorEl = document.querySelector(".signatures, .author, .authors");
+        const authorEl = document.querySelector(".signatures, .author, .authors, .forum-authors h3");
         if (authorEl && authorEl.textContent) {
           domAuthors = authorEl.textContent.trim();
         }
         const domAbstract = getContentFieldValue("Abstract") || "";
         const keywords = getContentFieldValue("Keywords") || "";
-        const tldr = getContentFieldValue("TL;DR") || "";
+        const tldr = getContentFieldValue("TL;DR") || getContentFieldValue("TLDR") || "";
         let venue = "";
-        const venueEl = document.querySelector('.item:contains("venue"), .meta_row .item');
-        if (venueEl && venueEl.textContent) {
-          venue = venueEl.textContent.trim();
+        const venueItems = document.querySelectorAll(".forum-meta .item");
+        for (const item of venueItems) {
+          const text = item.textContent?.trim();
+          if (text && text.includes("Submitted to")) {
+            venue = text.replace("Submitted to", "").trim();
+            break;
+          }
         }
         return {
           domTitle,
@@ -1036,86 +1061,122 @@ const openreviewPlugin = {
   async fetchApiData(id) {
     logger$4.info(`Fetching OpenReview API data for ID: ${id}`);
     try {
-      logger$4.info(`Trying forum endpoint first for ID: ${id}`);
+      const pdfUrl = `https://openreview.net/pdf?id=${id}`;
+      let note = null;
+      let reviewsData = null;
+      logger$4.info(`Trying forum endpoint for ID: ${id}`);
       const forumApiUrl = `https://api.openreview.net/notes?forum=${id}`;
       const forumResponse = await fetch(forumApiUrl);
-      let note;
-      if (!forumResponse.ok) {
-        logger$4.info(`Forum endpoint failed, trying notes endpoint for ID: ${id}`);
+      if (forumResponse.ok) {
+        const data = await forumResponse.json();
+        reviewsData = data;
+        if (data.notes && data.notes.length > 0) {
+          const mainNote = data.notes.find((n) => n.id === id || n.forum === id);
+          if (mainNote) {
+            note = mainNote;
+          } else {
+            note = data.notes[0];
+          }
+        } else {
+          logger$4.warning(`No notes found in forum for ID: ${id}`);
+        }
+      }
+      if (!note) {
+        logger$4.info(`Forum approach failed, trying direct ID endpoint for: ${id}`);
         const notesApiUrl = `https://api.openreview.net/notes?id=${id}`;
         const notesResponse = await fetch(notesApiUrl);
-        if (!notesResponse.ok) {
-          throw new Error(`API error: ${notesResponse.status}`);
+        if (notesResponse.ok) {
+          const data = await notesResponse.json();
+          if (data.notes && data.notes.length > 0) {
+            note = data.notes[0];
+          } else {
+            logger$4.warning(`No note found for ID: ${id}`);
+          }
+        } else {
+          logger$4.warning(`API error for notes endpoint: ${notesResponse.status}`);
         }
-        const data = await notesResponse.json();
-        if (!data.notes || data.notes.length === 0) {
-          logger$4.warning(`No note found for ID: ${id}`);
-          return {};
-        }
-        note = data.notes[0];
-      } else {
-        const data = await forumResponse.json();
-        if (!data.notes || data.notes.length === 0) {
-          logger$4.warning(`No notes found in forum for ID: ${id}`);
-          return {};
-        }
-        const mainNote = data.notes.find((n) => n.id === id || n.forum === id);
-        if (!mainNote) {
-          logger$4.warning(`Main note not found in forum data for ID: ${id}`);
-          return {};
-        }
-        note = mainNote;
+      }
+      if (!note) {
+        return {
+          title: `OpenReview Paper: ${id}`,
+          url: `https://openreview.net/forum?id=${id}`,
+          source_specific_metadata: {
+            forum_id: id,
+            pdf_url: pdfUrl
+          }
+        };
       }
       const content = note.content || {};
-      const title = content.title || "";
-      const authors = Array.isArray(content.authors) ? content.authors.join(", ") : content.authors || "";
-      const abstract = content.abstract || "";
+      const getContentValue = (field) => {
+        if (!content[field]) return "";
+        return typeof content[field] === "object" && "value" in content[field] ? content[field].value : content[field];
+      };
+      const title = getContentValue("title") || "";
+      let authors = "";
+      const authorsData = getContentValue("authors");
+      if (Array.isArray(authorsData)) {
+        authors = authorsData.join(", ");
+      } else if (typeof authorsData === "string") {
+        authors = authorsData;
+      }
+      const abstract = getContentValue("abstract") || "";
+      const keywords = getContentValue("keywords") || "";
+      const tldr = getContentValue("TL;DR") || getContentValue("TLDR") || "";
       const sourceSpecificMetadata = {
         forum_id: id,
-        venue: note.venue || "",
-        venueid: note.venueid || "",
-        invitation: note.invitation || "",
+        venue: getContentValue("venue") || note.venue || "",
+        venueid: getContentValue("venueid") || note.venueid || "",
+        pdf_url: pdfUrl,
+        keywords: Array.isArray(keywords) ? keywords.join(", ") : keywords,
+        tldr,
         creation_date: note.cdate ? new Date(note.cdate).toISOString() : "",
-        publication_date: note.pdate ? new Date(note.pdate).toISOString() : "",
-        tldr: content.TL_DR || content["TL;DR"] || "",
-        keywords: content.keywords || ""
+        publication_date: note.pdate ? new Date(note.pdate).toISOString() : ""
       };
-      let reviewsData = null;
-      try {
-        if (forumResponse.ok) {
-          reviewsData = await forumResponse.json();
-        } else {
-          const forumApiUrl2 = `https://api.openreview.net/notes?forum=${id}`;
-          const forumResponse2 = await fetch(forumApiUrl2);
-          if (forumResponse2.ok) {
-            reviewsData = await forumResponse2.json();
+      if (reviewsData && reviewsData.notes && reviewsData.notes.length > 1) {
+        const replies = reviewsData.notes.filter((n) => n.id !== id && n.id !== note?.id);
+        if (replies.length > 0) {
+          const reviews = replies.filter(
+            (n) => n.invitation.includes("/Review") || n.invitation.includes("/review") || n.invitation.includes("/evaluation")
+          );
+          const decisions = replies.filter(
+            (n) => n.invitation.includes("/Decision") || n.invitation.includes("/decision") || n.invitation.includes("/Meta_Review") || n.invitation.includes("/meta-review")
+          );
+          sourceSpecificMetadata.review_info = {
+            reviews_count: reviews.length,
+            decisions_count: decisions.length,
+            total_replies: replies.length
+          };
+          if (reviews.length > 0) {
+            const ratings = reviews.filter((r) => {
+              const content2 = r.content || {};
+              return content2.rating || content2.score || content2.confidence || content2.rating && content2.rating.value || content2.score && content2.score.value;
+            }).map((r) => {
+              const content2 = r.content || {};
+              const getRatingValue = (field) => {
+                if (!content2[field]) return null;
+                return typeof content2[field] === "object" && "value" in content2[field] ? content2[field].value : content2[field];
+              };
+              return {
+                rating: getRatingValue("rating") || getRatingValue("score") || null,
+                confidence: getRatingValue("confidence") || null
+              };
+            });
+            if (ratings.length > 0) {
+              sourceSpecificMetadata.review_info.ratings = ratings;
+            }
           }
-        }
-        if (reviewsData) {
-          const replies = reviewsData.notes.filter((n) => n.id !== id);
-          if (replies.length > 0) {
-            const reviews = replies.filter(
-              (n) => n.invitation.includes("/Review") || n.invitation.includes("/review") || n.invitation.includes("/evaluation")
-            );
-            const decisions = replies.filter(
-              (n) => n.invitation.includes("/Decision") || n.invitation.includes("/decision") || n.invitation.includes("/Meta_Review") || n.invitation.includes("/meta-review")
-            );
-            sourceSpecificMetadata.review_info = {
-              reviews_count: reviews.length,
-              decisions_count: decisions.length,
-              total_replies: replies.length,
-              // Extract ratings if available
-              ratings: reviews.filter((r) => r.content.rating || r.content.score || r.content.confidence).map((r) => ({
-                rating: r.content.rating || r.content.score || null,
-                confidence: r.content.confidence || null
-              })),
-              // Extract decision text if available
-              decision: decisions.length > 0 ? decisions[0].content.decision || decisions[0].content.recommendation || "" : ""
+          if (decisions.length > 0) {
+            const decisionContent = decisions[0].content || {};
+            const getDecisionValue = (field) => {
+              if (!decisionContent[field]) return null;
+              return typeof decisionContent[field] === "object" && "value" in decisionContent[field] ? decisionContent[field].value : decisionContent[field];
             };
+            const decision = getDecisionValue("decision") || getDecisionValue("recommendation") || getDecisionValue("metareview") || "";
+            if (decision) {
+              sourceSpecificMetadata.review_info.decision = decision;
+            }
           }
         }
-      } catch (error) {
-        logger$4.warning(`Error fetching forum data: ${error}`);
       }
       Object.keys(sourceSpecificMetadata).forEach((key) => {
         if (sourceSpecificMetadata[key] === "" || sourceSpecificMetadata[key] === null || sourceSpecificMetadata[key] === void 0 || Array.isArray(sourceSpecificMetadata[key]) && sourceSpecificMetadata[key].length === 0 || typeof sourceSpecificMetadata[key] === "object" && Object.keys(sourceSpecificMetadata[key]).filter((k) => sourceSpecificMetadata[key][k] !== null).length === 0) {
@@ -1131,7 +1192,14 @@ const openreviewPlugin = {
       };
     } catch (error) {
       logger$4.error(`Error fetching OpenReview API data: ${error}`);
-      return {};
+      return {
+        title: `OpenReview Paper: ${id}`,
+        url: `https://openreview.net/forum?id=${id}`,
+        source_specific_metadata: {
+          forum_id: id,
+          pdf_url: `https://openreview.net/pdf?id=${id}`
+        }
+      };
     }
   },
   color: "#6d4c41",
