@@ -1,5 +1,5 @@
 // extension/papers/source_utils.ts
-// Removing legacy format support and streamlining ID handling
+// Fixed to export isNewFormat function
 
 import { pluginRegistry } from './plugins/registry';
 import { loguru } from '../utils/logger';
@@ -68,6 +68,18 @@ export function parseId(prefixedId: string): { type: string; id: string } {
 }
 
 /**
+ * Checks if a string is in the required prefixed format
+ * @param {string} id - ID to check
+ * @returns {boolean} True if the ID is in the correct format
+ */
+export function isNewFormat(id: string): boolean {
+  if (!id) return false;
+  
+  // Check if it contains a dot, which separates the source from the ID
+  return id.includes('.');
+}
+
+/**
  * Gets a display label for a source type using the plugin if available
  * 
  * @param {string} sourceType - Source type
@@ -122,14 +134,4 @@ export function getCanonicalUrl(sourceType: string, id: string): string {
     default:
       return id.startsWith('10.') ? `https://doi.org/${id}` : "";
   }
-}
-
-/**
- * Checks if a string is in the required prefixed format
- * @param {string} id - ID to check
- * @returns {boolean} True if the ID is in the correct format
- */
-export function isNewFormat(id: string): boolean {
-  // Check if it has a valid source prefix
-  return id.includes('.');
 }
