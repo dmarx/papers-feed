@@ -21,7 +21,7 @@ const loguru = {
   getLogger: (name) => new Logger(name)
 };
 
-const logger$5 = loguru.getLogger("PluginRegistry");
+const logger$8 = loguru.getLogger("PluginRegistry");
 const debugLogger = loguru.getLogger("PluginRegistryDebug");
 class PluginRegistry {
   constructor() {
@@ -42,12 +42,12 @@ class PluginRegistry {
     }
     if (this.plugins.has(plugin.id)) {
       debugLogger.warning(`Plugin with ID ${plugin.id} already registered, overwriting`);
-      logger$5.warning(`Plugin with ID ${plugin.id} already registered, overwriting`);
+      logger$8.warning(`Plugin with ID ${plugin.id} already registered, overwriting`);
     }
     this.plugins.set(plugin.id, plugin);
     debugLogger.info(`Successfully registered plugin: ${plugin.name} (${plugin.id})`);
     debugLogger.info(`Plugin capabilities: hasApi=${!!plugin.hasApi}, formatId=${!!plugin.formatId}`);
-    logger$5.info(`Registered plugin: ${plugin.name} (${plugin.id})`);
+    logger$8.info(`Registered plugin: ${plugin.name} (${plugin.id})`);
   }
   getAll() {
     debugLogger.info(`Getting all plugins, currently ${this.plugins.size} registered`);
@@ -97,7 +97,7 @@ function formatPrimaryId(source, id) {
   return `${source}.${safeId}`;
 }
 
-const logger$4 = loguru.getLogger("PaperManager");
+const logger$7 = loguru.getLogger("PaperManager");
 function isInteractionLog(data) {
   return typeof data === "object" && data !== null && typeof data.paper_id === "string" && Array.isArray(data.interactions);
 }
@@ -119,11 +119,11 @@ class PaperManager {
       }
     }
     const objectId = `paper:${paperData.primary_id}`;
-    logger$4.info(`Getting or creating paper: ${objectId}`);
+    logger$7.info(`Getting or creating paper: ${objectId}`);
     try {
       const obj = await this.client.getObject(objectId);
       const data = obj.data;
-      logger$4.info(`Found existing paper: ${objectId}`);
+      logger$7.info(`Found existing paper: ${objectId}`);
       return data;
     } catch (error) {
       if (error instanceof Error && error.message.includes("No object found")) {
@@ -148,17 +148,17 @@ class PaperManager {
         if (paperData.doi) {
           defaultPaperData.identifiers.doi = paperData.doi;
         }
-        logger$4.info(`Creating new paper object: ${objectId}`);
+        logger$7.info(`Creating new paper object: ${objectId}`);
         try {
           await this.client.createObject(objectId, defaultPaperData);
-          logger$4.info(`Successfully created paper: ${objectId}`);
+          logger$7.info(`Successfully created paper: ${objectId}`);
           return defaultPaperData;
         } catch (createError) {
-          logger$4.error(`Error creating paper object: ${createError}`);
+          logger$7.error(`Error creating paper object: ${createError}`);
           throw createError;
         }
       }
-      logger$4.error(`Error in getOrCreatePaper: ${error}`);
+      logger$7.error(`Error in getOrCreatePaper: ${error}`);
       throw error;
     }
   }
@@ -168,7 +168,7 @@ class PaperManager {
   async getOrCreateInteractionLog(paperId) {
     const objectId = `interactions:${paperId}`;
     if (this.creationLocks.has(objectId)) {
-      logger$4.info(`Waiting for existing creation of interaction log: ${objectId}`);
+      logger$7.info(`Waiting for existing creation of interaction log: ${objectId}`);
       return this.creationLocks.get(objectId);
     }
     const creationPromise = (async () => {
@@ -185,7 +185,7 @@ class PaperManager {
             paper_id: paperId,
             interactions: []
           };
-          logger$4.info(`Creating new interaction log: ${objectId}`);
+          logger$7.info(`Creating new interaction log: ${objectId}`);
           await this.client.createObject(objectId, newLog);
           return newLog;
         }
@@ -333,99 +333,544 @@ function getConfigurationInMs(config) {
     };
 }
 
-const scriptRel = function detectScriptRel() {
-  const relList = typeof document !== "undefined" && document.createElement("link").relList;
-  return relList && relList.supports && relList.supports("modulepreload") ? "modulepreload" : "preload";
-}();
-const assetsURL = function(dep) {
-  return "/" + dep;
+function parseXML(xmlText) {
+  return {
+    getTagContent(tag, content) {
+      const searchText = content || xmlText;
+      const regex = new RegExp(`<${tag}[^>]*>(.*?)</${tag}>`, "s");
+      const match = searchText.match(regex);
+      return match ? match[1].trim() : "";
+    },
+    getAll(tag) {
+      const result = [];
+      const regex = new RegExp(`<${tag}[^>]*>(.*?)</${tag}>`, "gs");
+      let match;
+      while ((match = regex.exec(xmlText)) !== null) {
+        result.push(match[1].trim());
+      }
+      return result;
+    },
+    getAttribute(tag, attr) {
+      const result = [];
+      const regex = new RegExp(`<${tag}[^>]*${attr}="([^"]+)"`, "g");
+      let match;
+      while ((match = regex.exec(xmlText)) !== null) {
+        result.push(match[1]);
+      }
+      return result;
+    },
+    getEntry(text) {
+      const searchText = text || xmlText;
+      const entryRegex = /<entry>([\s\S]*?)<\/entry>/;
+      const entryMatch = searchText.match(entryRegex);
+      return entryMatch ? entryMatch[1] : "";
+    },
+    getAuthor(text) {
+      const searchText = text || xmlText;
+      const authors = [];
+      const regex = /<author>[^]*?<name>([^]*?)<\/name>[^]*?<\/author>/g;
+      let match;
+      while (match = regex.exec(searchText)) {
+        authors.push(match[1].trim());
+      }
+      return authors;
+    },
+    getCategories(text) {
+      const searchText = text || xmlText;
+      const categories = /* @__PURE__ */ new Set();
+      const primaryMatch = searchText.match(/<arxiv:primary_category[^>]*term="([^"]+)"/);
+      if (primaryMatch) {
+        categories.add(primaryMatch[1]);
+      }
+      const categoryRegex = /<category[^>]*term="([^"]+)"/g;
+      let match;
+      while (match = categoryRegex.exec(searchText)) {
+        categories.add(match[1]);
+      }
+      return Array.from(categories);
+    },
+    getPublishedDate(text) {
+      const searchText = text || xmlText;
+      const match = searchText.match(/<published>([^<]+)<\/published>/);
+      return match ? match[1].trim() : "";
+    }
+  };
+}
+
+const logger$6 = loguru.getLogger("ArXivPlugin");
+const arxivPlugin = {
+  id: "arxiv",
+  name: "arXiv",
+  description: "Support for arXiv papers",
+  version: "1.0.0",
+  urlPatterns: [
+    /arxiv\.org\/abs\/([0-9.]+)(v[0-9]+)?/,
+    /arxiv\.org\/pdf\/([0-9.]+)(v[0-9]+)?\.pdf/,
+    /arxiv\.org\/[a-z]+\/([0-9.]+)(v[0-9]+)?/
+  ],
+  extractId(url) {
+    for (const pattern of this.urlPatterns) {
+      const match = url.match(pattern);
+      if (match) {
+        return match[1] + (match[2] || "");
+      }
+    }
+    return null;
+  },
+  async extractMetadata(document, url) {
+    logger$6.info(`Extracting metadata from ${url}`);
+    try {
+      const getMetaContent = (selector) => {
+        const element = document.querySelector(selector);
+        return element && "content" in element ? element.content : void 0;
+      };
+      let title = document.querySelector(".title")?.textContent?.trim();
+      if (title?.startsWith("Title:")) {
+        title = title.substring(6).trim();
+      }
+      let authors = "";
+      const authorElements = document.querySelectorAll(".authors a");
+      if (authorElements.length > 0) {
+        authors = Array.from(authorElements).map((el) => el.textContent?.trim()).filter(Boolean).join(", ");
+      }
+      let abstract = document.querySelector(".abstract")?.textContent?.trim();
+      if (abstract?.startsWith("Abstract:")) {
+        abstract = abstract.substring(9).trim();
+      }
+      const categories = [];
+      const categoryElements = document.querySelectorAll(".subjects .tag");
+      categoryElements.forEach((el) => {
+        const text = el.textContent?.trim();
+        if (text) categories.push(text);
+      });
+      return {
+        title: title || "",
+        authors: authors || "",
+        abstract: abstract || "",
+        source_specific_metadata: {
+          arxiv_tags: categories,
+          published_date: ""
+          // Will be filled by API if available
+        }
+      };
+    } catch (error) {
+      logger$6.error("Error extracting metadata from arXiv page", error);
+      return {};
+    }
+  },
+  hasApi: true,
+  async fetchApiData(id) {
+    logger$6.info(`Fetching API data for arXiv:${id}`);
+    try {
+      const apiUrl = `https://export.arxiv.org/api/query?id_list=${id}`;
+      const response = await self.fetch(apiUrl);
+      if (!response.ok) {
+        throw new Error(`API error: ${response.status}`);
+      }
+      const text = await response.text();
+      const parser = parseXML(text);
+      const entryContent = parser.getEntry();
+      const title = parser.getTagContent("title");
+      const authorsList = parser.getAuthor();
+      const authors = authorsList.join(", ");
+      const abstract = parser.getTagContent("summary");
+      const categories = parser.getCategories();
+      const published = parser.getPublishedDate();
+      return {
+        title,
+        authors,
+        abstract,
+        source_specific_metadata: {
+          arxiv_tags: categories,
+          published_date: published
+        }
+      };
+    } catch (error) {
+      logger$6.error("Error fetching arXiv API data", error);
+      return {};
+    }
+  },
+  color: "#B31B1B",
+  icon: "📝",
+  formatId(id) {
+    return `arxiv.${id}`;
+  }
 };
-const seen = {};
-const __vitePreload = function preload(baseModule, deps, importerUrl) {
-  let promise = Promise.resolve();
-  if (true && deps && deps.length > 0) {
-    document.getElementsByTagName("link");
-    const cspNonceMeta = document.querySelector(
-      "meta[property=csp-nonce]"
-    );
-    const cspNonce = cspNonceMeta?.nonce || cspNonceMeta?.getAttribute("nonce");
-    promise = Promise.allSettled(
-      deps.map((dep) => {
-        dep = assetsURL(dep);
-        if (dep in seen) return;
-        seen[dep] = true;
-        const isCss = dep.endsWith(".css");
-        const cssSelector = isCss ? '[rel="stylesheet"]' : "";
-        if (document.querySelector(`link[href="${dep}"]${cssSelector}`)) {
-          return;
+pluginRegistry.register(arxivPlugin);
+
+const logger$5 = loguru.getLogger("SemanticScholarPlugin");
+const semanticScholarPlugin = {
+  id: "semanticscholar",
+  name: "Semantic Scholar",
+  description: "Support for Semantic Scholar papers",
+  version: "1.0.0",
+  urlPatterns: [
+    /semanticscholar\.org\/paper\/([a-f0-9]+)/,
+    /s2-research\.org\/papers\/([a-f0-9]+)/
+  ],
+  extractId(url) {
+    for (const pattern of this.urlPatterns) {
+      const match = url.match(pattern);
+      if (match) {
+        return match[1];
+      }
+    }
+    return null;
+  },
+  async extractMetadata(document, url) {
+    logger$5.info(`Extracting metadata from ${url}`);
+    try {
+      const getMetaContent = (selector) => {
+        const element = document.querySelector(selector);
+        return element && "content" in element ? element.content : void 0;
+      };
+      const title = getMetaContent('meta[name="citation_title"]') || getMetaContent('meta[property="og:title"]') || document.title;
+      let authors = "";
+      const authorElements = document.querySelectorAll('[data-test-id="author-list"] a');
+      if (authorElements.length > 0) {
+        authors = Array.from(authorElements).map((el) => el.textContent?.trim()).filter(Boolean).join(", ");
+      } else {
+        authors = getMetaContent('meta[name="citation_author"]') || "";
+      }
+      let abstract = getMetaContent('meta[name="description"]') || getMetaContent('meta[property="og:description"]');
+      if (!abstract) {
+        const abstractEl = document.querySelector('[data-test-id="abstract-text"]') || document.querySelector(".abstract");
+        abstract = abstractEl?.textContent?.trim();
+      }
+      let citations;
+      const citationEl = document.querySelector('[data-test-id="citation-count"]');
+      if (citationEl) {
+        const citText = citationEl.textContent;
+        if (citText) {
+          const match = citText.match(/(\d+)/);
+          if (match) {
+            citations = parseInt(match[1], 10);
+          }
         }
-        const link = document.createElement("link");
-        link.rel = isCss ? "stylesheet" : scriptRel;
-        if (!isCss) {
-          link.as = "script";
+      }
+      const doi = getMetaContent('meta[name="citation_doi"]');
+      const published_date = getMetaContent('meta[name="citation_publication_date"]');
+      return {
+        title: title || "",
+        authors: authors || "",
+        abstract: abstract || "",
+        source_specific_metadata: {
+          citations,
+          published_date: published_date || ""
+        },
+        identifiers: doi ? { doi } : void 0
+      };
+    } catch (error) {
+      logger$5.error("Error extracting metadata from Semantic Scholar page", error);
+      return {};
+    }
+  },
+  hasApi: true,
+  async fetchApiData(id) {
+    logger$5.info(`Fetching API data for S2:${id}`);
+    try {
+      const apiUrl = `https://api.semanticscholar.org/v1/paper/${id}`;
+      const response = await self.fetch(apiUrl);
+      if (!response.ok) {
+        throw new Error(`API error: ${response.status}`);
+      }
+      const data = await response.json();
+      const authors = data.authors ? data.authors.map((author) => author.name).join(", ") : "";
+      const paperData = {
+        title: data.title || "",
+        authors,
+        abstract: data.abstract || "",
+        source_specific_metadata: {
+          citations: data.citations,
+          published_date: data.year ? `${data.year}` : void 0
+        },
+        identifiers: {}
+      };
+      if (data.doi) {
+        paperData.identifiers.doi = data.doi;
+      }
+      if (data.arxivId) {
+        paperData.identifiers.arxiv = data.arxivId;
+      }
+      return paperData;
+    } catch (error) {
+      logger$5.error("Error fetching Semantic Scholar API data", error);
+      return {};
+    }
+  },
+  color: "#2e7d32",
+  icon: "📊",
+  formatId(id) {
+    return `s2.${id}`;
+  }
+};
+pluginRegistry.register(semanticScholarPlugin);
+
+const logger$4 = loguru.getLogger("OpenReviewPlugin");
+const openreviewPlugin = {
+  id: "openreview",
+  name: "OpenReview",
+  description: "Support for OpenReview papers",
+  version: "1.1.0",
+  urlPatterns: [
+    /openreview\.net\/forum\?id=([a-zA-Z0-9_\-]+)/,
+    /openreview\.net\/pdf\?id=([a-zA-Z0-9_\-]+)/
+  ],
+  extractId(url) {
+    for (const pattern of this.urlPatterns) {
+      const match = url.match(pattern);
+      if (match) {
+        return match[1];
+      }
+    }
+    return null;
+  },
+  async extractMetadata(document, url) {
+    logger$4.info(`Extracting metadata from OpenReview page: ${url}`);
+    try {
+      const paperId = this.extractId(url);
+      if (!paperId) {
+        logger$4.warning(`Could not extract paper ID from URL: ${url}`);
+        return { title: "Unknown OpenReview Paper", url };
+      }
+      const getMetaContent = (name) => {
+        const element = document.querySelector(`meta[name="${name}"]`);
+        return element ? element.getAttribute("content") || void 0 : void 0;
+      };
+      const authorElements = document.querySelectorAll('meta[name="citation_author"]');
+      const authors = Array.from(authorElements).map((el) => el.getAttribute("content") || "").filter(Boolean).join(", ");
+      const title = getMetaContent("citation_title") || document.title.replace(" | OpenReview", "");
+      const abstract = getMetaContent("citation_abstract");
+      const publicationDate = getMetaContent("citation_online_date");
+      const conferenceTitle = getMetaContent("citation_conference_title");
+      const pdfUrl = getMetaContent("citation_pdf_url");
+      const extractFromDOM = () => {
+        const getContentFieldValue = (fieldName) => {
+          const fields = Array.from(document.querySelectorAll(".note-content-field, .note_content_field"));
+          for (const field of fields) {
+            if (field.textContent?.includes(fieldName)) {
+              const valueEl = field.nextElementSibling || field.parentElement?.querySelector(".note-content-value, .note_content_value");
+              if (valueEl && valueEl.textContent) {
+                return valueEl.textContent.trim();
+              }
+            }
+          }
+          return null;
+        };
+        const domTitle = document.querySelector(".note_content_title, .note-content-title")?.textContent?.trim() || "";
+        let domAuthors = "";
+        const authorEl = document.querySelector(".signatures, .author, .authors");
+        if (authorEl && authorEl.textContent) {
+          domAuthors = authorEl.textContent.trim();
         }
-        link.crossOrigin = "";
-        link.href = dep;
-        if (cspNonce) {
-          link.setAttribute("nonce", cspNonce);
+        const domAbstract = getContentFieldValue("Abstract") || "";
+        const keywords = getContentFieldValue("Keywords") || "";
+        const tldr = getContentFieldValue("TL;DR") || "";
+        let venue = "";
+        const venueEl = document.querySelector('.item:contains("venue"), .meta_row .item');
+        if (venueEl && venueEl.textContent) {
+          venue = venueEl.textContent.trim();
         }
-        document.head.appendChild(link);
-        if (isCss) {
-          return new Promise((res, rej) => {
-            link.addEventListener("load", res);
-            link.addEventListener(
-              "error",
-              () => rej(new Error(`Unable to preload CSS for ${dep}`))
+        return {
+          domTitle,
+          domAuthors,
+          domAbstract,
+          keywords,
+          tldr,
+          venue
+        };
+      };
+      const extractReviewInfo = () => {
+        const reviewElements = document.querySelectorAll(".reply-container, .note-reply");
+        const reviewCount = reviewElements.length;
+        let decision = "";
+        const decisionEl = document.querySelector(
+          '.decision, .meta-review, .metareview, [id*="decision"], [class*="decision"]'
+        );
+        if (decisionEl && decisionEl.textContent) {
+          decision = decisionEl.textContent.trim();
+        }
+        const ratings = [];
+        const ratingElements = document.querySelectorAll(".rating, .score, .evaluation");
+        ratingElements.forEach((el) => {
+          const ratingText = el.textContent?.trim();
+          if (ratingText) {
+            const match = ratingText.match(/(.+):\s*(\d+)/);
+            if (match) {
+              ratings.push({ type: match[1].trim(), value: match[2].trim() });
+            } else {
+              ratings.push({ type: "rating", value: ratingText });
+            }
+          }
+        });
+        return {
+          reviewCount,
+          decision,
+          ratings
+        };
+      };
+      const domData = extractFromDOM();
+      const reviewInfo = extractReviewInfo();
+      const sourceSpecificMetadata = {
+        forum_id: paperId,
+        conference: conferenceTitle || domData.venue || "",
+        pdf_url: pdfUrl || "",
+        publication_date: publicationDate || "",
+        tldr: domData.tldr || "",
+        keywords: domData.keywords || "",
+        review_info: {
+          review_count: reviewInfo.reviewCount,
+          decision: reviewInfo.decision,
+          ratings: reviewInfo.ratings
+        }
+      };
+      Object.keys(sourceSpecificMetadata).forEach((key) => {
+        if (sourceSpecificMetadata[key] === "" || sourceSpecificMetadata[key] === null || sourceSpecificMetadata[key] === void 0 || Array.isArray(sourceSpecificMetadata[key]) && sourceSpecificMetadata[key].length === 0 || typeof sourceSpecificMetadata[key] === "object" && Object.keys(sourceSpecificMetadata[key]).length === 0) {
+          delete sourceSpecificMetadata[key];
+        }
+      });
+      return {
+        title: title || domData.domTitle || `OpenReview Paper: ${paperId}`,
+        authors: authors || domData.domAuthors || "",
+        abstract: abstract || domData.domAbstract || "",
+        url,
+        source_specific_metadata: sourceSpecificMetadata
+      };
+    } catch (error) {
+      logger$4.error("Error extracting metadata from OpenReview page", error);
+      return {
+        title: `OpenReview Paper: ${this.extractId(url) || "Unknown"}`,
+        url
+      };
+    }
+  },
+  hasApi: true,
+  async fetchApiData(id) {
+    logger$4.info(`Fetching OpenReview API data for ID: ${id}`);
+    try {
+      const apiUrl = `https://api.openreview.net/notes?id=${id}`;
+      const response = await fetch(apiUrl);
+      if (!response.ok) {
+        throw new Error(`API error: ${response.status}`);
+      }
+      const data = await response.json();
+      if (!data.notes || data.notes.length === 0) {
+        logger$4.warning(`No note found for ID: ${id}`);
+        return {};
+      }
+      const note = data.notes[0];
+      const content = note.content || {};
+      const title = content.title || "";
+      const authors = Array.isArray(content.authors) ? content.authors.join(", ") : content.authors || "";
+      const abstract = content.abstract || "";
+      const sourceSpecificMetadata = {
+        forum_id: id,
+        venue: note.venue || "",
+        venueid: note.venueid || "",
+        invitation: note.invitation || "",
+        creation_date: note.cdate ? new Date(note.cdate).toISOString() : "",
+        publication_date: note.pdate ? new Date(note.pdate).toISOString() : "",
+        tldr: content.TL_DR || content["TL;DR"] || "",
+        keywords: content.keywords || ""
+      };
+      try {
+        const forumApiUrl = `https://api.openreview.net/notes?forum=${id}`;
+        const forumResponse = await fetch(forumApiUrl);
+        if (forumResponse.ok) {
+          const forumData = await forumResponse.json();
+          const replies = forumData.notes.filter((n) => n.id !== id);
+          if (replies.length > 0) {
+            const reviews = replies.filter(
+              (n) => n.invitation.includes("/Review") || n.invitation.includes("/review") || n.invitation.includes("/evaluation")
             );
-          });
+            const decisions = replies.filter(
+              (n) => n.invitation.includes("/Decision") || n.invitation.includes("/decision") || n.invitation.includes("/Meta_Review") || n.invitation.includes("/meta-review")
+            );
+            sourceSpecificMetadata.review_info = {
+              reviews_count: reviews.length,
+              decisions_count: decisions.length,
+              total_replies: replies.length,
+              // Extract ratings if available
+              ratings: reviews.filter((r) => r.content.rating || r.content.score || r.content.confidence).map((r) => ({
+                rating: r.content.rating || r.content.score || null,
+                confidence: r.content.confidence || null
+              })),
+              // Extract decision text if available
+              decision: decisions.length > 0 ? decisions[0].content.decision || decisions[0].content.recommendation || "" : ""
+            };
+          }
         }
-      })
-    );
-  }
-  function handlePreloadError(err) {
-    const e = new Event("vite:preloadError", {
-      cancelable: true
-    });
-    e.payload = err;
-    self.dispatchEvent(e);
-    if (!e.defaultPrevented) {
-      throw err;
+      } catch (error) {
+        logger$4.warning(`Error fetching forum data: ${error}`);
+      }
+      Object.keys(sourceSpecificMetadata).forEach((key) => {
+        if (sourceSpecificMetadata[key] === "" || sourceSpecificMetadata[key] === null || sourceSpecificMetadata[key] === void 0 || Array.isArray(sourceSpecificMetadata[key]) && sourceSpecificMetadata[key].length === 0 || typeof sourceSpecificMetadata[key] === "object" && Object.keys(sourceSpecificMetadata[key]).filter((k) => sourceSpecificMetadata[key][k] !== null).length === 0) {
+          delete sourceSpecificMetadata[key];
+        }
+      });
+      return {
+        title,
+        authors,
+        abstract,
+        source_specific_metadata: sourceSpecificMetadata,
+        url: `https://openreview.net/forum?id=${id}`
+      };
+    } catch (error) {
+      logger$4.error(`Error fetching OpenReview API data: ${error}`);
+      return {};
     }
+  },
+  color: "#6d4c41",
+  icon: "📋",
+  formatId(id) {
+    return `openreview.${id}`;
   }
-  return promise.then((res) => {
-    for (const item of res || []) {
-      if (item.status !== "rejected") continue;
-      handlePreloadError(item.reason);
-    }
-    return baseModule().catch(handlePreloadError);
-  });
 };
+pluginRegistry.register(openreviewPlugin);
 
 const logger$3 = loguru.getLogger("PluginLoader");
 let pluginsInitialized = false;
 let initializationPromise = null;
+function registerCorePlugins() {
+  try {
+    const existingPlugins = pluginRegistry.getAll();
+    if (existingPlugins.length > 0) {
+      logger$3.info(`Found ${existingPlugins.length} plugins already registered`);
+      return;
+    }
+    pluginRegistry.register(arxivPlugin);
+    pluginRegistry.register(semanticScholarPlugin);
+    pluginRegistry.register(openreviewPlugin);
+    const pluginCount = pluginRegistry.getAll().length;
+    logger$3.info(`Registered ${pluginCount} core plugins manually`);
+  } catch (error) {
+    logger$3.error("Error registering core plugins:", error);
+    throw error;
+  }
+}
 async function loadBuiltinPlugins() {
   logger$3.info("Loading built-in plugins");
   try {
+    registerCorePlugins();
     const pluginCount = pluginRegistry.getAll().length;
     if (pluginCount === 0) {
-      logger$3.warning("No plugins were registered. Attempting emergency registration.");
+      logger$3.warning("No plugins were registered. Attempting emergency direct registration.");
       try {
-        await __vitePreload(() => import('./assets/arxiv_plugin-BHmSzkUq.js'),true?[]:void 0);
-        await __vitePreload(() => import('./assets/semantic_scholar_plugin-lumw_UZw.js'),true?[]:void 0);
-        await __vitePreload(() => import('./assets/openreview_plugin-D10kTOwB.js'),true?[]:void 0);
+        pluginRegistry.register(arxivPlugin);
+        pluginRegistry.register(semanticScholarPlugin);
+        pluginRegistry.register(openreviewPlugin);
         const emergencyCount = pluginRegistry.getAll().length;
         if (emergencyCount > 0) {
-          logger$3.info(`Emergency plugin loading successful: ${emergencyCount} plugins registered`);
+          logger$3.info(`Emergency plugin registration successful: ${emergencyCount} plugins registered`);
         } else {
-          throw new Error("Failed to load any plugins even with emergency loading");
+          throw new Error("Failed to register any plugins even with emergency registration");
         }
       } catch (emergencyError) {
-        logger$3.error("Emergency plugin loading failed:", emergencyError);
+        logger$3.error("Emergency plugin registration failed:", emergencyError);
         throw emergencyError;
       }
     } else {
-      logger$3.info(`${pluginCount} plugins are registered.`);
+      logger$3.info(`${pluginCount} plugins are registered`);
     }
   } catch (error) {
     logger$3.error("Error loading plugins", error);
@@ -1305,6 +1750,4 @@ function initializeDebugObjects() {
   };
   logger.info("Debug objects registered, access via __DEBUG__ in service worker console");
 }
-
-export { loguru as l, pluginRegistry as p };
 //# sourceMappingURL=background.bundle.js.map
