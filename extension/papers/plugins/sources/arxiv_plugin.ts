@@ -57,13 +57,17 @@ export const arxivPlugin: SourcePlugin = {
           title = title.substring(6).trim();
         }
         
-        // Extract authors
+        // Extract authors - properly type the elements from service worker DOM
         let authors = '';
         const authorElements = swDOM.querySelectorAll('.authors a');
         if (authorElements.length > 0) {
-          authors = authorElements.map(el => el.textContent?.trim())
-            .filter(Boolean)
-            .join(', ');
+          // Convert to string array with proper typing
+          const authorTexts: string[] = [];
+          authorElements.forEach((el: any) => {
+            const text = el.textContent?.trim();
+            if (text) authorTexts.push(text);
+          });
+          authors = authorTexts.join(', ');
         }
         
         // Extract abstract
@@ -75,7 +79,7 @@ export const arxivPlugin: SourcePlugin = {
         // Extract categories
         const categories: string[] = [];
         const categoryElements = swDOM.querySelectorAll('.subjects .tag');
-        categoryElements.forEach(el => {
+        categoryElements.forEach((el: any) => {
           const text = el.textContent?.trim();
           if (text) categories.push(text);
         });
