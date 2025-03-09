@@ -8,9 +8,9 @@
 export function isServiceWorkerContext(): boolean {
   return (
     typeof self !== 'undefined' && 
-    typeof window === 'undefined' && 
-    typeof WorkerGlobalScope !== 'undefined' &&
-    self instanceof WorkerGlobalScope
+    typeof window === 'undefined' &&
+    // Check for service worker context without using WorkerGlobalScope
+    'clients' in self
   );
 }
 
