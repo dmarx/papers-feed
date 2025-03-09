@@ -1,17 +1,19 @@
 // extension/background/session_manager.ts - Manages reading sessions
 
 import { loguru } from "../utils/logger";
-import { loadSessionConfig, getConfigurationInMs } from '../config/session.js';
+import { 
+  loadSessionConfig, 
+  getConfigurationInMs, 
+  SessionConfig as SessionConfigBase,
+  SessionConfigMs,
+  DEFAULT_CONFIG
+} from '../config/session';
 import credentialManager from './credential_manager';
 
 const logger = loguru.getLogger('SessionManager');
 
-interface SessionConfig {
-  minSessionDuration: number;
-  idleThreshold: number;
-  activityUpdateInterval: number;
-  [key: string]: any;
-}
+// Use the SessionConfigMs interface from our module
+type SessionConfig = SessionConfigMs;
 
 interface PaperData {
   primary_id: string;
@@ -170,7 +172,8 @@ export class SessionManager {
    * @returns {Promise<SessionConfig>} Session configuration
    */
   async loadSessionConfig(): Promise<SessionConfig> {
-    this.sessionConfig = getConfigurationInMs(await loadSessionConfig());
+    const config = await loadSessionConfig();
+    this.sessionConfig = getConfigurationInMs(config);
     logger.info('Session configuration loaded:', this.sessionConfig);
     
     // Listen for configuration changes
@@ -190,9 +193,15 @@ export class SessionManager {
    * @returns {SessionMetadata|null} Session metadata
    */
   startSession(paperData: PaperData): SessionMetadata | null {
-    if (!paperData || !paperData.primary_id || !this.sessionConfig) {
-      logger.error('Cannot start session: invalid paper data or missing configuration');
+    if (!paperData || !paperData.primary_id) {
+      logger.error('Cannot start session: invalid paper data');
       return null;
+    }
+
+    if (!this.sessionConfig) {
+      logger.error('Session configuration not loaded, loading default config');
+      // Use default config if not loaded
+      this.sessionConfig = getConfigurationInMs(DEFAULT_CONFIG);
     }
     
     // End any existing session
