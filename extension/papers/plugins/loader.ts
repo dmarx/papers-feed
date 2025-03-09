@@ -4,8 +4,11 @@
 import { loguru } from '../../utils/logger';
 import { pluginRegistry } from './registry';
 
-// Import plugins directly (static import)
-import * as plugins from './sources/index';
+// Import plugins directly (static imports only)
+// This is the key change - we need to use static imports only in service workers
+import { arxivPlugin } from './sources/arxiv_plugin';
+import { semanticScholarPlugin } from './sources/semantic_scholar_plugin';
+import { openreviewPlugin } from './sources/openreview_plugin';
 
 const logger = loguru.getLogger('PluginLoader');
 
@@ -14,37 +17,67 @@ let pluginsInitialized = false;
 let initializationPromise: Promise<void> | null = null;
 
 /**
+ * Register core plugins manually instead of dynamic imports
+ * Service workers don't support dynamic imports
+ */
+function registerCorePlugins(): void {
+  try {
+    // Clear existing plugins to avoid duplicates in case of retries
+    const existingPlugins = pluginRegistry.getAll();
+    if (existingPlugins.length > 0) {
+      logger.info(`Found ${existingPlugins.length} plugins already registered`);
+      return; // Already registered
+    }
+    
+    // Register each plugin manually - static imports
+    pluginRegistry.register(arxivPlugin);
+    pluginRegistry.register(semanticScholarPlugin);
+    pluginRegistry.register(openreviewPlugin);
+    
+    const pluginCount = pluginRegistry.getAll().length;
+    logger.info(`Registered ${pluginCount} core plugins manually`);
+  } catch (error) {
+    logger.error('Error registering core plugins:', error);
+    throw error;
+  }
+}
+
+/**
  * Load all built-in source plugins with improved error handling
  */
 async function loadBuiltinPlugins(): Promise<void> {
   logger.info('Loading built-in plugins');
   
   try {
-    // Plugins are already loaded via the static import
-    // This is just to check if they were properly registered
+    // Register the core plugins directly - no dynamic imports
+    registerCorePlugins();
+    
+    // Check if plugins were registered successfully
     const pluginCount = pluginRegistry.getAll().length;
     
     if (pluginCount === 0) {
-      logger.warning('No plugins were registered. Attempting emergency registration.');
-      // Emergency fallback - directly import critical plugins
+      logger.warning('No plugins were registered. Attempting emergency direct registration.');
+      
+      // Emergency fallback - try direct plugin registration again
       try {
-        await import('./sources/arxiv_plugin');
-        await import('./sources/semantic_scholar_plugin');
-        await import('./sources/openreview_plugin');
+        // These are the same plugins, but we try again in case of registration issues
+        pluginRegistry.register(arxivPlugin);
+        pluginRegistry.register(semanticScholarPlugin);
+        pluginRegistry.register(openreviewPlugin);
         
-        // Check if emergency loading worked
+        // Check if emergency registration worked
         const emergencyCount = pluginRegistry.getAll().length;
         if (emergencyCount > 0) {
-          logger.info(`Emergency plugin loading successful: ${emergencyCount} plugins registered`);
+          logger.info(`Emergency plugin registration successful: ${emergencyCount} plugins registered`);
         } else {
-          throw new Error('Failed to load any plugins even with emergency loading');
+          throw new Error('Failed to register any plugins even with emergency registration');
         }
       } catch (emergencyError) {
-        logger.error('Emergency plugin loading failed:', emergencyError);
+        logger.error('Emergency plugin registration failed:', emergencyError);
         throw emergencyError;
       }
     } else {
-      logger.info(`${pluginCount} plugins are registered.`);
+      logger.info(`${pluginCount} plugins are registered`);
     }
   } catch (error) {
     logger.error('Error loading plugins', error);
