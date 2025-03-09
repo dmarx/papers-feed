@@ -21,7 +21,7 @@ const loguru = {
   getLogger: (name) => new Logger(name)
 };
 
-const logger$8 = loguru.getLogger("PluginRegistry");
+const logger$9 = loguru.getLogger("PluginRegistry");
 const debugLogger = loguru.getLogger("PluginRegistryDebug");
 class PluginRegistry {
   constructor() {
@@ -42,12 +42,12 @@ class PluginRegistry {
     }
     if (this.plugins.has(plugin.id)) {
       debugLogger.warning(`Plugin with ID ${plugin.id} already registered, overwriting`);
-      logger$8.warning(`Plugin with ID ${plugin.id} already registered, overwriting`);
+      logger$9.warning(`Plugin with ID ${plugin.id} already registered, overwriting`);
     }
     this.plugins.set(plugin.id, plugin);
     debugLogger.info(`Successfully registered plugin: ${plugin.name} (${plugin.id})`);
     debugLogger.info(`Plugin capabilities: hasApi=${!!plugin.hasApi}, formatId=${!!plugin.formatId}`);
-    logger$8.info(`Registered plugin: ${plugin.name} (${plugin.id})`);
+    logger$9.info(`Registered plugin: ${plugin.name} (${plugin.id})`);
   }
   getAll() {
     debugLogger.info(`Getting all plugins, currently ${this.plugins.size} registered`);
@@ -97,7 +97,7 @@ function formatPrimaryId(source, id) {
   return `${source}.${safeId}`;
 }
 
-const logger$7 = loguru.getLogger("PaperManager");
+const logger$8 = loguru.getLogger("PaperManager");
 function isInteractionLog(data) {
   return typeof data === "object" && data !== null && typeof data.paper_id === "string" && Array.isArray(data.interactions);
 }
@@ -119,11 +119,11 @@ class PaperManager {
       }
     }
     const objectId = `paper:${paperData.primary_id}`;
-    logger$7.info(`Getting or creating paper: ${objectId}`);
+    logger$8.info(`Getting or creating paper: ${objectId}`);
     try {
       const obj = await this.client.getObject(objectId);
       const data = obj.data;
-      logger$7.info(`Found existing paper: ${objectId}`);
+      logger$8.info(`Found existing paper: ${objectId}`);
       return data;
     } catch (error) {
       if (error instanceof Error && error.message.includes("No object found")) {
@@ -148,17 +148,17 @@ class PaperManager {
         if (paperData.doi) {
           defaultPaperData.identifiers.doi = paperData.doi;
         }
-        logger$7.info(`Creating new paper object: ${objectId}`);
+        logger$8.info(`Creating new paper object: ${objectId}`);
         try {
           await this.client.createObject(objectId, defaultPaperData);
-          logger$7.info(`Successfully created paper: ${objectId}`);
+          logger$8.info(`Successfully created paper: ${objectId}`);
           return defaultPaperData;
         } catch (createError) {
-          logger$7.error(`Error creating paper object: ${createError}`);
+          logger$8.error(`Error creating paper object: ${createError}`);
           throw createError;
         }
       }
-      logger$7.error(`Error in getOrCreatePaper: ${error}`);
+      logger$8.error(`Error in getOrCreatePaper: ${error}`);
       throw error;
     }
   }
@@ -168,7 +168,7 @@ class PaperManager {
   async getOrCreateInteractionLog(paperId) {
     const objectId = `interactions:${paperId}`;
     if (this.creationLocks.has(objectId)) {
-      logger$7.info(`Waiting for existing creation of interaction log: ${objectId}`);
+      logger$8.info(`Waiting for existing creation of interaction log: ${objectId}`);
       return this.creationLocks.get(objectId);
     }
     const creationPromise = (async () => {
@@ -185,7 +185,7 @@ class PaperManager {
             paper_id: paperId,
             interactions: []
           };
-          logger$7.info(`Creating new interaction log: ${objectId}`);
+          logger$8.info(`Creating new interaction log: ${objectId}`);
           await this.client.createObject(objectId, newLog);
           return newLog;
         }
@@ -397,6 +397,156 @@ function parseXML(xmlText) {
   };
 }
 
+const logger$7 = loguru.getLogger("ServiceWorkerParser");
+function createServiceWorkerDOM(htmlString) {
+  const dom = {
+    _html: htmlString,
+    // Simplified querySelector that uses regex
+    querySelector(selector) {
+      try {
+        if (selector.startsWith("#")) {
+          const idName = selector.substring(1);
+          const match = new RegExp(`id=["']${idName}["'][^>]*>(.*?)<`, "is").exec(htmlString);
+          if (match) {
+            return {
+              textContent: match[1].replace(/<[^>]*>/g, ""),
+              getAttribute: (attr) => {
+                const attrMatch = new RegExp(`id=["']${idName}["'][^>]*${attr}=["']([^"']*)["']`, "i").exec(htmlString);
+                return attrMatch ? attrMatch[1] : null;
+              }
+            };
+          }
+        }
+        if (selector.startsWith(".")) {
+          const className = selector.substring(1);
+          const match = new RegExp(`class=["'][^"']*${className}[^"']*["'][^>]*>(.*?)<`, "is").exec(htmlString);
+          if (match) {
+            return {
+              textContent: match[1].replace(/<[^>]*>/g, ""),
+              getAttribute: (attr) => {
+                const attrMatch = new RegExp(`class=["'][^"']*${className}[^"']*["'][^>]*${attr}=["']([^"']*)["']`, "i").exec(htmlString);
+                return attrMatch ? attrMatch[1] : null;
+              }
+            };
+          }
+        }
+        if (selector.includes("meta[")) {
+          const nameMatch = /meta\[name=["']([^"']*)["']\]/.exec(selector);
+          if (nameMatch) {
+            const metaName = nameMatch[1];
+            const match = new RegExp(`<meta[^>]*name=["']${metaName}["'][^>]*content=["']([^"']*)["'][^>]*>`, "i").exec(htmlString);
+            if (match) {
+              return {
+                content: match[1],
+                getAttribute: (_attr) => null
+              };
+            }
+          }
+          const propertyMatch = /meta\[property=["']([^"']*)["']\]/.exec(selector);
+          if (propertyMatch) {
+            const propName = propertyMatch[1];
+            const match = new RegExp(`<meta[^>]*property=["']${propName}["'][^>]*content=["']([^"']*)["'][^>]*>`, "i").exec(htmlString);
+            if (match) {
+              return {
+                content: match[1],
+                getAttribute: (_attr) => null
+              };
+            }
+          }
+        }
+        const tagMatch = /^([a-zA-Z0-9]+)/.exec(selector);
+        if (tagMatch) {
+          const tagName = tagMatch[1].toLowerCase();
+          const match = new RegExp(`<${tagName}[^>]*>(.*?)</${tagName}>`, "is").exec(htmlString);
+          if (match) {
+            return {
+              textContent: match[1].replace(/<[^>]*>/g, ""),
+              getAttribute: (attr) => {
+                const attrMatch = new RegExp(`<${tagName}[^>]*${attr}=["']([^"']*)["'][^>]*>`, "i").exec(htmlString);
+                return attrMatch ? attrMatch[1] : null;
+              }
+            };
+          }
+        }
+        return null;
+      } catch (error) {
+        logger$7.error(`Error in service worker DOM querySelector: ${error}`);
+        return null;
+      }
+    },
+    // Simplified querySelectorAll that uses regex
+    querySelectorAll(selector) {
+      try {
+        const results = [];
+        if (selector.startsWith(".")) {
+          const className = selector.substring(1);
+          const regex = new RegExp(`class=["'][^"']*${className}[^"']*["'][^>]*>(.*?)<`, "gis");
+          let match;
+          while ((match = regex.exec(htmlString)) !== null) {
+            const capturedText = match[0];
+            results.push({
+              textContent: match[1].replace(/<[^>]*>/g, ""),
+              getAttribute: (attr) => {
+                const attrMatch = new RegExp(`class=["'][^"']*${className}[^"']*["'][^>]*${attr}=["']([^"']*)["']`, "i").exec(capturedText);
+                return attrMatch ? attrMatch[1] : null;
+              }
+            });
+          }
+          return results;
+        }
+        if (selector.includes("meta[")) {
+          const nameMatch = /meta\[name=["']([^"']*)["']\]/.exec(selector);
+          if (nameMatch) {
+            const metaName = nameMatch[1];
+            const regex = new RegExp(`<meta[^>]*name=["']${metaName}["'][^>]*content=["']([^"']*)["'][^>]*>`, "gi");
+            let match;
+            while ((match = regex.exec(htmlString)) !== null) {
+              results.push({
+                content: match[1],
+                getAttribute: (_attr) => null
+              });
+            }
+            return results;
+          }
+        }
+        const tagMatch = /^([a-zA-Z0-9]+)/.exec(selector);
+        if (tagMatch) {
+          const tagName = tagMatch[1].toLowerCase();
+          const regex = new RegExp(`<${tagName}[^>]*>(.*?)</${tagName}>`, "gis");
+          let match;
+          while ((match = regex.exec(htmlString)) !== null) {
+            const capturedText = match[0];
+            results.push({
+              textContent: match[1].replace(/<[^>]*>/g, ""),
+              innerHTML: match[1],
+              getAttribute: (attr) => {
+                const attrMatch = new RegExp(`<${tagName}[^>]*${attr}=["']([^"']*)["'][^>]*>`, "i").exec(capturedText);
+                return attrMatch ? attrMatch[1] : null;
+              }
+            });
+          }
+          return results;
+        }
+        return results;
+      } catch (error) {
+        logger$7.error(`Error in service worker DOM querySelectorAll: ${error}`);
+        return [];
+      }
+    },
+    // For convenience
+    getElementById(id) {
+      return this.querySelector(`#${id}`);
+    },
+    getElementsByClassName(className) {
+      return this.querySelectorAll(`.${className}`);
+    },
+    getElementsByTagName(tagName) {
+      return this.querySelectorAll(tagName);
+    }
+  };
+  return dom;
+}
+
 const logger$6 = loguru.getLogger("ArXivPlugin");
 const arxivPlugin = {
   id: "arxiv",
@@ -420,6 +570,46 @@ const arxivPlugin = {
   async extractMetadata(document, url) {
     logger$6.info(`Extracting metadata from ${url}`);
     try {
+      const isServiceWorker = typeof document !== "object" || !document.querySelector || typeof document.querySelector !== "function";
+      if (isServiceWorker) {
+        logger$6.info("Service worker context detected, using service worker DOM parser");
+        const htmlContent = typeof document === "string" ? document : document.innerHTML || document.outerHTML || "";
+        const swDOM = createServiceWorkerDOM(htmlContent);
+        let title2 = swDOM.querySelector(".title")?.textContent?.trim();
+        if (title2?.startsWith("Title:")) {
+          title2 = title2.substring(6).trim();
+        }
+        let authors2 = "";
+        const authorElements2 = swDOM.querySelectorAll(".authors a");
+        if (authorElements2.length > 0) {
+          const authorTexts = [];
+          authorElements2.forEach((el) => {
+            const text = el.textContent?.trim();
+            if (text) authorTexts.push(text);
+          });
+          authors2 = authorTexts.join(", ");
+        }
+        let abstract2 = swDOM.querySelector(".abstract")?.textContent?.trim();
+        if (abstract2?.startsWith("Abstract:")) {
+          abstract2 = abstract2.substring(9).trim();
+        }
+        const categories2 = [];
+        const categoryElements2 = swDOM.querySelectorAll(".subjects .tag");
+        categoryElements2.forEach((el) => {
+          const text = el.textContent?.trim();
+          if (text) categories2.push(text);
+        });
+        return {
+          title: title2 || "",
+          authors: authors2 || "",
+          abstract: abstract2 || "",
+          source_specific_metadata: {
+            arxiv_tags: categories2,
+            published_date: ""
+            // Will be filled by API if available
+          }
+        };
+      }
       const getMetaContent = (selector) => {
         const element = document.querySelector(selector);
         return element && "content" in element ? element.content : void 0;
@@ -431,7 +621,12 @@ const arxivPlugin = {
       let authors = "";
       const authorElements = document.querySelectorAll(".authors a");
       if (authorElements.length > 0) {
-        authors = Array.from(authorElements).map((el) => el.textContent?.trim()).filter(Boolean).join(", ");
+        const authorTexts = [];
+        authorElements.forEach((el) => {
+          const text = el.textContent?.trim();
+          if (text) authorTexts.push(text);
+        });
+        authors = authorTexts.join(", ");
       }
       let abstract = document.querySelector(".abstract")?.textContent?.trim();
       if (abstract?.startsWith("Abstract:")) {
