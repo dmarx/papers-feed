@@ -8,6 +8,15 @@ import { loguru } from './utils/logger';
 
 const logger = loguru.getLogger('BackgroundIntegration');
 
+
+interface NavDetails {
+    tabId: number;
+    url: string;
+    frameId: number;
+    timeStamp: number;
+}
+
+
 /**
  * Initialize the enhanced services
  * @returns {Promise<void>}
