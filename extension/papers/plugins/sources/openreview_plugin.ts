@@ -368,6 +368,7 @@ export const openreviewPlugin: SourcePlugin = {
       
       // Fetch note data from forum API
       const forumResponse = await fetch(forumApiUrl);
+      let note: OpenReviewNote; // Declare note variable outside the conditional blocks
       
       if (!forumResponse.ok) {
         // If forum API fails, try the notes endpoint as fallback
@@ -388,7 +389,7 @@ export const openreviewPlugin: SourcePlugin = {
         }
         
         // Extract the note data
-        const note = data.notes[0] as OpenReviewNote;
+        note = data.notes[0] as OpenReviewNote;
       } else {
         // Process forum response
         const data = await forumResponse.json();
@@ -408,7 +409,7 @@ export const openreviewPlugin: SourcePlugin = {
         }
         
         // Extract the note data
-        const note = mainNote as OpenReviewNote;
+        note = mainNote as OpenReviewNote;
       }
       
       const content = note.content || {};
