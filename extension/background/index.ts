@@ -1,4 +1,4 @@
-// extension/background/index.js - Main extension background service worker
+// extension/background/index.ts - Main extension background service worker
 
 import { loguru } from "../utils/logger";
 import { initializePluginSystem } from '../papers/plugins/loader';
@@ -15,7 +15,7 @@ const logger = loguru.getLogger('Background');
  * Initialize the extension
  * @returns {Promise<void>}
  */
-async function initialize() {
+async function initialize(): Promise<void> {
   logger.info('Initializing extension');
   
   try {
