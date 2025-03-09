@@ -8,9 +8,10 @@ import sessionManager from './session_manager';
 
 const logger = loguru.getLogger('Debug');
 
+// Define properly typed interfaces for debug objects
 interface EnhancedServices {
-  urlDetectionService: any;
-  getPluginState: () => any;
+  urlDetectionService: typeof urlDetectionService;
+  getPluginState: typeof getPluginInitializationState;
   handleUrl?: (url: string) => Promise<any>;
   [key: string]: any;
 }
@@ -24,9 +25,9 @@ declare global {
 
 /**
  * Initialize debug objects in service worker scope
- * @param {EnhancedServices} enhancedServices - Enhanced services object
+ * @param {Partial<EnhancedServices>} enhancedServices - Enhanced services object
  */
-export function initializeDebugObjects(enhancedServices?: EnhancedServices): void {
+export function initializeDebugObjects(enhancedServices?: Partial<EnhancedServices>): void {
   // Use self for service worker context
   if (typeof self !== 'undefined') {
     self.__DEBUG__ = {
@@ -35,10 +36,8 @@ export function initializeDebugObjects(enhancedServices?: EnhancedServices): voi
         return credentialManager.getPaperManager(); 
       },
       
-      // GitHub client
+      // GitHub client - return the paper manager instead of trying to access client
       getGithubClient: () => {
-        // We can't directly access paperManager.client as it's private
-        // Return the paper manager itself instead
         return credentialManager.getPaperManager();
       },
       
@@ -47,11 +46,12 @@ export function initializeDebugObjects(enhancedServices?: EnhancedServices): voi
       getCurrentSession: () => sessionManager.currentSession,
       getConfig: () => sessionManager.sessionConfig,
       
-      // Enhanced services
+      // Enhanced services - construct with proper defaults
       enhancedServices: {
         urlDetectionService,
         getPluginState: getPluginInitializationState,
-        handleUrl: enhancedServices?.handleUrl || ((url: string) => Promise.resolve(null))
+        handleUrl: enhancedServices?.handleUrl || ((url: string) => Promise.resolve(null)),
+        ...(enhancedServices || {})
       }
     };
 
