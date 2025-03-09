@@ -123,3 +123,13 @@ export function getCanonicalUrl(sourceType: string, id: string): string {
       return id.startsWith('10.') ? `https://doi.org/${id}` : "";
   }
 }
+
+/**
+ * Checks if a string is in the required prefixed format
+ * @param {string} id - ID to check
+ * @returns {boolean} True if the ID is in the correct format
+ */
+export function isNewFormat(id: string): boolean {
+  // Check if it has a valid source prefix
+  return id.includes('.');
+}
