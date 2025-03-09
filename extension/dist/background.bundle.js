@@ -837,6 +837,34 @@ const openreviewPlugin = {
           const element = swDOM.querySelector(`meta[name="${name}"]`);
           return element ? element.getAttribute("content") : void 0;
         };
+        let title2 = getMetaContent2("citation_title");
+        logger$4.info(`Meta title extraction result: ${title2 || "Not found"}`);
+        if (!title2) {
+          const titleElement = swDOM.querySelector("title");
+          if (titleElement && titleElement.textContent) {
+            title2 = titleElement.textContent.replace(" | OpenReview", "").trim();
+            logger$4.info(`Document title extraction result: ${title2 || "Not found"}`);
+          }
+        }
+        if (!title2) {
+          const h2Title = swDOM.querySelector(".forum-title h2");
+          if (h2Title && h2Title.textContent) {
+            title2 = h2Title.textContent.trim();
+            logger$4.info(`H2 title extraction result: ${title2 || "Not found"}`);
+          }
+        }
+        if (!title2) {
+          const ogTitle = swDOM.querySelector('meta[property="og:title"]');
+          if (ogTitle) {
+            title2 = ogTitle.getAttribute("content");
+            if (title2) {
+              if (title2.endsWith("...")) {
+                title2 = title2.substring(0, title2.length - 3);
+              }
+              logger$4.info(`OG title extraction result: ${title2 || "Not found"}`);
+            }
+          }
+        }
         const authorElements2 = swDOM.querySelectorAll('meta[name="citation_author"]');
         let authors2 = "";
         if (authorElements2.length > 0) {
@@ -847,13 +875,6 @@ const openreviewPlugin = {
           });
           authors2 = authorTexts.join(", ");
         }
-        let metaTitle2 = getMetaContent2("citation_title");
-        let titleElement = swDOM.querySelector("title");
-        let docTitle2 = titleElement?.textContent || "";
-        if (docTitle2) {
-          docTitle2 = docTitle2.replace(" | OpenReview", "").trim();
-        }
-        let title2 = metaTitle2 || docTitle2 || "";
         const abstract2 = getMetaContent2("citation_abstract");
         const publicationDate2 = getMetaContent2("citation_online_date");
         const conferenceTitle2 = getMetaContent2("citation_conference_title");
@@ -931,7 +952,23 @@ const openreviewPlugin = {
             delete sourceSpecificMetadata2[key];
           }
         });
-        const finalTitle2 = title2 || domTitle || `OpenReview Paper: ${paperId}`;
+        logger$4.info(`Title before fallback: "${title2 || "EMPTY"}"`);
+        logger$4.info(`DOM title before fallback: "${domTitle || "EMPTY"}"`);
+        let finalTitle2 = title2 || domTitle;
+        if (!finalTitle2) {
+          const titleElements = swDOM.querySelectorAll('[class*="title"]');
+          for (const el of titleElements) {
+            if (el.textContent && el.textContent.trim().length > 10) {
+              finalTitle2 = el.textContent.trim();
+              logger$4.info(`Last resort title from class: ${finalTitle2}`);
+              break;
+            }
+          }
+        }
+        if (!finalTitle2) {
+          finalTitle2 = `OpenReview Paper: ${paperId}`;
+          logger$4.info("Using generic fallback title");
+        }
         return {
           title: finalTitle2,
           authors: authors2 || domAuthors || "",
@@ -954,9 +991,32 @@ const openreviewPlugin = {
         });
         authors = authorTexts.join(", ");
       }
-      const metaTitle = getMetaContent("citation_title");
-      const docTitle = document.title.replace(" | OpenReview", "").trim();
-      let title = metaTitle || docTitle || "";
+      let title = getMetaContent("citation_title");
+      logger$4.info(`Meta title extraction result: ${title || "Not found"}`);
+      if (!title) {
+        title = document.title.replace(" | OpenReview", "").trim();
+        logger$4.info(`Document title extraction result: ${title || "Not found"}`);
+      }
+      if (!title) {
+        const h2Title = document.querySelector(".forum-title h2");
+        if (h2Title && h2Title.textContent) {
+          title = h2Title.textContent.trim();
+          logger$4.info(`H2 title extraction result: ${title || "Not found"}`);
+        }
+      }
+      if (!title) {
+        const ogTitle = document.querySelector('meta[property="og:title"]');
+        if (ogTitle) {
+          let ogTitleText = ogTitle.getAttribute("content");
+          if (ogTitleText) {
+            if (ogTitleText.endsWith("...")) {
+              ogTitleText = ogTitleText.substring(0, ogTitleText.length - 3);
+            }
+            title = ogTitleText;
+            logger$4.info(`OG title extraction result: ${title || "Not found"}`);
+          }
+        }
+      }
       const abstract = getMetaContent("citation_abstract");
       const publicationDate = getMetaContent("citation_online_date");
       const conferenceTitle = getMetaContent("citation_conference_title");
@@ -1055,7 +1115,23 @@ const openreviewPlugin = {
           delete sourceSpecificMetadata[key];
         }
       });
-      const finalTitle = title || domData.domTitle || `OpenReview Paper: ${paperId}`;
+      logger$4.info(`Title before fallback: "${title || "EMPTY"}"`);
+      logger$4.info(`DOM title before fallback: "${domData.domTitle || "EMPTY"}"`);
+      let finalTitle = title || domData.domTitle;
+      if (!finalTitle) {
+        const titleElements = document.querySelectorAll('[class*="title"]');
+        for (const el of titleElements) {
+          if (el.textContent && el.textContent.trim().length > 10) {
+            finalTitle = el.textContent.trim();
+            logger$4.info(`Last resort title from class: ${finalTitle}`);
+            break;
+          }
+        }
+      }
+      if (!finalTitle) {
+        finalTitle = `OpenReview Paper: ${paperId}`;
+        logger$4.info("Using generic fallback title");
+      }
       return {
         title: finalTitle,
         authors: authors || domData.domAuthors || "",
