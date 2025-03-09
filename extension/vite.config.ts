@@ -9,7 +9,7 @@ export default defineConfig({
     // Configure output for extension
     rollupOptions: {
       input: {
-        background: resolve(__dirname, 'extension/background/index.ts'), // Point directly to the module
+        background: resolve(__dirname, 'background/index.ts'), // Point directly to the module
         content: resolve(__dirname, 'content.js'),
         popup: resolve(__dirname, 'popup.js')
       },
