@@ -148,6 +148,4 @@ export const arxivPlugin: SourcePlugin = {
   }
 };
 
-// Register the plugin
-import { pluginRegistry } from '../registry';
-pluginRegistry.register(arxivPlugin);
+// Plugin is exported, registration is handled by the loader
