@@ -2,10 +2,10 @@
 
 import { SourcePlugin } from '../source_plugin';
 import { UnifiedPaperData } from '../../types';
-import { loguru } from '../utils/logger';
-import { parseXML } from '../utils/worker_safe_parser';
+import { loguru } from '../../../utils/logger';
+import { parseXML } from '../../../utils/worker_safe_parser';
 import { pluginRegistry } from '../registry';
-import { createServiceWorkerDOM } from '../utils/service_worker_parser';
+import { createServiceWorkerDOM } from '../../../utils/service_worker_parser';
 
 const logger = loguru.getLogger('ArXivPlugin');
 
