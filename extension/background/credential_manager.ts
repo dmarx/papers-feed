@@ -1,4 +1,4 @@
-// extension/background/credential_manager.js - Handles GitHub credentials
+// extension/background/credential_manager.ts - Handles GitHub credentials
 
 import { loguru } from "../utils/logger";
 import { GitHubStoreClient } from 'gh-store-client';
@@ -10,6 +10,10 @@ const logger = loguru.getLogger('CredentialManager');
  * Manages GitHub credentials and paper manager instantiation
  */
 export class CredentialManager {
+  private githubToken: string;
+  private githubRepo: string;
+  private paperManager: PaperManager | null;
+  
   constructor() {
     this.githubToken = '';
     this.githubRepo = '';
@@ -23,7 +27,7 @@ export class CredentialManager {
    * Load credentials from storage
    * @returns {Promise<{paperManager: PaperManager|null}>}
    */
-  async loadCredentials() {
+  async loadCredentials(): Promise<{paperManager: PaperManager | null}> {
     const items = await chrome.storage.sync.get(['githubToken', 'githubRepo']);
     this.githubToken = items.githubToken || '';
     this.githubRepo = items.githubRepo || '';
@@ -41,7 +45,7 @@ export class CredentialManager {
    * @private
    * @returns {Promise<{paperManager: PaperManager|null}>}
    */
-  async _initializePaperManager() {
+  private async _initializePaperManager(): Promise<{paperManager: PaperManager | null}> {
     if (this.githubToken && this.githubRepo) {
       const githubClient = new GitHubStoreClient(this.githubToken, this.githubRepo);
       this.paperManager = new PaperManager(githubClient);
@@ -59,7 +63,7 @@ export class CredentialManager {
    * @private
    * @param {Object} changes - Storage changes object
    */
-  async _handleStorageChanges(changes) {
+  private async _handleStorageChanges(changes: {[key: string]: chrome.storage.StorageChange}) {
     let credentialsChanged = false;
     
     if (changes.githubToken) {
@@ -82,7 +86,7 @@ export class CredentialManager {
    * Get the current paper manager instance
    * @returns {PaperManager|null}
    */
-  getPaperManager() {
+  getPaperManager(): PaperManager | null {
     return this.paperManager;
   }
 
@@ -90,7 +94,7 @@ export class CredentialManager {
    * Check if credentials are configured
    * @returns {boolean}
    */
-  hasValidCredentials() {
+  hasValidCredentials(): boolean {
     return !!(this.githubToken && this.githubRepo);
   }
 }
