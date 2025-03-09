@@ -2,9 +2,10 @@
 
 import { SourcePlugin } from '../source_plugin';
 import { UnifiedPaperData } from '../../types';
-import { loguru } from '../../../utils/logger';
-import { parseXML } from '../../../utils/worker_safe_parser';
+import { loguru } from '../utils/logger';
+import { parseXML } from '../utils/worker_safe_parser';
 import { pluginRegistry } from '../registry';
+import { createServiceWorkerDOM } from '../utils/service_worker_parser';
 
 const logger = loguru.getLogger('ArXivPlugin');
 
@@ -41,13 +42,56 @@ export const arxivPlugin: SourcePlugin = {
                              typeof document.querySelector !== 'function';
       
       if (isServiceWorker) {
-        // Service worker context - use the document content as string
-        logger.info('Service worker context detected, using string-based extraction');
-        return this.extractMetadataFromString(document.innerHTML || document.outerHTML || '', url);
+        // Use our service worker DOM utility instead of bespoke string processing
+        logger.info('Service worker context detected, using service worker DOM parser');
+        const htmlContent = typeof document === 'string' 
+          ? document 
+          : (document.innerHTML || document.outerHTML || '');
+        
+        // Create a lightweight DOM-like object we can query
+        const swDOM = createServiceWorkerDOM(htmlContent);
+        
+        // Now we can use querySelector-like methods
+        let title = swDOM.querySelector('.title')?.textContent?.trim();
+        if (title?.startsWith('Title:')) {
+          title = title.substring(6).trim();
+        }
+        
+        // Extract authors
+        let authors = '';
+        const authorElements = swDOM.querySelectorAll('.authors a');
+        if (authorElements.length > 0) {
+          authors = authorElements.map(el => el.textContent?.trim())
+            .filter(Boolean)
+            .join(', ');
+        }
+        
+        // Extract abstract
+        let abstract = swDOM.querySelector('.abstract')?.textContent?.trim();
+        if (abstract?.startsWith('Abstract:')) {
+          abstract = abstract.substring(9).trim();
+        }
+        
+        // Extract categories
+        const categories: string[] = [];
+        const categoryElements = swDOM.querySelectorAll('.subjects .tag');
+        categoryElements.forEach(el => {
+          const text = el.textContent?.trim();
+          if (text) categories.push(text);
+        });
+        
+        return {
+          title: title || '',
+          authors: authors || '',
+          abstract: abstract || '',
+          source_specific_metadata: {
+            arxiv_tags: categories,
+            published_date: '' // Will be filled by API if available
+          }
+        };
       }
       
-      // Browser context - use DOM methods
-      // Extract from page metadata
+      // Browser context - use real DOM methods
       const getMetaContent = (selector: string): string | undefined => {
         const element = document.querySelector(selector);
         return element && 'content' in element ? 
@@ -65,7 +109,7 @@ export const arxivPlugin: SourcePlugin = {
       const authorElements = document.querySelectorAll('.authors a');
       if (authorElements.length > 0) {
         authors = Array.from(authorElements)
-          .map(el => el.textContent?.trim())
+          .map((el: Element) => el.textContent?.trim())
           .filter(Boolean)
           .join(', ');
       }
@@ -79,7 +123,7 @@ export const arxivPlugin: SourcePlugin = {
       // Extract categories
       const categories: string[] = [];
       const categoryElements = document.querySelectorAll('.subjects .tag');
-      categoryElements.forEach(el => {
+      categoryElements.forEach((el: Element) => {
         const text = el.textContent?.trim();
         if (text) categories.push(text);
       });
@@ -95,58 +139,6 @@ export const arxivPlugin: SourcePlugin = {
       };
     } catch (error) {
       logger.error('Error extracting metadata from arXiv page', error);
-      return {};
-    }
-  },
-  
-  // String-based extraction for service worker context
-  async extractMetadataFromString(htmlString: string, url: string): Promise<Partial<UnifiedPaperData>> {
-    logger.info('Using string-based metadata extraction for arXiv');
-    
-    try {
-      // Simple regex-based extraction
-      const titleMatch = /<h1\s+class="title\s*[^"]*"[^>]*>(.*?)<\/h1>/is.exec(htmlString);
-      let title = titleMatch ? titleMatch[1].replace(/<[^>]*>/g, '').trim() : '';
-      if (title.startsWith('Title:')) {
-        title = title.substring(6).trim();
-      }
-      
-      // Extract authors
-      const authorsMatch = /<div\s+class="authors\s*[^"]*"[^>]*>(.*?)<\/div>/is.exec(htmlString);
-      let authors = '';
-      if (authorsMatch) {
-        // Extract names from a tags inside authors div
-        const authorsContent = authorsMatch[1];
-        const authorMatches = Array.from(authorsContent.matchAll(/<a[^>]*>(.*?)<\/a>/g));
-        authors = authorMatches.map(m => m[1].trim()).join(', ');
-      }
-      
-      // Extract abstract
-      const abstractMatch = /<span\s+class="abstract\s*[^"]*"[^>]*>(.*?)<\/span>/is.exec(htmlString);
-      let abstract = abstractMatch ? abstractMatch[1].replace(/<[^>]*>/g, '').trim() : '';
-      if (abstract.startsWith('Abstract:')) {
-        abstract = abstract.substring(9).trim();
-      }
-      
-      // Extract categories
-      const categories: string[] = [];
-      const categoryRegex = /<span\s+class="tag\s*[^"]*"[^>]*>(.*?)<\/span>/g;
-      let categoryMatch;
-      while ((categoryMatch = categoryRegex.exec(htmlString)) !== null) {
-        categories.push(categoryMatch[1].trim());
-      }
-      
-      return {
-        title: title || '',
-        authors: authors || '',
-        abstract: abstract || '',
-        source_specific_metadata: {
-          arxiv_tags: categories,
-          published_date: '' // Will be filled by API if available
-        }
-      };
-    } catch (error) {
-      logger.error('Error extracting metadata from arXiv HTML string', error);
       return {};
     }
   },
@@ -214,7 +206,6 @@ export const arxivPlugin: SourcePlugin = {
 };
 
 // Register the plugin
-// This is important - it's needed to make the plugin available to the system
 pluginRegistry.register(arxivPlugin);
 
 // Export the plugin for direct import by the loader
