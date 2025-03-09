@@ -55,7 +55,7 @@ export const urlDetectionService = {
     const plugin = pluginRegistry.get(sourceInfo.type);
     
     if (!plugin) {
-      logger.warn(`No plugin found for detected source: ${sourceInfo.type}`);
+      logger.warning(`No plugin found for detected source: ${sourceInfo.type}`);
       return sourceInfo;
     }
     
