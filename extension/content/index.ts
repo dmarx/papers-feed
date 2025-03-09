@@ -2,7 +2,8 @@
 
 import { initializeAnnotator } from './annotator';
 import { initializeMessageHandlers } from './message_handlers';
-import { setupLinkDetection } from './paper_detector';
+import { setupLinkDetection, detectPaperSource, trackPaper } from './paper_detector';
+import { fetchPaperMetadata } from './metadata_fetcher';
 import './styles.css';
 
 /**
@@ -16,7 +17,7 @@ function initialize(): void {
   initializeAnnotator();
   setupLinkDetection();
   
-  // Export global functions for backward compatibility
+  // Expose global functions for backward compatibility
   exposeGlobalFunctions();
 }
 
@@ -25,10 +26,6 @@ function initialize(): void {
  * and for access from page context
  */
 function exposeGlobalFunctions(): void {
-  // Import specific functions to expose
-  const { detectPaperSource, trackPaper } = require('./paper_detector');
-  const { fetchPaperMetadata } = require('./metadata_fetcher');
-  
   // Create the global object
   window.paperTracker = {
     detectPaperSource,
