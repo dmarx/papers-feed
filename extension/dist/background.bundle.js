@@ -1,5 +1,3 @@
-var d=class{constructor(e={}){this.cache=new Map,this.maxSize=e.maxSize??1e3,this.ttl=e.ttl??1e3*60*60,this.accessOrder=[];}get(e){let s=this.cache.get(e);if(s){if(Date.now()-s.lastAccessed>this.ttl){this.cache.delete(e),this.removeFromAccessOrder(e);return}return s.lastAccessed=Date.now(),this.updateAccessOrder(e),s.issueNumber}}set(e,s,t){if(this.cache.size>=this.maxSize&&!this.cache.has(e)){let r=this.accessOrder[this.accessOrder.length-1];r&&(this.cache.delete(r),this.removeFromAccessOrder(r));}this.cache.set(e,{issueNumber:s,lastAccessed:Date.now(),createdAt:t.createdAt,updatedAt:t.updatedAt}),this.updateAccessOrder(e);}remove(e){this.cache.delete(e),this.removeFromAccessOrder(e);}clear(){this.cache.clear(),this.accessOrder=[];}getStats(){return {size:this.cache.size,maxSize:this.maxSize,ttl:this.ttl}}shouldRefresh(e,s){let t=this.cache.get(e);return t?s>t.updatedAt:true}updateAccessOrder(e){this.removeFromAccessOrder(e),this.accessOrder.unshift(e);}removeFromAccessOrder(e){let s=this.accessOrder.indexOf(e);s>-1&&this.accessOrder.splice(s,1);}};var l="0.3.2";var f=class{constructor(e,s,t={}){this.token=e,this.repo=s,this.config={baseLabel:t.baseLabel??"stored-object",uidPrefix:t.uidPrefix??"UID:",reactions:{processed:t.reactions?.processed??"+1",initialState:t.reactions?.initialState??"rocket"}},this.cache=new d(t.cache);}async fetchFromGitHub(e,s={}){let t=new URL(`https://api.github.com/repos/${this.repo}${e}`);s.params&&(Object.entries(s.params).forEach(([i,a])=>{t.searchParams.append(i,a);}),delete s.params);let r=await fetch(t.toString(),{...s,headers:{Authorization:`token ${this.token}`,Accept:"application/vnd.github.v3+json",...s.headers}});if(!r.ok)throw new Error(`GitHub API error: ${r.status}`);return r.json()}createCommentPayload(e,s){let t={_data:e,_meta:{client_version:l,timestamp:new Date().toISOString(),update_mode:"append"}};return s&&(t.type=s),t}async getObject(e){let s=this.cache.get(e),t;if(s)try{t=await this.fetchFromGitHub(`/issues/${s}`),this._verifyIssueLabels(t,e)||(this.cache.remove(e),t=void 0);}catch{this.cache.remove(e);}if(!t){let c=await this.fetchFromGitHub("/issues",{method:"GET",params:{labels:[this.config.baseLabel,`${this.config.uidPrefix}${e}`].join(","),state:"closed"}});if(!c||c.length===0)throw new Error(`No object found with ID: ${e}`);t=c[0];}if(!t?.body)throw new Error(`Invalid issue data received for ID: ${e}`);let r=JSON.parse(t.body),i=new Date(t.created_at),a=new Date(t.updated_at);return this.cache.set(e,t.number,{createdAt:i,updatedAt:a}),{meta:{objectId:e,label:`${this.config.uidPrefix}${e}`,createdAt:i,updatedAt:a,version:await this._getVersion(t.number)},data:r}}async createObject(e,s){let t=`${this.config.uidPrefix}${e}`,r=await this.fetchFromGitHub("/issues",{method:"POST",body:JSON.stringify({title:`Stored Object: ${e}`,body:JSON.stringify(s,null,2),labels:[this.config.baseLabel,t]})});this.cache.set(e,r.number,{createdAt:new Date(r.created_at),updatedAt:new Date(r.updated_at)});let i=this.createCommentPayload(s,"initial_state"),a=await this.fetchFromGitHub(`/issues/${r.number}/comments`,{method:"POST",body:JSON.stringify({body:JSON.stringify(i,null,2)})});return await this.fetchFromGitHub(`/issues/comments/${a.id}/reactions`,{method:"POST",body:JSON.stringify({content:this.config.reactions.processed})}),await this.fetchFromGitHub(`/issues/comments/${a.id}/reactions`,{method:"POST",body:JSON.stringify({content:this.config.reactions.initialState})}),await this.fetchFromGitHub(`/issues/${r.number}`,{method:"PATCH",body:JSON.stringify({state:"closed"})}),{meta:{objectId:e,label:t,createdAt:new Date(r.created_at),updatedAt:new Date(r.updated_at),version:1},data:s}}_verifyIssueLabels(e,s){let t=new Set([this.config.baseLabel,`${this.config.uidPrefix}${s}`]);return e.labels.some(r=>t.has(r.name))}async updateObject(e,s){let t=await this.fetchFromGitHub("/issues",{method:"GET",params:{labels:[this.config.baseLabel,`${this.config.uidPrefix}${e}`].join(","),state:"all"}});if(!t||t.length===0)throw new Error(`No object found with ID: ${e}`);let r=t[0],i=this.createCommentPayload(s);return await this.fetchFromGitHub(`/issues/${r.number}/comments`,{method:"POST",body:JSON.stringify({body:JSON.stringify(i,null,2)})}),await this.fetchFromGitHub(`/issues/${r.number}`,{method:"PATCH",body:JSON.stringify({state:"open"})}),this.getObject(e)}async listAll(){let e=await this.fetchFromGitHub("/issues",{method:"GET",params:{labels:this.config.baseLabel,state:"closed"}}),s={};for(let t of e)if(!t.labels.some(r=>r.name==="archived"))try{let r=this._getObjectIdFromLabels(t),i=JSON.parse(t.body),a={objectId:r,label:r,createdAt:new Date(t.created_at),updatedAt:new Date(t.updated_at),version:await this._getVersion(t.number)};s[r]={meta:a,data:i};}catch{continue}return s}async listUpdatedSince(e){let s=await this.fetchFromGitHub("/issues",{method:"GET",params:{labels:this.config.baseLabel,state:"closed",since:e.toISOString()}}),t={};for(let r of s)if(!r.labels.some(i=>i.name==="archived"))try{let i=this._getObjectIdFromLabels(r),a=JSON.parse(r.body),n=new Date(r.updated_at);if(n>e){let c={objectId:i,label:i,createdAt:new Date(r.created_at),updatedAt:n,version:await this._getVersion(r.number)};t[i]={meta:c,data:a};}}catch{continue}return t}async getObjectHistory(e){let s=await this.fetchFromGitHub("/issues",{method:"GET",params:{labels:[this.config.baseLabel,`${this.config.uidPrefix}${e}`].join(","),state:"all"}});if(!s||s.length===0)throw new Error(`No object found with ID: ${e}`);let t=s[0],r=await this.fetchFromGitHub(`/issues/${t.number}/comments`),i=[];for(let a of r)try{let n=JSON.parse(a.body),c="update",m,b={client_version:"legacy",timestamp:a.created_at,update_mode:"append"};typeof n=="object"?"_data"in n?(c=n.type||"update",m=n._data,b=n._meta||b):"type"in n&&n.type==="initial_state"?(c="initial_state",m=n.data):m=n:m=n,i.push({timestamp:a.created_at,type:c,data:m,commentId:a.id});}catch{continue}return i}async _getVersion(e){return (await this.fetchFromGitHub(`/issues/${e}/comments`)).length+1}_getObjectIdFromLabels(e){for(let s of e.labels)if(s.name!==this.config.baseLabel&&s.name.startsWith(this.config.uidPrefix))return s.name.slice(this.config.uidPrefix.length);throw new Error(`No UID label found with prefix ${this.config.uidPrefix}`)}};
-
 class Logger {
   constructor(name) {
     this.name = name;
@@ -21,7 +19,7 @@ const loguru = {
   getLogger: (name) => new Logger(name)
 };
 
-const logger$9 = loguru.getLogger("PluginRegistry");
+const logger$g = loguru.getLogger("PluginRegistry");
 const debugLogger = loguru.getLogger("PluginRegistryDebug");
 class PluginRegistry {
   constructor() {
@@ -42,12 +40,12 @@ class PluginRegistry {
     }
     if (this.plugins.has(plugin.id)) {
       debugLogger.warning(`Plugin with ID ${plugin.id} already registered, overwriting`);
-      logger$9.warning(`Plugin with ID ${plugin.id} already registered, overwriting`);
+      logger$g.warning(`Plugin with ID ${plugin.id} already registered, overwriting`);
     }
     this.plugins.set(plugin.id, plugin);
     debugLogger.info(`Successfully registered plugin: ${plugin.name} (${plugin.id})`);
     debugLogger.info(`Plugin capabilities: hasApi=${!!plugin.hasApi}, formatId=${!!plugin.formatId}`);
-    logger$9.info(`Registered plugin: ${plugin.name} (${plugin.id})`);
+    logger$g.info(`Registered plugin: ${plugin.name} (${plugin.id})`);
   }
   getAll() {
     debugLogger.info(`Getting all plugins, currently ${this.plugins.size} registered`);
@@ -87,251 +85,6 @@ class PluginRegistry {
 }
 const pluginRegistry = new PluginRegistry();
 debugLogger.info("PluginRegistry singleton instance created");
-
-function formatPrimaryId(source, id) {
-  const plugin = pluginRegistry.get(source);
-  if (plugin && plugin.formatId) {
-    return plugin.formatId(id);
-  }
-  const safeId = id.replace(/\//g, "_").replace(/:/g, ".").replace(/\s/g, "_").replace(/\\/g, "_");
-  return `${source}.${safeId}`;
-}
-
-const logger$8 = loguru.getLogger("PaperManager");
-function isInteractionLog(data) {
-  return typeof data === "object" && data !== null && typeof data.paper_id === "string" && Array.isArray(data.interactions);
-}
-class PaperManager {
-  constructor(client) {
-    // Concurrency control locks
-    this.creationLocks = /* @__PURE__ */ new Map();
-    this.client = client;
-  }
-  /**
-   * Get or create a paper record
-   */
-  async getOrCreatePaper(paperData) {
-    if (!paperData.primary_id) {
-      if (paperData.source && paperData.sourceId) {
-        paperData.primary_id = formatPrimaryId(paperData.source, paperData.sourceId);
-      } else {
-        throw new Error("Invalid paper data: missing primary_id and cannot generate it");
-      }
-    }
-    const objectId = `paper:${paperData.primary_id}`;
-    logger$8.info(`Getting or creating paper: ${objectId}`);
-    try {
-      const obj = await this.client.getObject(objectId);
-      const data = obj.data;
-      logger$8.info(`Found existing paper: ${objectId}`);
-      return data;
-    } catch (error) {
-      if (error instanceof Error && error.message.includes("No object found")) {
-        const defaultPaperData = {
-          primary_id: paperData.primary_id,
-          source: paperData.source,
-          sourceId: paperData.sourceId,
-          url: paperData.url || "",
-          title: paperData.title || paperData.sourceId,
-          authors: paperData.authors || "",
-          abstract: paperData.abstract || "",
-          timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-          rating: "novote"
-        };
-        if (paperData.source_specific_metadata) {
-          defaultPaperData.source_specific_metadata = paperData.source_specific_metadata;
-        }
-        defaultPaperData.identifiers = {
-          original: paperData.sourceId,
-          url: paperData.url
-        };
-        if (paperData.doi) {
-          defaultPaperData.identifiers.doi = paperData.doi;
-        }
-        logger$8.info(`Creating new paper object: ${objectId}`);
-        try {
-          await this.client.createObject(objectId, defaultPaperData);
-          logger$8.info(`Successfully created paper: ${objectId}`);
-          return defaultPaperData;
-        } catch (createError) {
-          logger$8.error(`Error creating paper object: ${createError}`);
-          throw createError;
-        }
-      }
-      logger$8.error(`Error in getOrCreatePaper: ${error}`);
-      throw error;
-    }
-  }
-  /**
-   * Get or create an interaction log
-   */
-  async getOrCreateInteractionLog(paperId) {
-    const objectId = `interactions:${paperId}`;
-    if (this.creationLocks.has(objectId)) {
-      logger$8.info(`Waiting for existing creation of interaction log: ${objectId}`);
-      return this.creationLocks.get(objectId);
-    }
-    const creationPromise = (async () => {
-      try {
-        const obj = await this.client.getObject(objectId);
-        const data = obj.data;
-        if (isInteractionLog(data)) {
-          return data;
-        }
-        throw new Error("Invalid interaction log format");
-      } catch (error) {
-        if (error instanceof Error && error.message.includes("No object found")) {
-          const newLog = {
-            paper_id: paperId,
-            interactions: []
-          };
-          logger$8.info(`Creating new interaction log: ${objectId}`);
-          await this.client.createObject(objectId, newLog);
-          return newLog;
-        }
-        throw error;
-      } finally {
-        setTimeout(() => {
-          this.creationLocks.delete(objectId);
-        }, 500);
-      }
-    })();
-    this.creationLocks.set(objectId, creationPromise);
-    return creationPromise;
-  }
-  /**
-   * Log a reading session for a paper
-   */
-  async logReadingSession(paperId, session, paperData) {
-    if (paperData) {
-      if (!paperData.primary_id) {
-        paperData.primary_id = paperId;
-      }
-      await this.getOrCreatePaper(paperData);
-    }
-    await this.addInteraction(paperId, {
-      type: "reading_session",
-      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-      data: session
-    });
-  }
-  /**
-   * Log an annotation for a paper
-   */
-  async logAnnotation(paperId, key, value, paperData) {
-    if (paperData) {
-      if (!paperData.primary_id) {
-        paperData.primary_id = paperId;
-      }
-      await this.getOrCreatePaper(paperData);
-    }
-    await this.addInteraction(paperId, {
-      type: "annotation",
-      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-      data: { key, value }
-    });
-  }
-  /**
-   * Update a paper's rating
-   */
-  async updateRating(paperId, rating, paperData) {
-    const paper = await this.getOrCreatePaper(paperData || { primary_id: paperId });
-    const objectId = `paper:${paperId}`;
-    await this.client.updateObject(objectId, {
-      ...paper,
-      rating
-    });
-    await this.addInteraction(paperId, {
-      type: "rating",
-      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-      data: { rating }
-    });
-  }
-  /**
-   * Add an interaction to a paper's log
-   */
-  async addInteraction(paperId, interaction) {
-    const log = await this.getOrCreateInteractionLog(paperId);
-    log.interactions.push(interaction);
-    const objectId = `interactions:${paperId}`;
-    await this.client.updateObject(objectId, log);
-  }
-  /**
-   * Get interactions for a paper
-   */
-  async getInteractions(paperId, options = {}) {
-    try {
-      const log = await this.getOrCreateInteractionLog(paperId);
-      let interactions = log.interactions;
-      if (options.type) {
-        interactions = interactions.filter((i) => i.type === options.type);
-      }
-      if (options.startTime || options.endTime) {
-        interactions = interactions.filter((i) => {
-          const time = new Date(i.timestamp);
-          if (options.startTime && time < options.startTime) return false;
-          if (options.endTime && time > options.endTime) return false;
-          return true;
-        });
-      }
-      return interactions;
-    } catch (error) {
-      if (error instanceof Error && error.message.includes("No object found")) {
-        return [];
-      }
-      throw error;
-    }
-  }
-  /**
-   * Get total reading time for a paper
-   */
-  async getPaperReadingTime(paperId) {
-    const interactions = await this.getInteractions(paperId, { type: "reading_session" });
-    return interactions.reduce((total, i) => {
-      const data = i.data;
-      if (typeof data === "object" && data !== null && "duration_seconds" in data) {
-        return total + data.duration_seconds;
-      }
-      return total;
-    }, 0);
-  }
-  /**
-   * Get paper history
-   */
-  async getPaperHistory(paperId) {
-    const objectId = `paper:${paperId}`;
-    return this.client.getObjectHistory(objectId);
-  }
-}
-
-// extension/config/session.js
-
-// Default configuration values
-const DEFAULT_CONFIG = {
-    idleThresholdMinutes: 5,
-    minSessionDurationSeconds: 30,
-    // Adding more granular control
-    requireContinuousActivity: true,  // If true, resets timer on idle
-    logPartialSessions: false,        // If true, logs sessions even if under minimum duration
-    activityUpdateIntervalSeconds: 1  // How often to update active time
-};
-
-// Load session configuration from storage
-async function loadSessionConfig() {
-    const items = await chrome.storage.sync.get('sessionConfig');
-    return { ...DEFAULT_CONFIG, ...items.sessionConfig };
-}
-
-// Convert configuration to milliseconds for internal use
-function getConfigurationInMs(config) {
-    return {
-        idleThreshold: config.idleThresholdMinutes * 60 * 1000,
-        minSessionDuration: config.minSessionDurationSeconds * 1000,
-        activityUpdateInterval: config.activityUpdateIntervalSeconds * 1000,
-        requireContinuousActivity: config.requireContinuousActivity,
-        logPartialSessions: config.logPartialSessions
-    };
-}
 
 function parseXML(xmlText) {
   return {
@@ -397,7 +150,7 @@ function parseXML(xmlText) {
   };
 }
 
-const logger$7 = loguru.getLogger("ServiceWorkerParser");
+const logger$f = loguru.getLogger("ServiceWorkerParser");
 function createServiceWorkerDOM(htmlString) {
   const dom = {
     _html: htmlString,
@@ -470,7 +223,7 @@ function createServiceWorkerDOM(htmlString) {
         }
         return null;
       } catch (error) {
-        logger$7.error(`Error in service worker DOM querySelector: ${error}`);
+        logger$f.error(`Error in service worker DOM querySelector: ${error}`);
         return null;
       }
     },
@@ -529,7 +282,7 @@ function createServiceWorkerDOM(htmlString) {
         }
         return results;
       } catch (error) {
-        logger$7.error(`Error in service worker DOM querySelectorAll: ${error}`);
+        logger$f.error(`Error in service worker DOM querySelectorAll: ${error}`);
         return [];
       }
     },
@@ -547,7 +300,7 @@ function createServiceWorkerDOM(htmlString) {
   return dom;
 }
 
-const logger$6 = loguru.getLogger("ArXivPlugin");
+const logger$e = loguru.getLogger("ArXivPlugin");
 const arxivPlugin = {
   id: "arxiv",
   name: "arXiv",
@@ -568,11 +321,11 @@ const arxivPlugin = {
     return null;
   },
   async extractMetadata(document, url) {
-    logger$6.info(`Extracting metadata from ${url}`);
+    logger$e.info(`Extracting metadata from ${url}`);
     try {
       const isServiceWorker = typeof document !== "object" || !document.querySelector || typeof document.querySelector !== "function";
       if (isServiceWorker) {
-        logger$6.info("Service worker context detected, using service worker DOM parser");
+        logger$e.info("Service worker context detected, using service worker DOM parser");
         const htmlContent = typeof document === "string" ? document : document.innerHTML || document.outerHTML || "";
         const swDOM = createServiceWorkerDOM(htmlContent);
         let title2 = swDOM.querySelector(".title")?.textContent?.trim();
@@ -649,13 +402,13 @@ const arxivPlugin = {
         }
       };
     } catch (error) {
-      logger$6.error("Error extracting metadata from arXiv page", error);
+      logger$e.error("Error extracting metadata from arXiv page", error);
       return {};
     }
   },
   hasApi: true,
   async fetchApiData(id) {
-    logger$6.info(`Fetching API data for arXiv:${id}`);
+    logger$e.info(`Fetching API data for arXiv:${id}`);
     try {
       const apiUrl = `https://export.arxiv.org/api/query?id_list=${id}`;
       const response = await self.fetch(apiUrl);
@@ -681,7 +434,7 @@ const arxivPlugin = {
         }
       };
     } catch (error) {
-      logger$6.error("Error fetching arXiv API data", error);
+      logger$e.error("Error fetching arXiv API data", error);
       return {};
     }
   },
@@ -693,7 +446,7 @@ const arxivPlugin = {
 };
 pluginRegistry.register(arxivPlugin);
 
-const logger$5 = loguru.getLogger("SemanticScholarPlugin");
+const logger$d = loguru.getLogger("SemanticScholarPlugin");
 const semanticScholarPlugin = {
   id: "semanticscholar",
   name: "Semantic Scholar",
@@ -713,7 +466,7 @@ const semanticScholarPlugin = {
     return null;
   },
   async extractMetadata(document, url) {
-    logger$5.info(`Extracting metadata from ${url}`);
+    logger$d.info(`Extracting metadata from ${url}`);
     try {
       const getMetaContent = (selector) => {
         const element = document.querySelector(selector);
@@ -756,13 +509,13 @@ const semanticScholarPlugin = {
         identifiers: doi ? { doi } : void 0
       };
     } catch (error) {
-      logger$5.error("Error extracting metadata from Semantic Scholar page", error);
+      logger$d.error("Error extracting metadata from Semantic Scholar page", error);
       return {};
     }
   },
   hasApi: true,
   async fetchApiData(id) {
-    logger$5.info(`Fetching API data for S2:${id}`);
+    logger$d.info(`Fetching API data for S2:${id}`);
     try {
       const apiUrl = `https://api.semanticscholar.org/v1/paper/${id}`;
       const response = await self.fetch(apiUrl);
@@ -789,7 +542,7 @@ const semanticScholarPlugin = {
       }
       return paperData;
     } catch (error) {
-      logger$5.error("Error fetching Semantic Scholar API data", error);
+      logger$d.error("Error fetching Semantic Scholar API data", error);
       return {};
     }
   },
@@ -801,7 +554,7 @@ const semanticScholarPlugin = {
 };
 pluginRegistry.register(semanticScholarPlugin);
 
-const logger$4 = loguru.getLogger("OpenReviewPlugin");
+const logger$c = loguru.getLogger("OpenReviewPlugin");
 const openreviewPlugin = {
   id: "openreview",
   name: "OpenReview",
@@ -821,16 +574,16 @@ const openreviewPlugin = {
     return null;
   },
   async extractMetadata(document, url) {
-    logger$4.info(`Extracting metadata from OpenReview page: ${url}`);
+    logger$c.info(`Extracting metadata from OpenReview page: ${url}`);
     try {
       const paperId = this.extractId(url);
       if (!paperId) {
-        logger$4.warning(`Could not extract paper ID from URL: ${url}`);
+        logger$c.warning(`Could not extract paper ID from URL: ${url}`);
         return { title: "Unknown OpenReview Paper", url };
       }
       const isServiceWorker = typeof document !== "object" || !document.querySelector || typeof document.querySelector !== "function";
       if (isServiceWorker) {
-        logger$4.info("Service worker context detected, using service worker DOM parser");
+        logger$c.info("Service worker context detected, using service worker DOM parser");
         const htmlContent = typeof document === "string" ? document : document.innerHTML || document.outerHTML || "";
         const swDOM = createServiceWorkerDOM(htmlContent);
         const getMetaContent2 = (name) => {
@@ -1050,7 +803,7 @@ const openreviewPlugin = {
         source_specific_metadata: sourceSpecificMetadata
       };
     } catch (error) {
-      logger$4.error("Error extracting metadata from OpenReview page", error);
+      logger$c.error("Error extracting metadata from OpenReview page", error);
       return {
         title: `OpenReview Paper: ${this.extractId(url) || "Unknown"}`,
         url
@@ -1059,12 +812,12 @@ const openreviewPlugin = {
   },
   hasApi: true,
   async fetchApiData(id) {
-    logger$4.info(`Fetching OpenReview API data for ID: ${id}`);
+    logger$c.info(`Fetching OpenReview API data for ID: ${id}`);
     try {
       const pdfUrl = `https://openreview.net/pdf?id=${id}`;
       let note = null;
       let reviewsData = null;
-      logger$4.info(`Trying forum endpoint for ID: ${id}`);
+      logger$c.info(`Trying forum endpoint for ID: ${id}`);
       const forumApiUrl = `https://api.openreview.net/notes?forum=${id}`;
       const forumResponse = await fetch(forumApiUrl);
       if (forumResponse.ok) {
@@ -1078,11 +831,11 @@ const openreviewPlugin = {
             note = data.notes[0];
           }
         } else {
-          logger$4.warning(`No notes found in forum for ID: ${id}`);
+          logger$c.warning(`No notes found in forum for ID: ${id}`);
         }
       }
       if (!note) {
-        logger$4.info(`Forum approach failed, trying direct ID endpoint for: ${id}`);
+        logger$c.info(`Forum approach failed, trying direct ID endpoint for: ${id}`);
         const notesApiUrl = `https://api.openreview.net/notes?id=${id}`;
         const notesResponse = await fetch(notesApiUrl);
         if (notesResponse.ok) {
@@ -1090,10 +843,10 @@ const openreviewPlugin = {
           if (data.notes && data.notes.length > 0) {
             note = data.notes[0];
           } else {
-            logger$4.warning(`No note found for ID: ${id}`);
+            logger$c.warning(`No note found for ID: ${id}`);
           }
         } else {
-          logger$4.warning(`API error for notes endpoint: ${notesResponse.status}`);
+          logger$c.warning(`API error for notes endpoint: ${notesResponse.status}`);
         }
       }
       if (!note) {
@@ -1191,7 +944,7 @@ const openreviewPlugin = {
         url: `https://openreview.net/forum?id=${id}`
       };
     } catch (error) {
-      logger$4.error(`Error fetching OpenReview API data: ${error}`);
+      logger$c.error(`Error fetching OpenReview API data: ${error}`);
       return {
         title: `OpenReview Paper: ${id}`,
         url: `https://openreview.net/forum?id=${id}`,
@@ -1210,56 +963,56 @@ const openreviewPlugin = {
 };
 pluginRegistry.register(openreviewPlugin);
 
-const logger$3 = loguru.getLogger("PluginLoader");
+const logger$b = loguru.getLogger("PluginLoader");
 let pluginsInitialized = false;
 let initializationPromise = null;
 function registerCorePlugins() {
   try {
     const existingPlugins = pluginRegistry.getAll();
     if (existingPlugins.length > 0) {
-      logger$3.info(`Found ${existingPlugins.length} plugins already registered`);
+      logger$b.info(`Found ${existingPlugins.length} plugins already registered`);
       return;
     }
     pluginRegistry.register(arxivPlugin);
     pluginRegistry.register(semanticScholarPlugin);
     pluginRegistry.register(openreviewPlugin);
     const pluginCount = pluginRegistry.getAll().length;
-    logger$3.info(`Registered ${pluginCount} core plugins manually`);
+    logger$b.info(`Registered ${pluginCount} core plugins manually`);
   } catch (error) {
-    logger$3.error("Error registering core plugins:", error);
+    logger$b.error("Error registering core plugins:", error);
     throw error;
   }
 }
 async function loadBuiltinPlugins() {
-  logger$3.info("Loading built-in plugins");
+  logger$b.info("Loading built-in plugins");
   try {
     registerCorePlugins();
     const pluginCount = pluginRegistry.getAll().length;
     if (pluginCount === 0) {
-      logger$3.warning("No plugins were registered. Attempting emergency direct registration.");
+      logger$b.warning("No plugins were registered. Attempting emergency direct registration.");
       try {
         pluginRegistry.register(arxivPlugin);
         pluginRegistry.register(semanticScholarPlugin);
         pluginRegistry.register(openreviewPlugin);
         const emergencyCount = pluginRegistry.getAll().length;
         if (emergencyCount > 0) {
-          logger$3.info(`Emergency plugin registration successful: ${emergencyCount} plugins registered`);
+          logger$b.info(`Emergency plugin registration successful: ${emergencyCount} plugins registered`);
         } else {
           throw new Error("Failed to register any plugins even with emergency registration");
         }
       } catch (emergencyError) {
-        logger$3.error("Emergency plugin registration failed:", emergencyError);
+        logger$b.error("Emergency plugin registration failed:", emergencyError);
         throw emergencyError;
       }
     } else {
-      logger$3.info(`${pluginCount} plugins are registered`);
+      logger$b.info(`${pluginCount} plugins are registered`);
     }
   } catch (error) {
-    logger$3.error("Error loading plugins", error);
+    logger$b.error("Error loading plugins", error);
     if (error instanceof Error) {
-      logger$3.error(`Plugin loading error: ${error.message}`);
+      logger$b.error(`Plugin loading error: ${error.message}`);
       if (error.stack) {
-        logger$3.error(`Stack trace: ${error.stack}`);
+        logger$b.error(`Stack trace: ${error.stack}`);
       }
     }
     throw error;
@@ -1272,7 +1025,7 @@ async function initializePluginSystem(retries = 3) {
   if (initializationPromise) {
     return initializationPromise;
   }
-  logger$3.info("Initializing plugin system");
+  logger$b.info("Initializing plugin system");
   initializationPromise = (async () => {
     let attemptCount = 0;
     let lastError = null;
@@ -1280,24 +1033,24 @@ async function initializePluginSystem(retries = 3) {
       try {
         await loadBuiltinPlugins();
         const loadedPlugins = pluginRegistry.getAll();
-        logger$3.info(`Initialized ${loadedPlugins.length} plugins:`);
+        logger$b.info(`Initialized ${loadedPlugins.length} plugins:`);
         loadedPlugins.forEach((plugin) => {
-          logger$3.info(`- ${plugin.name} (${plugin.id}) v${plugin.version}`);
+          logger$b.info(`- ${plugin.name} (${plugin.id}) v${plugin.version}`);
         });
         pluginsInitialized = true;
         return;
       } catch (error) {
         attemptCount++;
         lastError = error instanceof Error ? error : new Error(String(error));
-        logger$3.warning(`Plugin initialization attempt ${attemptCount} failed: ${lastError.message}`);
+        logger$b.warning(`Plugin initialization attempt ${attemptCount} failed: ${lastError.message}`);
         if (attemptCount < retries) {
           const delay = Math.pow(2, attemptCount) * 500;
-          logger$3.info(`Retrying plugin initialization in ${delay}ms...`);
+          logger$b.info(`Retrying plugin initialization in ${delay}ms...`);
           await new Promise((resolve) => setTimeout(resolve, delay));
         }
       }
     }
-    logger$3.error(`Plugin initialization failed after ${retries} attempts.`);
+    logger$b.error(`Plugin initialization failed after ${retries} attempts.`);
     if (lastError) {
       throw lastError;
     } else {
@@ -1312,9 +1065,6 @@ async function initializePluginSystem(retries = 3) {
     throw error;
   }
 }
-function arePluginsInitialized() {
-  return pluginsInitialized;
-}
 function getPluginInitializationState() {
   return {
     initialized: pluginsInitialized,
@@ -1323,383 +1073,427 @@ function getPluginInitializationState() {
   };
 }
 
-const logger$2 = loguru.getLogger("URLDetectionService");
-class URLDetectionService {
-  constructor() {
-    // Track URLs being processed to prevent duplicates
-    this.pendingUrls = /* @__PURE__ */ new Set();
-    // Debounce configuration
-    this.debounceTime = 500;
-    // ms
-    this.debounceTimers = /* @__PURE__ */ new Map();
-    // Cache successful detections to avoid repeat processing
-    this.detectionCache = /* @__PURE__ */ new Map();
-    this.maxCacheSize = 100;
-    logger$2.info("URL Detection Service initialized");
+function formatPrimaryId(source, id) {
+  const plugin = pluginRegistry.get(source);
+  if (plugin && plugin.formatId) {
+    return plugin.formatId(id);
   }
+  const safeId = id.replace(/\//g, "_").replace(/:/g, ".").replace(/\s/g, "_").replace(/\\/g, "_");
+  return `${source}.${safeId}`;
+}
+
+const logger$a = loguru.getLogger("Detector");
+class MultiSourceDetector {
   /**
-   * Detect paper source from URL
-   * @param {string} url URL to analyze
-   * @returns {Promise<DetectedSourceInfo|null>} Detected source info or null
+   * Detect paper source and metadata from URL using the plugin registry
+   * 
+   * @param {string} url - URL to analyze
+   * @returns {SourceInfo|null} Paper source information or null if not detected
    */
-  async detectSource(url) {
-    if (!url) {
-      logger$2.warning("Empty URL provided to detectSource");
-      return null;
-    }
-    if (this.detectionCache.has(url)) {
-      logger$2.info(`Cache hit for ${url}`);
-      return this.detectionCache.get(url);
-    }
-    if (!arePluginsInitialized()) {
-      logger$2.info("Plugins not initialized, initializing now...");
-      try {
-        await initializePluginSystem();
-      } catch (error) {
-        logger$2.error("Failed to initialize plugins:", error);
-        return null;
-      }
-    }
-    if (this.isUrlPending(url)) {
-      logger$2.info(`URL already being processed: ${url}`);
-      return null;
-    }
-    try {
-      this.addPendingUrl(url);
-      const result = pluginRegistry.findForUrl(url);
-      if (result) {
-        const sourceInfo = {
-          type: result.plugin.id,
-          id: result.id,
-          primary_id: result.plugin.formatId ? result.plugin.formatId(result.id) : formatPrimaryId(result.plugin.id, result.id),
-          url,
-          plugin: result.plugin
-        };
-        this.addToCache(url, sourceInfo);
-        logger$2.info(`Detected source using plugin registry: ${sourceInfo.type}:${sourceInfo.id}`);
-        return sourceInfo;
-      }
-      const plugins = pluginRegistry.getAll();
-      for (const plugin of plugins) {
-        for (const pattern of plugin.urlPatterns) {
-          const match = url.match(pattern);
-          if (match) {
-            const id = plugin.extractId(url);
-            if (id) {
-              const sourceInfo = {
-                type: plugin.id,
-                id,
-                primary_id: plugin.formatId ? plugin.formatId(id) : formatPrimaryId(plugin.id, id),
-                url,
-                plugin
-              };
-              this.addToCache(url, sourceInfo);
-              logger$2.info(`Detected source using manual check: ${sourceInfo.type}:${sourceInfo.id}`);
-              return sourceInfo;
-            }
+  static detect(url) {
+    const plugins = pluginRegistry.getAll();
+    for (const plugin of plugins) {
+      for (const pattern of plugin.urlPatterns) {
+        const match = url.match(pattern);
+        if (match) {
+          const id = plugin.extractId(url);
+          if (id) {
+            const primary_id = plugin.formatId ? plugin.formatId(id) : formatPrimaryId(plugin.id, id);
+            logger$a.info(`Detected ${plugin.id} paper: ${id} (${primary_id})`);
+            return {
+              type: plugin.id,
+              id,
+              primary_id,
+              url
+            };
           }
         }
       }
-      logger$2.info(`No matching source found for URL: ${url}`);
-      return null;
-    } finally {
-      this.removePendingUrlWithDelay(url);
     }
+    logger$a.info(`No matching plugin found for URL: ${url}`);
+    return null;
   }
+}
+
+const logger$9 = loguru.getLogger("DetectionService");
+const urlDetectionService = {
   /**
-   * Check if a URL is valid for paper detection
+   * Check if URL is valid
    * @param {string} url URL to check
-   * @returns {boolean} True if URL is valid
+   * @returns {boolean} Whether URL is valid
    */
   isValidUrl(url) {
-    if (!url || typeof url !== "string") return false;
     try {
       new URL(url);
-      const commonDomains = [
-        "arxiv.org",
-        "semanticscholar.org",
-        "doi.org",
-        "dl.acm.org",
-        "openreview.net",
-        "s2-research.org"
-      ];
-      return commonDomains.some((domain) => url.includes(domain));
+      return true;
     } catch (e) {
       return false;
     }
-  }
+  },
   /**
-   * Check if URL is currently being processed
-   * @param {string} url URL to check
-   * @returns {boolean} True if URL is pending
+   * Detect paper source info from URL
+   * @param {string} url URL to analyze
+   * @returns {Promise<DetectedSourceInfo|null>} Detection result with plugin
    */
-  isUrlPending(url) {
-    return this.pendingUrls.has(url);
-  }
-  /**
-   * Add URL to pending set
-   * @param {string} url URL to add
-   */
-  addPendingUrl(url) {
-    this.pendingUrls.add(url);
-  }
-  /**
-   * Remove URL from pending set
-   * @param {string} url URL to remove
-   */
-  removePendingUrl(url) {
-    this.pendingUrls.delete(url);
-    if (this.debounceTimers.has(url)) {
-      clearTimeout(this.debounceTimers.get(url));
-      this.debounceTimers.delete(url);
+  async detectSource(url) {
+    const sourceInfo = MultiSourceDetector.detect(url);
+    if (!sourceInfo) {
+      return null;
     }
-  }
-  /**
-   * Remove URL from pending set after a delay
-   * @param {string} url URL to remove
-   * @param {number} delay Delay in ms (default: debounceTime)
-   */
-  removePendingUrlWithDelay(url, delay) {
-    if (this.debounceTimers.has(url)) {
-      clearTimeout(this.debounceTimers.get(url));
+    const plugin = pluginRegistry.get(sourceInfo.type);
+    if (!plugin) {
+      logger$9.warning(`No plugin found for detected source: ${sourceInfo.type}`);
+      return sourceInfo;
     }
-    const timer = setTimeout(() => {
-      this.pendingUrls.delete(url);
-      this.debounceTimers.delete(url);
-    }, delay || this.debounceTime);
-    this.debounceTimers.set(url, timer);
-  }
-  /**
-   * Add a successful detection to cache
-   * @param {string} url URL 
-   * @param {DetectedSourceInfo} info Detection info
-   */
-  addToCache(url, info) {
-    if (!url) {
-      logger$2.warning("Attempted to cache with empty URL");
-      return;
-    }
-    if (this.detectionCache.size >= this.maxCacheSize) {
-      const oldestKey = this.detectionCache.keys().next().value;
-      if (oldestKey) {
-        this.detectionCache.delete(oldestKey);
-      }
-    }
-    this.detectionCache.set(url, info);
-  }
-  /**
-   * Clear the detection cache
-   */
-  clearCache() {
-    this.detectionCache.clear();
-  }
-  /**
-   * Reset the service state
-   * Used for testing and emergency recovery
-   */
-  reset() {
-    this.pendingUrls.clear();
-    for (const timer of this.debounceTimers.values()) {
-      clearTimeout(timer);
-    }
-    this.debounceTimers.clear();
-    this.clearCache();
-    logger$2.info("URL Detection Service has been reset");
-  }
-  /**
-   * Get service status information
-   * @returns {Object} Service status
-   */
-  getStatus() {
     return {
-      pendingUrlsCount: this.pendingUrls.size,
-      activeTimersCount: this.debounceTimers.size,
-      cacheSize: this.detectionCache.size,
-      pluginsInitialized: arePluginsInitialized(),
-      pluginCount: pluginRegistry.getAll().length
+      ...sourceInfo,
+      plugin
     };
   }
-}
-const urlDetectionService = new URLDetectionService();
-
-const logger$1 = loguru.getLogger("BackgroundIntegration");
-async function initializeEnhancedServices() {
-  logger$1.info("Initializing enhanced services");
-  try {
-    await initializePluginSystem(3);
-    const pluginState = getPluginInitializationState();
-    logger$1.info("Plugin system initialized:", pluginState);
-    if (typeof self !== "undefined" && "self" in globalThis && "__DEBUG__" in self) {
-      self.__DEBUG__.enhancedServices = {
-        urlDetectionService,
-        getPluginState: getPluginInitializationState,
-        handleUrl: processUrl
-      };
-      logger$1.info("Debug API extended with enhanced services");
-    }
-  } catch (error) {
-    logger$1.error("Failed to initialize enhanced services:", error);
-    throw error;
-  }
-}
+};
 async function processUrl(url) {
   if (!urlDetectionService.isValidUrl(url)) {
-    logger$1.info(`Invalid or unsupported URL: ${url}`);
+    logger$9.info(`Invalid or unsupported URL: ${url}`);
     return null;
   }
   try {
     return await urlDetectionService.detectSource(url);
   } catch (error) {
-    logger$1.error(`Error processing URL ${url}:`, error);
+    logger$9.error(`Error processing URL ${url}:`, error);
     return null;
   }
 }
 async function processTab(tab) {
   if (!tab.url) {
-    logger$1.info("Tab has no URL");
+    logger$9.info("Tab has no URL");
     return null;
   }
   return processUrl(tab.url);
 }
 async function processNavigation(details) {
   if (!details.url) {
-    logger$1.info("Navigation event has no URL");
+    logger$9.info("Navigation event has no URL");
     return null;
   }
   return processUrl(details.url);
 }
-async function extractMetadataFromSource(sourceInfo) {
-  if (!sourceInfo || !sourceInfo.plugin) {
-    logger$1.info("No valid source info or plugin");
-    return null;
+
+var d=class{constructor(e={}){this.cache=new Map,this.maxSize=e.maxSize??1e3,this.ttl=e.ttl??1e3*60*60,this.accessOrder=[];}get(e){let s=this.cache.get(e);if(s){if(Date.now()-s.lastAccessed>this.ttl){this.cache.delete(e),this.removeFromAccessOrder(e);return}return s.lastAccessed=Date.now(),this.updateAccessOrder(e),s.issueNumber}}set(e,s,t){if(this.cache.size>=this.maxSize&&!this.cache.has(e)){let r=this.accessOrder[this.accessOrder.length-1];r&&(this.cache.delete(r),this.removeFromAccessOrder(r));}this.cache.set(e,{issueNumber:s,lastAccessed:Date.now(),createdAt:t.createdAt,updatedAt:t.updatedAt}),this.updateAccessOrder(e);}remove(e){this.cache.delete(e),this.removeFromAccessOrder(e);}clear(){this.cache.clear(),this.accessOrder=[];}getStats(){return {size:this.cache.size,maxSize:this.maxSize,ttl:this.ttl}}shouldRefresh(e,s){let t=this.cache.get(e);return t?s>t.updatedAt:true}updateAccessOrder(e){this.removeFromAccessOrder(e),this.accessOrder.unshift(e);}removeFromAccessOrder(e){let s=this.accessOrder.indexOf(e);s>-1&&this.accessOrder.splice(s,1);}};var l="0.3.2";var f=class{constructor(e,s,t={}){this.token=e,this.repo=s,this.config={baseLabel:t.baseLabel??"stored-object",uidPrefix:t.uidPrefix??"UID:",reactions:{processed:t.reactions?.processed??"+1",initialState:t.reactions?.initialState??"rocket"}},this.cache=new d(t.cache);}async fetchFromGitHub(e,s={}){let t=new URL(`https://api.github.com/repos/${this.repo}${e}`);s.params&&(Object.entries(s.params).forEach(([i,a])=>{t.searchParams.append(i,a);}),delete s.params);let r=await fetch(t.toString(),{...s,headers:{Authorization:`token ${this.token}`,Accept:"application/vnd.github.v3+json",...s.headers}});if(!r.ok)throw new Error(`GitHub API error: ${r.status}`);return r.json()}createCommentPayload(e,s){let t={_data:e,_meta:{client_version:l,timestamp:new Date().toISOString(),update_mode:"append"}};return s&&(t.type=s),t}async getObject(e){let s=this.cache.get(e),t;if(s)try{t=await this.fetchFromGitHub(`/issues/${s}`),this._verifyIssueLabels(t,e)||(this.cache.remove(e),t=void 0);}catch{this.cache.remove(e);}if(!t){let c=await this.fetchFromGitHub("/issues",{method:"GET",params:{labels:[this.config.baseLabel,`${this.config.uidPrefix}${e}`].join(","),state:"closed"}});if(!c||c.length===0)throw new Error(`No object found with ID: ${e}`);t=c[0];}if(!t?.body)throw new Error(`Invalid issue data received for ID: ${e}`);let r=JSON.parse(t.body),i=new Date(t.created_at),a=new Date(t.updated_at);return this.cache.set(e,t.number,{createdAt:i,updatedAt:a}),{meta:{objectId:e,label:`${this.config.uidPrefix}${e}`,createdAt:i,updatedAt:a,version:await this._getVersion(t.number)},data:r}}async createObject(e,s){let t=`${this.config.uidPrefix}${e}`,r=await this.fetchFromGitHub("/issues",{method:"POST",body:JSON.stringify({title:`Stored Object: ${e}`,body:JSON.stringify(s,null,2),labels:[this.config.baseLabel,t]})});this.cache.set(e,r.number,{createdAt:new Date(r.created_at),updatedAt:new Date(r.updated_at)});let i=this.createCommentPayload(s,"initial_state"),a=await this.fetchFromGitHub(`/issues/${r.number}/comments`,{method:"POST",body:JSON.stringify({body:JSON.stringify(i,null,2)})});return await this.fetchFromGitHub(`/issues/comments/${a.id}/reactions`,{method:"POST",body:JSON.stringify({content:this.config.reactions.processed})}),await this.fetchFromGitHub(`/issues/comments/${a.id}/reactions`,{method:"POST",body:JSON.stringify({content:this.config.reactions.initialState})}),await this.fetchFromGitHub(`/issues/${r.number}`,{method:"PATCH",body:JSON.stringify({state:"closed"})}),{meta:{objectId:e,label:t,createdAt:new Date(r.created_at),updatedAt:new Date(r.updated_at),version:1},data:s}}_verifyIssueLabels(e,s){let t=new Set([this.config.baseLabel,`${this.config.uidPrefix}${s}`]);return e.labels.some(r=>t.has(r.name))}async updateObject(e,s){let t=await this.fetchFromGitHub("/issues",{method:"GET",params:{labels:[this.config.baseLabel,`${this.config.uidPrefix}${e}`].join(","),state:"all"}});if(!t||t.length===0)throw new Error(`No object found with ID: ${e}`);let r=t[0],i=this.createCommentPayload(s);return await this.fetchFromGitHub(`/issues/${r.number}/comments`,{method:"POST",body:JSON.stringify({body:JSON.stringify(i,null,2)})}),await this.fetchFromGitHub(`/issues/${r.number}`,{method:"PATCH",body:JSON.stringify({state:"open"})}),this.getObject(e)}async listAll(){let e=await this.fetchFromGitHub("/issues",{method:"GET",params:{labels:this.config.baseLabel,state:"closed"}}),s={};for(let t of e)if(!t.labels.some(r=>r.name==="archived"))try{let r=this._getObjectIdFromLabels(t),i=JSON.parse(t.body),a={objectId:r,label:r,createdAt:new Date(t.created_at),updatedAt:new Date(t.updated_at),version:await this._getVersion(t.number)};s[r]={meta:a,data:i};}catch{continue}return s}async listUpdatedSince(e){let s=await this.fetchFromGitHub("/issues",{method:"GET",params:{labels:this.config.baseLabel,state:"closed",since:e.toISOString()}}),t={};for(let r of s)if(!r.labels.some(i=>i.name==="archived"))try{let i=this._getObjectIdFromLabels(r),a=JSON.parse(r.body),n=new Date(r.updated_at);if(n>e){let c={objectId:i,label:i,createdAt:new Date(r.created_at),updatedAt:n,version:await this._getVersion(r.number)};t[i]={meta:c,data:a};}}catch{continue}return t}async getObjectHistory(e){let s=await this.fetchFromGitHub("/issues",{method:"GET",params:{labels:[this.config.baseLabel,`${this.config.uidPrefix}${e}`].join(","),state:"all"}});if(!s||s.length===0)throw new Error(`No object found with ID: ${e}`);let t=s[0],r=await this.fetchFromGitHub(`/issues/${t.number}/comments`),i=[];for(let a of r)try{let n=JSON.parse(a.body),c="update",m,b={client_version:"legacy",timestamp:a.created_at,update_mode:"append"};typeof n=="object"?"_data"in n?(c=n.type||"update",m=n._data,b=n._meta||b):"type"in n&&n.type==="initial_state"?(c="initial_state",m=n.data):m=n:m=n,i.push({timestamp:a.created_at,type:c,data:m,commentId:a.id});}catch{continue}return i}async _getVersion(e){return (await this.fetchFromGitHub(`/issues/${e}/comments`)).length+1}_getObjectIdFromLabels(e){for(let s of e.labels)if(s.name!==this.config.baseLabel&&s.name.startsWith(this.config.uidPrefix))return s.name.slice(this.config.uidPrefix.length);throw new Error(`No UID label found with prefix ${this.config.uidPrefix}`)}};
+
+const logger$8 = loguru.getLogger("PaperManager");
+function isInteractionLog(data) {
+  return typeof data === "object" && data !== null && typeof data.paper_id === "string" && Array.isArray(data.interactions);
+}
+class PaperManager {
+  constructor(client) {
+    // Concurrency control locks
+    this.creationLocks = /* @__PURE__ */ new Map();
+    this.client = client;
   }
-  try {
-    if (sourceInfo.plugin.hasApi && sourceInfo.plugin.fetchApiData) {
-      try {
-        logger$1.info(`Using ${sourceInfo.plugin.id} plugin API to extract metadata`);
-        const apiData = await sourceInfo.plugin.fetchApiData(sourceInfo.id);
-        if (apiData && Object.keys(apiData).length > 0) {
-          return {
-            ...apiData,
-            source: sourceInfo.type,
-            sourceId: sourceInfo.id,
-            primary_id: sourceInfo.primary_id,
-            url: sourceInfo.url
-          };
-        }
-      } catch (apiError) {
-        logger$1.error(`Error using plugin API: ${apiError}`);
+  /**
+   * Get or create a paper record
+   */
+  async getOrCreatePaper(paperData) {
+    if (!paperData.primary_id) {
+      if (paperData.source && paperData.sourceId) {
+        paperData.primary_id = formatPrimaryId(paperData.source, paperData.sourceId);
+      } else {
+        throw new Error("Invalid paper data: missing primary_id and cannot generate it");
       }
     }
-    return {
-      source: sourceInfo.type,
-      sourceId: sourceInfo.id,
-      primary_id: sourceInfo.primary_id,
-      url: sourceInfo.url,
-      title: `${sourceInfo.type.toUpperCase()} Paper: ${sourceInfo.id}`,
-      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-      rating: "novote"
-    };
-  } catch (error) {
-    logger$1.error(`Error extracting metadata: ${error}`);
-    return null;
-  }
-}
-async function extractMetadataFromDOM(tabId, sourceInfo) {
-  if (!sourceInfo || !sourceInfo.plugin || !sourceInfo.plugin.extractMetadata) {
-    return null;
-  }
-  try {
-    logger$1.info(`Attempting DOM extraction for ${sourceInfo.type}`);
-    const script = await chrome.scripting.executeScript({
-      target: { tabId },
-      func: () => document.documentElement.outerHTML
-    });
-    if (script && script[0] && script[0].result) {
-      try {
-        const htmlString = script[0].result;
-        const metadata = await sourceInfo.plugin.extractMetadata({
-          documentElement: { outerHTML: htmlString }
-        }, sourceInfo.url);
-        if (metadata && Object.keys(metadata).length > 0) {
-          return {
-            ...metadata,
-            source: sourceInfo.type,
-            sourceId: sourceInfo.id,
-            primary_id: sourceInfo.primary_id,
-            url: sourceInfo.url
-          };
-        }
-      } catch (parserError) {
-        logger$1.error(`Error parsing HTML in service worker: ${parserError}`);
-        try {
-          const metadata = await sourceInfo.plugin.extractMetadata(
-            { innerHTML: script[0].result },
-            sourceInfo.url
-          );
-          if (metadata && Object.keys(metadata).length > 0) {
-            return {
-              ...metadata,
-              source: sourceInfo.type,
-              sourceId: sourceInfo.id,
-              primary_id: sourceInfo.primary_id,
-              url: sourceInfo.url
-            };
-          }
-        } catch (fallbackError) {
-          logger$1.error(`Error with fallback metadata extraction: ${fallbackError}`);
-        }
-      }
-    }
-  } catch (error) {
-    logger$1.error(`Error extracting metadata from DOM: ${error}`);
-  }
-  return null;
-}
-async function fullyProcessUrl(url, tabId = null) {
-  try {
-    const sourceInfo = await processUrl(url);
-    if (!sourceInfo) {
-      logger$1.info(`No source detected for URL: ${url}`);
-      return null;
-    }
-    logger$1.info(`Detected ${sourceInfo.type} paper: ${sourceInfo.id}`);
-    let paperData = await extractMetadataFromSource(sourceInfo);
-    if (tabId && (!paperData || !paperData.title || paperData.title.includes(sourceInfo.id))) {
-      logger$1.info("API extraction failed or returned minimal data, trying DOM extraction");
-      const domData = await extractMetadataFromDOM(tabId, sourceInfo);
-      if (domData) {
-        paperData = {
-          ...paperData,
-          ...domData,
-          // Ensure critical fields are preserved
-          source: sourceInfo.type,
-          sourceId: sourceInfo.id,
-          primary_id: sourceInfo.primary_id,
-          url: sourceInfo.url
+    const objectId = `paper:${paperData.primary_id}`;
+    logger$8.info(`Getting or creating paper: ${objectId}`);
+    try {
+      const obj = await this.client.getObject(objectId);
+      const data = obj.data;
+      logger$8.info(`Found existing paper: ${objectId}`);
+      return data;
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("No object found")) {
+        const defaultPaperData = {
+          primary_id: paperData.primary_id,
+          source: paperData.source,
+          sourceId: paperData.sourceId,
+          url: paperData.url || "",
+          title: paperData.title || paperData.sourceId,
+          authors: paperData.authors || "",
+          abstract: paperData.abstract || "",
+          timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+          rating: "novote"
         };
+        if (paperData.source_specific_metadata) {
+          defaultPaperData.source_specific_metadata = paperData.source_specific_metadata;
+        }
+        defaultPaperData.identifiers = {
+          original: paperData.sourceId,
+          url: paperData.url
+        };
+        if (paperData.doi) {
+          defaultPaperData.identifiers.doi = paperData.doi;
+        }
+        logger$8.info(`Creating new paper object: ${objectId}`);
+        try {
+          await this.client.createObject(objectId, defaultPaperData);
+          logger$8.info(`Successfully created paper: ${objectId}`);
+          return defaultPaperData;
+        } catch (createError) {
+          logger$8.error(`Error creating paper object: ${createError}`);
+          throw createError;
+        }
       }
+      logger$8.error(`Error in getOrCreatePaper: ${error}`);
+      throw error;
     }
+  }
+  /**
+   * Get or create an interaction log
+   */
+  async getOrCreateInteractionLog(paperId) {
+    const objectId = `interactions:${paperId}`;
+    if (this.creationLocks.has(objectId)) {
+      logger$8.info(`Waiting for existing creation of interaction log: ${objectId}`);
+      return this.creationLocks.get(objectId);
+    }
+    const creationPromise = (async () => {
+      try {
+        const obj = await this.client.getObject(objectId);
+        const data = obj.data;
+        if (isInteractionLog(data)) {
+          return data;
+        }
+        throw new Error("Invalid interaction log format");
+      } catch (error) {
+        if (error instanceof Error && error.message.includes("No object found")) {
+          const newLog = {
+            paper_id: paperId,
+            interactions: []
+          };
+          logger$8.info(`Creating new interaction log: ${objectId}`);
+          await this.client.createObject(objectId, newLog);
+          return newLog;
+        }
+        throw error;
+      } finally {
+        setTimeout(() => {
+          this.creationLocks.delete(objectId);
+        }, 500);
+      }
+    })();
+    this.creationLocks.set(objectId, creationPromise);
+    return creationPromise;
+  }
+  /**
+   * Log a reading session for a paper
+   */
+  async logReadingSession(paperId, session, paperData) {
     if (paperData) {
-      logger$1.info(`Successfully processed paper: ${paperData.title || paperData.primary_id}`);
+      if (!paperData.primary_id) {
+        paperData.primary_id = paperId;
+      }
+      await this.getOrCreatePaper(paperData);
     }
-    return paperData;
-  } catch (error) {
-    logger$1.error(`Error fully processing URL ${url}:`, error);
-    return null;
+    await this.addInteraction(paperId, {
+      type: "reading_session",
+      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+      data: session
+    });
+  }
+  /**
+   * Log an annotation for a paper
+   */
+  async logAnnotation(paperId, key, value, paperData) {
+    if (paperData) {
+      if (!paperData.primary_id) {
+        paperData.primary_id = paperId;
+      }
+      await this.getOrCreatePaper(paperData);
+    }
+    await this.addInteraction(paperId, {
+      type: "annotation",
+      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+      data: { key, value }
+    });
+  }
+  /**
+   * Update a paper's rating
+   */
+  async updateRating(paperId, rating, paperData) {
+    const paper = await this.getOrCreatePaper(paperData || { primary_id: paperId });
+    const objectId = `paper:${paperId}`;
+    await this.client.updateObject(objectId, {
+      ...paper,
+      rating
+    });
+    await this.addInteraction(paperId, {
+      type: "rating",
+      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+      data: { rating }
+    });
+  }
+  /**
+   * Add an interaction to a paper's log
+   */
+  async addInteraction(paperId, interaction) {
+    const log = await this.getOrCreateInteractionLog(paperId);
+    log.interactions.push(interaction);
+    const objectId = `interactions:${paperId}`;
+    await this.client.updateObject(objectId, log);
+  }
+  /**
+   * Get interactions for a paper
+   */
+  async getInteractions(paperId, options = {}) {
+    try {
+      const log = await this.getOrCreateInteractionLog(paperId);
+      let interactions = log.interactions;
+      if (options.type) {
+        interactions = interactions.filter((i) => i.type === options.type);
+      }
+      if (options.startTime || options.endTime) {
+        interactions = interactions.filter((i) => {
+          const time = new Date(i.timestamp);
+          if (options.startTime && time < options.startTime) return false;
+          if (options.endTime && time > options.endTime) return false;
+          return true;
+        });
+      }
+      return interactions;
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("No object found")) {
+        return [];
+      }
+      throw error;
+    }
+  }
+  /**
+   * Get total reading time for a paper
+   */
+  async getPaperReadingTime(paperId) {
+    const interactions = await this.getInteractions(paperId, { type: "reading_session" });
+    return interactions.reduce((total, i) => {
+      const data = i.data;
+      if (typeof data === "object" && data !== null && "duration_seconds" in data) {
+        return total + data.duration_seconds;
+      }
+      return total;
+    }, 0);
+  }
+  /**
+   * Get paper history
+   */
+  async getPaperHistory(paperId) {
+    const objectId = `paper:${paperId}`;
+    return this.client.getObjectHistory(objectId);
   }
 }
 
-const logger = loguru.getLogger("Background");
-let githubToken = "";
-let githubRepo = "";
-let currentPaperData = null;
-let currentSession = null;
-let activityInterval = null;
-let sessionConfig = null;
-let paperManager = null;
-const pendingUrls = /* @__PURE__ */ new Set();
+const logger$7 = loguru.getLogger("CredentialManager");
+class CredentialManager {
+  constructor() {
+    this.githubToken = "";
+    this.githubRepo = "";
+    this.paperManager = null;
+    chrome.storage.onChanged.addListener(this._handleStorageChanges.bind(this));
+  }
+  /**
+   * Load credentials from storage
+   * @returns {Promise<{paperManager: PaperManager|null}>}
+   */
+  async loadCredentials() {
+    const items = await chrome.storage.sync.get(["githubToken", "githubRepo"]);
+    this.githubToken = items.githubToken || "";
+    this.githubRepo = items.githubRepo || "";
+    logger$7.info("Credentials loaded:", {
+      hasToken: !!this.githubToken,
+      hasRepo: !!this.githubRepo
+    });
+    return this._initializePaperManager();
+  }
+  /**
+   * Initialize the paper manager if credentials are available
+   * @private
+   * @returns {Promise<{paperManager: PaperManager|null}>}
+   */
+  async _initializePaperManager() {
+    if (this.githubToken && this.githubRepo) {
+      const githubClient = new f(this.githubToken, this.githubRepo);
+      this.paperManager = new PaperManager(githubClient);
+      logger$7.info("Paper manager initialized");
+    } else {
+      this.paperManager = null;
+      logger$7.info("Paper manager not initialized - missing credentials");
+    }
+    return { paperManager: this.paperManager };
+  }
+  /**
+   * Handle storage changes
+   * @private
+   * @param {Object} changes - Storage changes object
+   */
+  async _handleStorageChanges(changes) {
+    let credentialsChanged = false;
+    if (changes.githubToken) {
+      this.githubToken = changes.githubToken.newValue;
+      credentialsChanged = true;
+    }
+    if (changes.githubRepo) {
+      this.githubRepo = changes.githubRepo.newValue;
+      credentialsChanged = true;
+    }
+    if (credentialsChanged) {
+      logger$7.info("GitHub credentials changed, reinitializing paper manager");
+      await this._initializePaperManager();
+    }
+  }
+  /**
+   * Get the current paper manager instance
+   * @returns {PaperManager|null}
+   */
+  getPaperManager() {
+    return this.paperManager;
+  }
+  /**
+   * Check if credentials are configured
+   * @returns {boolean}
+   */
+  hasValidCredentials() {
+    return !!(this.githubToken && this.githubRepo);
+  }
+}
+const credentialManager = new CredentialManager();
+
+const DEFAULT_CONFIG = {
+  idleThresholdMinutes: 5,
+  minSessionDurationSeconds: 30,
+  // Adding more granular control
+  requireContinuousActivity: true,
+  // If true, resets timer on idle
+  logPartialSessions: false,
+  // If true, logs sessions even if under minimum duration
+  activityUpdateIntervalSeconds: 1
+  // How often to update active time
+};
+async function loadSessionConfig() {
+  const items = await chrome.storage.sync.get("sessionConfig");
+  return { ...DEFAULT_CONFIG, ...items.sessionConfig };
+}
+function getConfigurationInMs(config) {
+  return {
+    idleThreshold: config.idleThresholdMinutes * 60 * 1e3,
+    minSessionDuration: config.minSessionDurationSeconds * 1e3,
+    activityUpdateInterval: config.activityUpdateIntervalSeconds * 1e3,
+    requireContinuousActivity: config.requireContinuousActivity,
+    logPartialSessions: config.logPartialSessions
+  };
+}
+
+const logger$6 = loguru.getLogger("SessionManager");
 class EnhancedReadingSession {
+  /**
+   * Create a new reading session
+   * @param {PaperData} paperData - Paper metadata
+   * @param {SessionConfig} config - Session configuration
+   */
   constructor(paperData, config) {
     if (!paperData.primary_id) {
       throw new Error("Paper data must include primary_id");
@@ -1716,6 +1510,9 @@ class EnhancedReadingSession {
     this.endTime = null;
     this.finalizedData = null;
   }
+  /**
+   * Update session timing data
+   */
   update() {
     if (this.isTracking && !this.finalizedData) {
       const now = /* @__PURE__ */ new Date();
@@ -1728,6 +1525,10 @@ class EnhancedReadingSession {
       this.lastActiveTime = now;
     }
   }
+  /**
+   * Finalize session data
+   * @returns {SessionData|null} Session data or null if session was too short
+   */
   finalize() {
     if (this.finalizedData) {
       return this.finalizedData;
@@ -1749,6 +1550,10 @@ class EnhancedReadingSession {
     }
     return null;
   }
+  /**
+   * Get session metadata
+   * @returns {SessionMetadata} Session metadata
+   */
   getMetadata() {
     return {
       sourceType: this.paperData.source,
@@ -1761,375 +1566,649 @@ class EnhancedReadingSession {
     };
   }
 }
-async function loadCredentials() {
-  const items = await chrome.storage.sync.get(["githubToken", "githubRepo"]);
-  githubToken = items.githubToken || "";
-  githubRepo = items.githubRepo || "";
-  logger.info("Credentials loaded:", { hasToken: !!githubToken, hasRepo: !!githubRepo });
-  if (githubToken && githubRepo) {
-    const githubClient = new f(githubToken, githubRepo);
-    paperManager = new PaperManager(githubClient);
-    logger.info("Paper manager initialized");
+class SessionManager {
+  constructor() {
+    this.currentPaperData = null;
+    this.currentSession = null;
+    this.activityInterval = null;
+    this.sessionConfig = null;
   }
-  sessionConfig = getConfigurationInMs(await loadSessionConfig());
-  logger.info("Session configuration loaded:", sessionConfig);
-  initializeDebugObjects();
-}
-chrome.storage.onChanged.addListener(async (changes) => {
-  logger.info("Storage changes detected:", Object.keys(changes));
-  if (changes.githubToken) {
-    githubToken = changes.githubToken.newValue;
+  /**
+   * Load session configuration
+   * @returns {Promise<SessionConfig>} Session configuration
+   */
+  async loadSessionConfig() {
+    const config = await loadSessionConfig();
+    this.sessionConfig = getConfigurationInMs(config);
+    logger$6.info("Session configuration loaded:", this.sessionConfig);
+    chrome.storage.onChanged.addListener((changes) => {
+      if (changes.sessionConfig) {
+        this.sessionConfig = getConfigurationInMs(changes.sessionConfig.newValue);
+        logger$6.info("Session configuration updated:", this.sessionConfig);
+      }
+    });
+    return this.sessionConfig;
   }
-  if (changes.githubRepo) {
-    githubRepo = changes.githubRepo.newValue;
-  }
-  if (changes.sessionConfig) {
-    sessionConfig = getConfigurationInMs(changes.sessionConfig.newValue);
-    logger.info("Session configuration updated:", sessionConfig);
-  }
-  if (changes.githubToken || changes.githubRepo) {
-    if (githubToken && githubRepo) {
-      const githubClient = new f(githubToken, githubRepo);
-      paperManager = new PaperManager(githubClient);
-      logger.info("Paper manager reinitialized");
+  /**
+   * Start a new reading session for a paper
+   * @param {PaperData} paperData - Paper metadata
+   * @returns {SessionMetadata|null} Session metadata
+   */
+  startSession(paperData) {
+    if (!paperData || !paperData.primary_id) {
+      logger$6.error("Cannot start session: invalid paper data");
+      return null;
     }
+    if (!this.sessionConfig) {
+      logger$6.error("Session configuration not loaded, loading default config");
+      this.sessionConfig = getConfigurationInMs(DEFAULT_CONFIG);
+    }
+    if (this.currentSession) {
+      logger$6.info("Ending existing session before starting new one");
+      this.endCurrentSession();
+    }
+    logger$6.info(`Starting new session for: ${paperData.primary_id}`);
+    this.currentPaperData = paperData;
+    this.currentSession = new EnhancedReadingSession(paperData, this.sessionConfig);
+    const metadata = this.currentSession.getMetadata();
+    logger$6.info("New session created:", metadata);
+    this._startActivityTracking();
+    return metadata;
   }
-});
-async function initialize() {
-  logger.info("Initializing extension");
-  await loadCredentials();
-  await initializeEnhancedServices();
-  await setupListeners();
-  logger.info("Extension initialized");
-}
-initialize().catch((error) => {
-  logger.error("Initialization failed", error);
-});
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  logger.info("Message received:", request);
-  if (request.type === "getCurrentPaper") {
-    logger.info("Popup requested current paper:", currentPaperData);
-    sendResponse(currentPaperData);
-  } else if (request.type === "updateRating") {
-    logger.info("Rating update requested:", request.rating);
-    handleUpdateRating(request.rating, sendResponse);
-    return true;
-  } else if (request.type === "updateAnnotation") {
-    logger.info("Annotation update requested:", request.annotationType, request.data);
-    handleAnnotationUpdate(request.annotationType, request.data).then((response) => sendResponse(response)).catch((error) => sendResponse({ success: false, error: error.message }));
-    return true;
-  } else if (request.type === "trackPaper") {
-    logger.info("Track paper requested:", request);
-    handleTrackPaper(request).then((response) => sendResponse(response)).catch((error) => sendResponse({ success: false, error: error.message }));
-    return true;
-  }
-  return true;
-});
-async function handleTrackPaper(request) {
-  if (!paperManager) {
-    throw new Error("Paper manager not initialized");
-  }
-  try {
-    let paperData;
-    if (request.url) {
-      paperData = await fullyProcessUrl(request.url);
-    } else if (request.source && request.id) {
-      const primary_id = formatPrimaryId(request.source, request.id);
-      paperData = {
-        source: request.source,
-        sourceId: request.id,
-        primary_id,
-        url: request.url || "",
-        title: request.title || `${request.source.toUpperCase()} Paper: ${request.id}`,
-        timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-        rating: "novote"
+  /**
+   * End the current reading session
+   * @returns {Promise<{paperData: PaperData, sessionData: SessionData} | null>} Session result or null if no active session
+   */
+  async endCurrentSession() {
+    if (this.currentSession && this.currentPaperData) {
+      logger$6.info(`Ending session for: ${this.currentPaperData.primary_id}`);
+      const sessionData = this.currentSession.finalize();
+      if (sessionData) {
+        logger$6.info("Creating reading event:", sessionData);
+        await this._createReadingEvent(this.currentPaperData, sessionData);
+      }
+      const result = {
+        paperData: this.currentPaperData,
+        sessionData
       };
-    } else {
-      throw new Error("Invalid request: missing URL or source/id");
+      this.currentSession = null;
+      this.currentPaperData = null;
+      this._stopActivityTracking();
+      return result;
     }
-    if (!paperData) {
-      throw new Error(`Could not process paper: ${request.url || request.id}`);
-    }
-    const createdPaper = await createGithubIssue(paperData);
-    return { success: true, paperData: createdPaper };
-  } catch (error) {
-    logger.error(`Error tracking paper: ${error}`);
-    throw error;
-  }
-}
-async function handleUpdateRating(rating, sendResponse) {
-  if (!paperManager) {
-    sendResponse({ success: false, error: "Paper manager not initialized" });
-    return;
-  }
-  if (!currentPaperData) {
-    sendResponse({ success: false, error: "No current paper" });
-    return;
-  }
-  try {
-    const paperId = currentPaperData.primary_id;
-    await paperManager.updateRating(paperId, rating, currentPaperData);
-    currentPaperData.rating = rating;
-    sendResponse({ success: true });
-  } catch (error) {
-    logger.error("Error updating rating:", error);
-    sendResponse({ success: false, error: error.message });
-  }
-}
-async function setupListeners() {
-  logger.info("Setting up unified event listeners");
-  const plugins = pluginRegistry.getAll();
-  const hostPatterns = [];
-  for (const plugin of plugins) {
-    try {
-      for (const pattern of plugin.urlPatterns) {
-        const patternStr = pattern.toString();
-        const match = patternStr.match(/([a-zA-Z0-9.-]+)\\?\.([a-zA-Z]+)/);
-        if (match) {
-          const domain = match[1];
-          const tld = match[2];
-          hostPatterns.push({ hostSuffix: `${domain}.${tld}` });
-        }
-      }
-    } catch (err) {
-      logger.error(`Error processing plugin URL patterns: ${err}`);
-    }
-  }
-  if (hostPatterns.length === 0) {
-    hostPatterns.push(
-      { hostSuffix: "arxiv.org" },
-      { hostSuffix: "semanticscholar.org" },
-      { hostSuffix: "doi.org" },
-      { hostSuffix: "dl.acm.org" },
-      { hostSuffix: "openreview.net" }
-    );
-  }
-  logger.info(`Setting up navigation listener with patterns: ${JSON.stringify(hostPatterns)}`);
-  chrome.webNavigation.onCompleted.addListener(handleUnifiedNavigation, {
-    url: hostPatterns
-  });
-  chrome.tabs.onActivated.addListener(handleUnifiedTabActivation);
-  chrome.tabs.onUpdated.addListener(handleUnifiedTabUpdate);
-  chrome.windows.onFocusChanged.addListener((windowId) => {
-    if (windowId === chrome.windows.WINDOW_ID_NONE) {
-      endCurrentSession();
-    }
-  });
-  logger.info("All event listeners initialized");
-}
-async function handleUnifiedNavigation(details) {
-  logger.info(`Unified navigation handler: ${details.url}`);
-  try {
-    const sourceInfo = await processNavigation(details);
-    if (!sourceInfo) {
-      logger.info("Not a recognized paper URL");
-      return;
-    }
-    logger.info(`Detected paper: ${sourceInfo.type}:${sourceInfo.id}`);
-    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (tabs.length > 0 && tabs[0].id === details.tabId) {
-      await handleTabChangeWithPlugins(tabs[0]);
-    } else {
-      const paperData = await fullyProcessUrl(details.url);
-      if (paperData) {
-        logger.info(`Processed paper data: ${paperData.title}`);
-      }
-    }
-  } catch (error) {
-    logger.error(`Error in navigation handler: ${error}`);
-  }
-}
-async function handleUnifiedTabActivation(activeInfo) {
-  logger.info(`Unified tab activation handler: ${activeInfo.tabId}`);
-  const tab = await chrome.tabs.get(activeInfo.tabId);
-  if (!tab.url || pendingUrls.has(tab.url)) {
-    logger.info(`Tab URL empty or already being processed: ${tab.url}`);
-    return;
-  }
-  try {
-    pendingUrls.add(tab.url);
-    await handleTabChangeWithPlugins(tab);
-  } catch (error) {
-    logger.error(`Error in tab activation handler: ${error}`);
-  } finally {
-    setTimeout(() => {
-      pendingUrls.delete(tab.url);
-    }, 500);
-  }
-}
-async function handleUnifiedTabUpdate(tabId, changeInfo, tab) {
-  if (changeInfo.status !== "complete" || !tab.url || pendingUrls.has(tab.url)) {
-    return;
-  }
-  logger.info(`Unified tab update handler: ${tab.url}`);
-  try {
-    pendingUrls.add(tab.url);
-    await handleTabChangeWithPlugins(tab);
-  } catch (error) {
-    logger.error(`Error in tab update handler: ${error}`);
-  } finally {
-    setTimeout(() => {
-      pendingUrls.delete(tab.url);
-    }, 500);
-  }
-}
-async function handleTabChangeWithPlugins(tab) {
-  if (!tab.url) return;
-  const sourceInfo = await processTab(tab);
-  if (!sourceInfo) {
-    logger.info("Not a recognized paper page, ending current session");
-    await endCurrentSession();
-    return;
-  }
-  if (currentSession) {
-    logger.info("Ending existing session before starting new one");
-    await endCurrentSession();
-  }
-  logger.info(`Processing paper URL: ${tab.url}`);
-  const paperData = await fullyProcessUrl(tab.url, tab.id);
-  if (paperData) {
-    logger.info(`Starting new session for: ${paperData.primary_id}`);
-    currentPaperData = paperData;
-    currentSession = new EnhancedReadingSession(paperData, sessionConfig);
-    const metadata = currentSession.getMetadata();
-    logger.info("New session created:", metadata);
-    startActivityTracking();
-    logger.info(`Creating GitHub issue for: ${paperData.primary_id}`);
-    try {
-      await createGithubIssue(paperData);
-    } catch (error) {
-      logger.error(`Error creating GitHub issue: ${error}`);
-    }
-  }
-}
-async function endCurrentSession() {
-  if (currentSession && currentPaperData) {
-    logger.info(`Ending session for: ${currentPaperData.primary_id}`);
-    const sessionData = currentSession.finalize();
-    if (sessionData) {
-      logger.info("Creating reading event:", sessionData);
-      await createReadingEvent(currentPaperData, sessionData);
-    }
-    currentSession = null;
-    currentPaperData = null;
-    stopActivityTracking();
-  }
-}
-function startActivityTracking() {
-  if (!activityInterval) {
-    logger.info("Starting activity tracking");
-    activityInterval = setInterval(() => {
-      if (currentSession) {
-        currentSession.update();
-      }
-    }, sessionConfig.activityUpdateInterval);
-  }
-}
-function stopActivityTracking() {
-  if (activityInterval) {
-    clearInterval(activityInterval);
-    activityInterval = null;
-  }
-}
-async function createReadingEvent(paperData, sessionData) {
-  if (!paperManager || !paperData) {
-    logger.error("Missing required data for creating reading event:", {
-      hasPaperManager: !!paperManager,
-      hasPaperData: !!paperData
-    });
-    return;
-  }
-  try {
-    if (!paperData.primary_id) {
-      logger.error("Paper data missing primary_id. This should not happen.");
-      return;
-    }
-    const paperId = paperData.primary_id;
-    await paperManager.logReadingSession(
-      paperId,
-      sessionData,
-      paperData
-    );
-    logger.info("Reading session logged:", {
-      paperId,
-      sessionId: sessionData.session_id,
-      activeTime: sessionData.duration_seconds,
-      idleTime: sessionData.idle_seconds,
-      totalTime: sessionData.total_elapsed_seconds
-    });
-  } catch (error) {
-    logger.error("Error logging reading session:", error);
-  }
-}
-async function createGithubIssue(paperData) {
-  if (!paperManager) {
-    logger.error("Paper manager not initialized");
     return null;
   }
-  if (!paperData.primary_id) {
-    if (paperData.source && paperData.sourceId) {
-      paperData.primary_id = formatPrimaryId(paperData.source, paperData.sourceId);
-    } else {
-      logger.error("Cannot create paper - no valid identifier");
+  /**
+   * Get the current paper data
+   * @returns {PaperData|null} Current paper data
+   */
+  getCurrentPaper() {
+    return this.currentPaperData;
+  }
+  /**
+   * Start tracking activity
+   * @private
+   */
+  _startActivityTracking() {
+    if (!this.activityInterval && this.sessionConfig) {
+      logger$6.info("Starting activity tracking");
+      this.activityInterval = self.setInterval(() => {
+        if (this.currentSession) {
+          this.currentSession.update();
+        }
+      }, this.sessionConfig.activityUpdateInterval);
+    }
+  }
+  /**
+   * Stop tracking activity
+   * @private
+   */
+  _stopActivityTracking() {
+    if (this.activityInterval) {
+      clearInterval(this.activityInterval);
+      this.activityInterval = null;
+    }
+  }
+  /**
+   * Create reading event in GitHub
+   * @private
+   * @param {PaperData} paperData - Paper metadata
+   * @param {SessionData} sessionData - Session data
+   * @returns {Promise<void>}
+   */
+  async _createReadingEvent(paperData, sessionData) {
+    const paperManager = credentialManager.getPaperManager();
+    if (!paperManager || !paperData) {
+      logger$6.error("Missing required data for creating reading event:", {
+        hasPaperManager: !!paperManager,
+        hasPaperData: !!paperData
+      });
+      return;
+    }
+    try {
+      if (!paperData.primary_id) {
+        logger$6.error("Paper data missing primary_id. This should not happen.");
+        return;
+      }
+      const paperId = paperData.primary_id;
+      await paperManager.logReadingSession(
+        paperId,
+        sessionData,
+        paperData
+      );
+      logger$6.info("Reading session logged:", {
+        paperId,
+        sessionId: sessionData.session_id,
+        activeTime: sessionData.duration_seconds,
+        idleTime: sessionData.idle_seconds,
+        totalTime: sessionData.total_elapsed_seconds
+      });
+    } catch (error) {
+      logger$6.error("Error logging reading session:", error);
+    }
+  }
+}
+const sessionManager = new SessionManager();
+
+const logger$5 = loguru.getLogger("MetadataService");
+async function extractMetadataFromSource(sourceInfo) {
+  if (!sourceInfo || !sourceInfo.plugin) {
+    logger$5.info("No valid source info or plugin");
+    return null;
+  }
+  try {
+    if (sourceInfo.plugin.hasApi && sourceInfo.plugin.fetchApiData) {
+      try {
+        logger$5.info(`Using ${sourceInfo.plugin.id} plugin API to extract metadata`);
+        const apiData = await sourceInfo.plugin.fetchApiData(sourceInfo.id);
+        if (apiData && Object.keys(apiData).length > 0) {
+          return {
+            ...apiData,
+            source: sourceInfo.type,
+            sourceId: sourceInfo.id,
+            primary_id: sourceInfo.primary_id,
+            url: sourceInfo.url
+          };
+        }
+      } catch (apiError) {
+        logger$5.error(`Error using plugin API: ${apiError}`);
+      }
+    }
+    return {
+      source: sourceInfo.type,
+      sourceId: sourceInfo.id,
+      primary_id: sourceInfo.primary_id,
+      url: sourceInfo.url,
+      title: `${sourceInfo.type.toUpperCase()} Paper: ${sourceInfo.id}`,
+      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+      rating: "novote"
+    };
+  } catch (error) {
+    logger$5.error(`Error extracting metadata: ${error}`);
+    return null;
+  }
+}
+async function extractMetadataFromDOM(tabId, sourceInfo) {
+  if (!sourceInfo || !sourceInfo.plugin || !sourceInfo.plugin.extractMetadata) {
+    return null;
+  }
+  try {
+    logger$5.info(`Attempting DOM extraction for ${sourceInfo.type}`);
+    const script = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => document.documentElement.outerHTML
+    });
+    if (script && script[0] && script[0].result) {
+      try {
+        const htmlString = script[0].result;
+        const metadata = await sourceInfo.plugin.extractMetadata({
+          documentElement: { outerHTML: htmlString }
+        }, sourceInfo.url);
+        if (metadata && Object.keys(metadata).length > 0) {
+          return {
+            ...metadata,
+            source: sourceInfo.type,
+            sourceId: sourceInfo.id,
+            primary_id: sourceInfo.primary_id,
+            url: sourceInfo.url
+          };
+        }
+      } catch (parserError) {
+        logger$5.error(`Error parsing HTML in service worker: ${parserError}`);
+        try {
+          const metadata = await sourceInfo.plugin.extractMetadata(
+            { innerHTML: script[0].result },
+            sourceInfo.url
+          );
+          if (metadata && Object.keys(metadata).length > 0) {
+            return {
+              ...metadata,
+              source: sourceInfo.type,
+              sourceId: sourceInfo.id,
+              primary_id: sourceInfo.primary_id,
+              url: sourceInfo.url
+            };
+          }
+        } catch (fallbackError) {
+          logger$5.error(`Error with fallback metadata extraction: ${fallbackError}`);
+        }
+      }
+    }
+  } catch (error) {
+    logger$5.error(`Error extracting metadata from DOM: ${error}`);
+  }
+  return null;
+}
+async function extractPaperMetadata(sourceInfo, tabId = null) {
+  try {
+    if (!sourceInfo) {
+      logger$5.info("No source info provided");
+      return null;
+    }
+    logger$5.info(`Extracting metadata for ${sourceInfo.type} paper: ${sourceInfo.id}`);
+    let paperData = await extractMetadataFromSource(sourceInfo);
+    if (tabId && (!paperData || !paperData.title || paperData.title.includes(sourceInfo.id))) {
+      logger$5.info("API extraction failed or returned minimal data, trying DOM extraction");
+      const domData = await extractMetadataFromDOM(tabId, sourceInfo);
+      if (domData) {
+        paperData = {
+          ...paperData,
+          ...domData,
+          // Ensure critical fields are preserved
+          source: sourceInfo.type,
+          sourceId: sourceInfo.id,
+          primary_id: sourceInfo.primary_id,
+          url: sourceInfo.url
+        };
+      }
+    }
+    if (paperData) {
+      logger$5.info(`Successfully extracted metadata: ${paperData.title || paperData.primary_id}`);
+    }
+    return paperData;
+  } catch (error) {
+    logger$5.error(`Error extracting paper metadata: ${error}`);
+    return null;
+  }
+}
+
+const logger$4 = loguru.getLogger("PaperProcessor");
+async function fullyProcessUrl(url, tabId = null) {
+  try {
+    const sourceInfo = await processUrl(url);
+    if (!sourceInfo) {
+      logger$4.info(`No source detected for URL: ${url}`);
+      return null;
+    }
+    logger$4.info(`Detected ${sourceInfo.type} paper: ${sourceInfo.id}`);
+    return await extractPaperMetadata(sourceInfo, tabId);
+  } catch (error) {
+    logger$4.error(`Error fully processing URL ${url}:`, error);
+    return null;
+  }
+}
+async function fullyProcessTab(tab) {
+  if (!tab.url || !tab.id) {
+    logger$4.info("Tab has no URL or ID");
+    return null;
+  }
+  try {
+    const sourceInfo = await processTab(tab);
+    if (!sourceInfo) {
+      logger$4.info(`No source detected for tab URL: ${tab.url}`);
+      return null;
+    }
+    logger$4.info(`Detected ${sourceInfo.type} paper: ${sourceInfo.id} in tab ${tab.id}`);
+    return await extractPaperMetadata(sourceInfo, tab.id);
+  } catch (error) {
+    logger$4.error(`Error fully processing tab: ${error}`);
+    return null;
+  }
+}
+
+const logger$3 = loguru.getLogger("GitHubIntegration");
+class GitHubIntegration {
+  /**
+   * Create or update a GitHub issue for a paper
+   * @param {PaperData} paperData - Paper metadata
+   * @returns {Promise<PaperData|null>} Created or updated paper data
+   */
+  async createGithubIssue(paperData) {
+    const paperManager = credentialManager.getPaperManager();
+    if (!paperManager) {
+      logger$3.error("Paper manager not initialized");
+      return null;
+    }
+    if (!paperData.primary_id) {
+      if (paperData.source && paperData.sourceId) {
+        paperData.primary_id = formatPrimaryId(paperData.source, paperData.sourceId);
+      } else {
+        logger$3.error("Cannot create paper - no valid identifier");
+        return null;
+      }
+    }
+    try {
+      logger$3.info(`Creating/getting paper issue: ${paperData.primary_id}`);
+      const existingPaper = await paperManager.getOrCreatePaper(paperData);
+      logger$3.info(`Paper metadata stored/retrieved: ${existingPaper.primary_id}`);
+      return existingPaper;
+    } catch (error) {
+      logger$3.error(`Error handling paper metadata: ${error}`, error);
       return null;
     }
   }
-  try {
-    logger.info(`Creating/getting paper issue: ${paperData.primary_id}`);
-    const existingPaper = await paperManager.getOrCreatePaper(paperData);
-    logger.info(`Paper metadata stored/retrieved: ${existingPaper.primary_id}`);
-    return existingPaper;
-  } catch (error) {
-    logger.error(`Error handling paper metadata: ${error}`, error);
-    return null;
-  }
-}
-async function handleAnnotationUpdate(type, data) {
-  if (!paperManager) {
-    throw new Error("Paper manager not initialized");
-  }
-  try {
-    let paperId = data.paperId;
-    if (!paperId.includes(".")) {
-      const source = data.source || "arxiv";
-      paperId = formatPrimaryId(source, paperId);
-      logger.info(`Converted ID to standardized format: ${paperId}`);
+  /**
+   * Update paper rating
+   * @param {PaperData} paperData - Paper metadata
+   * @param {string} rating - Rating value
+   * @returns {Promise<boolean>} Success status
+   */
+  async updateRating(paperData, rating) {
+    const paperManager = credentialManager.getPaperManager();
+    if (!paperManager) {
+      logger$3.error("Paper manager not initialized");
+      return false;
     }
-    const paperData = data.title ? {
-      title: data.title,
-      source: data.source,
-      primary_id: paperId
-    } : void 0;
-    if (type === "vote") {
-      await paperManager.updateRating(
-        paperId,
-        data.vote,
-        paperData
-      );
-    } else {
-      await paperManager.logAnnotation(
-        paperId,
-        "notes",
-        data.notes,
-        paperData
-      );
+    try {
+      const paperId = paperData.primary_id;
+      if (!paperId) {
+        logger$3.error("Paper data missing primary_id");
+        return false;
+      }
+      await paperManager.updateRating(paperId, rating, paperData);
+      logger$3.info(`Updated rating for ${paperId}: ${rating}`);
+      return true;
+    } catch (error) {
+      logger$3.error("Error updating rating:", error);
+      return false;
     }
-    return { success: true };
-  } catch (error) {
-    logger.error("Error logging interaction:", error);
-    throw error;
+  }
+  /**
+   * Update paper annotation
+   * @param {string} type - Annotation type
+   * @param {Object} data - Annotation data
+   * @returns {Promise<boolean>} Success status
+   */
+  async updateAnnotation(type, data) {
+    const paperManager = credentialManager.getPaperManager();
+    if (!paperManager) {
+      logger$3.error("Paper manager not initialized");
+      return false;
+    }
+    try {
+      let paperId = data.paperId;
+      if (!paperId.includes(".")) {
+        const source = data.source || "arxiv";
+        paperId = formatPrimaryId(source, paperId);
+        logger$3.info(`Converted ID to standardized format: ${paperId}`);
+      }
+      const paperData = data.title ? {
+        title: data.title,
+        source: data.source,
+        primary_id: paperId
+      } : void 0;
+      if (type === "vote") {
+        await paperManager.updateRating(
+          paperId,
+          data.vote,
+          paperData
+        );
+      } else {
+        await paperManager.logAnnotation(
+          paperId,
+          "notes",
+          data.notes,
+          paperData
+        );
+      }
+      return true;
+    } catch (error) {
+      logger$3.error("Error logging interaction:", error);
+      return false;
+    }
   }
 }
-function initializeDebugObjects() {
-  self.__DEBUG__ = {
-    get paperManager() {
-      return paperManager;
-    },
-    getGithubClient: () => paperManager?.client,
-    getCurrentPaper: () => currentPaperData,
-    getCurrentSession: () => currentSession,
-    getConfig: () => sessionConfig
-  };
-  logger.info("Debug objects registered, access via __DEBUG__ in service worker console");
+const githubIntegration = new GitHubIntegration();
+
+const logger$2 = loguru.getLogger("EventHandlers");
+class EventHandlers {
+  constructor() {
+    this.pendingUrls = /* @__PURE__ */ new Set();
+  }
+  /**
+   * Set up all event listeners
+   * @returns {Promise<void>}
+   */
+  async setupListeners() {
+    logger$2.info("Setting up unified event listeners");
+    const plugins = pluginRegistry.getAll();
+    const hostPatterns = this._buildHostPatterns(plugins);
+    logger$2.info(`Setting up navigation listener with patterns: ${JSON.stringify(hostPatterns)}`);
+    chrome.webNavigation.onCompleted.addListener(
+      this.handleUnifiedNavigation.bind(this),
+      { url: hostPatterns }
+    );
+    chrome.tabs.onActivated.addListener(
+      this.handleUnifiedTabActivation.bind(this)
+    );
+    chrome.tabs.onUpdated.addListener(
+      this.handleUnifiedTabUpdate.bind(this)
+    );
+    chrome.windows.onFocusChanged.addListener((windowId) => {
+      if (windowId === chrome.windows.WINDOW_ID_NONE) {
+        sessionManager.endCurrentSession();
+      }
+    });
+    logger$2.info("All event listeners initialized");
+  }
+  /**
+   * Build host patterns from plugins
+   * @private
+   * @param {Plugin[]} plugins - Available plugins
+   * @returns {HostPattern[]} Host patterns for navigation listener
+   */
+  _buildHostPatterns(plugins) {
+    const hostPatterns = [];
+    for (const plugin of plugins) {
+      try {
+        for (const pattern of plugin.urlPatterns) {
+          const patternStr = pattern.toString();
+          const match = patternStr.match(/([a-zA-Z0-9.-]+)\\?\.([a-zA-Z]+)/);
+          if (match) {
+            const domain = match[1];
+            const tld = match[2];
+            hostPatterns.push({ hostSuffix: `${domain}.${tld}` });
+          }
+        }
+      } catch (err) {
+        logger$2.error(`Error processing plugin URL patterns: ${err}`);
+      }
+    }
+    if (hostPatterns.length === 0) {
+      hostPatterns.push(
+        { hostSuffix: "arxiv.org" },
+        { hostSuffix: "semanticscholar.org" },
+        { hostSuffix: "doi.org" },
+        { hostSuffix: "dl.acm.org" },
+        { hostSuffix: "openreview.net" }
+      );
+    }
+    return hostPatterns;
+  }
+  /**
+   * Handle navigation events
+   * @param {NavDetails} details - Navigation details
+   * @returns {Promise<void>}
+   */
+  async handleUnifiedNavigation(details) {
+    logger$2.info(`Unified navigation handler: ${details.url}`);
+    try {
+      const sourceInfo = await processNavigation(details);
+      if (!sourceInfo) {
+        logger$2.info("Not a recognized paper URL");
+        return;
+      }
+      logger$2.info(`Detected paper: ${sourceInfo.type}:${sourceInfo.id}`);
+      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (tabs.length > 0 && tabs[0].id === details.tabId) {
+        await this.handleTabChangeWithPlugins(tabs[0]);
+      } else {
+        const paperData = await fullyProcessUrl(details.url);
+        if (paperData) {
+          logger$2.info(`Processed paper data: ${paperData.title}`);
+        }
+      }
+    } catch (error) {
+      logger$2.error(`Error in navigation handler: ${error}`);
+    }
+  }
+  /**
+   * Handle tab activation events
+   * @param {chrome.tabs.TabActiveInfo} activeInfo - Tab activation info
+   * @returns {Promise<void>}
+   */
+  async handleUnifiedTabActivation(activeInfo) {
+    logger$2.info(`Unified tab activation handler: ${activeInfo.tabId}`);
+    const tab = await chrome.tabs.get(activeInfo.tabId);
+    if (!tab.url || this.pendingUrls.has(tab.url)) {
+      logger$2.info(`Tab URL empty or already being processed: ${tab.url}`);
+      return;
+    }
+    try {
+      this.pendingUrls.add(tab.url);
+      await this.handleTabChangeWithPlugins(tab);
+    } catch (error) {
+      logger$2.error(`Error in tab activation handler: ${error}`);
+    } finally {
+      setTimeout(() => {
+        if (tab.url) this.pendingUrls.delete(tab.url);
+      }, 500);
+    }
+  }
+  /**
+   * Handle tab update events
+   * @param {number} tabId - Tab ID
+   * @param {chrome.tabs.TabChangeInfo} changeInfo - Change info
+   * @param {chrome.tabs.Tab} tab - Tab object
+   * @returns {Promise<void>}
+   */
+  async handleUnifiedTabUpdate(tabId, changeInfo, tab) {
+    if (changeInfo.status !== "complete" || !tab.url || this.pendingUrls.has(tab.url)) {
+      return;
+    }
+    logger$2.info(`Unified tab update handler: ${tab.url}`);
+    try {
+      this.pendingUrls.add(tab.url);
+      await this.handleTabChangeWithPlugins(tab);
+    } catch (error) {
+      logger$2.error(`Error in tab update handler: ${error}`);
+    } finally {
+      setTimeout(() => {
+        if (tab.url) this.pendingUrls.delete(tab.url);
+      }, 500);
+    }
+  }
+  /**
+   * Handle tab changes for papers
+   * @param {chrome.tabs.Tab} tab - Tab object
+   * @returns {Promise<void>}
+   */
+  async handleTabChangeWithPlugins(tab) {
+    if (!tab.url) return;
+    const sourceInfo = await processTab(tab);
+    if (!sourceInfo) {
+      logger$2.info("Not a recognized paper page, ending current session");
+      await sessionManager.endCurrentSession();
+      return;
+    }
+    logger$2.info(`Processing paper URL: ${tab.url}`);
+    const paperData = await fullyProcessTab(tab);
+    if (paperData) {
+      logger$2.info(`Starting new session for: ${paperData.primary_id}`);
+      sessionManager.startSession(paperData);
+      logger$2.info(`Creating GitHub issue for: ${paperData.primary_id}`);
+      try {
+        await githubIntegration.createGithubIssue(paperData);
+      } catch (error) {
+        logger$2.error(`Error creating GitHub issue: ${error}`);
+      }
+    }
+  }
+  /**
+   * Process a paper URL
+   * @param {string} url - Paper URL
+   * @param {Object} options - Processing options
+   * @returns {Promise<any|null>} Paper data or null
+   */
+  async processPaperUrl(url, options = {}) {
+    logger$2.info(`Processing paper URL: ${url}`);
+    try {
+      const tabId = options.tabId || null;
+      return await fullyProcessUrl(url, tabId);
+    } catch (error) {
+      logger$2.error(`Error processing paper URL: ${error}`);
+      return null;
+    }
+  }
 }
+const eventHandlers = new EventHandlers();
+
+const logger$1 = loguru.getLogger("Debug");
+function initializeDebugObjects(enhancedServices) {
+  if (typeof self !== "undefined") {
+    self.__DEBUG__ = {
+      // Paper manager
+      get paperManager() {
+        return credentialManager.getPaperManager();
+      },
+      // GitHub client - use any to bypass type checking for this property
+      getGithubClient: () => {
+        return credentialManager.getPaperManager();
+      },
+      // Session info
+      getCurrentPaper: () => sessionManager.getCurrentPaper(),
+      getCurrentSession: () => sessionManager.currentSession,
+      getConfig: () => sessionManager.sessionConfig,
+      // Enhanced services - construct with proper defaults
+      enhancedServices: {
+        urlDetectionService,
+        getPluginState: getPluginInitializationState,
+        handleUrl: enhancedServices?.handleUrl || ((url) => Promise.resolve(null)),
+        ...enhancedServices || {}
+      }
+    };
+    logger$1.info("Debug objects registered, access via __DEBUG__ in service worker console");
+  } else {
+    logger$1.warning("Debug objects not initialized: service worker context not detected");
+  }
+}
+const debugModule = {
+  initializeDebugObjects
+};
+
+const logger = loguru.getLogger("Background");
+async function initialize() {
+  logger.info("Initializing extension");
+  try {
+    const { paperManager } = await credentialManager.loadCredentials();
+    logger.info("Credentials loaded:", {
+      hasPaperManager: !!paperManager
+    });
+    const sessionConfig = await sessionManager.loadSessionConfig();
+    logger.info("Session configuration loaded");
+    logger.info("Initializing plugin system");
+    await initializePluginSystem(3);
+    logger.info("Plugin system initialized");
+    await eventHandlers.setupListeners();
+    debugModule.initializeDebugObjects({
+      urlDetectionService,
+      getPluginState: getPluginInitializationState,
+      handleUrl: processUrl
+    });
+    logger.info("Extension initialized successfully");
+  } catch (error) {
+    logger.error("Extension initialization failed:", error);
+  }
+}
+initialize();
 //# sourceMappingURL=background.bundle.js.map

@@ -1,102 +1,14 @@
-// extension/background_integration.ts - With service worker support
+// extension/papers/metadata_service.ts - Paper metadata extraction service
 
-import { urlDetectionService, DetectedSourceInfo } from './papers/url_detection_service';
-import { initializePluginSystem, getPluginInitializationState } from './papers/plugins/loader';
-import { formatPrimaryId } from './papers/source_utils';
-import { loguru } from './utils/logger';
+import { loguru } from "../utils/logger";
+import { DetectedSourceInfo } from './detection_service';
 
-// Define NavDetails interface for Chrome API types
-interface NavDetails {
-    tabId: number;
-    url: string;
-    frameId: number;
-    timeStamp: number;
-}
-
-const logger = loguru.getLogger('BackgroundIntegration');
+const logger = loguru.getLogger('MetadataService');
 
 /**
- * Initialize the enhanced services
- * @returns {Promise<void>}
- */
-export async function initializeEnhancedServices(): Promise<void> {
-  logger.info('Initializing enhanced services');
-  
-  try {
-    // Initialize plugin system with retry capability
-    await initializePluginSystem(3);
-    
-    const pluginState = getPluginInitializationState();
-    logger.info('Plugin system initialized:', pluginState);
-    
-    // Add this integration module to the extension debug API
-    // Using 'self' for service worker context
-    if (typeof self !== 'undefined' && 'self' in globalThis && '__DEBUG__' in self) {
-      (self as any).__DEBUG__.enhancedServices = {
-        urlDetectionService,
-        getPluginState: getPluginInitializationState,
-        handleUrl: processUrl
-      };
-      
-      logger.info('Debug API extended with enhanced services');
-    }
-  } catch (error) {
-    logger.error('Failed to initialize enhanced services:', error);
-    throw error;
-  }
-}
-
-/**
- * Process a URL using the enhanced detection service
- * @param {string} url URL to process
- * @returns {Promise<DetectedSourceInfo|null>} Detection result
- */
-export async function processUrl(url: string): Promise<DetectedSourceInfo | null> {
-  if (!urlDetectionService.isValidUrl(url)) {
-    logger.info(`Invalid or unsupported URL: ${url}`);
-    return null;
-  }
-  
-  try {
-    return await urlDetectionService.detectSource(url);
-  } catch (error) {
-    logger.error(`Error processing URL ${url}:`, error);
-    return null;
-  }
-}
-
-/**
- * Process a tab using the enhanced detection service
- * @param {chrome.tabs.Tab} tab Tab to process
- * @returns {Promise<DetectedSourceInfo|null>} Detection result
- */
-export async function processTab(tab: chrome.tabs.Tab): Promise<DetectedSourceInfo | null> {
-  if (!tab.url) {
-    logger.info('Tab has no URL');
-    return null;
-  }
-  
-  return processUrl(tab.url);
-}
-
-/**
- * Process navigation event using the enhanced detection service
- * @param {NavDetails} details Navigation details
- * @returns {Promise<DetectedSourceInfo|null>} Detection result
- */
-export async function processNavigation(details: NavDetails): Promise<DetectedSourceInfo | null> {
-  if (!details.url) {
-    logger.info('Navigation event has no URL');
-    return null;
-  }
-  
-  return processUrl(details.url);
-}
-
-/**
- * Extract metadata from a detected source
- * @param {DetectedSourceInfo} sourceInfo Source info
- * @returns {Promise<Object|null>} Extracted metadata or null
+ * Extract metadata from a detected source using its plugin
+ * @param {DetectedSourceInfo} sourceInfo Source info with plugin
+ * @returns {Promise<any|null>} Extracted metadata or null
  */
 export async function extractMetadataFromSource(sourceInfo: DetectedSourceInfo): Promise<any | null> {
   if (!sourceInfo || !sourceInfo.plugin) {
@@ -143,10 +55,10 @@ export async function extractMetadataFromSource(sourceInfo: DetectedSourceInfo):
 }
 
 /**
- * Process a document with DOM access using the given tab
+ * Extract metadata from DOM using plugin's extraction method
  * @param {number} tabId Tab ID for DOM access
- * @param {DetectedSourceInfo} sourceInfo Source info
- * @returns {Promise<Object|null>} Extracted metadata or null
+ * @param {DetectedSourceInfo} sourceInfo Source info with plugin
+ * @returns {Promise<any|null>} Extracted metadata or null
  */
 export async function extractMetadataFromDOM(tabId: number, sourceInfo: DetectedSourceInfo): Promise<any | null> {
   if (!sourceInfo || !sourceInfo.plugin || !sourceInfo.plugin.extractMetadata) {
@@ -215,22 +127,23 @@ export async function extractMetadataFromDOM(tabId: number, sourceInfo: Detected
 }
 
 /**
- * Fully process a URL with all enhanced services
+ * Process a paper URL to extract full metadata
  * @param {string} url URL to process
+ * @param {DetectedSourceInfo} sourceInfo Source detection info
  * @param {number|null} tabId Optional tab ID for DOM access
- * @returns {Promise<Object|null>} Full paper data or null
+ * @returns {Promise<any|null>} Full paper data or null
  */
-export async function fullyProcessUrl(url: string, tabId: number | null = null): Promise<any | null> {
+export async function extractPaperMetadata(
+  sourceInfo: DetectedSourceInfo, 
+  tabId: number | null = null
+): Promise<any | null> {
   try {
-    // Detect source
-    const sourceInfo = await processUrl(url);
-    
     if (!sourceInfo) {
-      logger.info(`No source detected for URL: ${url}`);
+      logger.info('No source info provided');
       return null;
     }
     
-    logger.info(`Detected ${sourceInfo.type} paper: ${sourceInfo.id}`);
+    logger.info(`Extracting metadata for ${sourceInfo.type} paper: ${sourceInfo.id}`);
     
     // Try API metadata extraction first
     let paperData = await extractMetadataFromSource(sourceInfo);
@@ -256,12 +169,12 @@ export async function fullyProcessUrl(url: string, tabId: number | null = null):
     }
     
     if (paperData) {
-      logger.info(`Successfully processed paper: ${paperData.title || paperData.primary_id}`);
+      logger.info(`Successfully extracted metadata: ${paperData.title || paperData.primary_id}`);
     }
     
     return paperData;
   } catch (error) {
-    logger.error(`Error fully processing URL ${url}:`, error);
+    logger.error(`Error extracting paper metadata: ${error}`);
     return null;
   }
 }
