@@ -23,16 +23,12 @@ function updateUI(paperData) {
   const sourceElement = document.getElementById("paperSource");
   if (paperData) {
     if (!paperData.primary_id) {
-      console.warn("Paper data missing primary_id:", paperData);
-      if (paperData.source && paperData.sourceId) {
-        paperData.primary_id = formatPrimaryId(paperData.source, paperData.sourceId);
-      } else if (paperData.arxivId) {
-        paperData.source = "arxiv";
-        paperData.sourceId = paperData.arxivId;
-        paperData.primary_id = formatPrimaryId("arxiv", paperData.arxivId);
-      }
+      console.error("Paper data missing required primary_id:", paperData);
+      titleElement.textContent = "Error: Missing paper identifier";
+      sourceElement.classList.add("hidden");
+      return;
     }
-    titleElement.textContent = paperData.title || paperData.sourceId || "Untitled Paper";
+    titleElement.textContent = paperData.title || "Untitled Paper";
     authorsElement.textContent = paperData.authors || "";
     if (paperData.source) {
       sourceElement.textContent = getSourceLabel(paperData.source);
@@ -59,22 +55,8 @@ function updateUI(paperData) {
     document.getElementById("thumbsDown").disabled = true;
   }
 }
-function formatPrimaryId(source, id) {
-  const prefixes = {
-    "arxiv": "arxiv",
-    "semanticscholar": "s2",
-    "doi": "doi",
-    "acm": "doi",
-    // ACM also uses DOIs
-    "openreview": "openreview",
-    "default": "generic"
-  };
-  const sourcePrefix = prefixes[source] || prefixes.default;
-  const safeId = id.replace(/\//g, "_").replace(/:/g, ".").replace(/\s/g, "_").replace(/\\/g, "_");
-  return `${sourcePrefix}.${safeId}`;
-}
 function isPaperUrl(url) {
-  return url.includes("arxiv.org/") || url.includes("semanticscholar.org/paper/") || url.includes("doi.org/") || url.includes("dl.acm.org/doi/") || url.includes("openreview.net/forum");
+  return url.includes("arxiv.org/") || url.includes("semanticscholar.org/paper/") || url.includes("doi.org/") || url.includes("dl.acm.org/doi/") || url.includes("openreview.net/forum") || url.includes("openreview.net/pdf");
 }
 document.addEventListener("DOMContentLoaded", async () => {
   console.log("Popup opened");
