@@ -1,14 +1,11 @@
-// extension/background_integration.ts
-// Integration of the improved URL detection and plugin system into the background script
+// extension/background_integration.ts - Updated with type fixes
 
 import { urlDetectionService, DetectedSourceInfo } from './papers/url_detection_service';
 import { initializePluginSystem, getPluginInitializationState } from './papers/plugins/loader';
 import { formatPrimaryId } from './papers/source_utils';
 import { loguru } from './utils/logger';
 
-const logger = loguru.getLogger('BackgroundIntegration');
-
-
+// Define NavDetails interface for Chrome API
 interface NavDetails {
     tabId: number;
     url: string;
@@ -16,6 +13,7 @@ interface NavDetails {
     timeStamp: number;
 }
 
+const logger = loguru.getLogger('BackgroundIntegration');
 
 /**
  * Initialize the enhanced services
@@ -32,8 +30,8 @@ export async function initializeEnhancedServices(): Promise<void> {
     logger.info('Plugin system initialized:', pluginState);
     
     // Add this integration module to the extension debug API
-    if (typeof self !== 'undefined' && self.__DEBUG__) {
-      self.__DEBUG__.enhancedServices = {
+    if (typeof self !== 'undefined' && '__DEBUG__' in self) {
+      (self as any).__DEBUG__.enhancedServices = {
         urlDetectionService,
         getPluginState: getPluginInitializationState,
         handleUrl: processUrl
@@ -82,10 +80,10 @@ export async function processTab(tab: chrome.tabs.Tab): Promise<DetectedSourceIn
 
 /**
  * Process navigation event using the enhanced detection service
- * @param {chrome.webNavigation.NavDetails} details Navigation details
+ * @param {NavDetails} details Navigation details
  * @returns {Promise<DetectedSourceInfo|null>} Detection result
  */
-export async function processNavigation(details: chrome.webNavigation.NavDetails): Promise<DetectedSourceInfo | null> {
+export async function processNavigation(details: NavDetails): Promise<DetectedSourceInfo | null> {
   if (!details.url) {
     logger.info('Navigation event has no URL');
     return null;
@@ -166,7 +164,7 @@ export async function extractMetadataFromDOM(tabId: number, sourceInfo: Detected
     if (script && script[0] && script[0].result) {
       // Create DOM document from HTML
       const parser = new DOMParser();
-      const doc = parser.parseFromString(script[0].result, 'text/html');
+      const doc = parser.parseFromString(script[0].result as string, "text/html");
       
       // Use plugin to extract metadata
       const metadata = await sourceInfo.plugin.extractMetadata(doc, sourceInfo.url);
