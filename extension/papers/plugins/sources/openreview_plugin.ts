@@ -3,6 +3,8 @@
 import { SourcePlugin } from '../source_plugin';
 import { UnifiedPaperData } from '../../types';
 import { loguru } from '../../../utils/logger';
+import { pluginRegistry } from '../registry';
+import { createServiceWorkerDOM } from '../../../utils/service_worker_parser';
 
 const logger = loguru.getLogger('OpenReviewPlugin');
 
@@ -48,7 +50,7 @@ export const openreviewPlugin: SourcePlugin = {
     return null;
   },
   
-  async extractMetadata(document: Document, url: string): Promise<Partial<UnifiedPaperData>> {
+  async extractMetadata(document: any, url: string): Promise<Partial<UnifiedPaperData>> {
     logger.info(`Extracting metadata from OpenReview page: ${url}`);
     
     try {
@@ -59,6 +61,98 @@ export const openreviewPlugin: SourcePlugin = {
         return { title: 'Unknown OpenReview Paper', url };
       }
       
+      // Check if we're in a service worker context (document is not a real DOM)
+      const isServiceWorker = typeof document !== 'object' || 
+                             !document.querySelector || 
+                             typeof document.querySelector !== 'function';
+      
+      if (isServiceWorker) {
+        // Use our service worker DOM utility instead of bespoke string processing
+        logger.info('Service worker context detected, using service worker DOM parser');
+        const htmlContent = typeof document === 'string' 
+          ? document 
+          : (document.innerHTML || document.outerHTML || '');
+        
+        // Create a lightweight DOM-like object we can query
+        const swDOM = createServiceWorkerDOM(htmlContent);
+        
+        // Get meta content helper
+        const getMetaContent = (name: string): string | undefined => {
+          const element = swDOM.querySelector(`meta[name="${name}"]`);
+          return element ? element.getAttribute('content') : undefined;
+        };
+        
+        // Get all citation_author meta tags
+        const authorElements = swDOM.querySelectorAll('meta[name="citation_author"]');
+        let authors = '';
+        if (authorElements.length > 0) {
+          const authorTexts: string[] = [];
+          authorElements.forEach((el: any) => {
+            const content = el.getAttribute('content');
+            if (content) authorTexts.push(content);
+          });
+          authors = authorTexts.join(', ');
+        }
+        
+        // Extract title, abstract, and other metadata from meta tags
+        const title = getMetaContent('citation_title') || 
+                      swDOM.querySelector('title')?.textContent?.replace(' | OpenReview', '') || '';
+        const abstract = getMetaContent('citation_abstract');
+        const publicationDate = getMetaContent('citation_online_date');
+        const conferenceTitle = getMetaContent('citation_conference_title');
+        const pdfUrl = getMetaContent('citation_pdf_url');
+        
+        // Secondary approach: Extract from DOM structure if meta tags are incomplete
+        const domTitle = swDOM.querySelector('.note_content_title, .note-content-title')?.textContent?.trim() || '';
+        
+        // Extract authors if not found in meta
+        let domAuthors = '';
+        const authorEl = swDOM.querySelector('.signatures, .author, .authors');
+        if (authorEl && authorEl.textContent) {
+          domAuthors = authorEl.textContent.trim();
+        }
+        
+        // Extract abstract if not found in meta
+        let domAbstract = '';
+        // This is a simplified approach in service worker context
+        const abstractEl = swDOM.querySelector('.note-content-field, .note_content_field');
+        if (abstractEl && abstractEl.textContent?.includes('Abstract')) {
+          const valueEl = swDOM.querySelector('.note-content-value, .note_content_value');
+          if (valueEl && valueEl.textContent) {
+            domAbstract = valueEl.textContent.trim();
+          }
+        }
+        
+        // Construct the source-specific metadata
+        const sourceSpecificMetadata: Record<string, any> = {
+          forum_id: paperId,
+          conference: conferenceTitle || '',
+          pdf_url: pdfUrl || ''
+        };
+        
+        // Filter out empty values
+        Object.keys(sourceSpecificMetadata).forEach(key => {
+          if (
+            sourceSpecificMetadata[key] === '' || 
+            sourceSpecificMetadata[key] === null || 
+            sourceSpecificMetadata[key] === undefined ||
+            (Array.isArray(sourceSpecificMetadata[key]) && sourceSpecificMetadata[key].length === 0) ||
+            (typeof sourceSpecificMetadata[key] === 'object' && Object.keys(sourceSpecificMetadata[key]).length === 0)
+          ) {
+            delete sourceSpecificMetadata[key];
+          }
+        });
+        
+        return {
+          title: title || domTitle || `OpenReview Paper: ${paperId}`,
+          authors: authors || domAuthors || '',
+          abstract: abstract || domAbstract || '',
+          url: url,
+          source_specific_metadata: sourceSpecificMetadata
+        };
+      }
+      
+      // Browser context - use real DOM methods
       // First priority: Extract from meta tags (most reliable)
       const getMetaContent = (name: string): string | undefined => {
         const element = document.querySelector(`meta[name="${name}"]`);
@@ -67,10 +161,15 @@ export const openreviewPlugin: SourcePlugin = {
       
       // Get all citation_author meta tags
       const authorElements = document.querySelectorAll('meta[name="citation_author"]');
-      const authors = Array.from(authorElements)
-        .map(el => el.getAttribute('content') || '')
-        .filter(Boolean)
-        .join(', ');
+      let authors = '';
+      if (authorElements.length > 0) {
+        const authorTexts: string[] = [];
+        authorElements.forEach((el: Element) => {
+          const content = el.getAttribute('content');
+          if (content) authorTexts.push(content);
+        });
+        authors = authorTexts.join(', ');
+      }
       
       // Extract title, abstract, and other metadata from meta tags
       const title = getMetaContent('citation_title') || document.title.replace(' | OpenReview', '');
@@ -153,7 +252,7 @@ export const openreviewPlugin: SourcePlugin = {
         const ratings: Array<{type: string, value: string}> = [];
         const ratingElements = document.querySelectorAll('.rating, .score, .evaluation');
         
-        ratingElements.forEach(el => {
+        ratingElements.forEach((el: Element) => {
           const ratingText = el.textContent?.trim();
           if (ratingText) {
             const match = ratingText.match(/(.+):\s*(\d+)/);
@@ -351,5 +450,7 @@ export const openreviewPlugin: SourcePlugin = {
 };
 
 // Register the plugin
-import { pluginRegistry } from '../registry';
 pluginRegistry.register(openreviewPlugin);
+
+// Export the plugin for direct import by the loader
+export default openreviewPlugin;
