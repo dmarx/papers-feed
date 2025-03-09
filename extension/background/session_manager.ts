@@ -1,4 +1,4 @@
-// extension/background/session_manager.js - Manages reading sessions
+// extension/background/session_manager.ts - Manages reading sessions
 
 import { loguru } from "../utils/logger";
 import { loadSessionConfig, getConfigurationInMs } from '../config/session.js';
@@ -6,16 +6,64 @@ import credentialManager from './credential_manager';
 
 const logger = loguru.getLogger('SessionManager');
 
+interface SessionConfig {
+  minSessionDuration: number;
+  idleThreshold: number;
+  activityUpdateInterval: number;
+  [key: string]: any;
+}
+
+interface PaperData {
+  primary_id: string;
+  source: string;
+  sourceId: string;
+  url: string;
+  title: string;
+  [key: string]: any;
+}
+
+interface SessionData {
+  session_id: string;
+  duration_seconds: number;
+  idle_seconds: number;
+  start_time: string;
+  end_time: string;
+  total_elapsed_seconds: number;
+  [key: string]: any;
+}
+
+interface SessionMetadata {
+  sourceType: string;
+  paperId: string;
+  title: string;
+  sessionId: string;
+  startTime: string;
+  activeSeconds: number;
+  idleSeconds: number;
+}
+
 /**
  * Enhanced reading session for modern format
  */
 class EnhancedReadingSession {
+  paperId: string;
+  paperData: PaperData;
+  sessionId: string;
+  startTime: Date;
+  activeTime: number;
+  idleTime: number;
+  lastActiveTime: Date;
+  isTracking: boolean;
+  config: SessionConfig;
+  endTime: Date | null;
+  finalizedData: SessionData | null;
+
   /**
    * Create a new reading session
-   * @param {Object} paperData - Paper metadata
-   * @param {Object} config - Session configuration
+   * @param {PaperData} paperData - Paper metadata
+   * @param {SessionConfig} config - Session configuration
    */
-  constructor(paperData, config) {
+  constructor(paperData: PaperData, config: SessionConfig) {
     // Validate required fields
     if (!paperData.primary_id) {
       throw new Error('Paper data must include primary_id');
@@ -41,7 +89,7 @@ class EnhancedReadingSession {
   /**
    * Update session timing data
    */
-  update() {
+  update(): void {
     if (this.isTracking && !this.finalizedData) {
       const now = new Date();
       const timeSinceLastActive = now.getTime() - this.lastActiveTime.getTime();
@@ -58,9 +106,9 @@ class EnhancedReadingSession {
   
   /**
    * Finalize session data
-   * @returns {Object|null} Session data or null if session was too short
+   * @returns {SessionData|null} Session data or null if session was too short
    */
-  finalize() {
+  finalize(): SessionData | null {
     if (this.finalizedData) {
       return this.finalizedData;
     }
@@ -86,9 +134,9 @@ class EnhancedReadingSession {
   
   /**
    * Get session metadata
-   * @returns {Object} Session metadata
+   * @returns {SessionMetadata} Session metadata
    */
-  getMetadata() {
+  getMetadata(): SessionMetadata {
     return {
       sourceType: this.paperData.source,
       paperId: this.paperId,
@@ -105,6 +153,11 @@ class EnhancedReadingSession {
  * Manages paper reading sessions
  */
 export class SessionManager {
+  currentPaperData: PaperData | null;
+  currentSession: EnhancedReadingSession | null;
+  activityInterval: number | null;
+  sessionConfig: SessionConfig | null;
+
   constructor() {
     this.currentPaperData = null;
     this.currentSession = null;
@@ -114,9 +167,9 @@ export class SessionManager {
 
   /**
    * Load session configuration
-   * @returns {Promise<Object>} Session configuration
+   * @returns {Promise<SessionConfig>} Session configuration
    */
-  async loadSessionConfig() {
+  async loadSessionConfig(): Promise<SessionConfig> {
     this.sessionConfig = getConfigurationInMs(await loadSessionConfig());
     logger.info('Session configuration loaded:', this.sessionConfig);
     
@@ -133,12 +186,12 @@ export class SessionManager {
 
   /**
    * Start a new reading session for a paper
-   * @param {Object} paperData - Paper metadata
-   * @returns {Object|null} Session metadata
+   * @param {PaperData} paperData - Paper metadata
+   * @returns {SessionMetadata|null} Session metadata
    */
-  startSession(paperData) {
-    if (!paperData || !paperData.primary_id) {
-      logger.error('Cannot start session: invalid paper data');
+  startSession(paperData: PaperData): SessionMetadata | null {
+    if (!paperData || !paperData.primary_id || !this.sessionConfig) {
+      logger.error('Cannot start session: invalid paper data or missing configuration');
       return null;
     }
     
@@ -167,9 +220,9 @@ export class SessionManager {
 
   /**
    * End the current reading session
-   * @returns {Promise<Object|null>} Session data or null if no active session
+   * @returns {Promise<{paperData: PaperData, sessionData: SessionData} | null>} Session result or null if no active session
    */
-  async endCurrentSession() {
+  async endCurrentSession(): Promise<{paperData: PaperData, sessionData: SessionData | null} | null> {
     if (this.currentSession && this.currentPaperData) {
       logger.info(`Ending session for: ${this.currentPaperData.primary_id}`);
       const sessionData = this.currentSession.finalize();
@@ -196,9 +249,9 @@ export class SessionManager {
 
   /**
    * Get the current paper data
-   * @returns {Object|null} Current paper data
+   * @returns {PaperData|null} Current paper data
    */
-  getCurrentPaper() {
+  getCurrentPaper(): PaperData | null {
     return this.currentPaperData;
   }
 
@@ -206,10 +259,10 @@ export class SessionManager {
    * Start tracking activity
    * @private
    */
-  _startActivityTracking() {
-    if (!this.activityInterval) {
+  private _startActivityTracking(): void {
+    if (!this.activityInterval && this.sessionConfig) {
       logger.info('Starting activity tracking');
-      this.activityInterval = setInterval(() => {
+      this.activityInterval = window.setInterval(() => {
         if (this.currentSession) {
           this.currentSession.update();
         }
@@ -221,7 +274,7 @@ export class SessionManager {
    * Stop tracking activity
    * @private
    */
-  _stopActivityTracking() {
+  private _stopActivityTracking(): void {
     if (this.activityInterval) {
       clearInterval(this.activityInterval);
       this.activityInterval = null;
@@ -231,11 +284,11 @@ export class SessionManager {
   /**
    * Create reading event in GitHub
    * @private
-   * @param {Object} paperData - Paper metadata
-   * @param {Object} sessionData - Session data
+   * @param {PaperData} paperData - Paper metadata
+   * @param {SessionData} sessionData - Session data
    * @returns {Promise<void>}
    */
-  async _createReadingEvent(paperData, sessionData) {
+  private async _createReadingEvent(paperData: PaperData, sessionData: SessionData): Promise<void> {
     const paperManager = credentialManager.getPaperManager();
     
     if (!paperManager || !paperData) {
