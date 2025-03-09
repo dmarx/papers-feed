@@ -2,7 +2,8 @@
 
 import { loguru } from "../utils/logger";
 import { initializePluginSystem } from '../papers/plugins/loader';
-import { processUrl } from '../papers/detection_service';
+import { processUrl, urlDetectionService } from '../papers/detection_service';
+import { getPluginInitializationState } from '../papers/plugins/loader';
 import credentialManager from './credential_manager';
 import sessionManager from './session_manager';
 import eventHandlers from './event_handlers';
@@ -39,6 +40,8 @@ async function initialize(): Promise<void> {
     
     // Initialize debug objects (message handlers are self-initializing)
     debugModule.initializeDebugObjects({
+      urlDetectionService,
+      getPluginState: getPluginInitializationState,
       handleUrl: processUrl
     });
     
