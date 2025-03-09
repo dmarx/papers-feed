@@ -1,7 +1,8 @@
 // extension/background/event_handlers.js - Tab and navigation event handlers
 
 import { loguru } from "../utils/logger";
-import { processNavigation, processTab, fullyProcessUrl } from '../papers/detection_service';
+import { processNavigation, processTab } from '../papers/detection_service';
+import { fullyProcessUrl, fullyProcessTab } from '../papers/paper_processor';
 import { pluginRegistry } from '../papers/plugins/registry';
 import sessionManager from './session_manager';
 import githubIntegration from './github_integration';
