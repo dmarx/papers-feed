@@ -213,7 +213,7 @@ export class EventHandlers {
 
     // Process the paper URL with full metadata extraction
     logger.info(`Processing paper URL: ${tab.url}`);
-    const paperData = await fullyProcessUrl(tab.url, tab.id);
+    const paperData = await fullyProcessTab(tab);
     
     if (paperData) {
       logger.info(`Starting new session for: ${paperData.primary_id}`);
