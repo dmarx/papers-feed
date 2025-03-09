@@ -2,12 +2,18 @@
 
 import { UnifiedPaperData } from '../types';
 
+/**
+ * Result of metadata quality evaluation
+ */
 export interface MetadataQualityResult {
   quality: 'minimal' | 'partial' | 'complete';
   missingFields: string[];
   hasEssentialFields: boolean;
 }
 
+/**
+ * Core interface for all source plugins
+ */
 export interface SourcePlugin {
   // Basic info
   id: string;               // Unique source identifier
