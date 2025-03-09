@@ -1,5 +1,5 @@
 // popup.js
-// Enhanced to support multiple paper sources with new ID format
+// Fully updated to use the standardized data model approach
 
 /**
  * Get paper data from background script
@@ -41,22 +41,16 @@ function updateUI(paperData) {
   const sourceElement = document.getElementById('paperSource');
 
   if (paperData) {
-    // Validate the data has primary_id (shouldn't happen but we check anyway)
+    // Ensure paper data has primary_id - should always be the case now
     if (!paperData.primary_id) {
-      console.warn('Paper data missing primary_id:', paperData);
-      if (paperData.source && paperData.sourceId) {
-        // Build primary_id from components
-        paperData.primary_id = formatPrimaryId(paperData.source, paperData.sourceId);
-      } else if (paperData.arxivId) {
-        // Legacy fallback
-        paperData.source = 'arxiv';
-        paperData.sourceId = paperData.arxivId;
-        paperData.primary_id = formatPrimaryId('arxiv', paperData.arxivId);
-      }
+      console.error('Paper data missing required primary_id:', paperData);
+      titleElement.textContent = 'Error: Missing paper identifier';
+      sourceElement.classList.add('hidden');
+      return;
     }
     
     // Set paper details
-    titleElement.textContent = paperData.title || paperData.sourceId || 'Untitled Paper';
+    titleElement.textContent = paperData.title || 'Untitled Paper';
     authorsElement.textContent = paperData.authors || '';
     
     // Set source information
@@ -96,48 +90,18 @@ function updateUI(paperData) {
 }
 
 /**
- * Format a source-specific ID into a universal primary ID format
- * @param {string} source Source type (e.g. 'arxiv', 'doi')
- * @param {string} id Original source-specific identifier
- * @returns {string} Formatted primary ID
- */
-function formatPrimaryId(source, id) {
-  // Source prefixes match the ones in source_utils.ts
-  const prefixes = {
-    'arxiv': 'arxiv',
-    'semanticscholar': 's2',
-    'doi': 'doi',
-    'acm': 'doi',  // ACM also uses DOIs
-    'openreview': 'openreview',
-    'default': 'generic'
-  };
-  
-  // Use source-specific prefixes
-  const sourcePrefix = prefixes[source] || prefixes.default;
-  
-  // Sanitize the ID by replacing problematic characters
-  const safeId = id
-    .replace(/\//g, '_')
-    .replace(/:/g, '.')
-    .replace(/\s/g, '_')
-    .replace(/\\/g, '_');
-  
-  return `${sourcePrefix}.${safeId}`;
-}
-
-/**
  * Check if URL is a supported paper source
  * @param {string} url URL to check
  * @returns {boolean} Whether URL is from a supported source
  */
 function isPaperUrl(url) {
-  // Check all supported sources
   return (
     url.includes('arxiv.org/') ||
     url.includes('semanticscholar.org/paper/') ||
     url.includes('doi.org/') ||
     url.includes('dl.acm.org/doi/') ||
-    url.includes('openreview.net/forum')
+    url.includes('openreview.net/forum') ||
+    url.includes('openreview.net/pdf')
   );
 }
 
@@ -171,7 +135,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       chrome.runtime.sendMessage({
         type: 'updateRating',
         rating: 'thumbsup'
-      }, response => {
+      }, (response) => {
         if (response && response.success) {
           document.getElementById('status').textContent = 'Rating updated to: thumbs up';
           document.getElementById('thumbsUp').classList.add('active');
@@ -187,7 +151,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       chrome.runtime.sendMessage({
         type: 'updateRating',
         rating: 'thumbsdown'
-      }, response => {
+      }, (response) => {
         if (response && response.success) {
           document.getElementById('status').textContent = 'Rating updated to: thumbs down';
           document.getElementById('thumbsUp').classList.remove('active');
