@@ -146,7 +146,7 @@ export async function processPaperLink(link: HTMLAnchorElement): Promise<void> {
     // Remove existing popup if any
     if (activePopup) {
       activePopup.parentElement?.remove(); // Remove the wrapper
-      if (activePopup.paperSource === source && activePopup.paperId === id) {
+      if ((activePopup as any).paperSource === source && (activePopup as any).paperId === id) {
         activePopup = null;
         return;
       }
