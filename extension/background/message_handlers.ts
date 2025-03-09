@@ -1,12 +1,37 @@
-// extension/background/message_handlers.js - Message passing handlers
+// extension/background/message_handlers.ts - Message passing handlers
 
 import { loguru } from "../utils/logger";
 import { formatPrimaryId } from '../papers/source_utils';
-import { fullyProcessUrl } from '../papers/detection_service';
+import { fullyProcessUrl } from '../papers/paper_processor';
 import sessionManager from './session_manager';
 import githubIntegration from './github_integration';
 
 const logger = loguru.getLogger('MessageHandlers');
+
+interface MessageResponse {
+  success: boolean;
+  error?: string;
+  paperData?: any;
+  [key: string]: any;
+}
+
+interface TrackPaperRequest {
+  type: string;
+  url?: string;
+  source?: string;
+  id?: string;
+  title?: string;
+  [key: string]: any;
+}
+
+interface AnnotationData {
+  paperId: string;
+  source?: string;
+  title?: string;
+  vote?: string;
+  notes?: string;
+  [key: string]: any;
+}
 
 /**
  * Handles messages from popup and content scripts
@@ -25,7 +50,11 @@ export class MessageHandlers {
    * @param {Function} sendResponse - Send response function
    * @returns {boolean} True if response will be sent asynchronously
    */
-  handleMessage(request, sender, sendResponse) {
+  handleMessage(
+    request: any, 
+    sender: chrome.runtime.MessageSender, 
+    sendResponse: (response?: any) => void
+  ): boolean {
     logger.info('Message received:', request);
     
     if (request.type === 'getCurrentPaper') {
@@ -62,7 +91,7 @@ export class MessageHandlers {
    * @param {Function} sendResponse - Send response function
    * @returns {Promise<void>}
    */
-  async handleUpdateRating(rating, sendResponse) {
+  async handleUpdateRating(rating: string, sendResponse: (response: MessageResponse) => void): Promise<void> {
     const currentPaper = sessionManager.getCurrentPaper();
     
     if (!currentPaper) {
@@ -82,17 +111,17 @@ export class MessageHandlers {
       }
     } catch (error) {
       logger.error('Error updating rating:', error);
-      sendResponse({ success: false, error: error.message });
+      sendResponse({ success: false, error: error instanceof Error ? error.message : String(error) });
     }
   }
 
   /**
    * Handle annotation update message
    * @param {string} annotationType - Annotation type
-   * @param {Object} data - Annotation data
-   * @returns {Promise<Object>} Response object
+   * @param {AnnotationData} data - Annotation data
+   * @returns {Promise<MessageResponse>} Response object
    */
-  async handleAnnotationUpdate(annotationType, data) {
+  async handleAnnotationUpdate(annotationType: string, data: AnnotationData): Promise<MessageResponse> {
     try {
       const success = await githubIntegration.updateAnnotation(annotationType, data);
       return { success };
@@ -104,10 +133,10 @@ export class MessageHandlers {
 
   /**
    * Handle track paper message
-   * @param {Object} request - Track paper request
-   * @returns {Promise<Object>} Response object
+   * @param {TrackPaperRequest} request - Track paper request
+   * @returns {Promise<MessageResponse>} Response object
    */
-  async handleTrackPaper(request) {
+  async handleTrackPaper(request: TrackPaperRequest): Promise<MessageResponse> {
     try {
       // Process the paper URL using enhanced services
       let paperData;
