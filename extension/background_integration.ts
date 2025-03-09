@@ -1,11 +1,11 @@
-// extension/background_integration.ts - Updated with type fixes
+// extension/background_integration.ts - With service worker support
 
 import { urlDetectionService, DetectedSourceInfo } from './papers/url_detection_service';
 import { initializePluginSystem, getPluginInitializationState } from './papers/plugins/loader';
 import { formatPrimaryId } from './papers/source_utils';
 import { loguru } from './utils/logger';
 
-// Define NavDetails interface for Chrome API
+// Define NavDetails interface for Chrome API types
 interface NavDetails {
     tabId: number;
     url: string;
@@ -30,7 +30,8 @@ export async function initializeEnhancedServices(): Promise<void> {
     logger.info('Plugin system initialized:', pluginState);
     
     // Add this integration module to the extension debug API
-    if (typeof self !== 'undefined' && '__DEBUG__' in self) {
+    // Using 'self' for service worker context
+    if (typeof self !== 'undefined' && 'self' in globalThis && '__DEBUG__' in self) {
       (self as any).__DEBUG__.enhancedServices = {
         urlDetectionService,
         getPluginState: getPluginInitializationState,
@@ -162,21 +163,48 @@ export async function extractMetadataFromDOM(tabId: number, sourceInfo: Detected
     });
     
     if (script && script[0] && script[0].result) {
-      // Create DOM document from HTML
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(script[0].result as string, "text/html");
-      
-      // Use plugin to extract metadata
-      const metadata = await sourceInfo.plugin.extractMetadata(doc, sourceInfo.url);
-      
-      if (metadata && Object.keys(metadata).length > 0) {
-        return {
-          ...metadata,
-          source: sourceInfo.type,
-          sourceId: sourceInfo.id,
-          primary_id: sourceInfo.primary_id,
-          url: sourceInfo.url
-        };
+      // Create DOM document from HTML for service worker context
+      // Use non-DOM parser for service worker environment
+      try {
+        const htmlString = script[0].result as string;
+        
+        // Since we're in a service worker, we need to use a different approach for metadata extraction
+        // Ask the plugin to extract metadata - must be a service worker safe implementation
+        const metadata = await sourceInfo.plugin.extractMetadata({
+          documentElement: { outerHTML: htmlString }
+        }, sourceInfo.url);
+        
+        if (metadata && Object.keys(metadata).length > 0) {
+          return {
+            ...metadata,
+            source: sourceInfo.type,
+            sourceId: sourceInfo.id,
+            primary_id: sourceInfo.primary_id,
+            url: sourceInfo.url
+          };
+        }
+      } catch (parserError) {
+        logger.error(`Error parsing HTML in service worker: ${parserError}`);
+        // Fall back to direct string content
+        try {
+          // Use a simpler approach - pass the HTML as a string
+          const metadata = await sourceInfo.plugin.extractMetadata(
+            { innerHTML: script[0].result },
+            sourceInfo.url
+          );
+          
+          if (metadata && Object.keys(metadata).length > 0) {
+            return {
+              ...metadata,
+              source: sourceInfo.type,
+              sourceId: sourceInfo.id,
+              primary_id: sourceInfo.primary_id,
+              url: sourceInfo.url
+            };
+          }
+        } catch (fallbackError) {
+          logger.error(`Error with fallback metadata extraction: ${fallbackError}`);
+        }
       }
     }
   } catch (error) {
