@@ -852,24 +852,52 @@ const openreviewPlugin = {
         const publicationDate2 = getMetaContent2("citation_online_date");
         const conferenceTitle2 = getMetaContent2("citation_conference_title");
         const pdfUrl2 = getMetaContent2("citation_pdf_url");
-        const domTitle = swDOM.querySelector(".note_content_title, .note-content-title")?.textContent?.trim() || "";
+        let domTitle = "";
         let domAuthors = "";
-        const authorEl = swDOM.querySelector(".signatures, .author, .authors");
-        if (authorEl && authorEl.textContent) {
-          domAuthors = authorEl.textContent.trim();
-        }
         let domAbstract = "";
-        const abstractEl = swDOM.querySelector(".note-content-field, .note_content_field");
-        if (abstractEl && abstractEl.textContent?.includes("Abstract")) {
-          const valueEl = swDOM.querySelector(".note-content-value, .note_content_value");
-          if (valueEl && valueEl.textContent) {
-            domAbstract = valueEl.textContent.trim();
-          }
+        let keywords = "";
+        let tldr = "";
+        let decision = "";
+        const titleRegex = /<h1.*?>(.*?)<\/h1>/i;
+        const titleMatch = htmlContent.match(titleRegex);
+        if (titleMatch && titleMatch[1]) {
+          domTitle = titleMatch[1].replace(/<[^>]*>/g, "").trim();
+        }
+        const authorsRegex = /<div[^>]*class="authors"[^>]*>(.*?)<\/div>/is;
+        const authorsMatch = htmlContent.match(authorsRegex);
+        if (authorsMatch && authorsMatch[1]) {
+          domAuthors = authorsMatch[1].replace(/<[^>]*>/g, "").trim();
+        }
+        const abstractRegex = /Abstract:(.*?)(?:<\/div>|<\/p>|<\/span>)/is;
+        const abstractMatch = htmlContent.match(abstractRegex);
+        if (abstractMatch && abstractMatch[1]) {
+          domAbstract = abstractMatch[1].replace(/<[^>]*>/g, "").trim();
+        }
+        const keywordsRegex = /Keywords:(.*?)(?:<\/div>|<\/p>|<\/span>)/is;
+        const keywordsMatch = htmlContent.match(keywordsRegex);
+        if (keywordsMatch && keywordsMatch[1]) {
+          keywords = keywordsMatch[1].replace(/<[^>]*>/g, "").trim();
+        }
+        const tldrRegex = /TL;DR:(.*?)(?:<\/div>|<\/p>|<\/span>)/is;
+        const tldrMatch = htmlContent.match(tldrRegex);
+        if (tldrMatch && tldrMatch[1]) {
+          tldr = tldrMatch[1].replace(/<[^>]*>/g, "").trim();
+        }
+        const decisionRegex = /Decision:(.*?)(?:<\/div>|<\/p>|<\/span>)/is;
+        const decisionMatch = htmlContent.match(decisionRegex);
+        if (decisionMatch && decisionMatch[1]) {
+          decision = decisionMatch[1].replace(/<[^>]*>/g, "").trim();
         }
         const sourceSpecificMetadata2 = {
           forum_id: paperId,
           conference: conferenceTitle2 || "",
-          pdf_url: pdfUrl2 || ""
+          pdf_url: pdfUrl2 || "",
+          publication_date: publicationDate2 || "",
+          keywords: keywords || "",
+          tldr: tldr || "",
+          review_info: decision ? {
+            decision
+          } : void 0
         };
         Object.keys(sourceSpecificMetadata2).forEach((key) => {
           if (sourceSpecificMetadata2[key] === "" || sourceSpecificMetadata2[key] === null || sourceSpecificMetadata2[key] === void 0 || Array.isArray(sourceSpecificMetadata2[key]) && sourceSpecificMetadata2[key].length === 0 || typeof sourceSpecificMetadata2[key] === "object" && Object.keys(sourceSpecificMetadata2[key]).length === 0) {
@@ -1008,17 +1036,36 @@ const openreviewPlugin = {
   async fetchApiData(id) {
     logger$4.info(`Fetching OpenReview API data for ID: ${id}`);
     try {
-      const apiUrl = `https://api.openreview.net/notes?id=${id}`;
-      const response = await fetch(apiUrl);
-      if (!response.ok) {
-        throw new Error(`API error: ${response.status}`);
+      logger$4.info(`Trying forum endpoint first for ID: ${id}`);
+      const forumApiUrl = `https://api.openreview.net/notes?forum=${id}`;
+      const forumResponse = await fetch(forumApiUrl);
+      let note;
+      if (!forumResponse.ok) {
+        logger$4.info(`Forum endpoint failed, trying notes endpoint for ID: ${id}`);
+        const notesApiUrl = `https://api.openreview.net/notes?id=${id}`;
+        const notesResponse = await fetch(notesApiUrl);
+        if (!notesResponse.ok) {
+          throw new Error(`API error: ${notesResponse.status}`);
+        }
+        const data = await notesResponse.json();
+        if (!data.notes || data.notes.length === 0) {
+          logger$4.warning(`No note found for ID: ${id}`);
+          return {};
+        }
+        note = data.notes[0];
+      } else {
+        const data = await forumResponse.json();
+        if (!data.notes || data.notes.length === 0) {
+          logger$4.warning(`No notes found in forum for ID: ${id}`);
+          return {};
+        }
+        const mainNote = data.notes.find((n) => n.id === id || n.forum === id);
+        if (!mainNote) {
+          logger$4.warning(`Main note not found in forum data for ID: ${id}`);
+          return {};
+        }
+        note = mainNote;
       }
-      const data = await response.json();
-      if (!data.notes || data.notes.length === 0) {
-        logger$4.warning(`No note found for ID: ${id}`);
-        return {};
-      }
-      const note = data.notes[0];
       const content = note.content || {};
       const title = content.title || "";
       const authors = Array.isArray(content.authors) ? content.authors.join(", ") : content.authors || "";
@@ -1033,12 +1080,19 @@ const openreviewPlugin = {
         tldr: content.TL_DR || content["TL;DR"] || "",
         keywords: content.keywords || ""
       };
+      let reviewsData = null;
       try {
-        const forumApiUrl = `https://api.openreview.net/notes?forum=${id}`;
-        const forumResponse = await fetch(forumApiUrl);
         if (forumResponse.ok) {
-          const forumData = await forumResponse.json();
-          const replies = forumData.notes.filter((n) => n.id !== id);
+          reviewsData = await forumResponse.json();
+        } else {
+          const forumApiUrl2 = `https://api.openreview.net/notes?forum=${id}`;
+          const forumResponse2 = await fetch(forumApiUrl2);
+          if (forumResponse2.ok) {
+            reviewsData = await forumResponse2.json();
+          }
+        }
+        if (reviewsData) {
+          const replies = reviewsData.notes.filter((n) => n.id !== id);
           if (replies.length > 0) {
             const reviews = replies.filter(
               (n) => n.invitation.includes("/Review") || n.invitation.includes("/review") || n.invitation.includes("/evaluation")
