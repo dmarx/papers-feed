@@ -29,13 +29,13 @@ export function createPopupWrapper(): HTMLElement {
  * @param {string} source Paper source
  * @param {string} id Paper ID
  * @param {string} initialTitle Optional initial title
- * @returns {Promise<HTMLElement & { paperSource?: string; paperId?: string; primary_id?: string }>} Popup element
+ * @returns {Promise<HTMLElement>} Popup element
  */
 export async function createPopup(
   source: string, 
   id: string, 
   initialTitle = ''
-): Promise<HTMLElement & { paperSource?: string; paperId?: string; primary_id?: string }> {
+): Promise<HTMLElement> {
   console.log(`Creating popup for ${source}:${id}`);
   
   // Calculate the standardized primary ID
@@ -201,12 +201,27 @@ export async function createPopup(
     });
   }
 
-  // Store source info on the popup element
-  (popup as HTMLElement & { paperSource: string; paperId: string; primary_id: string }).paperSource = source;
-  (popup as HTMLElement & { paperSource: string; paperId: string; primary_id: string }).paperId = id;
-  (popup as HTMLElement & { paperSource: string; paperId: string; primary_id: string }).primary_id = primary_id;
+  // Store source info on the popup element - use simple property access
+  // Use Object.defineProperties to attach properties
+  Object.defineProperties(popup, {
+    paperSource: {
+      value: source,
+      writable: true,
+      enumerable: true
+    },
+    paperId: {
+      value: id,
+      writable: true,
+      enumerable: true
+    },
+    primary_id: {
+      value: primary_id,
+      writable: true,
+      enumerable: true
+    }
+  });
   
-  return popup as HTMLElement & { paperSource?: string; paperId?: string; primary_id?: string };
+  return popup;
 }
 
 /**
