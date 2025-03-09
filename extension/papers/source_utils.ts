@@ -1,20 +1,10 @@
 // extension/papers/source_utils.ts
-// Simplified utility functions for paper sources that work with the plugin system
+// Removing legacy format support and streamlining ID handling
 
 import { pluginRegistry } from './plugins/registry';
 import { loguru } from '../utils/logger';
 
 const logger = loguru.getLogger('SourceUtils');
-
-// Default source prefixes for ID formatting
-// These are used as fallbacks if a plugin doesn't define its own formatId method
-const SOURCE_PREFIXES: Record<string, string> = {
-  'arxiv': 'arxiv',
-  'semanticscholar': 's2',
-  'doi': 'doi',
-  'openreview': 'openreview',
-  'acm': 'doi'  // ACM uses DOIs
-};
 
 /**
  * Format a source-specific ID into a universal primary ID format
@@ -33,9 +23,6 @@ export function formatPrimaryId(source: string, id: string): string {
     return plugin.formatId(id);
   }
   
-  // Otherwise use the default prefix
-  const sourcePrefix = SOURCE_PREFIXES[source] || 'generic';
-  
   // Sanitize the ID by replacing problematic characters
   const safeId = id
     .replace(/\//g, '_')
@@ -43,7 +30,7 @@ export function formatPrimaryId(source: string, id: string): string {
     .replace(/\s/g, '_')
     .replace(/\\/g, '_');
   
-  return `${sourcePrefix}.${safeId}`;
+  return `${source}.${safeId}`;
 }
 
 /**
@@ -73,32 +60,11 @@ export function parseId(prefixedId: string): { type: string; id: string } {
     }
   }
   
-  // Fallback to hardcoded mapping for backward compatibility
-  const prefixToSource: Record<string, string> = {
-    'arxiv': 'arxiv',
-    's2': 'semanticscholar',
-    'doi': 'doi',
-    'openreview': 'openreview'
-  };
-  
+  // Assume the prefix is the source type
   return {
-    type: prefixToSource[prefix] || 'generic',
+    type: prefix,
     id: prefix === 'doi' ? id.replace(/_/g, '/') : id
   };
-}
-
-/**
- * Checks if a string is in the required prefixed format
- * 
- * @param {string} id - ID to check
- * @returns {boolean} True if the ID is in the correct format
- */
-export function isNewFormat(id: string): boolean {
-  // Check if it has a valid prefix
-  const validPrefixes = Object.values(SOURCE_PREFIXES).map(prefix => `${prefix}.`);
-  validPrefixes.push('generic.'); // Add generic prefix
-  
-  return validPrefixes.some(prefix => id.startsWith(prefix));
 }
 
 /**
@@ -113,16 +79,7 @@ export function getSourceLabel(sourceType: string): string {
     return plugin.name;
   }
   
-  // Fallback for backward compatibility
-  const labels: Record<string, string> = {
-    'arxiv': 'arXiv',
-    'semanticscholar': 'Semantic Scholar',
-    'doi': 'DOI',
-    'acm': 'ACM Digital Library',
-    'openreview': 'OpenReview'
-  };
-  
-  return labels[sourceType] || sourceType.charAt(0).toUpperCase() + sourceType.slice(1);
+  return sourceType.charAt(0).toUpperCase() + sourceType.slice(1);
 }
 
 /**
@@ -151,7 +108,6 @@ export function getCanonicalUrl(sourceType: string, id: string): string {
     }
   }
   
-  // Fallback for backward compatibility
   switch (sourceType) {
     case 'arxiv':
       return `https://arxiv.org/abs/${id}`;
