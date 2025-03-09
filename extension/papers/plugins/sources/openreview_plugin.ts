@@ -1,4 +1,5 @@
 // extension/papers/plugins/sources/openreview_plugin.ts
+// Fixed version of openreview_plugin.ts with corrected title fallback logic
 
 import { SourcePlugin } from '../source_plugin';
 import { UnifiedPaperData } from '../../types';
@@ -95,9 +96,21 @@ export const openreviewPlugin: SourcePlugin = {
           authors = authorTexts.join(', ');
         }
         
-        // Extract title, abstract, and other metadata from meta tags
-        const title = getMetaContent('citation_title') || 
-                     swDOM.querySelector('title')?.textContent?.replace(' | OpenReview', '') || '';
+        // Extract title from meta tags first
+        let metaTitle = getMetaContent('citation_title');
+        
+        // If not found in meta tags, try to get from title element
+        let titleElement = swDOM.querySelector('title');
+        let docTitle = titleElement?.textContent || '';
+        
+        // Clean up title from title element (remove " | OpenReview" suffix)
+        if (docTitle) {
+          docTitle = docTitle.replace(' | OpenReview', '').trim();
+        }
+        
+        // Use meta title or document title
+        let title = metaTitle || docTitle || '';
+        
         const abstract = getMetaContent('citation_abstract');
         const publicationDate = getMetaContent('citation_online_date');
         const conferenceTitle = getMetaContent('citation_conference_title');
@@ -201,8 +214,11 @@ export const openreviewPlugin: SourcePlugin = {
           }
         });
         
+        // Fixed title fallback: properly use the available title information
+        const finalTitle = title || domTitle || `OpenReview Paper: ${paperId}`;
+        
         return {
-          title: title || domTitle || `OpenReview Paper: ${paperId}`,
+          title: finalTitle,
           authors: authors || domAuthors || '',
           abstract: abstract || domAbstract || '',
           url: url,
@@ -230,7 +246,12 @@ export const openreviewPlugin: SourcePlugin = {
       }
       
       // Extract title, abstract, and other metadata from meta tags
-      const title = getMetaContent('citation_title') || document.title.replace(' | OpenReview', '');
+      // FIXED: Explicitly store meta title separately
+      const metaTitle = getMetaContent('citation_title');
+      const docTitle = document.title.replace(' | OpenReview', '').trim();
+      // Use meta title first, fallback to document title
+      let title = metaTitle || docTitle || '';
+      
       const abstract = getMetaContent('citation_abstract');
       const publicationDate = getMetaContent('citation_online_date');
       const conferenceTitle = getMetaContent('citation_conference_title');
@@ -257,7 +278,11 @@ export const openreviewPlugin: SourcePlugin = {
         };
         
         // Extract the submission title if not found in meta
-        const domTitle = document.querySelector('.note_content_title, .note-content-title, .forum-title h2')?.textContent?.trim() || '';
+        let domTitle = '';
+        const titleEl = document.querySelector('.note_content_title, .note-content-title, .forum-title h2');
+        if (titleEl && titleEl.textContent) {
+          domTitle = titleEl.textContent.trim();
+        }
         
         // Extract authors if not found in meta
         let domAuthors = '';
@@ -366,8 +391,11 @@ export const openreviewPlugin: SourcePlugin = {
         }
       });
       
+      // FIXED: properly use the available title information with clear fallback chain
+      const finalTitle = title || domData.domTitle || `OpenReview Paper: ${paperId}`;
+      
       return {
-        title: title || domData.domTitle || `OpenReview Paper: ${paperId}`,
+        title: finalTitle,
         authors: authors || domData.domAuthors || '',
         abstract: abstract || domData.domAbstract || '',
         url: url,
