@@ -108,14 +108,16 @@ export const arxivPlugin: SourcePlugin = {
         title = title.substring(6).trim();
       }
       
-      // Extract authors
+      // Extract authors using forEach instead of map to avoid type issues
       let authors = '';
       const authorElements = document.querySelectorAll('.authors a');
       if (authorElements.length > 0) {
-        authors = Array.from(authorElements)
-          .map((el: Element) => el.textContent?.trim())
-          .filter(Boolean)
-          .join(', ');
+        const authorTexts: string[] = [];
+        authorElements.forEach((el: Element) => {
+          const text = el.textContent?.trim();
+          if (text) authorTexts.push(text);
+        });
+        authors = authorTexts.join(', ');
       }
       
       // Extract abstract
