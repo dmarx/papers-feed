@@ -1,5 +1,4 @@
-// extension/papers/url_detection_service.ts
-// Enhanced URL detection with unified approach and debouncing
+// extension/papers/url_detection_service.ts - Fixed version
 
 import { pluginRegistry } from './plugins/registry';
 import { formatPrimaryId } from './source_utils';
@@ -39,6 +38,11 @@ class URLDetectionService {
    * @returns {Promise<DetectedSourceInfo|null>} Detected source info or null
    */
   async detectSource(url: string): Promise<DetectedSourceInfo | null> {
+    if (!url) {
+      logger.warning('Empty URL provided to detectSource');
+      return null;
+    }
+    
     // First check cache
     if (this.detectionCache.has(url)) {
       logger.info(`Cache hit for ${url}`);
@@ -190,7 +194,7 @@ class URLDetectionService {
   removePendingUrlWithDelay(url: string, delay?: number): void {
     // Clear any existing timer
     if (this.debounceTimers.has(url)) {
-      clearTimeout(this.debounceTimers.get(url));
+      clearTimeout(this.debounceTimers.get(url) as NodeJS.Timeout);
     }
     
     // Set new timer
@@ -207,15 +211,19 @@ class URLDetectionService {
    * @param {string} url URL 
    * @param {DetectedSourceInfo} info Detection info
    */
-  // In extension/papers/url_detection_service.ts
   private addToCache(url: string, info: DetectedSourceInfo): void {
-    if (!url) return; // Add this check
+    if (!url) {
+      logger.warning('Attempted to cache with empty URL');
+      return;
+    }
     
     // Implement LRU cache eviction if needed
     if (this.detectionCache.size >= this.maxCacheSize) {
       // Remove oldest entry (first key)
       const oldestKey = this.detectionCache.keys().next().value;
-      this.detectionCache.delete(oldestKey);
+      if (oldestKey) {
+        this.detectionCache.delete(oldestKey);
+      }
     }
     
     this.detectionCache.set(url, info);
