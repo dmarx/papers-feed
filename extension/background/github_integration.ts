@@ -1,4 +1,4 @@
-// extension/background/github_integration.js - GitHub API integration
+// extension/background/github_integration.ts - GitHub API integration
 
 import { loguru } from "../utils/logger";
 import { formatPrimaryId } from '../papers/source_utils';
@@ -6,16 +6,25 @@ import credentialManager from './credential_manager';
 
 const logger = loguru.getLogger('GitHubIntegration');
 
+interface PaperData {
+  primary_id?: string;
+  source?: string;
+  sourceId?: string;
+  url?: string;
+  title?: string;
+  [key: string]: any;
+}
+
 /**
  * Handles GitHub integration for paper storage
  */
 export class GitHubIntegration {
   /**
    * Create or update a GitHub issue for a paper
-   * @param {Object} paperData - Paper metadata
-   * @returns {Promise<Object|null>} Created or updated paper data
+   * @param {PaperData} paperData - Paper metadata
+   * @returns {Promise<PaperData|null>} Created or updated paper data
    */
-  async createGithubIssue(paperData) {
+  async createGithubIssue(paperData: PaperData): Promise<PaperData | null> {
     const paperManager = credentialManager.getPaperManager();
     
     if (!paperManager) {
@@ -46,11 +55,11 @@ export class GitHubIntegration {
 
   /**
    * Update paper rating
-   * @param {Object} paperData - Paper metadata
+   * @param {PaperData} paperData - Paper metadata
    * @param {string} rating - Rating value
    * @returns {Promise<boolean>} Success status
    */
-  async updateRating(paperData, rating) {
+  async updateRating(paperData: PaperData, rating: string): Promise<boolean> {
     const paperManager = credentialManager.getPaperManager();
     
     if (!paperManager) {
@@ -61,6 +70,12 @@ export class GitHubIntegration {
     try {
       // Always use primary_id for rating updates
       const paperId = paperData.primary_id;
+      
+      if (!paperId) {
+        logger.error('Paper data missing primary_id');
+        return false;
+      }
+      
       await paperManager.updateRating(paperId, rating, paperData);
       logger.info(`Updated rating for ${paperId}: ${rating}`);
       return true;
@@ -76,7 +91,14 @@ export class GitHubIntegration {
    * @param {Object} data - Annotation data
    * @returns {Promise<boolean>} Success status
    */
-  async updateAnnotation(type, data) {
+  async updateAnnotation(type: string, data: {
+    paperId: string;
+    source?: string;
+    title?: string;
+    vote?: string;
+    notes?: string;
+    [key: string]: any;
+  }): Promise<boolean> {
     const paperManager = credentialManager.getPaperManager();
     
     if (!paperManager) {
@@ -105,14 +127,14 @@ export class GitHubIntegration {
       if (type === 'vote') {
         await paperManager.updateRating(
           paperId,
-          data.vote,
+          data.vote!,
           paperData
         );
       } else {
         await paperManager.logAnnotation(
           paperId,
           'notes',
-          data.notes,
+          data.notes!,
           paperData
         );
       }
