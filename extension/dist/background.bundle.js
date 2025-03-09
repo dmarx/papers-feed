@@ -702,7 +702,7 @@ async function initializeEnhancedServices() {
     await initializePluginSystem(3);
     const pluginState = getPluginInitializationState();
     logger$1.info("Plugin system initialized:", pluginState);
-    if (typeof self !== "undefined" && "__DEBUG__" in self) {
+    if (typeof self !== "undefined" && "self" in globalThis && "__DEBUG__" in self) {
       self.__DEBUG__.enhancedServices = {
         urlDetectionService,
         getPluginState: getPluginInitializationState,
@@ -789,17 +789,39 @@ async function extractMetadataFromDOM(tabId, sourceInfo) {
       func: () => document.documentElement.outerHTML
     });
     if (script && script[0] && script[0].result) {
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(script[0].result, "text/html");
-      const metadata = await sourceInfo.plugin.extractMetadata(doc, sourceInfo.url);
-      if (metadata && Object.keys(metadata).length > 0) {
-        return {
-          ...metadata,
-          source: sourceInfo.type,
-          sourceId: sourceInfo.id,
-          primary_id: sourceInfo.primary_id,
-          url: sourceInfo.url
-        };
+      try {
+        const htmlString = script[0].result;
+        const metadata = await sourceInfo.plugin.extractMetadata({
+          documentElement: { outerHTML: htmlString }
+        }, sourceInfo.url);
+        if (metadata && Object.keys(metadata).length > 0) {
+          return {
+            ...metadata,
+            source: sourceInfo.type,
+            sourceId: sourceInfo.id,
+            primary_id: sourceInfo.primary_id,
+            url: sourceInfo.url
+          };
+        }
+      } catch (parserError) {
+        logger$1.error(`Error parsing HTML in service worker: ${parserError}`);
+        try {
+          const metadata = await sourceInfo.plugin.extractMetadata(
+            { innerHTML: script[0].result },
+            sourceInfo.url
+          );
+          if (metadata && Object.keys(metadata).length > 0) {
+            return {
+              ...metadata,
+              source: sourceInfo.type,
+              sourceId: sourceInfo.id,
+              primary_id: sourceInfo.primary_id,
+              url: sourceInfo.url
+            };
+          }
+        } catch (fallbackError) {
+          logger$1.error(`Error with fallback metadata extraction: ${fallbackError}`);
+        }
       }
     }
   } catch (error) {
