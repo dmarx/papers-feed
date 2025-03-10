@@ -1,15 +1,15 @@
 // extension/papers/plugins/source_factory.ts
-// Updated factory to create context-separated plugins
+// Updated factory to create plugins with proper context separation
 
-import { SourcePlugin, ServiceWorkerPlugin, ContentScriptPlugin } from './source_plugin';
+import { SourcePlugin, MetadataQualityResult } from './source_plugin';
 import { pluginRegistry } from './registry';
-import { UnifiedPaperData, MetadataQualityResult } from '../../types/common';
+import { UnifiedPaperData } from '../../types/common';
 import { loguru } from '../../utils/logger';
 
 const logger = loguru.getLogger('SourcePluginFactory');
 
 /**
- * Configuration for creating a source plugin with context separation
+ * Configuration for creating a source plugin
  */
 export interface SourcePluginConfig {
   id: string;
@@ -31,6 +31,8 @@ export interface SourcePluginConfig {
   // Content script specific
   contentScript: {
     extractorModulePath: string;
+    extractorCode?: string; // For compatibility with existing code
+    extractMetadata?: (document: Document, url: string) => Promise<Partial<UnifiedPaperData>>;
   };
 }
 
@@ -49,56 +51,44 @@ export class SourcePluginFactory {
     // Validate required fields
     this.validateConfig(config);
     
-    // Build service worker plugin component
-    const serviceWorker: ServiceWorkerPlugin = {
-      detectSourceId: config.serviceWorker.detectSourceId,
-      formatId: config.serviceWorker.formatId,
-      fetchApiData: config.serviceWorker.fetchApiData,
-      
-      // Default quality evaluation if not provided
-      evaluateMetadataQuality: config.serviceWorker.evaluateMetadataQuality || 
-        ((paperData: Partial<UnifiedPaperData>): MetadataQualityResult => {
-          // Define required fields for different quality levels
-          const essentialFields = ['title', 'primary_id', 'url'];
-          const standardFields = [...essentialFields, 'authors'];
-          const completeFields = [...standardFields, 'abstract', 'timestamp'];
-          
-          // Check which fields are missing
-          const missingEssential = essentialFields.filter(field => {
-            const value = paperData[field];
-            return value === undefined || value === null || value === '';
-          });
-          
-          const missingComplete = completeFields.filter(field => {
-            const value = paperData[field];
-            return value === undefined || value === null || value === '';
-          });
-          
-          // Calculate quality level
-          let quality: 'minimal' | 'partial' | 'complete';
-          
-          if (missingEssential.length > 0) {
-            quality = 'minimal';
-          } else if (missingComplete.length > 0) {
-            quality = 'partial';
-          } else {
-            quality = 'complete';
-          }
-          
-          return {
-            quality,
-            missingFields: missingComplete,
-            hasEssentialFields: missingEssential.length === 0
-          };
-        })
-    };
+    // Default quality evaluation if not provided
+    const evaluateMetadataQuality = config.serviceWorker.evaluateMetadataQuality || 
+      ((paperData: Partial<UnifiedPaperData>): MetadataQualityResult => {
+        // Define required fields for different quality levels
+        const essentialFields = ['title', 'primary_id', 'url'];
+        const standardFields = [...essentialFields, 'authors'];
+        const completeFields = [...standardFields, 'abstract', 'timestamp'];
+        
+        // Check which fields are missing
+        const missingEssential = essentialFields.filter(field => {
+          const value = paperData[field];
+          return value === undefined || value === null || value === '';
+        });
+        
+        const missingComplete = completeFields.filter(field => {
+          const value = paperData[field];
+          return value === undefined || value === null || value === '';
+        });
+        
+        // Calculate quality level
+        let quality: 'minimal' | 'partial' | 'complete';
+        
+        if (missingEssential.length > 0) {
+          quality = 'minimal';
+        } else if (missingComplete.length > 0) {
+          quality = 'partial';
+        } else {
+          quality = 'complete';
+        }
+        
+        return {
+          quality,
+          missingFields: missingComplete,
+          hasEssentialFields: missingEssential.length === 0
+        };
+      });
     
-    // Build content script plugin component
-    const contentScript: ContentScriptPlugin = {
-      extractorModulePath: config.contentScript.extractorModulePath
-    };
-    
-    // Create the complete plugin
+    // Create the plugin with both top-level methods and context-specific components
     const plugin: SourcePlugin = {
       id: config.id,
       name: config.name,
@@ -107,8 +97,38 @@ export class SourcePluginFactory {
       urlPatterns: config.urlPatterns,
       color: config.color,
       icon: config.icon,
-      serviceWorker,
-      contentScript
+      
+      // Top-level methods (for compatibility with existing code)
+      extractId: config.serviceWorker.detectSourceId,
+      formatId: config.serviceWorker.formatId,
+      hasApi: !!config.serviceWorker.fetchApiData,
+      fetchApiData: config.serviceWorker.fetchApiData,
+      evaluateMetadataQuality,
+      
+      // Content script methods
+      getContentScriptExtractor: () => {
+        // Return the extractor code or a placeholder
+        return config.contentScript.extractorCode || 
+          `// Extractor code for ${config.id} plugin\n` +
+          `// This is a generated placeholder. Replace with actual extraction logic.\n` +
+          `async function extractMetadata(document, url) {\n` +
+          `  console.warn('Using placeholder extractor for ${config.id}');\n` +
+          `  return { source: "${config.id}", url: url };\n` +
+          `}`;
+      },
+      extractMetadata: config.contentScript.extractMetadata,
+      
+      // Context-specific components
+      serviceWorker: {
+        detectSourceId: config.serviceWorker.detectSourceId,
+        formatId: config.serviceWorker.formatId,
+        fetchApiData: config.serviceWorker.fetchApiData,
+        evaluateMetadataQuality
+      },
+      contentScript: {
+        extractorModulePath: config.contentScript.extractorModulePath,
+        extractMetadata: config.contentScript.extractMetadata
+      }
     };
     
     // Register the plugin
