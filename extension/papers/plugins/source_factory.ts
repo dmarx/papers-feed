@@ -1,13 +1,15 @@
 // extension/papers/plugins/source_factory.ts
-// Factory to simplify creation of new source plugins
+// Updated factory to create context-separated plugins
 
-import { SourcePlugin, MetadataQualityResult } from './source_plugin';
+import { SourcePlugin, ServiceWorkerPlugin, ContentScriptPlugin } from './source_plugin';
 import { pluginRegistry } from './registry';
-import { UnifiedPaperData } from '../types';
+import { UnifiedPaperData, MetadataQualityResult } from '../../types/common';
 import { loguru } from '../../utils/logger';
 
+const logger = loguru.getLogger('SourcePluginFactory');
+
 /**
- * Base configuration for creating a source plugin
+ * Configuration for creating a source plugin with context separation
  */
 export interface SourcePluginConfig {
   id: string;
@@ -18,71 +20,44 @@ export interface SourcePluginConfig {
   color?: string;
   icon?: string;
   
-  // Core functionality
-  idExtractor: (url: string) => string | null;
-  formatId: (id: string) => string;
+  // Service worker specific
+  serviceWorker: {
+    detectSourceId: (url: string) => string | null;
+    formatId: (id: string) => string;
+    fetchApiData?: (id: string) => Promise<Partial<UnifiedPaperData>>;
+    evaluateMetadataQuality?: (paperData: Partial<UnifiedPaperData>) => MetadataQualityResult;
+  };
   
-  // Content script extractor function as a string
-  contentScriptExtractorCode: string;
-  
-  // Service worker operations
-  apiDataFetcher?: (id: string) => Promise<Partial<UnifiedPaperData>>;
-  
-  // Optional custom quality evaluation
-  evaluateMetadataQuality?: (paperData: Partial<UnifiedPaperData>) => MetadataQualityResult;
+  // Content script specific
+  contentScript: {
+    extractorModulePath: string;
+  };
 }
 
 /**
- * Factory for creating source plugins with consistent behavior
+ * Factory for creating source plugins with proper context separation
  */
 export class SourcePluginFactory {
-  private logger = loguru.getLogger('SourcePluginFactory');
-
   /**
    * Create a new source plugin from configuration and register it
-   * 
    * @param config Plugin configuration
    * @returns The created plugin
    */
   createPlugin(config: SourcePluginConfig): SourcePlugin {
-    this.logger.info(`Creating plugin: ${config.id}`);
+    logger.info(`Creating plugin: ${config.id}`);
     
     // Validate required fields
     this.validateConfig(config);
     
-    const plugin: SourcePlugin = {
-      id: config.id,
-      name: config.name,
-      description: config.description,
-      version: config.version,
-      urlPatterns: config.urlPatterns,
-      color: config.color,
-      icon: config.icon,
-      hasApi: !!config.apiDataFetcher,
+    // Build service worker plugin component
+    const serviceWorker: ServiceWorkerPlugin = {
+      detectSourceId: config.serviceWorker.detectSourceId,
+      formatId: config.serviceWorker.formatId,
+      fetchApiData: config.serviceWorker.fetchApiData,
       
-      // ID extraction function
-      extractId: (url: string): string | null => {
-        try {
-          return config.idExtractor(url);
-        } catch (error) {
-          this.logger.error(`Error extracting ID for ${config.id}:`, error);
-          return null;
-        }
-      },
-      
-      // Content script extraction code provider
-      getContentScriptExtractor: (): string => {
-        return config.contentScriptExtractorCode;
-      },
-      
-      // Default metadata quality evaluation method
-      evaluateMetadataQuality: (paperData: Partial<UnifiedPaperData>): MetadataQualityResult => {
-        try {
-          // If custom evaluator is provided, use it
-          if (config.evaluateMetadataQuality) {
-            return config.evaluateMetadataQuality(paperData);
-          }
-          
+      // Default quality evaluation if not provided
+      evaluateMetadataQuality: config.serviceWorker.evaluateMetadataQuality || 
+        ((paperData: Partial<UnifiedPaperData>): MetadataQualityResult => {
           // Define required fields for different quality levels
           const essentialFields = ['title', 'primary_id', 'url'];
           const standardFields = [...essentialFields, 'authors'];
@@ -90,11 +65,6 @@ export class SourcePluginFactory {
           
           // Check which fields are missing
           const missingEssential = essentialFields.filter(field => {
-            const value = paperData[field];
-            return value === undefined || value === null || value === '';
-          });
-          
-          const missingStandard = standardFields.filter(field => {
             const value = paperData[field];
             return value === undefined || value === null || value === '';
           });
@@ -120,33 +90,26 @@ export class SourcePluginFactory {
             missingFields: missingComplete,
             hasEssentialFields: missingEssential.length === 0
           };
-        } catch (error) {
-          this.logger.error(`Error evaluating metadata quality: ${error}`);
-          return {
-            quality: 'minimal',
-            missingFields: ['error'],
-            hasEssentialFields: false
-          };
-        }
-      },
-      
-      // ID formatting function
-      formatId: config.formatId
+        })
     };
     
-    // Add API data fetcher if provided
-    if (config.apiDataFetcher) {
-      plugin.fetchApiData = async (id: string): Promise<Partial<UnifiedPaperData>> => {
-        try {
-          const data = await config.apiDataFetcher!(id);
-          this.logger.info(`Fetched API data for ${config.id}:${id}`);
-          return data;
-        } catch (error) {
-          this.logger.error(`Error fetching API data for ${config.id}:${id}:`, error);
-          return {};
-        }
-      };
-    }
+    // Build content script plugin component
+    const contentScript: ContentScriptPlugin = {
+      extractorModulePath: config.contentScript.extractorModulePath
+    };
+    
+    // Create the complete plugin
+    const plugin: SourcePlugin = {
+      id: config.id,
+      name: config.name,
+      description: config.description,
+      version: config.version,
+      urlPatterns: config.urlPatterns,
+      color: config.color,
+      icon: config.icon,
+      serviceWorker,
+      contentScript
+    };
     
     // Register the plugin
     pluginRegistry.register(plugin);
@@ -163,7 +126,7 @@ export class SourcePluginFactory {
     // Required fields must exist
     const requiredFields = [
       'id', 'name', 'description', 'version', 'urlPatterns',
-      'idExtractor', 'formatId', 'contentScriptExtractorCode'
+      'serviceWorker', 'contentScript'
     ];
     
     const missingFields = requiredFields.filter(field => 
@@ -171,50 +134,32 @@ export class SourcePluginFactory {
     
     if (missingFields.length > 0) {
       const error = `Plugin configuration missing required fields: ${missingFields.join(', ')}`;
-      this.logger.error(error);
+      logger.error(error);
       throw new Error(error);
     }
     
     // URL patterns must be an array with at least one pattern
     if (!Array.isArray(config.urlPatterns) || config.urlPatterns.length === 0) {
       const error = `Plugin ${config.id} has no URL patterns`;
-      this.logger.error(error);
+      logger.error(error);
       throw new Error(error);
     }
     
-    // Validate function fields
-    if (typeof config.idExtractor !== 'function') {
-      const error = `Plugin ${config.id} has invalid idExtractor: not a function`;
-      this.logger.error(error);
+    // Validate service worker component
+    const requiredSWFields = ['detectSourceId', 'formatId'];
+    const missingSWFields = requiredSWFields.filter(field => 
+      !config.serviceWorker[field as keyof typeof config.serviceWorker]);
+    
+    if (missingSWFields.length > 0) {
+      const error = `Plugin ${config.id} service worker is missing required fields: ${missingSWFields.join(', ')}`;
+      logger.error(error);
       throw new Error(error);
     }
     
-    if (typeof config.formatId !== 'function') {
-      const error = `Plugin ${config.id} has invalid formatId: not a function`;
-      this.logger.error(error);
-      throw new Error(error);
-    }
-    
-    // Content script extractor code must be a non-empty string
-    if (typeof config.contentScriptExtractorCode !== 'string' || 
-        config.contentScriptExtractorCode.trim() === '') {
-      const error = `Plugin ${config.id} has invalid contentScriptExtractorCode: empty or not a string`;
-      this.logger.error(error);
-      throw new Error(error);
-    }
-    
-    // If apiDataFetcher is provided, it must be a function
-    if (config.apiDataFetcher !== undefined && typeof config.apiDataFetcher !== 'function') {
-      const error = `Plugin ${config.id} has invalid apiDataFetcher: not a function`;
-      this.logger.error(error);
-      throw new Error(error);
-    }
-    
-    // If evaluateMetadataQuality is provided, it must be a function
-    if (config.evaluateMetadataQuality !== undefined && 
-        typeof config.evaluateMetadataQuality !== 'function') {
-      const error = `Plugin ${config.id} has invalid evaluateMetadataQuality: not a function`;
-      this.logger.error(error);
+    // Validate content script component
+    if (!config.contentScript.extractorModulePath) {
+      const error = `Plugin ${config.id} content script is missing required extractorModulePath`;
+      logger.error(error);
       throw new Error(error);
     }
   }

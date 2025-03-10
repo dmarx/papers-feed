@@ -1,18 +1,17 @@
 // extension/papers/plugins/registry.ts
-// Enhanced plugin registry with improved validation and logging
+// Updated registry to work with context-separated plugins
 
-import { SourcePlugin } from './source_plugin';
+import { SourcePlugin, extractIdWithPlugin } from './source_plugin';
 import { loguru } from '../../utils/logger';
 
 const logger = loguru.getLogger('PluginRegistry');
 const debugLogger = loguru.getLogger('PluginRegistryDebug');
 
 /**
- * Registry for paper source plugins
- * Manages plugin registration, discovery, and lookup
+ * Registry for paper source plugins with context-awareness
  */
 class PluginRegistry {
-  private plugins: Map<string, SourcePlugin> = new Map();
+  private plugins = new Map<string, SourcePlugin>();
   
   /**
    * Register a plugin with the registry
@@ -21,7 +20,7 @@ class PluginRegistry {
   register(plugin: SourcePlugin): void {
     debugLogger.info(`Registering plugin: ${plugin.id} (${plugin.name})`);
     
-    // Validate plugin has required fields
+    // Validate plugin has required fields and components
     if (!plugin.id || typeof plugin.id !== 'string') {
       debugLogger.error(`Plugin missing valid id: ${JSON.stringify(plugin)}`);
       return;
@@ -31,23 +30,30 @@ class PluginRegistry {
       debugLogger.warning(`Plugin ${plugin.id} has no URL patterns`);
     }
     
-    if (!plugin.extractId || typeof plugin.extractId !== 'function') {
-      debugLogger.error(`Plugin ${plugin.id} missing required extractId method`);
+    // Validate service worker component
+    if (!plugin.serviceWorker) {
+      debugLogger.error(`Plugin ${plugin.id} missing required serviceWorker component`);
       return;
     }
     
-    if (!plugin.getContentScriptExtractor || typeof plugin.getContentScriptExtractor !== 'function') {
-      debugLogger.error(`Plugin ${plugin.id} missing required getContentScriptExtractor method`);
+    if (!plugin.serviceWorker.detectSourceId || typeof plugin.serviceWorker.detectSourceId !== 'function') {
+      debugLogger.error(`Plugin ${plugin.id} missing required detectSourceId method`);
       return;
     }
     
-    if (!plugin.formatId || typeof plugin.formatId !== 'function') {
+    if (!plugin.serviceWorker.formatId || typeof plugin.serviceWorker.formatId !== 'function') {
       debugLogger.error(`Plugin ${plugin.id} missing required formatId method`);
       return;
     }
     
-    if (!plugin.evaluateMetadataQuality || typeof plugin.evaluateMetadataQuality !== 'function') {
-      debugLogger.error(`Plugin ${plugin.id} missing required evaluateMetadataQuality method`);
+    // Validate content script component
+    if (!plugin.contentScript) {
+      debugLogger.error(`Plugin ${plugin.id} missing required contentScript component`);
+      return;
+    }
+    
+    if (!plugin.contentScript.extractorModulePath) {
+      debugLogger.error(`Plugin ${plugin.id} missing required extractorModulePath`);
       return;
     }
     
@@ -58,7 +64,7 @@ class PluginRegistry {
     
     this.plugins.set(plugin.id, plugin);
     debugLogger.info(`Successfully registered plugin: ${plugin.name} (${plugin.id})`);
-    debugLogger.info(`Plugin capabilities: hasApi=${!!plugin.hasApi}, formatId=${!!plugin.formatId}`);
+    debugLogger.info(`Plugin capabilities: hasApi=${!!plugin.serviceWorker.fetchApiData}, formatId=${!!plugin.serviceWorker.formatId}`);
     logger.info(`Registered plugin: ${plugin.name} (${plugin.id})`);
   }
   
@@ -98,20 +104,12 @@ class PluginRegistry {
     for (const plugin of this.plugins.values()) {
       debugLogger.info(`Testing URL against plugin: ${plugin.id}`);
       
-      for (const pattern of plugin.urlPatterns) {
-        debugLogger.info(`Testing pattern: ${pattern.toString()}`);
-        
-        if (pattern.test(url)) {
-          debugLogger.info(`URL matches pattern for plugin: ${plugin.id}`);
-          
-          const id = plugin.extractId(url);
-          if (id) {
-            debugLogger.info(`Successfully extracted ID: ${id}`);
-            return { plugin, id };
-          } else {
-            debugLogger.warning(`Pattern matched but failed to extract ID`);
-          }
-        }
+      // Use the plugin's service worker component to detect the ID
+      const id = extractIdWithPlugin(plugin, url);
+      
+      if (id) {
+        debugLogger.info(`URL matches plugin ${plugin.id}, extracted ID: ${id}`);
+        return { plugin, id };
       }
     }
     
@@ -120,22 +118,17 @@ class PluginRegistry {
   }
   
   /**
-   * Get the content script extractor code for a plugin
+   * Get the path to the extractor module for a plugin
    * @param id Plugin ID
-   * @returns Extractor code as string or null if plugin not found
+   * @returns Path to extractor module or null if plugin not found
    */
-  getExtractorCode(id: string): string | null {
+  getExtractorPath(id: string): string | null {
     const plugin = this.get(id);
     if (!plugin) {
       return null;
     }
     
-    try {
-      return plugin.getContentScriptExtractor();
-    } catch (error) {
-      debugLogger.error(`Error getting extractor code for plugin ${id}: ${error}`);
-      return null;
-    }
+    return plugin.contentScript.extractorModulePath;
   }
   
   /**
@@ -144,14 +137,7 @@ class PluginRegistry {
    * @returns True if URL is supported
    */
   isSupportedUrl(url: string): boolean {
-    for (const plugin of this.plugins.values()) {
-      for (const pattern of plugin.urlPatterns) {
-        if (pattern.test(url)) {
-          return true;
-        }
-      }
-    }
-    return false;
+    return this.findForUrl(url) !== null;
   }
   
   /**
@@ -170,7 +156,7 @@ class PluginRegistry {
       name: plugin.name,
       description: plugin.description,
       version: plugin.version,
-      hasApi: !!plugin.hasApi
+      hasApi: !!plugin.serviceWorker.fetchApiData
     }));
   }
 }

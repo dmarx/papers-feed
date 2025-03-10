@@ -170,7 +170,7 @@ export class MessageHandlers {
         
         // Format primary ID
         const primary_id = plugin ? 
-          plugin.formatId(request.id) : 
+          plugin.serviceWorker.formatId(request.id) : 
           `${request.source}.${request.id}`;
         
         paperData = {
@@ -300,7 +300,7 @@ export class MessageHandlers {
    */
   handleGetPluginExtractor(pluginId: string, sendResponse: (response: any) => void): void {
     try {
-      const extractorCode = urlDetectionService.getExtractorForPlugin(pluginId);
+      const extractorCode = urlDetectionService.getExtractorInfoForPlugin(pluginId);
       
       if (extractorCode) {
         sendResponse({
@@ -348,7 +348,7 @@ export class MessageHandlers {
         if (metadata.source && metadata.sourceId) {
           const plugin = pluginRegistry.get(metadata.source);
           metadata.primary_id = plugin ? 
-            plugin.formatId(metadata.sourceId) : 
+            plugin.serviceWorker.formatId(metadata.sourceId) : 
             `${metadata.source}.${metadata.sourceId}`;
         } else {
           sendResponse({
