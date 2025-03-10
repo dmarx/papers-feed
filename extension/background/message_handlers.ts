@@ -170,7 +170,7 @@ export class MessageHandlers {
         
         // Format primary ID
         const primary_id = plugin ? 
-          plugin.formatId(request.id) : 
+          plugin.serviceWorker.formatId(request.id) : 
           `${request.source}.${request.id}`;
         
         paperData = {
@@ -348,7 +348,7 @@ export class MessageHandlers {
         if (metadata.source && metadata.sourceId) {
           const plugin = pluginRegistry.get(metadata.source);
           metadata.primary_id = plugin ? 
-            plugin.formatId(metadata.sourceId) : 
+            plugin.serviceWorker.formatId(metadata.sourceId) : 
             `${metadata.source}.${metadata.sourceId}`;
         } else {
           sendResponse({
