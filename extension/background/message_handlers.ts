@@ -7,6 +7,7 @@ import { pluginRegistry } from '../papers/plugins/registry';
 import { fullyProcessUrl } from '../papers/paper_processor';
 import sessionManager from './session_manager';
 import githubIntegration from './github_integration';
+import { PaperData } from '../types/common';
 
 const logger = loguru.getLogger('MessageHandlers');
 
