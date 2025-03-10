@@ -1,7 +1,6 @@
 // extension/papers/process_paper_url.ts
 // Process paper URLs from multiple sources with plugin system integration
 
-import { MultiSourceDetector } from './detector';
 import { SourceInfo } from '../types/common';
 import { formatPrimaryId } from './source_utils';
 import { pluginRegistry } from './plugins/registry';
@@ -221,9 +220,7 @@ function findPluginForUrl(url: string): (SourceInfo & { plugin?: any }) | null {
       }
     }
   }
-  
-  // Fallback to legacy detector if no plugin match
-  return MultiSourceDetector.detect(url);
+  return null;
 }
 
 /**
