@@ -1,62 +1,19 @@
 // extension/papers/plugins/source_plugin.ts
 // Redesigned plugin interface with clear context separation
 
-import { UnifiedPaperData, MetadataQualityResult } from '../../types/common';
+import { UnifiedPaperData } from '../../types/common';
 
 /**
- * Service worker specific plugin functionality
+ * Result of metadata quality evaluation
  */
-export interface ServiceWorkerPlugin {
-  /**
-   * Detect paper ID from URL (runs in service worker)
-   * @param url URL to analyze
-   * @returns Source ID or null if not matching
-   */
-  detectSourceId: (url: string) => string | null;
-  
-  /**
-   * Format ID according to plugin's conventions
-   * @param id Source-specific ID
-   * @returns Formatted primary ID
-   */
-  formatId: (id: string) => string;
-  
-  /**
-   * Fetch metadata from API (runs in service worker)
-   * @param id Source-specific ID
-   * @returns Paper metadata or null if unavailable
-   */
-  fetchApiData?: (id: string) => Promise<Partial<UnifiedPaperData>>;
-  
-  /**
-   * Evaluate quality of paper metadata
-   * @param paperData Paper data to evaluate
-   * @returns Quality evaluation result
-   */
-  evaluateMetadataQuality: (paperData: Partial<UnifiedPaperData>) => MetadataQualityResult;
+export interface MetadataQualityResult {
+  quality: 'minimal' | 'partial' | 'complete';
+  missingFields: string[];
+  hasEssentialFields: boolean;
 }
 
 /**
- * Content script specific plugin functionality
- */
-export interface ContentScriptPlugin {
-  /**
-   * Path to the content script extractor module
-   * This will be imported at build time
-   */
-  extractorModulePath: string;
-  
-  /**
-   * DOM metadata extraction (defined but loaded separately)
-   * @param document Document to extract from
-   * @param url URL of the page
-   * @returns Extracted metadata
-   */
-  extractMetadata?: (document: Document, url: string) => Promise<Partial<UnifiedPaperData>>;
-}
-
-/**
- * Core plugin interface with context-specific components
+ * Core plugin interface
  */
 export interface SourcePlugin {
   // Basic plugin information
@@ -68,13 +25,31 @@ export interface SourcePlugin {
   // URL detection (shared but used differently in each context)
   urlPatterns: RegExp[];
   
-  // Context-specific components
-  serviceWorker: ServiceWorkerPlugin;
-  contentScript: ContentScriptPlugin;
+  // Methods required by existing codebase
+  extractId: (url: string) => string | null;
+  formatId: (id: string) => string;
+  hasApi?: boolean;
+  fetchApiData?: (id: string) => Promise<Partial<UnifiedPaperData>>;
+  getContentScriptExtractor: () => string;
+  extractMetadata?: (document: any, url: string) => Promise<Partial<UnifiedPaperData>>;
+  evaluateMetadataQuality: (paperData: Partial<UnifiedPaperData>) => MetadataQualityResult;
   
   // UI customization
   color?: string;
   icon?: string;
+  
+  // Context-specific components (for internal use)
+  serviceWorker: {
+    detectSourceId: (url: string) => string | null;
+    formatId: (id: string) => string;
+    fetchApiData?: (id: string) => Promise<Partial<UnifiedPaperData>>;
+    evaluateMetadataQuality: (paperData: Partial<UnifiedPaperData>) => MetadataQualityResult;
+  };
+  
+  contentScript: {
+    extractorModulePath: string;
+    extractMetadata?: (document: Document, url: string) => Promise<Partial<UnifiedPaperData>>;
+  };
 }
 
 /**
@@ -85,7 +60,7 @@ export interface SourcePlugin {
  */
 export function extractIdWithPlugin(plugin: SourcePlugin, url: string): string | null {
   // First try the dedicated method
-  const id = plugin.serviceWorker.detectSourceId(url);
+  const id = plugin.extractId(url);
   if (id) return id;
   
   // Fall back to pattern matching if the method doesn't return an ID
