@@ -1354,8 +1354,7 @@ async function extractMetadataFromDOM(tabId, sourceInfo) {
           sourceId: sourceInfo.id,
           primary_id: sourceInfo.primary_id,
           url: sourceInfo.url,
-          title: `${sourceInfo.type.toUpperCase()} Paper: ${sourceInfo.id}`,
-          _note: `Would load extractor from: ${extractorModule}`
+          title: ""
         };
       } catch (parserError) {
         logger$5.error(`Error parsing HTML in service worker: ${parserError}`);
@@ -1400,6 +1399,26 @@ async function extractPaperMetadata(sourceInfo, tabId = null) {
   }
 }
 
+function sanitizeMetadata(data) {
+  const sanitized = { ...data };
+  const textFields = ["title", "authors", "abstract", "doi"];
+  for (const field of textFields) {
+    if (typeof sanitized[field] === "string") {
+      sanitized[field] = sanitized[field].replace(/\n/g, " ").replace(/\s+/g, " ").trim();
+    }
+  }
+  if (sanitized.source_specific_metadata && typeof sanitized.source_specific_metadata === "object") {
+    const nestedData = { ...sanitized.source_specific_metadata };
+    for (const [key, value] of Object.entries(nestedData)) {
+      if (typeof value === "string") {
+        nestedData[key] = value.replace(/\n/g, " ").replace(/\s+/g, " ").trim();
+      }
+    }
+    sanitized.source_specific_metadata = nestedData;
+  }
+  return sanitized;
+}
+
 const logger$4 = loguru.getLogger("PaperProcessor");
 async function fullyProcessUrl(url, tabId = null) {
   try {
@@ -1409,7 +1428,16 @@ async function fullyProcessUrl(url, tabId = null) {
       return null;
     }
     logger$4.info(`Detected ${sourceInfo.type} paper: ${sourceInfo.id}`);
-    return await extractPaperMetadata(sourceInfo, tabId);
+    let paperData = await extractPaperMetadata(sourceInfo, tabId);
+    if (paperData) {
+      paperData = sanitizeMetadata(paperData);
+      const hasMissingFields = !paperData.title || !paperData.authors;
+      if (hasMissingFields) {
+        paperData.metadata_quality = "incomplete";
+      }
+      return paperData;
+    }
+    return null;
   } catch (error) {
     logger$4.error(`Error fully processing URL ${url}:`, error);
     return null;
