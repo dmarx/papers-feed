@@ -74,12 +74,12 @@ function processLink(link: HTMLAnchorElement): void {
   link.classList.add('paper-processed');
   
   // Check if this is a paper URL
-  window.paperTracker.isPaperUrl(link.href).then((isPaper) => {
+  window.paperTracker.isPaperUrl(link.href).then((isPaper: boolean) => {
     if (isPaper) {
       // Add paper indicator icon
       addPaperIndicator(link);
     }
-  }).catch((error) => {
+  }).catch((error: Error) => {
     logger.error(`Error checking if URL is paper: ${error}`);
   });
 }
@@ -143,12 +143,12 @@ function showTrackingFeedback(element: HTMLElement): void {
  */
 function checkCurrentPageForPaper(): void {
   // Extract metadata from current page
-  window.paperTracker.extractMetadata().then(metadata => {
+  window.paperTracker.extractMetadata().then((metadata: any) => {
     if (metadata) {
       logger.info('Current page is a paper. Adding overlay UI');
       addPageOverlay(metadata);
     }
-  }).catch(error => {
+  }).catch((error: Error) => {
     logger.error(`Error checking if current page is paper: ${error}`);
   });
 }
