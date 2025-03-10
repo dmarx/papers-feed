@@ -18,9 +18,9 @@ export function formatPrimaryId(source: string, id: string): string {
   // First check if we have a plugin for this source
   const plugin = pluginRegistry.get(source);
   
-  // Use plugin's formatId method if available
-  if (plugin && plugin.formatId) {
-    return plugin.formatId(id);
+  // Use plugin's serviceWorker.formatId method if available
+  if (plugin && plugin.serviceWorker && plugin.serviceWorker.formatId) {
+    return plugin.serviceWorker.formatId(id);
   }
   
   // Sanitize the ID by replacing problematic characters
@@ -48,8 +48,8 @@ export function parseId(prefixedId: string): { type: string; id: string } {
   const plugins = pluginRegistry.getAll();
   for (const plugin of plugins) {
     // Check if the plugin's ID format matches the prefix
-    if (plugin.formatId) {
-      const sampleId = plugin.formatId('test');
+    if (plugin.serviceWorker && plugin.serviceWorker.formatId) {
+      const sampleId = plugin.serviceWorker.formatId('test');
       const samplePrefix = sampleId.split('.')[0];
       if (samplePrefix === prefix) {
         return {
@@ -65,73 +65,4 @@ export function parseId(prefixedId: string): { type: string; id: string } {
     type: prefix,
     id: prefix === 'doi' ? id.replace(/_/g, '/') : id
   };
-}
-
-/**
- * Checks if a string is in the required prefixed format
- * @param {string} id - ID to check
- * @returns {boolean} True if the ID is in the correct format
- */
-export function isNewFormat(id: string): boolean {
-  if (!id) return false;
-  
-  // Check if it contains a dot, which separates the source from the ID
-  return id.includes('.');
-}
-
-/**
- * Gets a display label for a source type using the plugin if available
- * 
- * @param {string} sourceType - Source type
- * @returns {string} Human-readable label
- */
-export function getSourceLabel(sourceType: string): string {
-  const plugin = pluginRegistry.get(sourceType);
-  if (plugin) {
-    return plugin.name;
-  }
-  
-  return sourceType.charAt(0).toUpperCase() + sourceType.slice(1);
-}
-
-/**
- * Get canonical URL for a paper using the plugin if available
- * 
- * @param {string} sourceType - Source type
- * @param {string} id - Source ID
- * @returns {string} Canonical URL
- */
-export function getCanonicalUrl(sourceType: string, id: string): string {
-  // First check if a plugin is available for this source
-  const plugin = pluginRegistry.get(sourceType);
-  if (plugin) {
-    // If the plugin has any URL patterns, try to construct a URL
-    if (plugin.urlPatterns && plugin.urlPatterns.length > 0) {
-      const pattern = plugin.urlPatterns[0].toString();
-      // Extract the domain and path pattern
-      const match = pattern.match(/([^/]+)(\/[^)]+)/);
-      if (match) {
-        const domain = match[1].replace(/\\\./, '.');
-        const path = match[2]
-          .replace(/\\\//g, '/')
-          .replace(/\([^)]+\)/, id);
-        return `https://${domain}${path}`;
-      }
-    }
-  }
-  
-  switch (sourceType) {
-    case 'arxiv':
-      return `https://arxiv.org/abs/${id}`;
-    case 'semanticscholar':
-      return `https://www.semanticscholar.org/paper/${id}`;
-    case 'doi':
-      return `https://doi.org/${id}`;
-    case 'acm':
-      return `https://dl.acm.org/doi/${id}`;
-    case 'openreview':
-      return `https://openreview.net/forum?id=${id}`;
-    default:
-      return id.startsWith('10.') ? `https://doi.org/${id}` : "";
-  }
 }

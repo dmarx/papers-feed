@@ -1,6 +1,18 @@
 import { l as loguru } from './assets/logger-Cyvnc9vo.js';
 
-const logger$c = loguru.getLogger("PluginRegistry");
+function extractIdWithPlugin(plugin, url) {
+  const id = plugin.serviceWorker.detectSourceId(url);
+  if (id) return id;
+  for (const pattern of plugin.urlPatterns) {
+    const match = url.match(pattern);
+    if (match) {
+      return match[1] || null;
+    }
+  }
+  return null;
+}
+
+const logger$d = loguru.getLogger("PluginRegistry");
 const debugLogger = loguru.getLogger("PluginRegistryDebug");
 class PluginRegistry {
   constructor() {
@@ -19,30 +31,34 @@ class PluginRegistry {
     if (!Array.isArray(plugin.urlPatterns) || plugin.urlPatterns.length === 0) {
       debugLogger.warning(`Plugin ${plugin.id} has no URL patterns`);
     }
-    if (!plugin.extractId || typeof plugin.extractId !== "function") {
-      debugLogger.error(`Plugin ${plugin.id} missing required extractId method`);
+    if (!plugin.serviceWorker) {
+      debugLogger.error(`Plugin ${plugin.id} missing required serviceWorker component`);
       return;
     }
-    if (!plugin.getContentScriptExtractor || typeof plugin.getContentScriptExtractor !== "function") {
-      debugLogger.error(`Plugin ${plugin.id} missing required getContentScriptExtractor method`);
+    if (!plugin.serviceWorker.detectSourceId || typeof plugin.serviceWorker.detectSourceId !== "function") {
+      debugLogger.error(`Plugin ${plugin.id} missing required detectSourceId method`);
       return;
     }
-    if (!plugin.formatId || typeof plugin.formatId !== "function") {
+    if (!plugin.serviceWorker.formatId || typeof plugin.serviceWorker.formatId !== "function") {
       debugLogger.error(`Plugin ${plugin.id} missing required formatId method`);
       return;
     }
-    if (!plugin.evaluateMetadataQuality || typeof plugin.evaluateMetadataQuality !== "function") {
-      debugLogger.error(`Plugin ${plugin.id} missing required evaluateMetadataQuality method`);
+    if (!plugin.contentScript) {
+      debugLogger.error(`Plugin ${plugin.id} missing required contentScript component`);
+      return;
+    }
+    if (!plugin.contentScript.extractorModulePath) {
+      debugLogger.error(`Plugin ${plugin.id} missing required extractorModulePath`);
       return;
     }
     if (this.plugins.has(plugin.id)) {
       debugLogger.warning(`Plugin with ID ${plugin.id} already registered, overwriting`);
-      logger$c.warning(`Plugin with ID ${plugin.id} already registered, overwriting`);
+      logger$d.warning(`Plugin with ID ${plugin.id} already registered, overwriting`);
     }
     this.plugins.set(plugin.id, plugin);
     debugLogger.info(`Successfully registered plugin: ${plugin.name} (${plugin.id})`);
-    debugLogger.info(`Plugin capabilities: hasApi=${!!plugin.hasApi}, formatId=${!!plugin.formatId}`);
-    logger$c.info(`Registered plugin: ${plugin.name} (${plugin.id})`);
+    debugLogger.info(`Plugin capabilities: hasApi=${!!plugin.serviceWorker.fetchApiData}, formatId=${!!plugin.serviceWorker.formatId}`);
+    logger$d.info(`Registered plugin: ${plugin.name} (${plugin.id})`);
   }
   /**
    * Get all registered plugins
@@ -76,39 +92,26 @@ class PluginRegistry {
     debugLogger.info(`Finding plugin for URL: ${url}`);
     for (const plugin of this.plugins.values()) {
       debugLogger.info(`Testing URL against plugin: ${plugin.id}`);
-      for (const pattern of plugin.urlPatterns) {
-        debugLogger.info(`Testing pattern: ${pattern.toString()}`);
-        if (pattern.test(url)) {
-          debugLogger.info(`URL matches pattern for plugin: ${plugin.id}`);
-          const id = plugin.extractId(url);
-          if (id) {
-            debugLogger.info(`Successfully extracted ID: ${id}`);
-            return { plugin, id };
-          } else {
-            debugLogger.warning(`Pattern matched but failed to extract ID`);
-          }
-        }
+      const id = extractIdWithPlugin(plugin, url);
+      if (id) {
+        debugLogger.info(`URL matches plugin ${plugin.id}, extracted ID: ${id}`);
+        return { plugin, id };
       }
     }
     debugLogger.warning(`No plugin found for URL: ${url}`);
     return null;
   }
   /**
-   * Get the content script extractor code for a plugin
+   * Get the path to the extractor module for a plugin
    * @param id Plugin ID
-   * @returns Extractor code as string or null if plugin not found
+   * @returns Path to extractor module or null if plugin not found
    */
-  getExtractorCode(id) {
+  getExtractorPath(id) {
     const plugin = this.get(id);
     if (!plugin) {
       return null;
     }
-    try {
-      return plugin.getContentScriptExtractor();
-    } catch (error) {
-      debugLogger.error(`Error getting extractor code for plugin ${id}: ${error}`);
-      return null;
-    }
+    return plugin.contentScript.extractorModulePath;
   }
   /**
    * Check if a URL is supported by any registered plugin
@@ -116,14 +119,7 @@ class PluginRegistry {
    * @returns True if URL is supported
    */
   isSupportedUrl(url) {
-    for (const plugin of this.plugins.values()) {
-      for (const pattern of plugin.urlPatterns) {
-        if (pattern.test(url)) {
-          return true;
-        }
-      }
-    }
-    return false;
+    return this.findForUrl(url) !== null;
   }
   /**
    * Get information about all registered plugins
@@ -135,26 +131,58 @@ class PluginRegistry {
       name: plugin.name,
       description: plugin.description,
       version: plugin.version,
-      hasApi: !!plugin.hasApi
+      hasApi: !!plugin.serviceWorker.fetchApiData
     }));
   }
 }
 const pluginRegistry = new PluginRegistry();
 debugLogger.info("PluginRegistry singleton instance created");
 
+const logger$c = loguru.getLogger("SourcePluginFactory");
 class SourcePluginFactory {
-  constructor() {
-    this.logger = loguru.getLogger("SourcePluginFactory");
-  }
   /**
    * Create a new source plugin from configuration and register it
-   * 
    * @param config Plugin configuration
    * @returns The created plugin
    */
   createPlugin(config) {
-    this.logger.info(`Creating plugin: ${config.id}`);
+    logger$c.info(`Creating plugin: ${config.id}`);
     this.validateConfig(config);
+    const serviceWorker = {
+      detectSourceId: config.serviceWorker.detectSourceId,
+      formatId: config.serviceWorker.formatId,
+      fetchApiData: config.serviceWorker.fetchApiData,
+      // Default quality evaluation if not provided
+      evaluateMetadataQuality: config.serviceWorker.evaluateMetadataQuality || ((paperData) => {
+        const essentialFields = ["title", "primary_id", "url"];
+        const standardFields = [...essentialFields, "authors"];
+        const completeFields = [...standardFields, "abstract", "timestamp"];
+        const missingEssential = essentialFields.filter((field) => {
+          const value = paperData[field];
+          return value === void 0 || value === null || value === "";
+        });
+        const missingComplete = completeFields.filter((field) => {
+          const value = paperData[field];
+          return value === void 0 || value === null || value === "";
+        });
+        let quality;
+        if (missingEssential.length > 0) {
+          quality = "minimal";
+        } else if (missingComplete.length > 0) {
+          quality = "partial";
+        } else {
+          quality = "complete";
+        }
+        return {
+          quality,
+          missingFields: missingComplete,
+          hasEssentialFields: missingEssential.length === 0
+        };
+      })
+    };
+    const contentScript = {
+      extractorModulePath: config.contentScript.extractorModulePath
+    };
     const plugin = {
       id: config.id,
       name: config.name,
@@ -163,78 +191,9 @@ class SourcePluginFactory {
       urlPatterns: config.urlPatterns,
       color: config.color,
       icon: config.icon,
-      hasApi: !!config.apiDataFetcher,
-      // ID extraction function
-      extractId: (url) => {
-        try {
-          return config.idExtractor(url);
-        } catch (error) {
-          this.logger.error(`Error extracting ID for ${config.id}:`, error);
-          return null;
-        }
-      },
-      // Content script extraction code provider
-      getContentScriptExtractor: () => {
-        return config.contentScriptExtractorCode;
-      },
-      // Default metadata quality evaluation method
-      evaluateMetadataQuality: (paperData) => {
-        try {
-          if (config.evaluateMetadataQuality) {
-            return config.evaluateMetadataQuality(paperData);
-          }
-          const essentialFields = ["title", "primary_id", "url"];
-          const standardFields = [...essentialFields, "authors"];
-          const completeFields = [...standardFields, "abstract", "timestamp"];
-          const missingEssential = essentialFields.filter((field) => {
-            const value = paperData[field];
-            return value === void 0 || value === null || value === "";
-          });
-          const missingStandard = standardFields.filter((field) => {
-            const value = paperData[field];
-            return value === void 0 || value === null || value === "";
-          });
-          const missingComplete = completeFields.filter((field) => {
-            const value = paperData[field];
-            return value === void 0 || value === null || value === "";
-          });
-          let quality;
-          if (missingEssential.length > 0) {
-            quality = "minimal";
-          } else if (missingComplete.length > 0) {
-            quality = "partial";
-          } else {
-            quality = "complete";
-          }
-          return {
-            quality,
-            missingFields: missingComplete,
-            hasEssentialFields: missingEssential.length === 0
-          };
-        } catch (error) {
-          this.logger.error(`Error evaluating metadata quality: ${error}`);
-          return {
-            quality: "minimal",
-            missingFields: ["error"],
-            hasEssentialFields: false
-          };
-        }
-      },
-      // ID formatting function
-      formatId: config.formatId
+      serviceWorker,
+      contentScript
     };
-    if (config.apiDataFetcher) {
-      plugin.fetchApiData = async (id) => {
-        try {
-          const data = await config.apiDataFetcher(id);
-          this.logger.info(`Fetched API data for ${config.id}:${id}`);
-          return data;
-        } catch (error) {
-          this.logger.error(`Error fetching API data for ${config.id}:${id}:`, error);
-          return {};
-        }
-      };
-    }
     pluginRegistry.register(plugin);
     return plugin;
   }
@@ -250,44 +209,30 @@ class SourcePluginFactory {
       "description",
       "version",
       "urlPatterns",
-      "idExtractor",
-      "formatId",
-      "contentScriptExtractorCode"
+      "serviceWorker",
+      "contentScript"
     ];
     const missingFields = requiredFields.filter((field) => !config[field]);
     if (missingFields.length > 0) {
       const error = `Plugin configuration missing required fields: ${missingFields.join(", ")}`;
-      this.logger.error(error);
+      logger$c.error(error);
       throw new Error(error);
     }
     if (!Array.isArray(config.urlPatterns) || config.urlPatterns.length === 0) {
       const error = `Plugin ${config.id} has no URL patterns`;
-      this.logger.error(error);
+      logger$c.error(error);
       throw new Error(error);
     }
-    if (typeof config.idExtractor !== "function") {
-      const error = `Plugin ${config.id} has invalid idExtractor: not a function`;
-      this.logger.error(error);
+    const requiredSWFields = ["detectSourceId", "formatId"];
+    const missingSWFields = requiredSWFields.filter((field) => !config.serviceWorker[field]);
+    if (missingSWFields.length > 0) {
+      const error = `Plugin ${config.id} service worker is missing required fields: ${missingSWFields.join(", ")}`;
+      logger$c.error(error);
       throw new Error(error);
     }
-    if (typeof config.formatId !== "function") {
-      const error = `Plugin ${config.id} has invalid formatId: not a function`;
-      this.logger.error(error);
-      throw new Error(error);
-    }
-    if (typeof config.contentScriptExtractorCode !== "string" || config.contentScriptExtractorCode.trim() === "") {
-      const error = `Plugin ${config.id} has invalid contentScriptExtractorCode: empty or not a string`;
-      this.logger.error(error);
-      throw new Error(error);
-    }
-    if (config.apiDataFetcher !== void 0 && typeof config.apiDataFetcher !== "function") {
-      const error = `Plugin ${config.id} has invalid apiDataFetcher: not a function`;
-      this.logger.error(error);
-      throw new Error(error);
-    }
-    if (config.evaluateMetadataQuality !== void 0 && typeof config.evaluateMetadataQuality !== "function") {
-      const error = `Plugin ${config.id} has invalid evaluateMetadataQuality: not a function`;
-      this.logger.error(error);
+    if (!config.contentScript.extractorModulePath) {
+      const error = `Plugin ${config.id} content script is missing required extractorModulePath`;
+      logger$c.error(error);
       throw new Error(error);
     }
   }
@@ -359,65 +304,6 @@ function parseXML(xmlText) {
 }
 
 const logger$b = loguru.getLogger("ArXivPlugin");
-const extractorCode = `
-  // Extract arXiv ID from URL
-  const idMatch = url.match(/arxiv\\.org\\/(?:abs|pdf)\\/([0-9.]+)(v[0-9]+)?/);
-  const arxivId = idMatch ? (idMatch[1] + (idMatch[2] || '')) : '';
-  
-  if (!arxivId) {
-    return null;
-  }
-  
-  // Create standardized ID
-  const primary_id = \`arxiv.\${arxivId}\`;
-  
-  // Extract title
-  let title = '';
-  const titleElement = document.querySelector('.title');
-  if (titleElement) {
-    title = titleElement.textContent?.replace('Title:', '').trim() || '';
-  }
-  
-  // Extract authors
-  let authors = '';
-  const authorElements = document.querySelectorAll('.authors a');
-  if (authorElements.length > 0) {
-    authors = Array.from(authorElements)
-      .map(el => el.textContent?.trim())
-      .filter(Boolean)
-      .join(', ');
-  }
-  
-  // Extract abstract
-  let abstract = '';
-  const abstractElement = document.querySelector('.abstract');
-  if (abstractElement) {
-    abstract = abstractElement.textContent?.replace('Abstract:', '').trim() || '';
-  }
-  
-  // Extract categories
-  const categories = [];
-  const categoryElements = document.querySelectorAll('.subjects .tag');
-  categoryElements.forEach(el => {
-    const text = el.textContent?.trim();
-    if (text) categories.push(text);
-  });
-  
-  // Return structured metadata
-  return {
-    primary_id,
-    source: 'arxiv',
-    sourceId: arxivId,
-    url,
-    title,
-    authors,
-    abstract,
-    source_specific_metadata: {
-      arxiv_tags: categories
-    },
-    timestamp: new Date().toISOString()
-  };
-`;
 const arxivPlugin = sourcePluginFactory.createPlugin({
   id: "arxiv",
   name: "arXiv",
@@ -425,94 +311,100 @@ const arxivPlugin = sourcePluginFactory.createPlugin({
   version: "1.0.0",
   color: "#B31B1B",
   icon: "📝",
-  // URL patterns for detecting arXiv papers
+  // URL patterns for detecting arXiv papers (used in both contexts)
   urlPatterns: [
     /arxiv\.org\/abs\/([0-9.]+)(v[0-9]+)?/,
     /arxiv\.org\/pdf\/([0-9.]+)(v[0-9]+)?\.pdf/,
     /arxiv\.org\/[a-z]+\/([0-9.]+)(v[0-9]+)?/
   ],
-  // Extract ID from URL
-  idExtractor: (url) => {
-    for (const pattern of [
-      /arxiv\.org\/abs\/([0-9.]+)(v[0-9]+)?/,
-      /arxiv\.org\/pdf\/([0-9.]+)(v[0-9]+)?\.pdf/,
-      /arxiv\.org\/[a-z]+\/([0-9.]+)(v[0-9]+)?/
-    ]) {
-      const match = url.match(pattern);
-      if (match) {
-        return match[1] + (match[2] || "");
-      }
-    }
-    return null;
-  },
-  // Content script extraction code
-  contentScriptExtractorCode: extractorCode,
-  // API-based metadata fetching (service worker)
-  apiDataFetcher: async (id) => {
-    logger$b.info(`Fetching arXiv API data for ID: ${id}`);
-    try {
-      const apiUrl = `https://export.arxiv.org/api/query?id_list=${id}`;
-      const response = await fetch(apiUrl);
-      if (!response.ok) {
-        throw new Error(`API error: ${response.status}`);
-      }
-      const text = await response.text();
-      const parser = parseXML(text);
-      const entryContent = parser.getEntry();
-      const title = parser.getTagContent("title");
-      const authorsList = parser.getAuthor();
-      const authors = authorsList.join(", ");
-      const abstract = parser.getTagContent("summary");
-      const categories = parser.getCategories();
-      const published = parser.getPublishedDate();
-      const primary_id = `arxiv.${id}`;
-      return {
-        primary_id,
-        source: "arxiv",
-        sourceId: id,
-        url: `https://arxiv.org/abs/${id}`,
-        title,
-        authors,
-        abstract,
-        timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-        source_specific_metadata: {
-          arxiv_tags: categories,
-          published_date: published
+  // Service worker specific functionality
+  serviceWorker: {
+    // Extract ID from URL (service worker context)
+    detectSourceId: (url) => {
+      for (const pattern of [
+        /arxiv\.org\/abs\/([0-9.]+)(v[0-9]+)?/,
+        /arxiv\.org\/pdf\/([0-9.]+)(v[0-9]+)?\.pdf/,
+        /arxiv\.org\/[a-z]+\/([0-9.]+)(v[0-9]+)?/
+      ]) {
+        const match = url.match(pattern);
+        if (match) {
+          return match[1] + (match[2] || "");
         }
+      }
+      return null;
+    },
+    // Format ID consistently
+    formatId: (id) => `arxiv.${id}`,
+    // API-based metadata fetching (service worker context)
+    fetchApiData: async (id) => {
+      logger$b.info(`Fetching arXiv API data for ID: ${id}`);
+      try {
+        const apiUrl = `https://export.arxiv.org/api/query?id_list=${id}`;
+        const response = await fetch(apiUrl);
+        if (!response.ok) {
+          throw new Error(`API error: ${response.status}`);
+        }
+        const text = await response.text();
+        const parser = parseXML(text);
+        const entryContent = parser.getEntry();
+        const title = parser.getTagContent("title");
+        const authorsList = parser.getAuthor();
+        const authors = authorsList.join(", ");
+        const abstract = parser.getTagContent("summary");
+        const categories = parser.getCategories();
+        const published = parser.getPublishedDate();
+        const primary_id = `arxiv.${id}`;
+        return {
+          primary_id,
+          source: "arxiv",
+          sourceId: id,
+          url: `https://arxiv.org/abs/${id}`,
+          title,
+          authors,
+          abstract,
+          timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+          source_specific_metadata: {
+            arxiv_tags: categories,
+            published_date: published
+          }
+        };
+      } catch (error) {
+        logger$b.error(`Error fetching arXiv API data: ${error}`);
+        return {};
+      }
+    },
+    // Custom metadata quality evaluation
+    evaluateMetadataQuality: (paperData) => {
+      const essentialFields = ["title", "primary_id", "url"];
+      const standardFields = [...essentialFields, "authors"];
+      const completeFields = [...standardFields, "abstract", "source_specific_metadata"];
+      const missingEssential = essentialFields.filter((field) => !paperData[field] || paperData[field] === "");
+      const missingComplete = completeFields.filter((field) => {
+        if (field === "source_specific_metadata") {
+          return !paperData.source_specific_metadata || !paperData.source_specific_metadata.arxiv_tags || !Array.isArray(paperData.source_specific_metadata.arxiv_tags) || paperData.source_specific_metadata.arxiv_tags.length === 0;
+        }
+        return !paperData[field] || paperData[field] === "";
+      });
+      let quality;
+      if (missingEssential.length > 0) {
+        quality = "minimal";
+      } else if (missingComplete.length > 0) {
+        quality = "partial";
+      } else {
+        quality = "complete";
+      }
+      return {
+        quality,
+        missingFields: missingComplete,
+        hasEssentialFields: missingEssential.length === 0
       };
-    } catch (error) {
-      logger$b.error(`Error fetching arXiv API data: ${error}`);
-      return {};
     }
   },
-  // Custom ID formatting
-  formatId: (id) => `arxiv.${id}`,
-  // Custom metadata quality evaluation
-  evaluateMetadataQuality: (paperData) => {
-    const essentialFields = ["title", "primary_id", "url"];
-    const standardFields = [...essentialFields, "authors"];
-    const completeFields = [...standardFields, "abstract", "source_specific_metadata"];
-    const missingEssential = essentialFields.filter((field) => !paperData[field] || paperData[field] === "");
-    standardFields.filter((field) => !paperData[field] || paperData[field] === "");
-    const missingComplete = completeFields.filter((field) => {
-      if (field === "source_specific_metadata") {
-        return !paperData.source_specific_metadata || !paperData.source_specific_metadata.arxiv_tags || !Array.isArray(paperData.source_specific_metadata.arxiv_tags) || paperData.source_specific_metadata.arxiv_tags.length === 0;
-      }
-      return !paperData[field] || paperData[field] === "";
-    });
-    let quality;
-    if (missingEssential.length > 0) {
-      quality = "minimal";
-    } else if (missingComplete.length > 0) {
-      quality = "partial";
-    } else {
-      quality = "complete";
-    }
-    return {
-      quality,
-      missingFields: missingComplete,
-      hasEssentialFields: missingEssential.length === 0
-    };
+  // Content script specific functionality
+  contentScript: {
+    // Path to the content script extractor module
+    // This will be imported at build time
+    extractorModulePath: "./extractors/arxiv_extractor"
   }
 });
 
@@ -630,25 +522,17 @@ class URLDetectionService {
   constructor() {
     // Track processing state
     this.pendingUrls = /* @__PURE__ */ new Set();
+    // Debounce configuration
+    this.debounceTime = 500;
+    // ms
+    this.debounceTimers = /* @__PURE__ */ new Map();
+    // Cache successful detections to avoid repeat processing
     this.detectionCache = /* @__PURE__ */ new Map();
+    this.maxCacheSize = 100;
     logger$9.info("URL Detection Service initialized");
   }
   /**
-   * Check if URL is valid
-   * @param {string} url URL to check
-   * @returns {boolean} Whether URL is valid
-   */
-  isValidUrl(url) {
-    if (!url) return false;
-    try {
-      new URL(url);
-      return true;
-    } catch (e) {
-      return false;
-    }
-  }
-  /**
-   * Detect paper source info from URL
+   * Detect paper source from URL
    * @param {string} url URL to analyze
    * @returns {Promise<DetectedSourceInfo|null>} Detection result with plugin
    */
@@ -681,68 +565,167 @@ class URLDetectionService {
         const sourceInfo = {
           type: result.plugin.id,
           id: result.id,
-          primary_id: result.plugin.formatId(result.id),
+          primary_id: result.plugin.serviceWorker.formatId ? result.plugin.serviceWorker.formatId(result.id) : `${result.plugin.id}.${result.id}`,
           url,
           plugin: result.plugin
         };
-        this.detectionCache.set(url, sourceInfo);
-        logger$9.info(`Detected source: ${sourceInfo.type}:${sourceInfo.id}`);
+        this.addToCache(url, sourceInfo);
+        logger$9.info(`Detected source using plugin registry: ${sourceInfo.type}:${sourceInfo.id}`);
         return sourceInfo;
+      }
+      const plugins = pluginRegistry.getAll();
+      for (const plugin of plugins) {
+        for (const pattern of plugin.urlPatterns) {
+          const match = url.match(pattern);
+          if (match) {
+            const id = plugin.serviceWorker.detectSourceId(url);
+            if (id) {
+              const sourceInfo = {
+                type: plugin.id,
+                id,
+                primary_id: plugin.serviceWorker.formatId ? plugin.serviceWorker.formatId(id) : `${plugin.id}.${id}`,
+                url,
+                plugin
+              };
+              this.addToCache(url, sourceInfo);
+              logger$9.info(`Detected source using manual check: ${sourceInfo.type}:${sourceInfo.id}`);
+              return sourceInfo;
+            }
+          }
+        }
       }
       logger$9.info(`No matching source found for URL: ${url}`);
       return null;
     } finally {
-      setTimeout(() => {
-        this.pendingUrls.delete(url);
-      }, 500);
+      this.removePendingUrlWithDelay(url);
     }
   }
   /**
-   * Check if URL is pending processing
-   * @param url URL to check
-   * @returns True if URL is pending
+   * Check if a URL is valid for paper detection
+   * @param {string} url URL to check
+   * @returns {boolean} True if URL is valid
+   */
+  isValidUrl(url) {
+    if (!url || typeof url !== "string") return false;
+    try {
+      new URL(url);
+      const commonDomains = [
+        "arxiv.org",
+        "semanticscholar.org",
+        "doi.org",
+        "dl.acm.org",
+        "openreview.net",
+        "s2-research.org"
+      ];
+      return commonDomains.some((domain) => url.includes(domain));
+    } catch (e) {
+      return false;
+    }
+  }
+  /**
+   * Check if URL is currently being processed
+   * @param {string} url URL to check
+   * @returns {boolean} True if URL is pending
    */
   isUrlPending(url) {
     return this.pendingUrls.has(url);
   }
   /**
    * Add URL to pending set
-   * @param url URL to add
+   * @param {string} url URL to add
    */
   addPendingUrl(url) {
     this.pendingUrls.add(url);
   }
   /**
-   * Clear detection cache
+   * Remove URL from pending set
+   * @param {string} url URL to remove
+   */
+  removePendingUrl(url) {
+    this.pendingUrls.delete(url);
+    if (this.debounceTimers.has(url)) {
+      clearTimeout(this.debounceTimers.get(url));
+      this.debounceTimers.delete(url);
+    }
+  }
+  /**
+   * Remove URL from pending set after a delay
+   * @param {string} url URL to remove
+   * @param {number} delay Delay in ms (default: debounceTime)
+   */
+  removePendingUrlWithDelay(url, delay) {
+    if (this.debounceTimers.has(url)) {
+      clearTimeout(this.debounceTimers.get(url));
+    }
+    const timer = setTimeout(() => {
+      this.pendingUrls.delete(url);
+      this.debounceTimers.delete(url);
+    }, delay || this.debounceTime);
+    this.debounceTimers.set(url, timer);
+  }
+  /**
+   * Add a successful detection to cache
+   * @param {string} url URL 
+   * @param {DetectedSourceInfo} info Detection info
+   */
+  addToCache(url, info) {
+    if (!url) {
+      logger$9.warning("Attempted to cache with empty URL");
+      return;
+    }
+    if (this.detectionCache.size >= this.maxCacheSize) {
+      const oldestKey = this.detectionCache.keys().next().value;
+      if (oldestKey) {
+        this.detectionCache.delete(oldestKey);
+      }
+    }
+    this.detectionCache.set(url, info);
+  }
+  /**
+   * Clear the detection cache
    */
   clearCache() {
     this.detectionCache.clear();
-    logger$9.info("Detection cache cleared");
   }
   /**
-   * Get a plugin's extractor code for a URL
-   * @param url URL to get extractor for
-   * @returns Extractor code as string or null
+   * Get information about extractor module for a plugin
+   * @param id Plugin ID
+   * @returns Extractor information or null
    */
-  async getExtractorForUrl(url) {
-    const sourceInfo = await this.detectSource(url);
-    if (!sourceInfo || !sourceInfo.plugin) {
+  getExtractorInfoForPlugin(id) {
+    const plugin = pluginRegistry.get(id);
+    if (!plugin || !plugin.contentScript || !plugin.contentScript.extractorModulePath) {
       return null;
     }
-    try {
-      return sourceInfo.plugin.getContentScriptExtractor();
-    } catch (error) {
-      logger$9.error(`Error getting extractor for ${url}:`, error);
-      return null;
-    }
+    return {
+      path: plugin.contentScript.extractorModulePath
+    };
   }
   /**
-   * Get extractor code for a specific plugin
-   * @param pluginId Plugin ID
-   * @returns Extractor code or null
+   * Reset the service state
+   * Used for testing and emergency recovery
    */
-  getExtractorForPlugin(pluginId) {
-    return pluginRegistry.getExtractorCode(pluginId);
+  reset() {
+    this.pendingUrls.clear();
+    for (const timer of this.debounceTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.debounceTimers.clear();
+    this.clearCache();
+    logger$9.info("URL Detection Service has been reset");
+  }
+  /**
+   * Get service status information
+   * @returns {Object} Service status
+   */
+  getStatus() {
+    return {
+      pendingUrlsCount: this.pendingUrls.size,
+      activeTimersCount: this.debounceTimers.size,
+      cacheSize: this.detectionCache.size,
+      pluginsInitialized: arePluginsInitialized(),
+      pluginCount: pluginRegistry.getAll().length
+    };
   }
 }
 const urlDetectionService = new URLDetectionService();
@@ -777,8 +760,8 @@ var d=class{constructor(e={}){this.cache=new Map,this.maxSize=e.maxSize??1e3,thi
 
 function formatPrimaryId(source, id) {
   const plugin = pluginRegistry.get(source);
-  if (plugin && plugin.formatId) {
-    return plugin.formatId(id);
+  if (plugin && plugin.serviceWorker && plugin.serviceWorker.formatId) {
+    return plugin.serviceWorker.formatId(id);
   }
   const safeId = id.replace(/\//g, "_").replace(/:/g, ".").replace(/\s/g, "_").replace(/\\/g, "_");
   return `${source}.${safeId}`;
@@ -1321,10 +1304,10 @@ async function extractMetadataFromSource(sourceInfo) {
     return null;
   }
   try {
-    if (sourceInfo.plugin.hasApi && sourceInfo.plugin.fetchApiData) {
+    if (sourceInfo.plugin.serviceWorker && sourceInfo.plugin.serviceWorker.fetchApiData) {
       try {
         logger$5.info(`Using ${sourceInfo.plugin.id} plugin API to extract metadata`);
-        const apiData = await sourceInfo.plugin.fetchApiData(sourceInfo.id);
+        const apiData = await sourceInfo.plugin.serviceWorker.fetchApiData(sourceInfo.id);
         if (apiData && Object.keys(apiData).length > 0) {
           return {
             ...apiData,
@@ -1353,7 +1336,7 @@ async function extractMetadataFromSource(sourceInfo) {
   }
 }
 async function extractMetadataFromDOM(tabId, sourceInfo) {
-  if (!sourceInfo || !sourceInfo.plugin || !sourceInfo.plugin.extractMetadata) {
+  if (!sourceInfo || !sourceInfo.plugin || !sourceInfo.plugin.contentScript || !sourceInfo.plugin.contentScript.extractorModulePath) {
     return null;
   }
   try {
@@ -1365,37 +1348,18 @@ async function extractMetadataFromDOM(tabId, sourceInfo) {
     if (script && script[0] && script[0].result) {
       try {
         const htmlString = script[0].result;
-        const metadata = await sourceInfo.plugin.extractMetadata({
-          documentElement: { outerHTML: htmlString }
-        }, sourceInfo.url);
-        if (metadata && Object.keys(metadata).length > 0) {
-          return {
-            ...metadata,
-            source: sourceInfo.type,
-            sourceId: sourceInfo.id,
-            primary_id: sourceInfo.primary_id,
-            url: sourceInfo.url
-          };
-        }
+        const extractorModule = sourceInfo.plugin.contentScript.extractorModulePath;
+        return {
+          source: sourceInfo.type,
+          sourceId: sourceInfo.id,
+          primary_id: sourceInfo.primary_id,
+          url: sourceInfo.url,
+          title: `${sourceInfo.type.toUpperCase()} Paper: ${sourceInfo.id}`,
+          _note: `Would load extractor from: ${extractorModule}`
+        };
       } catch (parserError) {
         logger$5.error(`Error parsing HTML in service worker: ${parserError}`);
-        try {
-          const metadata = await sourceInfo.plugin.extractMetadata(
-            { innerHTML: script[0].result },
-            sourceInfo.url
-          );
-          if (metadata && Object.keys(metadata).length > 0) {
-            return {
-              ...metadata,
-              source: sourceInfo.type,
-              sourceId: sourceInfo.id,
-              primary_id: sourceInfo.primary_id,
-              url: sourceInfo.url
-            };
-          }
-        } catch (fallbackError) {
-          logger$5.error(`Error with fallback metadata extraction: ${fallbackError}`);
-        }
+        return null;
       }
     }
   } catch (error) {

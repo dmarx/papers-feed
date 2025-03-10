@@ -1,27 +1,33 @@
 // extension/papers/metadata_service.ts - Paper metadata extraction service
 
 import { loguru } from "../utils/logger";
-import { DetectedSourceInfo } from './detection_service';
+import { SourceInfo } from "../types/common";
+
+// Extend SourceInfo to include plugin
+export interface DetectedSourceInfoWithPlugin extends SourceInfo {
+  plugin?: any;  // Associated plugin if available
+}
 
 const logger = loguru.getLogger('MetadataService');
 
 /**
  * Extract metadata from a detected source using its plugin
- * @param {DetectedSourceInfo} sourceInfo Source info with plugin
+ * @param {DetectedSourceInfoWithPlugin} sourceInfo Source info with plugin
  * @returns {Promise<any|null>} Extracted metadata or null
  */
-export async function extractMetadataFromSource(sourceInfo: DetectedSourceInfo): Promise<any | null> {
+export async function extractMetadataFromSource(sourceInfo: DetectedSourceInfoWithPlugin): Promise<any | null> {
   if (!sourceInfo || !sourceInfo.plugin) {
     logger.info('No valid source info or plugin');
     return null;
   }
   
   try {
-    // Try to use the plugin's API if available
-    if (sourceInfo.plugin.hasApi && sourceInfo.plugin.fetchApiData) {
+    // Try to use the plugin's API if available through serviceWorker
+    if (sourceInfo.plugin.serviceWorker && 
+        sourceInfo.plugin.serviceWorker.fetchApiData) {
       try {
         logger.info(`Using ${sourceInfo.plugin.id} plugin API to extract metadata`);
-        const apiData = await sourceInfo.plugin.fetchApiData(sourceInfo.id);
+        const apiData = await sourceInfo.plugin.serviceWorker.fetchApiData(sourceInfo.id);
         
         if (apiData && Object.keys(apiData).length > 0) {
           // Ensure required fields are present
@@ -57,11 +63,13 @@ export async function extractMetadataFromSource(sourceInfo: DetectedSourceInfo):
 /**
  * Extract metadata from DOM using plugin's extraction method
  * @param {number} tabId Tab ID for DOM access
- * @param {DetectedSourceInfo} sourceInfo Source info with plugin
+ * @param {DetectedSourceInfoWithPlugin} sourceInfo Source info with plugin
  * @returns {Promise<any|null>} Extracted metadata or null
  */
-export async function extractMetadataFromDOM(tabId: number, sourceInfo: DetectedSourceInfo): Promise<any | null> {
-  if (!sourceInfo || !sourceInfo.plugin || !sourceInfo.plugin.extractMetadata) {
+export async function extractMetadataFromDOM(tabId: number, sourceInfo: DetectedSourceInfoWithPlugin): Promise<any | null> {
+  if (!sourceInfo || !sourceInfo.plugin || 
+      !sourceInfo.plugin.contentScript ||
+      !sourceInfo.plugin.contentScript.extractorModulePath) {
     return null;
   }
   
@@ -81,42 +89,21 @@ export async function extractMetadataFromDOM(tabId: number, sourceInfo: Detected
         const htmlString = script[0].result as string;
         
         // Since we're in a service worker, we need to use a different approach for metadata extraction
-        // Ask the plugin to extract metadata - must be a service worker safe implementation
-        const metadata = await sourceInfo.plugin.extractMetadata({
-          documentElement: { outerHTML: htmlString }
-        }, sourceInfo.url);
+        // Load the extractor dynamically based on the module path
+        const extractorModule = sourceInfo.plugin.contentScript.extractorModulePath;
         
-        if (metadata && Object.keys(metadata).length > 0) {
-          return {
-            ...metadata,
-            source: sourceInfo.type,
-            sourceId: sourceInfo.id,
-            primary_id: sourceInfo.primary_id,
-            url: sourceInfo.url
-          };
-        }
+        // For now, just return minimal data with note about dynamic loading
+        return {
+          source: sourceInfo.type,
+          sourceId: sourceInfo.id,
+          primary_id: sourceInfo.primary_id,
+          url: sourceInfo.url,
+          title: `${sourceInfo.type.toUpperCase()} Paper: ${sourceInfo.id}`,
+          _note: `Would load extractor from: ${extractorModule}`
+        };
       } catch (parserError) {
         logger.error(`Error parsing HTML in service worker: ${parserError}`);
-        // Fall back to direct string content
-        try {
-          // Use a simpler approach - pass the HTML as a string
-          const metadata = await sourceInfo.plugin.extractMetadata(
-            { innerHTML: script[0].result },
-            sourceInfo.url
-          );
-          
-          if (metadata && Object.keys(metadata).length > 0) {
-            return {
-              ...metadata,
-              source: sourceInfo.type,
-              sourceId: sourceInfo.id,
-              primary_id: sourceInfo.primary_id,
-              url: sourceInfo.url
-            };
-          }
-        } catch (fallbackError) {
-          logger.error(`Error with fallback metadata extraction: ${fallbackError}`);
-        }
+        return null;
       }
     }
   } catch (error) {
@@ -129,12 +116,12 @@ export async function extractMetadataFromDOM(tabId: number, sourceInfo: Detected
 /**
  * Process a paper URL to extract full metadata
  * @param {string} url URL to process
- * @param {DetectedSourceInfo} sourceInfo Source detection info
+ * @param {DetectedSourceInfoWithPlugin} sourceInfo Source detection info
  * @param {number|null} tabId Optional tab ID for DOM access
  * @returns {Promise<any|null>} Full paper data or null
  */
 export async function extractPaperMetadata(
-  sourceInfo: DetectedSourceInfo, 
+  sourceInfo: DetectedSourceInfoWithPlugin, 
   tabId: number | null = null
 ): Promise<any | null> {
   try {

@@ -1,139 +1,8 @@
-/**
- * Enhance paper data with additional metadata from APIs
- * 
- * @param {any} paperData - Basic paper data
- * @returns {Promise<any>} Enhanced paper data
- */
-export async function enhancePaperData(paperData: any): Promise<any> {
-  if (!paperData.source || !paperData.sourceId) {
-    return paperData;
-  }
-  
-  try {
-    // Try to get additional metadata
-    const additionalData = await fetchAdditionalMetadata(
-      paperData.source,
-      paperData.sourceId
-    );
-    
-    if (additionalData) {
-      // Check if we have a plugin for this source
-      const plugin = pluginRegistry.get(paperData.source);
-      
-      if (plugin) {
-        // The plugin API already handled this in fetchAdditionalMetadata
-        // Just add source info
-        return {
-          ...paperData,
-          ...additionalData,
-          source: paperData.source,
-          sourceId: paperData.sourceId,
-          primary_id: paperData.primary_id
-        };
-      }
-      
-      // Source-specific data enhancement
-      if (paperData.source === 'semanticscholar') {
-        // Update with S2 data
-        if (!paperData.title && additionalData.title) {
-          paperData.title = additionalData.title;
-        }
-        
-        if (!paperData.abstract && additionalData.abstract) {
-          paperData.abstract = additionalData.abstract;
-        }
-        
-        if (!paperData.authors && additionalData.authors) {
-          paperData.authors = additionalData.authors
-            .map((author: any) => author.name)
-            .join(', ');
-        }
-        
-        // Add identifiers
-        if (additionalData.doi) {
-          paperData.doi = additionalData.doi;
-          paperData.identifiers.doi = additionalData.doi;
-        }
-        
-        if (additionalData.arxivId) {
-          paperData.identifiers.arxiv = additionalData.arxivId;
-        }
-        
-        // Add citation count
-        if (additionalData.citationCount) {
-          paperData.citations = additionalData.citationCount;
-        }
-      } else if (paperData.source === 'doi') {
-        // Update with CrossRef data
-        if (!paperData.title && additionalData.title) {
-          paperData.title = additionalData.title;
-        }
-        
-        if (!paperData.authors && additionalData.author) {
-          paperData.authors = additionalData.author
-            .map((author: any) => {
-              if (author.given && author.family) {
-                return `${author.given} ${author.family}`;
-              }
-              return author.name || '';
-            })
-            .filter(Boolean)
-            .join(', ');
-        }
-        
-        // Add publication date
-        if (!paperData.published_date && additionalData.created) {
-          const date = new Date(additionalData.created['date-time']);
-          paperData.published_date = date.toISOString().split('T')[0];
-        }
-      } else if (paperData.source === 'openreview') {
-        // Update with OpenReview data
-        if (additionalData.notes && additionalData.notes.length > 0) {
-          const note = additionalData.notes[0];
-          
-          if (note.content) {
-            if (!paperData.title && note.content.title) {
-              paperData.title = note.content.title;
-            }
-            
-            if (!paperData.abstract && note.content.abstract) {
-              paperData.abstract = note.content.abstract;
-            }
-            
-            if (!paperData.authors && note.content.authors) {
-              if (Array.isArray(note.content.authors)) {
-                paperData.authors = note.content.authors.join(', ');
-              } else {
-                paperData.authors = note.content.authors;
-              }
-            }
-            
-            // Add venue information
-            if (note.venue) {
-              paperData.venue = note.venue;
-            }
-            
-            // Add specific OpenReview metadata
-            paperData.source_specific_metadata = {
-              forum_id: note.forum || note.id,
-              invitation: note.invitation,
-              creation_date: note.cdate ? new Date(note.cdate).toISOString() : undefined,
-              publication_date: note.pdate ? new Date(note.pdate).toISOString() : undefined
-            };
-          }
-        }
-      }
-    }
-  } catch (error) {
-    logger.error('Error enhancing paper data:', error);
-  }
-  
-  return paperData;
-}// extension/papers/process_paper_url.ts
+// extension/papers/process_paper_url.ts
 // Process paper URLs from multiple sources with plugin system integration
 
 import { MultiSourceDetector } from './detector';
-import { SourceInfo } from './types';
+import { SourceInfo } from '../types/common';
 import { formatPrimaryId } from './source_utils';
 import { pluginRegistry } from './plugins/registry';
 import { loguru } from '../utils/logger';
@@ -337,12 +206,14 @@ function findPluginForUrl(url: string): (SourceInfo & { plugin?: any }) | null {
     for (const pattern of plugin.urlPatterns) {
       const match = url.match(pattern);
       if (match) {
-        const id = plugin.extractId(url);
+        const id = plugin.serviceWorker.detectSourceId(url);
         if (id) {
           return {
             type: plugin.id,
             id: id,
-            primary_id: plugin.formatId ? plugin.formatId(id) : formatPrimaryId(plugin.id, id),
+            primary_id: plugin.serviceWorker.formatId ? 
+              plugin.serviceWorker.formatId(id) : 
+              formatPrimaryId(plugin.id, id),
             url,
             plugin: plugin
           };
@@ -384,10 +255,10 @@ export async function processPaperUrl(
     const plugin = sourceInfo.plugin;
     
     // Try to use plugin's API
-    if (plugin.hasApi && plugin.fetchApiData) {
+    if (plugin.serviceWorker && plugin.serviceWorker.fetchApiData) {
       try {
         logger.info(`Using ${plugin.id} plugin API`);
-        const apiData = await plugin.fetchApiData(sourceId);
+        const apiData = await plugin.serviceWorker.fetchApiData(sourceId);
         if (Object.keys(apiData).length > 0) {
           // Add required source information
           return {
@@ -494,10 +365,10 @@ export async function fetchAdditionalMetadata(
   // First check if we have a plugin for this source
   const plugin = pluginRegistry.get(sourceType);
   
-  if (plugin && plugin.hasApi && plugin.fetchApiData) {
+  if (plugin && plugin.serviceWorker && plugin.serviceWorker.fetchApiData) {
     try {
       logger.info(`Using ${plugin.id} plugin API for additional metadata`);
-      return await plugin.fetchApiData(sourceId);
+      return await plugin.serviceWorker.fetchApiData(sourceId);
     } catch (error) {
       logger.error(`Error fetching metadata via plugin API: ${error}`);
     }

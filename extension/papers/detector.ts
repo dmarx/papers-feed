@@ -1,7 +1,7 @@
 // extension/papers/detector.ts
 // Simplified detector that uses the plugin registry
 
-import { SourceInfo } from './types';
+import { SourceInfo } from '../types/common';
 import { formatPrimaryId } from './source_utils';
 import { pluginRegistry } from './plugins/registry';
 import { loguru } from '../utils/logger';
@@ -26,9 +26,13 @@ export class MultiSourceDetector {
       for (const pattern of plugin.urlPatterns) {
         const match = url.match(pattern);
         if (match) {
-          const id = plugin.extractId(url);
+          const id = plugin.serviceWorker.detectSourceId(url);
           if (id) {
-            const primary_id = plugin.formatId ? plugin.formatId(id) : formatPrimaryId(plugin.id, id);
+            // Use serviceWorker.formatId instead of plugin.formatId
+            const primary_id = plugin.serviceWorker.formatId ? 
+              plugin.serviceWorker.formatId(id) : 
+              formatPrimaryId(plugin.id, id);
+            
             logger.info(`Detected ${plugin.id} paper: ${id} (${primary_id})`);
             return {
               type: plugin.id,

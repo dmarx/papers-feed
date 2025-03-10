@@ -1,24 +1,24 @@
 // extension/papers/detection_service.ts
-// Enhanced paper detection service using the plugin system
+// Enhanced paper detection service
 
 import { loguru } from "../utils/logger";
-import { SourceInfo } from './types';
 import { pluginRegistry } from './plugins/registry';
 import { arePluginsInitialized, initializePluginSystem } from './plugins/loader';
+import { SourceInfo } from '../types/common';
 
 const logger = loguru.getLogger('DetectionService');
 
-// Define interfaces for detection service
-export interface DetectedSourceInfo extends SourceInfo {
-  plugin?: any; // Plugin instance
-}
-
-// Define NavDetails interface for Chrome API types
+// Type definition for navigation details
 interface NavDetails {
     tabId: number;
     url: string;
     frameId: number;
     timeStamp: number;
+}
+
+// Export the interface for use elsewhere
+export interface DetectedSourceInfo extends SourceInfo {
+  plugin?: any;  // Associated plugin if available
 }
 
 /**
@@ -27,30 +27,21 @@ interface NavDetails {
 export class URLDetectionService {
   // Track processing state
   private pendingUrls = new Set<string>();
+  
+  // Debounce configuration
+  private debounceTime = 500; // ms
+  private debounceTimers = new Map<string, NodeJS.Timeout>();
+  
+  // Cache successful detections to avoid repeat processing
   private detectionCache = new Map<string, DetectedSourceInfo>();
+  private maxCacheSize = 100;
   
   constructor() {
     logger.info('URL Detection Service initialized');
   }
   
   /**
-   * Check if URL is valid
-   * @param {string} url URL to check
-   * @returns {boolean} Whether URL is valid
-   */
-  isValidUrl(url: string): boolean {
-    if (!url) return false;
-    
-    try {
-      new URL(url);
-      return true;
-    } catch (e) {
-      return false;
-    }
-  }
-
-  /**
-   * Detect paper source info from URL
+   * Detect paper source from URL
    * @param {string} url URL to analyze
    * @returns {Promise<DetectedSourceInfo|null>} Detection result with plugin
    */
@@ -60,7 +51,7 @@ export class URLDetectionService {
       return null;
     }
     
-    // Check cache first
+    // First check cache
     if (this.detectionCache.has(url)) {
       logger.info(`Cache hit for ${url}`);
       return this.detectionCache.get(url) as DetectedSourceInfo;
@@ -87,40 +78,95 @@ export class URLDetectionService {
       // Mark URL as pending
       this.addPendingUrl(url);
       
-      // Use the plugin registry to find a matching plugin
+      // Try using the plugin registry's findForUrl method first
       const result = pluginRegistry.findForUrl(url);
-      
       if (result) {
-        // Create a standardized result
         const sourceInfo: DetectedSourceInfo = {
           type: result.plugin.id,
           id: result.id,
-          primary_id: result.plugin.formatId(result.id),
+          primary_id: result.plugin.serviceWorker.formatId ? 
+            result.plugin.serviceWorker.formatId(result.id) : 
+            `${result.plugin.id}.${result.id}`,
           url: url,
           plugin: result.plugin
         };
         
-        // Cache the result
-        this.detectionCache.set(url, sourceInfo);
+        // Add to cache
+        this.addToCache(url, sourceInfo);
         
-        logger.info(`Detected source: ${sourceInfo.type}:${sourceInfo.id}`);
+        logger.info(`Detected source using plugin registry: ${sourceInfo.type}:${sourceInfo.id}`);
         return sourceInfo;
+      }
+      
+      // Fall back to checking each plugin manually
+      const plugins = pluginRegistry.getAll();
+      
+      for (const plugin of plugins) {
+        for (const pattern of plugin.urlPatterns) {
+          const match = url.match(pattern);
+          if (match) {
+            const id = plugin.serviceWorker.detectSourceId(url);
+            if (id) {
+              const sourceInfo: DetectedSourceInfo = {
+                type: plugin.id,
+                id: id,
+                primary_id: plugin.serviceWorker.formatId ? 
+                  plugin.serviceWorker.formatId(id) : 
+                  `${plugin.id}.${id}`,
+                url: url,
+                plugin: plugin
+              };
+              
+              // Add to cache
+              this.addToCache(url, sourceInfo);
+              
+              logger.info(`Detected source using manual check: ${sourceInfo.type}:${sourceInfo.id}`);
+              return sourceInfo;
+            }
+          }
+        }
       }
       
       logger.info(`No matching source found for URL: ${url}`);
       return null;
     } finally {
-      // Remove from pending after a delay to prevent immediate reprocessing
-      setTimeout(() => {
-        this.pendingUrls.delete(url);
-      }, 500);
+      // Clean up pending URL after a delay to prevent immediate reprocessing
+      this.removePendingUrlWithDelay(url);
     }
   }
   
   /**
-   * Check if URL is pending processing
-   * @param url URL to check
-   * @returns True if URL is pending
+   * Check if a URL is valid for paper detection
+   * @param {string} url URL to check
+   * @returns {boolean} True if URL is valid
+   */
+  isValidUrl(url: string): boolean {
+    if (!url || typeof url !== 'string') return false;
+    
+    try {
+      // Basic URL validation
+      new URL(url);
+      
+      // Check for common academic domains
+      const commonDomains = [
+        'arxiv.org',
+        'semanticscholar.org',
+        'doi.org',
+        'dl.acm.org',
+        'openreview.net',
+        's2-research.org'
+      ];
+      
+      return commonDomains.some(domain => url.includes(domain));
+    } catch (e) {
+      return false;
+    }
+  }
+  
+  /**
+   * Check if URL is currently being processed
+   * @param {string} url URL to check
+   * @returns {boolean} True if URL is pending
    */
   isUrlPending(url: string): boolean {
     return this.pendingUrls.has(url);
@@ -128,50 +174,128 @@ export class URLDetectionService {
   
   /**
    * Add URL to pending set
-   * @param url URL to add
+   * @param {string} url URL to add
    */
   addPendingUrl(url: string): void {
     this.pendingUrls.add(url);
   }
   
   /**
-   * Clear detection cache
+   * Remove URL from pending set
+   * @param {string} url URL to remove
+   */
+  removePendingUrl(url: string): void {
+    this.pendingUrls.delete(url);
+    
+    // Clear any existing timer
+    if (this.debounceTimers.has(url)) {
+      clearTimeout(this.debounceTimers.get(url));
+      this.debounceTimers.delete(url);
+    }
+  }
+  
+  /**
+   * Remove URL from pending set after a delay
+   * @param {string} url URL to remove
+   * @param {number} delay Delay in ms (default: debounceTime)
+   */
+  removePendingUrlWithDelay(url: string, delay?: number): void {
+    // Clear any existing timer
+    if (this.debounceTimers.has(url)) {
+      clearTimeout(this.debounceTimers.get(url) as NodeJS.Timeout);
+    }
+    
+    // Set new timer
+    const timer = setTimeout(() => {
+      this.pendingUrls.delete(url);
+      this.debounceTimers.delete(url);
+    }, delay || this.debounceTime);
+    
+    this.debounceTimers.set(url, timer);
+  }
+  
+  /**
+   * Add a successful detection to cache
+   * @param {string} url URL 
+   * @param {DetectedSourceInfo} info Detection info
+   */
+  private addToCache(url: string, info: DetectedSourceInfo): void {
+    if (!url) {
+      logger.warning('Attempted to cache with empty URL');
+      return;
+    }
+    
+    // Implement LRU cache eviction if needed
+    if (this.detectionCache.size >= this.maxCacheSize) {
+      // Remove oldest entry (first key)
+      const oldestKey = this.detectionCache.keys().next().value;
+      if (oldestKey) {
+        this.detectionCache.delete(oldestKey);
+      }
+    }
+    
+    this.detectionCache.set(url, info);
+  }
+  
+  /**
+   * Clear the detection cache
    */
   clearCache(): void {
     this.detectionCache.clear();
-    logger.info('Detection cache cleared');
   }
   
   /**
-   * Get a plugin's extractor code for a URL
-   * @param url URL to get extractor for
-   * @returns Extractor code as string or null
+   * Get information about extractor module for a plugin
+   * @param id Plugin ID
+   * @returns Extractor information or null
    */
-  async getExtractorForUrl(url: string): Promise<string | null> {
-    const sourceInfo = await this.detectSource(url);
-    if (!sourceInfo || !sourceInfo.plugin) {
+  getExtractorInfoForPlugin(id: string): { path: string } | null {
+    const plugin = pluginRegistry.get(id);
+    if (!plugin || !plugin.contentScript || !plugin.contentScript.extractorModulePath) {
       return null;
     }
     
-    try {
-      return sourceInfo.plugin.getContentScriptExtractor();
-    } catch (error) {
-      logger.error(`Error getting extractor for ${url}:`, error);
-      return null;
-    }
+    return {
+      path: plugin.contentScript.extractorModulePath
+    };
   }
   
   /**
-   * Get extractor code for a specific plugin
-   * @param pluginId Plugin ID
-   * @returns Extractor code or null
+   * Reset the service state
+   * Used for testing and emergency recovery
    */
-  getExtractorForPlugin(pluginId: string): string | null {
-    return pluginRegistry.getExtractorCode(pluginId);
+  reset(): void {
+    // Clear pending URLs
+    this.pendingUrls.clear();
+    
+    // Clear all timers
+    for (const timer of this.debounceTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.debounceTimers.clear();
+    
+    // Clear cache
+    this.clearCache();
+    
+    logger.info('URL Detection Service has been reset');
+  }
+  
+  /**
+   * Get service status information
+   * @returns {Object} Service status
+   */
+  getStatus(): any {
+    return {
+      pendingUrlsCount: this.pendingUrls.size,
+      activeTimersCount: this.debounceTimers.size,
+      cacheSize: this.detectionCache.size,
+      pluginsInitialized: arePluginsInitialized(),
+      pluginCount: pluginRegistry.getAll().length
+    };
   }
 }
 
-// Create singleton instance
+// Export singleton instance
 export const urlDetectionService = new URLDetectionService();
 
 /**
