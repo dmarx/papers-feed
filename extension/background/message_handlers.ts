@@ -159,7 +159,7 @@ export class MessageHandlers {
    */
   async handleTrackPaper(request: any): Promise<MessageResponse> {
     try {
-      let paperData;
+      let paperData: PaperData | null = null;
       
       if (request.url) {
         // Process using URL
