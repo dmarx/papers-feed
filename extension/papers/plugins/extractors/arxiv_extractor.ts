@@ -30,9 +30,19 @@ export async function extractMetadata(
     
     // Extract title
     let title = '';
-    const titleElement = document.querySelector('.title');
-    if (titleElement) {
-      title = titleElement.textContent?.replace('Title:', '').trim() || '';
+    // Prioritize structured content fields when available <-- TODO: update rest of plugin to follow this convention
+    const metaTitle = document.querySelector('meta[name="citation_title"]')?.getAttribute('content') ||
+                       document.querySelector('meta[property="og:title"]')?.getAttribute('content');
+    if (metaTitle) {
+      title = metaTitle;
+    } else {
+      // Fallback to page body
+      const titleElement = document.querySelector('h1.title.mathjax');
+      if (titleElement) {
+        const titleContent = titleElement.textContent || '';
+        // Remove "Title:" prefix if present
+        title = titleContent.replace('Title:', '').trim();
+      }
     }
     
     // Extract authors
