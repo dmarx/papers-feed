@@ -8,17 +8,17 @@ import { SourceInfo } from '../types/common';
 
 const logger = loguru.getLogger('DetectionService');
 
-// Extended source info with plugin
-export interface DetectedSourceInfo extends SourceInfo {
-  plugin?: any;  // Associated plugin if available
-}
-
 // Type definition for navigation details
 interface NavDetails {
     tabId: number;
     url: string;
     frameId: number;
     timeStamp: number;
+}
+
+// Export the interface for use elsewhere
+export interface DetectedSourceInfo extends SourceInfo {
+  plugin?: any;  // Associated plugin if available
 }
 
 /**
@@ -78,15 +78,15 @@ export class URLDetectionService {
       // Mark URL as pending
       this.addPendingUrl(url);
       
-      // Use the plugin registry's findForUrl method first
+      // Try using the plugin registry's findForUrl method first
       const result = pluginRegistry.findForUrl(url);
-      
       if (result) {
-        // Create a standardized result
         const sourceInfo: DetectedSourceInfo = {
           type: result.plugin.id,
           id: result.id,
-          primary_id: result.plugin.formatId(result.id),
+          primary_id: result.plugin.serviceWorker.formatId ? 
+            result.plugin.serviceWorker.formatId(result.id) : 
+            `${result.plugin.id}.${result.id}`,
           url: url,
           plugin: result.plugin
         };
@@ -94,27 +94,70 @@ export class URLDetectionService {
         // Add to cache
         this.addToCache(url, sourceInfo);
         
-        logger.info(`Detected source: ${sourceInfo.type}:${sourceInfo.id}`);
+        logger.info(`Detected source using plugin registry: ${sourceInfo.type}:${sourceInfo.id}`);
         return sourceInfo;
+      }
+      
+      // Fall back to checking each plugin manually
+      const plugins = pluginRegistry.getAll();
+      
+      for (const plugin of plugins) {
+        for (const pattern of plugin.urlPatterns) {
+          const match = url.match(pattern);
+          if (match) {
+            const id = plugin.serviceWorker.detectSourceId(url);
+            if (id) {
+              const sourceInfo: DetectedSourceInfo = {
+                type: plugin.id,
+                id: id,
+                primary_id: plugin.serviceWorker.formatId ? 
+                  plugin.serviceWorker.formatId(id) : 
+                  `${plugin.id}.${id}`,
+                url: url,
+                plugin: plugin
+              };
+              
+              // Add to cache
+              this.addToCache(url, sourceInfo);
+              
+              logger.info(`Detected source using manual check: ${sourceInfo.type}:${sourceInfo.id}`);
+              return sourceInfo;
+            }
+          }
+        }
       }
       
       logger.info(`No matching source found for URL: ${url}`);
       return null;
     } finally {
-      // Remove from pending after a delay to prevent immediate reprocessing
+      // Clean up pending URL after a delay to prevent immediate reprocessing
       this.removePendingUrlWithDelay(url);
     }
   }
   
   /**
-   * Check if URL is valid
+   * Check if a URL is valid for paper detection
    * @param {string} url URL to check
-   * @returns {boolean} Whether URL is valid
+   * @returns {boolean} True if URL is valid
    */
   isValidUrl(url: string): boolean {
+    if (!url || typeof url !== 'string') return false;
+    
     try {
+      // Basic URL validation
       new URL(url);
-      return true;
+      
+      // Check for common academic domains
+      const commonDomains = [
+        'arxiv.org',
+        'semanticscholar.org',
+        'doi.org',
+        'dl.acm.org',
+        'openreview.net',
+        's2-research.org'
+      ];
+      
+      return commonDomains.some(domain => url.includes(domain));
     } catch (e) {
       return false;
     }
@@ -202,41 +245,13 @@ export class URLDetectionService {
   }
   
   /**
-   * Get a plugin's extractor code for a URL
-   * @param url URL to get extractor for
-   * @returns Extractor code as string or null
-   */
-  async getExtractorForUrl(url: string): Promise<string | null> {
-    const sourceInfo = await this.detectSource(url);
-    if (!sourceInfo || !sourceInfo.plugin) {
-      return null;
-    }
-    
-    try {
-      return sourceInfo.plugin.getContentScriptExtractor();
-    } catch (error) {
-      logger.error(`Error getting extractor for ${url}:`, error);
-      return null;
-    }
-  }
-  
-  /**
-   * Get extractor code for a specific plugin
-   * @param pluginId Plugin ID
-   * @returns Extractor code or null
-   */
-  getExtractorForPlugin(pluginId: string): string | null {
-    return pluginRegistry.getExtractorCode(pluginId);
-  }
-  
-  /**
    * Get information about extractor module for a plugin
    * @param id Plugin ID
    * @returns Extractor information or null
    */
   getExtractorInfoForPlugin(id: string): { path: string } | null {
     const plugin = pluginRegistry.get(id);
-    if (!plugin) {
+    if (!plugin || !plugin.contentScript || !plugin.contentScript.extractorModulePath) {
       return null;
     }
     
