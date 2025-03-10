@@ -15,11 +15,6 @@ interface PaperTracker {
   extractMetadata: () => Promise<any>;
   trackPaper: (url: string) => void;
   isPaperUrl: (url: string) => Promise<boolean>;
-  
-  // Include these to be compatible with old interface
-  detectPaperSource: (url: string) => any | null;
-  fetchPaperMetadata: (source: string, id: string) => Promise<any>;
-  processPaperLink?: (link: HTMLAnchorElement) => Promise<void>;
 }
 
 /**
