@@ -89,14 +89,20 @@ export class SourcePluginFactory {
           const completeFields = [...standardFields, 'abstract', 'timestamp'];
           
           // Check which fields are missing
-          const missingEssential = essentialFields.filter(field => 
-            !paperData[field] || paperData[field] === '');
+          const missingEssential = essentialFields.filter(field => {
+            const value = paperData[field];
+            return value === undefined || value === null || value === '';
+          });
           
-          const missingStandard = standardFields.filter(field => 
-            !paperData[field] || paperData[field] === '');
+          const missingStandard = standardFields.filter(field => {
+            const value = paperData[field];
+            return value === undefined || value === null || value === '';
+          });
           
-          const missingComplete = completeFields.filter(field => 
-            !paperData[field] || paperData[field] === '');
+          const missingComplete = completeFields.filter(field => {
+            const value = paperData[field];
+            return value === undefined || value === null || value === '';
+          });
           
           // Calculate quality level
           let quality: 'minimal' | 'partial' | 'complete';
