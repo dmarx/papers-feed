@@ -1,12 +1,17 @@
 // extension/papers/detection_service.ts
-// Enhanced paper detection service using context-separated plugins
+// Enhanced paper detection service
 
 import { loguru } from "../utils/logger";
 import { pluginRegistry } from './plugins/registry';
 import { arePluginsInitialized, initializePluginSystem } from './plugins/loader';
-import { SourceInfo, DetectedSourceInfo } from '../types/common';
+import { SourceInfo } from '../types/common';
 
 const logger = loguru.getLogger('DetectionService');
+
+// Extended source info with plugin
+export interface DetectedSourceInfo extends SourceInfo {
+  plugin?: any;  // Associated plugin if available
+}
 
 // Type definition for navigation details
 interface NavDetails {
@@ -17,7 +22,7 @@ interface NavDetails {
 }
 
 /**
- * Enhanced URL detection service with context awareness
+ * Enhanced URL detection service
  */
 export class URLDetectionService {
   // Track processing state
@@ -38,7 +43,7 @@ export class URLDetectionService {
   /**
    * Detect paper source from URL
    * @param {string} url URL to analyze
-   * @returns {Promise<DetectedSourceInfo|null>} Detected source info or null
+   * @returns {Promise<DetectedSourceInfo|null>} Detection result with plugin
    */
   async detectSource(url: string): Promise<DetectedSourceInfo | null> {
     if (!url) {
@@ -73,7 +78,7 @@ export class URLDetectionService {
       // Mark URL as pending
       this.addPendingUrl(url);
       
-      // Use the plugin registry's findForUrl method
+      // Use the plugin registry's findForUrl method first
       const result = pluginRegistry.findForUrl(url);
       
       if (result) {
@@ -81,8 +86,7 @@ export class URLDetectionService {
         const sourceInfo: DetectedSourceInfo = {
           type: result.plugin.id,
           id: result.id,
-          // Use the plugin's formatId method to ensure consistency
-          primary_id: result.plugin.serviceWorker.formatId(result.id),
+          primary_id: result.plugin.formatId(result.id),
           url: url,
           plugin: result.plugin
         };
@@ -103,15 +107,12 @@ export class URLDetectionService {
   }
   
   /**
-   * Check if a URL is valid for paper detection
+   * Check if URL is valid
    * @param {string} url URL to check
-   * @returns {boolean} True if URL is valid
+   * @returns {boolean} Whether URL is valid
    */
   isValidUrl(url: string): boolean {
-    if (!url || typeof url !== 'string') return false;
-    
     try {
-      // Basic URL validation
       new URL(url);
       return true;
     } catch (e) {
@@ -198,6 +199,34 @@ export class URLDetectionService {
    */
   clearCache(): void {
     this.detectionCache.clear();
+  }
+  
+  /**
+   * Get a plugin's extractor code for a URL
+   * @param url URL to get extractor for
+   * @returns Extractor code as string or null
+   */
+  async getExtractorForUrl(url: string): Promise<string | null> {
+    const sourceInfo = await this.detectSource(url);
+    if (!sourceInfo || !sourceInfo.plugin) {
+      return null;
+    }
+    
+    try {
+      return sourceInfo.plugin.getContentScriptExtractor();
+    } catch (error) {
+      logger.error(`Error getting extractor for ${url}:`, error);
+      return null;
+    }
+  }
+  
+  /**
+   * Get extractor code for a specific plugin
+   * @param pluginId Plugin ID
+   * @returns Extractor code or null
+   */
+  getExtractorForPlugin(pluginId: string): string | null {
+    return pluginRegistry.getExtractorCode(pluginId);
   }
   
   /**
