@@ -402,3 +402,4 @@ export async function fetchAdditionalMetadata(
   }
   
   return null;
+}
