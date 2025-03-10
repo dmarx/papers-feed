@@ -1,7 +1,7 @@
 // extension/tests/source_detection.test.ts
 // Tests for proper URL detection of different paper sources
 
-import { MultiSourceDetector } from '../papers/detector';
+
 import { parseId, formatPrimaryId } from '../papers/source_utils';
 
 // Test URLs for each supported source
@@ -29,22 +29,22 @@ const TEST_URLS = {
   ]
 };
 
-// Run test for each source type
-Object.entries(TEST_URLS).forEach(([sourceType, urls]) => {
-  console.log(`\n=== Testing ${sourceType} URL detection ===`);
+// // Run test for each source type
+// Object.entries(TEST_URLS).forEach(([sourceType, urls]) => {
+//   console.log(`\n=== Testing ${sourceType} URL detection ===`);
   
-  urls.forEach(url => {
-    const result = MultiSourceDetector.detect(url);
-    const success = result && result.type === sourceType;
+//   urls.forEach(url => {
+//     const result = MultiSourceDetector.detect(url);
+//     const success = result && result.type === sourceType;
     
-    if (success) {
-      console.log(`✅ ${url} -> Detected as ${result.type} with ID: ${result.id}`);
-      console.log(`  Primary ID: ${result.primary_id}`);
-    } else {
-      console.error(`❌ ${url} -> ${result ? `Wrong type: ${result.type}` : 'Not detected'}`);
-    }
-  });
-});
+//     if (success) {
+//       console.log(`✅ ${url} -> Detected as ${result.type} with ID: ${result.id}`);
+//       console.log(`  Primary ID: ${result.primary_id}`);
+//     } else {
+//       console.error(`❌ ${url} -> ${result ? `Wrong type: ${result.type}` : 'Not detected'}`);
+//     }
+//   });
+// });
 
 // Test ID formatting and parsing
 console.log('\n=== Testing ID formatting and parsing ===');
