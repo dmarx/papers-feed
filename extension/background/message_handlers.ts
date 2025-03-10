@@ -300,7 +300,7 @@ export class MessageHandlers {
    */
   handleGetPluginExtractor(pluginId: string, sendResponse: (response: any) => void): void {
     try {
-      const extractorCode = urlDetectionService.getExtractorForPlugin(pluginId);
+      const extractorCode = urlDetectionService.getExtractorInfoForPlugin(pluginId);
       
       if (extractorCode) {
         sendResponse({
