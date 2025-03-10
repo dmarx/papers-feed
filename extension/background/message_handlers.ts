@@ -2,7 +2,7 @@
 // Message handling for plugin system
 
 import { loguru } from "../utils/logger";
-import { urlDetectionService } from '../papers/detection_service';
+import { URLDetectionService } from '../papers/detection_service';
 import { pluginRegistry } from '../papers/plugins/registry';
 import { fullyProcessUrl } from '../papers/paper_processor';
 import sessionManager from './session_manager';
