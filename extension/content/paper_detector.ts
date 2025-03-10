@@ -1,20 +1,10 @@
-// content/paper_detector.ts - Paper link detection and processing
+// extension/content/paper_detector.ts - Paper link detection and processing
 
 import { fetchPaperMetadata } from './metadata_fetcher';
 import { createPopup, createPopupWrapper } from './annotator';
+import { SourceInfo } from '../types/common'; // Import from common types
 
-/**
- * Paper source information
- */
-export interface SourceInfo {
-  type: string;
-  id: string;
-  url: string;
-}
-
-/**
- * Reference to active popup
- */
+// Reference to active popup
 let activePopup: HTMLElement | null = null;
 
 /**
@@ -107,9 +97,11 @@ export function detectPaperSource(url: string): SourceInfo | null {
       const match = url.match(source.urlPatterns[i]);
       if (match) {
         const id = source.getIdFromMatch(match);
+        const primary_id = formatPrimaryId(source.type, id);
         return {
           type: source.type,
           id: id,
+          primary_id: primary_id, // Include primary_id to match common.ts SourceInfo
           url: url
         };
       }

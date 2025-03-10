@@ -1,12 +1,15 @@
-// content/message_handlers.ts - Handle messages between content script and background
+// extension/content/message_handlers.ts
+// Handle messages between content script and background
 
-import { detectPaperSource, trackPaper } from './paper_detector';
+import { loguru } from '../utils/logger';
+
+const logger = loguru.getLogger('ContentMessageHandlers');
 
 /**
  * Initialize message handlers for content script
  */
 export function initializeMessageHandlers(): void {
-  console.log('Initializing content script message handlers');
+  logger.info('Initializing content script message handlers');
   
   // Listen for messages from the background script
   chrome.runtime.onMessage.addListener(handleMessage);
@@ -27,49 +30,41 @@ function handleMessage(
   sender: chrome.runtime.MessageSender, 
   sendResponse: (response?: any) => void
 ): boolean {
-  console.log('Content script received message:', message);
+  logger.info('Content script received message:', message);
 
   // Handle different message types
   switch (message.type) {
-    case 'detectPaper':
-      // Check if the current page is a paper
-      const currentUrl = window.location.href;
-      const sourceInfo = detectPaperSource(currentUrl);
-      sendResponse(sourceInfo);
+    case 'extractPageMetadata':
+      // Execute the extractor code on the current page
+      executeExtractor(message.extractorCode, window.location.href)
+        .then(metadata => {
+          sendResponse({ 
+            success: true, 
+            metadata 
+          });
+        })
+        .catch(error => {
+          logger.error('Error executing extractor:', error);
+          sendResponse({ 
+            success: false, 
+            error: String(error) 
+          });
+        });
       break;
 
-    case 'trackCurrentPaper':
-      // Track the current page as a paper
-      trackPaper(window.location.href);
+    case 'getPluginForUrl':
+      // We don't need to do anything here, just report success
+      // This is handled by the background script
       sendResponse({ success: true });
-      break;
-      
-    case 'extractMetadata':
-      // Extract metadata from the current page
-      const metadata = extractMetadataFromPage();
-      sendResponse(metadata);
-      break;
-      
-    case 'injectAnnotator':
-      // Inject annotator on specific element
-      if (message.selector) {
-        try {
-          const element = document.querySelector(message.selector);
-          if (element) {
-            // TODO: Implement specialized annotator injection
-            sendResponse({ success: true });
-          } else {
-            sendResponse({ success: false, error: 'Element not found' });
-          }
-        } catch (error) {
-          sendResponse({ success: false, error: String(error) });
-        }
-      }
       break;
       
     default:
       // Unhandled message type
-      console.log('Unhandled message type:', message.type);
+      logger.info('Unhandled message type:', message.type);
+      sendResponse({ 
+        success: false, 
+        error: `Unhandled message type: ${message.type}` 
+      });
   }
 
   return true; // Keep channel open for async response
@@ -92,80 +87,119 @@ function handleWindowMessage(event: MessageEvent): void {
     return;
   }
 
-  console.log('Content script received window message:', message);
+  logger.info('Content script received window message:', message);
 
   // Handle different action types
   switch (message.action) {
-    case 'trackPaper':
-      if (message.url) {
-        trackPaper(message.url);
-        // Respond to the page script
-        window.postMessage({
-          source: 'paper_tracker_extension',
-          response: 'trackPaper',
-          success: true
-        }, '*');
-      }
-      break;
-
-    case 'detectPaper':
-      if (message.url) {
-        const sourceInfo = detectPaperSource(message.url);
-        // Respond to the page script
-        window.postMessage({
-          source: 'paper_tracker_extension',
-          response: 'detectPaper',
-          data: sourceInfo
-        }, '*');
-      }
+    case 'extractMetadata':
+      // Request the extractor from the background script
+      chrome.runtime.sendMessage({
+        type: 'getExtractorForUrl',
+        url: window.location.href
+      }, async (response) => {
+        if (response && response.success && response.extractorCode) {
+          try {
+            // Execute the extractor code
+            const metadata = await executeExtractor(response.extractorCode, window.location.href);
+            
+            // Send result back to the page
+            window.postMessage({
+              source: 'paper_tracker_extension',
+              response: 'extractMetadata',
+              success: true,
+              metadata
+            }, '*');
+          } catch (error) {
+            window.postMessage({
+              source: 'paper_tracker_extension',
+              response: 'extractMetadata',
+              success: false,
+              error: String(error)
+            }, '*');
+          }
+        } else {
+          window.postMessage({
+            source: 'paper_tracker_extension',
+            response: 'extractMetadata',
+            success: false,
+            error: response?.error || 'No extractor available'
+          }, '*');
+        }
+      });
       break;
 
     default:
-      console.log('Unhandled window message action:', message.action);
+      logger.info('Unhandled window message action:', message.action);
+  }
+}
+
+/**
+ * Execute extractor code in the content script context
+ * @param {string} extractorCode Code to execute
+ * @param {string} url Page URL
+ * @returns {Promise<any>} Extracted metadata
+ */
+async function executeExtractor(extractorCode: string, url: string): Promise<any> {
+  try {
+    // Create a function from the extractor code string
+    const extractorFn = new Function('document', 'url', `
+      return (async function(document, url) {
+        ${extractorCode}
+      })(document, url);
+    `);
+    
+    // Execute the extractor function
+    const metadata = await extractorFn(document, url);
+    
+    if (metadata) {
+      logger.info(`Extracted metadata: ${metadata.title || 'Untitled'}`);
+      return metadata;
+    } else {
+      logger.warning('Extractor returned no metadata');
+      return null;
+    }
+  } catch (error) {
+    logger.error(`Error executing extractor: ${error}`);
+    throw error;
   }
 }
 
 /**
  * Extract metadata from the current page
- * @returns {Object} Page metadata
+ * @returns {Promise<any>} Extracted metadata
  */
-function extractMetadataFromPage(): Record<string, any> {
-  // Helper to safely get meta content
-  const getMetaContent = (selector: string): string | undefined => {
-    const element = document.querySelector(selector);
-    return element && 'content' in element ? 
-      (element as HTMLMetaElement).content : undefined;
-  };
+export async function extractCurrentPageMetadata(): Promise<any> {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage({
+      type: 'getExtractorForUrl',
+      url: window.location.href
+    }, async response => {
+      if (!response || !response.success || !response.extractorCode) {
+        return resolve(null);
+      }
+      
+      try {
+        const metadata = await executeExtractor(response.extractorCode, window.location.href);
+        resolve(metadata);
+      } catch (error) {
+        reject(error);
+      }
+    });
+  });
+}
 
-  // Extract common metadata fields
-  const metadata: Record<string, any> = {
-    title: getMetaContent('meta[name="citation_title"]') ||
-           getMetaContent('meta[property="og:title"]') ||
-           document.title,
-    authors: getMetaContent('meta[name="citation_author"]') ||
-             getMetaContent('meta[name="citation_authors"]') ||
-             getMetaContent('meta[name="author"]'),
-    abstract: getMetaContent('meta[name="description"]') ||
-              getMetaContent('meta[property="og:description"]') ||
-              getMetaContent('meta[name="citation_abstract"]'),
-    published_date: getMetaContent('meta[name="citation_publication_date"]') ||
-                    getMetaContent('meta[name="citation_date"]'),
-    doi: getMetaContent('meta[name="citation_doi"]'),
-    url: getMetaContent('meta[property="og:url"]') || window.location.href
-  };
-
-  // Try to get abstract from various elements if not found in meta tags
-  if (!metadata.abstract) {
-    // Common abstract containers
-    const abstractElement = document.querySelector('.abstract') || 
-                           document.querySelector('#abstract') ||
-                           document.querySelector('[class*="abstract"]') ||
-                           document.querySelector('[id*="abstract"]');
-    
-    if (abstractElement) {
-      metadata.abstract = abstractElement.textContent?.trim();
-    }
-  }
-
-  return metadata;
+/**
+ * Report extracted metadata to the background script
+ * @param {any} metadata Extracted metadata
+ * @returns {Promise<boolean>} Success status
+ */
+export async function reportExtractedMetadata(metadata: any): Promise<boolean> {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage({
+      type: 'metadataExtracted',
+      data: metadata
+    }, response => {
+      resolve(response && response.success);
+    });
+  });
 }

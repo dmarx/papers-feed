@@ -3,17 +3,9 @@
 import { loguru } from "../utils/logger";
 import { formatPrimaryId } from '../papers/source_utils';
 import credentialManager from './credential_manager';
+import { PaperData } from '../types/common';
 
 const logger = loguru.getLogger('GitHubIntegration');
-
-interface PaperData {
-  primary_id?: string;
-  source?: string;
-  sourceId?: string;
-  url?: string;
-  title?: string;
-  [key: string]: any;
-}
 
 /**
  * Handles GitHub integration for paper storage
@@ -118,10 +110,12 @@ export class GitHubIntegration {
         logger.info(`Converted ID to standardized format: ${paperId}`);
       }
       
-      const paperData = data.title ? {
+      const paperData: PaperData | undefined = data.title ? {
         title: data.title,
-        source: data.source,
-        primary_id: paperId
+        source: data.source || 'unknown',
+        sourceId: paperId.split('.')[1] || paperId,
+        primary_id: paperId,
+        url: ''
       } : undefined;
 
       if (type === 'vote') {

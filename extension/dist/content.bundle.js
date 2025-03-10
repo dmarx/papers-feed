@@ -1,3 +1,332 @@
+import { l as loguru } from './assets/logger-Cyvnc9vo.js';
+
+const logger$2 = loguru.getLogger("ContentMessageHandlers");
+function initializeMessageHandlers() {
+  logger$2.info("Initializing content script message handlers");
+  chrome.runtime.onMessage.addListener(handleMessage);
+  self.addEventListener("message", handleWindowMessage);
+}
+function handleMessage(message, sender, sendResponse) {
+  logger$2.info("Content script received message:", message);
+  switch (message.type) {
+    case "extractPageMetadata":
+      executeExtractor(message.extractorCode, self.location.href).then((metadata) => {
+        sendResponse({
+          success: true,
+          metadata
+        });
+      }).catch((error) => {
+        logger$2.error("Error executing extractor:", error);
+        sendResponse({
+          success: false,
+          error: String(error)
+        });
+      });
+      break;
+    case "getPluginForUrl":
+      sendResponse({ success: true });
+      break;
+    default:
+      logger$2.info("Unhandled message type:", message.type);
+      sendResponse({
+        success: false,
+        error: `Unhandled message type: ${message.type}`
+      });
+  }
+  return true;
+}
+function handleWindowMessage(event) {
+  if (event.source !== self) {
+    return;
+  }
+  const message = event.data;
+  if (typeof message !== "object" || message === null || message.target !== "paper_tracker_extension") {
+    return;
+  }
+  logger$2.info("Content script received window message:", message);
+  switch (message.action) {
+    case "extractMetadata":
+      chrome.runtime.sendMessage({
+        type: "getExtractorForUrl",
+        url: self.location.href
+      }, async (response) => {
+        if (response && response.success && response.extractorCode) {
+          try {
+            const metadata = await executeExtractor(response.extractorCode, self.location.href);
+            self.postMessage({
+              source: "paper_tracker_extension",
+              response: "extractMetadata",
+              success: true,
+              metadata
+            }, "*");
+          } catch (error) {
+            self.postMessage({
+              source: "paper_tracker_extension",
+              response: "extractMetadata",
+              success: false,
+              error: String(error)
+            }, "*");
+          }
+        } else {
+          self.postMessage({
+            source: "paper_tracker_extension",
+            response: "extractMetadata",
+            success: false,
+            error: response?.error || "No extractor available"
+          }, "*");
+        }
+      });
+      break;
+    default:
+      logger$2.info("Unhandled window message action:", message.action);
+  }
+}
+async function executeExtractor(extractorCode, url) {
+  try {
+    const extractorFn = new Function("document", "url", `
+      return (async function(document, url) {
+        ${extractorCode}
+      })(document, url);
+    `);
+    const metadata = await extractorFn(document, url);
+    if (metadata) {
+      logger$2.info(`Extracted metadata: ${metadata.title || "Untitled"}`);
+      return metadata;
+    } else {
+      logger$2.warning("Extractor returned no metadata");
+      return null;
+    }
+  } catch (error) {
+    logger$2.error(`Error executing extractor: ${error}`);
+    throw error;
+  }
+}
+async function extractCurrentPageMetadata() {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage({
+      type: "getExtractorForUrl",
+      url: self.location.href
+    }, async (response) => {
+      if (!response || !response.success || !response.extractorCode) {
+        return resolve(null);
+      }
+      try {
+        const metadata = await executeExtractor(response.extractorCode, self.location.href);
+        resolve(metadata);
+      } catch (error) {
+        reject(error);
+      }
+    });
+  });
+}
+async function reportExtractedMetadata(metadata) {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage({
+      type: "metadataExtracted",
+      data: metadata
+    }, (response) => {
+      resolve(response && response.success);
+    });
+  });
+}
+
+const logger$1 = loguru.getLogger("PaperOverlay");
+function setupPaperUIOverlay() {
+  logger$1.info("Setting up paper UI overlay");
+  setupLinkAnnotation();
+  checkCurrentPageForPaper();
+}
+function setupLinkAnnotation() {
+  processExistingLinks();
+  const observer = new MutationObserver((mutations) => {
+    mutations.forEach((mutation) => {
+      mutation.addedNodes.forEach((node) => {
+        if (node.nodeType === Node.ELEMENT_NODE) {
+          if (node.tagName === "A" && node.href) {
+            processLink(node);
+          }
+          node.querySelectorAll("a[href]").forEach((link) => {
+            processLink(link);
+          });
+        }
+      });
+    });
+  });
+  observer.observe(document.body, {
+    childList: true,
+    subtree: true
+  });
+}
+function processExistingLinks() {
+  document.querySelectorAll("a[href]").forEach((link) => {
+    processLink(link);
+  });
+}
+function processLink(link) {
+  if (link.classList.contains("paper-processed")) {
+    return;
+  }
+  link.classList.add("paper-processed");
+  self.paperTracker.isPaperUrl(link.href).then((isPaper) => {
+    if (isPaper) {
+      addPaperIndicator(link);
+    }
+  }).catch((error) => {
+    logger$1.error(`Error checking if URL is paper: ${error}`);
+  });
+}
+function addPaperIndicator(link) {
+  const indicator = document.createElement("span");
+  indicator.className = "paper-indicator";
+  indicator.title = "Academic paper - Click to track";
+  indicator.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    self.paperTracker.trackPaper(link.href);
+    showTrackingFeedback(indicator);
+  });
+  link.parentNode?.insertBefore(indicator, link.nextSibling);
+}
+function showTrackingFeedback(element) {
+  element.classList.add("tracked");
+  const tooltip = document.createElement("div");
+  tooltip.className = "paper-tooltip";
+  tooltip.textContent = "Paper tracked!";
+  const rect = element.getBoundingClientRect();
+  tooltip.style.top = `${rect.top - 30}px`;
+  tooltip.style.left = `${rect.left}px`;
+  document.body.appendChild(tooltip);
+  setTimeout(() => {
+    tooltip.remove();
+    element.classList.remove("tracked");
+  }, 2e3);
+}
+function checkCurrentPageForPaper() {
+  self.paperTracker.extractMetadata().then((metadata) => {
+    if (metadata) {
+      logger$1.info("Current page is a paper. Adding overlay UI");
+      addPageOverlay(metadata);
+    }
+  }).catch((error) => {
+    logger$1.error(`Error checking if current page is paper: ${error}`);
+  });
+}
+function addPageOverlay(metadata) {
+  const fab = document.createElement("div");
+  fab.className = "paper-fab";
+  fab.title = "Paper actions";
+  const icon = document.createElement("span");
+  icon.className = "paper-fab-icon";
+  icon.textContent = "📝";
+  fab.appendChild(icon);
+  fab.addEventListener("click", () => {
+    if (document.querySelector(".paper-action-popup")) {
+      removeActionPopup();
+    } else {
+      showActionPopup(fab, metadata);
+    }
+  });
+  document.body.appendChild(fab);
+}
+function showActionPopup(trigger, metadata) {
+  const popup = document.createElement("div");
+  popup.className = "paper-action-popup";
+  popup.innerHTML = `
+    <div class="paper-popup-header">
+      <div class="paper-popup-title">${metadata.title || "Untitled Paper"}</div>
+      <div class="paper-popup-source">${getSourceLabel$1(metadata.source)}</div>
+    </div>
+    <div class="paper-popup-authors">${metadata.authors || ""}</div>
+    ${metadata.abstract ? `<div class="paper-popup-abstract">${metadata.abstract}</div>` : ""}
+    <div class="paper-popup-actions">
+      <button class="paper-action-button" data-action="rate-up">👍 Interesting</button>
+      <button class="paper-action-button" data-action="rate-down">👎 Not interesting</button>
+    </div>
+    <textarea class="paper-notes" placeholder="Add notes..."></textarea>
+    <button class="paper-save-button">Save</button>
+  `;
+  const rect = trigger.getBoundingClientRect();
+  popup.style.bottom = `${self.innerHeight - rect.top + 10}px`;
+  popup.style.right = `${self.innerWidth - rect.right + 10}px`;
+  document.body.appendChild(popup);
+  popup.querySelector(".paper-save-button")?.addEventListener("click", () => {
+    const notes = popup.querySelector(".paper-notes").value;
+    if (notes) {
+      saveNotes(metadata, notes);
+    }
+    removeActionPopup();
+  });
+  popup.querySelectorAll(".paper-action-button").forEach((button) => {
+    button.addEventListener("click", () => {
+      const action = button.dataset.action;
+      if (action === "rate-up") {
+        rateCurrentPaper("thumbsup");
+      } else if (action === "rate-down") {
+        rateCurrentPaper("thumbsdown");
+      }
+      popup.querySelectorAll(".paper-action-button").forEach((b) => b.classList.remove("active"));
+      button.classList.add("active");
+    });
+  });
+  document.addEventListener("click", outsideClickHandler);
+}
+function removeActionPopup() {
+  document.querySelector(".paper-action-popup")?.remove();
+  document.removeEventListener("click", outsideClickHandler);
+}
+function outsideClickHandler(e) {
+  const popup = document.querySelector(".paper-action-popup");
+  const fab = document.querySelector(".paper-fab");
+  if (popup && fab && !popup.contains(e.target) && !fab.contains(e.target)) {
+    removeActionPopup();
+  }
+}
+function saveNotes(metadata, notes) {
+  chrome.runtime.sendMessage({
+    type: "updateAnnotation",
+    annotationType: "notes",
+    data: {
+      paperId: metadata.primary_id,
+      source: metadata.source,
+      notes,
+      title: metadata.title
+    }
+  }, (response) => {
+    if (response && response.success) {
+      showSaveSuccess();
+    }
+  });
+}
+function rateCurrentPaper(rating) {
+  chrome.runtime.sendMessage({
+    type: "updateRating",
+    rating
+  }, (response) => {
+    if (response && response.success) {
+      showSaveSuccess();
+    }
+  });
+}
+function showSaveSuccess() {
+  const toast = document.createElement("div");
+  toast.className = "paper-toast";
+  toast.textContent = "Saved successfully!";
+  document.body.appendChild(toast);
+  setTimeout(() => {
+    toast.remove();
+  }, 3e3);
+}
+function getSourceLabel$1(source) {
+  const labels = {
+    "arxiv": "arXiv",
+    "semanticscholar": "Semantic Scholar",
+    "doi": "DOI",
+    "acm": "ACM Digital Library",
+    "openreview": "OpenReview"
+  };
+  return labels[source] || source.charAt(0).toUpperCase() + source.slice(1);
+}
+
 const metadataCache = /* @__PURE__ */ new Map();
 async function fetchPaperMetadata(source, id) {
   const cacheKey = `${source}:${id}`;
@@ -172,158 +501,6 @@ async function fetchOpenReviewMetadata(id) {
       url: `https://openreview.net/forum?id=${id}`
     };
   }
-}
-
-let activePopup = null;
-function formatPrimaryId(source, id) {
-  const safeId = id.replace(/\//g, "_").replace(/:/g, ".").replace(/\s/g, "_").replace(/\\/g, "_");
-  return `${source}.${safeId}`;
-}
-function getSourceLabel(source) {
-  const labels = {
-    "arxiv": "arXiv",
-    "semanticscholar": "Semantic Scholar",
-    "doi": "DOI",
-    "acm": "ACM Digital Library",
-    "openreview": "OpenReview"
-  };
-  return labels[source] || source.charAt(0).toUpperCase() + source.slice(1);
-}
-const PAPER_SOURCES = [
-  {
-    type: "arxiv",
-    urlPatterns: [
-      /arxiv\.org\/abs\/([0-9.]+)(v[0-9]+)?/,
-      /arxiv\.org\/pdf\/([0-9.]+)(v[0-9]+)?\.pdf/
-    ],
-    getIdFromMatch: (match) => match[1] + (match[2] || "")
-  },
-  {
-    type: "semanticscholar",
-    urlPatterns: [
-      /semanticscholar\.org\/paper\/([a-f0-9]+)/,
-      /s2-research\.org\/papers\/([a-f0-9]+)/
-    ],
-    getIdFromMatch: (match) => match[1]
-  },
-  {
-    type: "doi",
-    urlPatterns: [
-      /doi\.org\/(10\.[0-9.]+\/[^\s&\/?#]+[^\s&\/?#.:])/
-    ],
-    getIdFromMatch: (match) => match[1]
-  },
-  {
-    type: "acm",
-    urlPatterns: [
-      /dl\.acm\.org\/doi\/(10\.[0-9.]+\/[^\s&\/?#]+[^\s&\/?#.:])/
-    ],
-    getIdFromMatch: (match) => match[1]
-  },
-  {
-    type: "openreview",
-    urlPatterns: [
-      /openreview\.net\/forum\?id=([a-zA-Z0-9_\-]+)/,
-      /openreview\.net\/pdf\?id=([a-zA-Z0-9_\-]+)/
-    ],
-    getIdFromMatch: (match) => match[1]
-  }
-];
-function detectPaperSource(url) {
-  for (const source of PAPER_SOURCES) {
-    for (let i = 0; i < source.urlPatterns.length; i++) {
-      const match = url.match(source.urlPatterns[i]);
-      if (match) {
-        const id = source.getIdFromMatch(match);
-        return {
-          type: source.type,
-          id,
-          url
-        };
-      }
-    }
-  }
-  return null;
-}
-async function processPaperLink(link) {
-  if (link.classList.contains("paper-processed")) return;
-  link.classList.add("paper-processed");
-  const sourceInfo = detectPaperSource(link.href);
-  if (!sourceInfo) return;
-  const { type: source, id } = sourceInfo;
-  const annotator = document.createElement("span");
-  annotator.className = `paper-annotator annotator-${source}`;
-  annotator.title = `Add ${getSourceLabel(source)} annotation`;
-  annotator.addEventListener("click", async (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (activePopup) {
-      activePopup.parentElement?.remove();
-      if (
-        // Access properties directly - they're properly defined 
-        // on the HTMLElement with Object.defineProperties
-        activePopup.hasOwnProperty("paperSource") && activePopup.hasOwnProperty("paperId") && activePopup.paperSource === source && activePopup.paperId === id
-      ) {
-        activePopup = null;
-        return;
-      }
-    }
-    const popup = await createPopup(source, id);
-    const wrapper = createPopupWrapper();
-    wrapper.appendChild(popup);
-    const annotatorRect = annotator.getBoundingClientRect();
-    const available_width = self.innerWidth - annotatorRect.left;
-    if (available_width < 320) {
-      popup.style.right = "0";
-      popup.style.left = "auto";
-    } else {
-      popup.style.left = "0";
-    }
-    popup.style.top = `${annotatorRect.height + 5}px`;
-    annotator.parentNode.insertBefore(wrapper, annotator.nextSibling);
-    activePopup = popup;
-  });
-  link.parentNode.insertBefore(annotator, link.nextSibling);
-}
-function trackPaper(url) {
-  const sourceInfo = detectPaperSource(url);
-  if (!sourceInfo) {
-    console.log("Not a recognized paper URL:", url);
-    return;
-  }
-  const title = document.title || `${sourceInfo.type.toUpperCase()} Paper: ${sourceInfo.id}`;
-  chrome.runtime.sendMessage({
-    type: "trackPaper",
-    source: sourceInfo.type,
-    id: sourceInfo.id,
-    url,
-    title
-  }, (response) => {
-    console.log("Paper tracking result:", response);
-  });
-}
-function setupLinkDetection() {
-  document.querySelectorAll("a[href]").forEach((link) => {
-    processPaperLink(link);
-  });
-  const observer = new MutationObserver((mutations) => {
-    mutations.forEach((mutation) => {
-      mutation.addedNodes.forEach((node) => {
-        if (node.nodeType === Node.ELEMENT_NODE) {
-          if (node.tagName === "A" && node.href) {
-            processPaperLink(node);
-          }
-          node.querySelectorAll("a[href]").forEach((link) => {
-            processPaperLink(link);
-          });
-        }
-      });
-    });
-  });
-  observer.observe(document.body, {
-    childList: true,
-    subtree: true
-  });
 }
 
 function createPopupWrapper() {
@@ -504,130 +681,192 @@ function getSourceColor(source) {
   };
   return colors[source] || "#666666";
 }
-function initializeAnnotator() {
-  console.log("Initializing paper annotator module");
-  document.addEventListener("click", (e) => {
-    if (e.target && !e.target.closest(".paper-popup") && !e.target.closest(".paper-annotator")) {
-      document.querySelectorAll(".paper-popup-container").forEach((container) => {
-        if (container.contains(document.activeElement)) {
-          return;
-        }
-        container.remove();
-      });
+
+let activePopup = null;
+function formatPrimaryId(source, id) {
+  const safeId = id.replace(/\//g, "_").replace(/:/g, ".").replace(/\s/g, "_").replace(/\\/g, "_");
+  return `${source}.${safeId}`;
+}
+function getSourceLabel(source) {
+  const labels = {
+    "arxiv": "arXiv",
+    "semanticscholar": "Semantic Scholar",
+    "doi": "DOI",
+    "acm": "ACM Digital Library",
+    "openreview": "OpenReview"
+  };
+  return labels[source] || source.charAt(0).toUpperCase() + source.slice(1);
+}
+const PAPER_SOURCES = [
+  {
+    type: "arxiv",
+    urlPatterns: [
+      /arxiv\.org\/abs\/([0-9.]+)(v[0-9]+)?/,
+      /arxiv\.org\/pdf\/([0-9.]+)(v[0-9]+)?\.pdf/
+    ],
+    getIdFromMatch: (match) => match[1] + (match[2] || "")
+  },
+  {
+    type: "semanticscholar",
+    urlPatterns: [
+      /semanticscholar\.org\/paper\/([a-f0-9]+)/,
+      /s2-research\.org\/papers\/([a-f0-9]+)/
+    ],
+    getIdFromMatch: (match) => match[1]
+  },
+  {
+    type: "doi",
+    urlPatterns: [
+      /doi\.org\/(10\.[0-9.]+\/[^\s&\/?#]+[^\s&\/?#.:])/
+    ],
+    getIdFromMatch: (match) => match[1]
+  },
+  {
+    type: "acm",
+    urlPatterns: [
+      /dl\.acm\.org\/doi\/(10\.[0-9.]+\/[^\s&\/?#]+[^\s&\/?#.:])/
+    ],
+    getIdFromMatch: (match) => match[1]
+  },
+  {
+    type: "openreview",
+    urlPatterns: [
+      /openreview\.net\/forum\?id=([a-zA-Z0-9_\-]+)/,
+      /openreview\.net\/pdf\?id=([a-zA-Z0-9_\-]+)/
+    ],
+    getIdFromMatch: (match) => match[1]
+  }
+];
+function detectPaperSource(url) {
+  for (const source of PAPER_SOURCES) {
+    for (let i = 0; i < source.urlPatterns.length; i++) {
+      const match = url.match(source.urlPatterns[i]);
+      if (match) {
+        const id = source.getIdFromMatch(match);
+        const primary_id = formatPrimaryId(source.type, id);
+        return {
+          type: source.type,
+          id,
+          primary_id,
+          // Include primary_id to match common.ts SourceInfo
+          url
+        };
+      }
     }
+  }
+  return null;
+}
+async function processPaperLink(link) {
+  if (link.classList.contains("paper-processed")) return;
+  link.classList.add("paper-processed");
+  const sourceInfo = detectPaperSource(link.href);
+  if (!sourceInfo) return;
+  const { type: source, id } = sourceInfo;
+  const annotator = document.createElement("span");
+  annotator.className = `paper-annotator annotator-${source}`;
+  annotator.title = `Add ${getSourceLabel(source)} annotation`;
+  annotator.addEventListener("click", async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (activePopup) {
+      activePopup.parentElement?.remove();
+      if (
+        // Access properties directly - they're properly defined 
+        // on the HTMLElement with Object.defineProperties
+        activePopup.hasOwnProperty("paperSource") && activePopup.hasOwnProperty("paperId") && activePopup.paperSource === source && activePopup.paperId === id
+      ) {
+        activePopup = null;
+        return;
+      }
+    }
+    const popup = await createPopup(source, id);
+    const wrapper = createPopupWrapper();
+    wrapper.appendChild(popup);
+    const annotatorRect = annotator.getBoundingClientRect();
+    const available_width = self.innerWidth - annotatorRect.left;
+    if (available_width < 320) {
+      popup.style.right = "0";
+      popup.style.left = "auto";
+    } else {
+      popup.style.left = "0";
+    }
+    popup.style.top = `${annotatorRect.height + 5}px`;
+    annotator.parentNode.insertBefore(wrapper, annotator.nextSibling);
+    activePopup = popup;
   });
+  link.parentNode.insertBefore(annotator, link.nextSibling);
 }
 
-function initializeMessageHandlers() {
-  console.log("Initializing content script message handlers");
-  chrome.runtime.onMessage.addListener(handleMessage);
-  self.addEventListener("message", handleWindowMessage);
-}
-function handleMessage(message, sender, sendResponse) {
-  console.log("Content script received message:", message);
-  switch (message.type) {
-    case "detectPaper":
-      const currentUrl = self.location.href;
-      const sourceInfo = detectPaperSource(currentUrl);
-      sendResponse(sourceInfo);
-      break;
-    case "trackCurrentPaper":
-      trackPaper(self.location.href);
-      sendResponse({ success: true });
-      break;
-    case "extractMetadata":
-      const metadata = extractMetadataFromPage();
-      sendResponse(metadata);
-      break;
-    case "injectAnnotator":
-      if (message.selector) {
-        try {
-          const element = document.querySelector(message.selector);
-          if (element) {
-            sendResponse({ success: true });
-          } else {
-            sendResponse({ success: false, error: "Element not found" });
-          }
-        } catch (error) {
-          sendResponse({ success: false, error: String(error) });
-        }
-      }
-      break;
-    default:
-      console.log("Unhandled message type:", message.type);
-  }
-  return true;
-}
-function handleWindowMessage(event) {
-  if (event.source !== self) {
-    return;
-  }
-  const message = event.data;
-  if (typeof message !== "object" || message === null || message.target !== "paper_tracker_extension") {
-    return;
-  }
-  console.log("Content script received window message:", message);
-  switch (message.action) {
-    case "trackPaper":
-      if (message.url) {
-        trackPaper(message.url);
-        self.postMessage({
-          source: "paper_tracker_extension",
-          response: "trackPaper",
-          success: true
-        }, "*");
-      }
-      break;
-    case "detectPaper":
-      if (message.url) {
-        const sourceInfo = detectPaperSource(message.url);
-        self.postMessage({
-          source: "paper_tracker_extension",
-          response: "detectPaper",
-          data: sourceInfo
-        }, "*");
-      }
-      break;
-    default:
-      console.log("Unhandled window message action:", message.action);
-  }
-}
-function extractMetadataFromPage() {
-  const getMetaContent = (selector) => {
-    const element = document.querySelector(selector);
-    return element && "content" in element ? element.content : void 0;
-  };
-  const metadata = {
-    title: getMetaContent('meta[name="citation_title"]') || getMetaContent('meta[property="og:title"]') || document.title,
-    authors: getMetaContent('meta[name="citation_author"]') || getMetaContent('meta[name="citation_authors"]') || getMetaContent('meta[name="author"]'),
-    abstract: getMetaContent('meta[name="description"]') || getMetaContent('meta[property="og:description"]') || getMetaContent('meta[name="citation_abstract"]'),
-    published_date: getMetaContent('meta[name="citation_publication_date"]') || getMetaContent('meta[name="citation_date"]'),
-    doi: getMetaContent('meta[name="citation_doi"]'),
-    url: getMetaContent('meta[property="og:url"]') || self.location.href
-  };
-  if (!metadata.abstract) {
-    const abstractElement = document.querySelector(".abstract") || document.querySelector("#abstract") || document.querySelector('[class*="abstract"]') || document.querySelector('[id*="abstract"]');
-    if (abstractElement) {
-      metadata.abstract = abstractElement.textContent?.trim();
-    }
-  }
-  return metadata;
-}
-
+const logger = loguru.getLogger("ContentScript");
 function initialize() {
-  console.log("Academic Paper Tracker content script initialized");
+  logger.info("Academic Paper Tracker content script initialized");
   initializeMessageHandlers();
-  initializeAnnotator();
-  setupLinkDetection();
+  setupPaperUIOverlay();
+  analyzeCurrentPage();
   exposeGlobalFunctions();
 }
+async function analyzeCurrentPage() {
+  try {
+    logger.info(`Analyzing current page: ${self.location.href}`);
+    const metadata = await extractCurrentPageMetadata();
+    if (metadata) {
+      logger.info(`Extracted metadata: ${metadata.title || "Untitled"}`);
+      const success = await reportExtractedMetadata(metadata);
+      if (success) {
+        logger.info("Successfully processed paper metadata");
+      } else {
+        logger.warning("Failed to process paper metadata");
+      }
+    } else {
+      logger.info("Current page is not a recognized paper or metadata extraction failed");
+    }
+  } catch (error) {
+    logger.error(`Error analyzing current page: ${error}`);
+  }
+}
 function exposeGlobalFunctions() {
-  self.paperTracker = {
+  const paperTracker = {
+    // Import functions directly from their modules
     detectPaperSource,
     fetchPaperMetadata,
-    trackPaper
+    processPaperLink,
+    // Extract metadata from the current page
+    extractMetadata: async () => {
+      try {
+        const metadata = await extractCurrentPageMetadata();
+        return metadata;
+      } catch (error) {
+        logger.error(`Error extracting metadata: ${error}`);
+        return null;
+      }
+    },
+    // Track a paper URL
+    trackPaper: (url) => {
+      chrome.runtime.sendMessage({
+        type: "trackPaper",
+        url
+      }, (response) => {
+        if (response && response.success) {
+          logger.info(`Paper tracked: ${response.paperData?.title || url}`);
+        } else {
+          logger.warning(`Failed to track paper: ${response?.error || "Unknown error"}`);
+        }
+      });
+    },
+    // Check if a URL is a supported paper source
+    isPaperUrl: async (url) => {
+      return new Promise((resolve) => {
+        chrome.runtime.sendMessage({
+          type: "detectPaperSource",
+          url
+        }, (response) => {
+          resolve(response && response.success && response.detected);
+        });
+      });
+    }
   };
-  self.trackPaper = trackPaper;
+  self.paperTracker = paperTracker;
+  self.trackPaper = paperTracker.trackPaper;
 }
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", initialize);
