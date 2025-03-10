@@ -70,9 +70,8 @@ async function analyzeCurrentPage(): Promise<void> {
   }
 }
 
-/**
- * Expose critical functions to window for API access
- */
+// 3. Then fix exposeGlobalFunctions() in content/index.ts:
+
 function exposeGlobalFunctions(): void {
   // Create the paperTracker API
   const paperTracker: PaperTracker = {
@@ -103,6 +102,17 @@ function exposeGlobalFunctions(): void {
           resolve(response && response.success && response.detected);
         });
       });
+    },
+    
+    // Legacy compatibility methods
+    detectPaperSource: (url: string) => {
+      logger.info('Legacy detectPaperSource called - consider using isPaperUrl');
+      return null; // Just a stub that returns null
+    },
+    
+    fetchPaperMetadata: async (source: string, id: string): Promise<any> => {
+      logger.info('Legacy fetchPaperMetadata called - consider using extractMetadata');
+      return {}; // Just a stub that returns an empty object
     }
   };
   
