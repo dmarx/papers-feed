@@ -73,15 +73,17 @@ function processLink(link: HTMLAnchorElement): void {
   
   link.classList.add('paper-processed');
   
-  // Check if this is a paper URL
-  window.paperTracker.isPaperUrl(link.href).then((isPaper: boolean) => {
-    if (isPaper) {
-      // Add paper indicator icon
-      addPaperIndicator(link);
-    }
-  }).catch((error: Error) => {
-    logger.error(`Error checking if URL is paper: ${error}`);
-  });
+  // Use isPaperUrl from the paperTracker API
+  window.paperTracker.isPaperUrl(link.href)
+    .then((isPaper: boolean) => {
+      if (isPaper) {
+        // Add paper indicator icon
+        addPaperIndicator(link);
+      }
+    })
+    .catch((error: Error) => {
+      logger.error(`Error checking if URL is paper: ${error}`);
+    });
 }
 
 /**
@@ -142,15 +144,17 @@ function showTrackingFeedback(element: HTMLElement): void {
  * Check if the current page is a paper and add UI if needed
  */
 function checkCurrentPageForPaper(): void {
-  // Extract metadata from current page
-  window.paperTracker.extractMetadata().then((metadata: any) => {
-    if (metadata) {
-      logger.info('Current page is a paper. Adding overlay UI');
-      addPageOverlay(metadata);
-    }
-  }).catch((error: Error) => {
-    logger.error(`Error checking if current page is paper: ${error}`);
-  });
+  // Use extractMetadata from the paperTracker API
+  window.paperTracker.extractMetadata()
+    .then((metadata: any) => {
+      if (metadata) {
+        logger.info('Current page is a paper. Adding overlay UI');
+        addPageOverlay(metadata);
+      }
+    })
+    .catch((error: Error) => {
+      logger.error(`Error checking if current page is paper: ${error}`);
+    });
 }
 
 /**
