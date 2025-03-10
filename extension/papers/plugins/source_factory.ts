@@ -1,7 +1,7 @@
 // extension/papers/plugins/source_factory.ts
 // Factory to simplify creation of new source plugins
 
-import { SourcePlugin } from './source_plugin';
+import { SourcePlugin, MetadataQualityResult } from './source_plugin';
 import { pluginRegistry } from './registry';
 import { UnifiedPaperData } from '../types';
 import { loguru } from '../../utils/logger';
@@ -17,11 +17,19 @@ export interface SourcePluginConfig {
   urlPatterns: RegExp[];
   color?: string;
   icon?: string;
-  hasApi?: boolean;
+  
+  // Core functionality
   idExtractor: (url: string) => string | null;
-  metadataExtractor: (document: Document, url: string) => Promise<Partial<UnifiedPaperData>>;
+  formatId: (id: string) => string;
+  
+  // Content script extractor function as a string
+  contentScriptExtractorCode: string;
+  
+  // Service worker operations
   apiDataFetcher?: (id: string) => Promise<Partial<UnifiedPaperData>>;
-  formatId?: (id: string) => string;
+  
+  // Optional custom quality evaluation
+  evaluateMetadataQuality?: (paperData: Partial<UnifiedPaperData>) => MetadataQualityResult;
 }
 
 /**
@@ -39,6 +47,9 @@ export class SourcePluginFactory {
   createPlugin(config: SourcePluginConfig): SourcePlugin {
     this.logger.info(`Creating plugin: ${config.id}`);
     
+    // Validate required fields
+    this.validateConfig(config);
+    
     const plugin: SourcePlugin = {
       id: config.id,
       name: config.name,
@@ -49,7 +60,7 @@ export class SourcePluginFactory {
       icon: config.icon,
       hasApi: !!config.apiDataFetcher,
       
-      // Standard implementation of extractId
+      // ID extraction function
       extractId: (url: string): string | null => {
         try {
           return config.idExtractor(url);
@@ -59,17 +70,68 @@ export class SourcePluginFactory {
         }
       },
       
-      // Standard implementation of extractMetadata
-      extractMetadata: async (document: Document, url: string): Promise<Partial<UnifiedPaperData>> => {
+      // Content script extraction code provider
+      getContentScriptExtractor: (): string => {
+        return config.contentScriptExtractorCode;
+      },
+      
+      // Default metadata quality evaluation method
+      evaluateMetadataQuality: (paperData: Partial<UnifiedPaperData>): MetadataQualityResult => {
         try {
-          const metadata = await config.metadataExtractor(document, url);
-          this.logger.info(`Extracted metadata for ${config.id}: ${metadata.title || 'Untitled'}`);
-          return metadata;
+          // If custom evaluator is provided, use it
+          if (config.evaluateMetadataQuality) {
+            return config.evaluateMetadataQuality(paperData);
+          }
+          
+          // Define required fields for different quality levels
+          const essentialFields = ['title', 'primary_id', 'url'];
+          const standardFields = [...essentialFields, 'authors'];
+          const completeFields = [...standardFields, 'abstract', 'timestamp'];
+          
+          // Check which fields are missing
+          const missingEssential = essentialFields.filter(field => {
+            const value = paperData[field];
+            return value === undefined || value === null || value === '';
+          });
+          
+          const missingStandard = standardFields.filter(field => {
+            const value = paperData[field];
+            return value === undefined || value === null || value === '';
+          });
+          
+          const missingComplete = completeFields.filter(field => {
+            const value = paperData[field];
+            return value === undefined || value === null || value === '';
+          });
+          
+          // Calculate quality level
+          let quality: 'minimal' | 'partial' | 'complete';
+          
+          if (missingEssential.length > 0) {
+            quality = 'minimal';
+          } else if (missingComplete.length > 0) {
+            quality = 'partial';
+          } else {
+            quality = 'complete';
+          }
+          
+          return {
+            quality,
+            missingFields: missingComplete,
+            hasEssentialFields: missingEssential.length === 0
+          };
         } catch (error) {
-          this.logger.error(`Error extracting metadata for ${config.id}:`, error);
-          return {};
+          this.logger.error(`Error evaluating metadata quality: ${error}`);
+          return {
+            quality: 'minimal',
+            missingFields: ['error'],
+            hasEssentialFields: false
+          };
         }
-      }
+      },
+      
+      // ID formatting function
+      formatId: config.formatId
     };
     
     // Add API data fetcher if provided
@@ -86,11 +148,6 @@ export class SourcePluginFactory {
       };
     }
     
-    // Add formatId if provided
-    if (config.formatId) {
-      plugin.formatId = config.formatId;
-    }
-    
     // Register the plugin
     pluginRegistry.register(plugin);
     
@@ -98,29 +155,68 @@ export class SourcePluginFactory {
   }
   
   /**
-   * Create a basic plugin from minimal configuration
-   * 
-   * @param id Plugin ID
-   * @param name Display name
-   * @param urlPatterns URL patterns to match
-   * @param idExtractor Function to extract ID from URL
-   * @returns The created plugin
+   * Validate plugin configuration
+   * @param config Configuration to validate
+   * @throws Error if required fields are missing
    */
-  createBasicPlugin(
-    id: string,
-    name: string,
-    urlPatterns: RegExp[],
-    idExtractor: (url: string) => string | null
-  ): SourcePlugin {
-    return this.createPlugin({
-      id,
-      name,
-      description: `Support for ${name} papers`,
-      version: '1.0.0',
-      urlPatterns,
-      idExtractor,
-      metadataExtractor: async () => ({})
-    });
+  private validateConfig(config: SourcePluginConfig): void {
+    // Required fields must exist
+    const requiredFields = [
+      'id', 'name', 'description', 'version', 'urlPatterns',
+      'idExtractor', 'formatId', 'contentScriptExtractorCode'
+    ];
+    
+    const missingFields = requiredFields.filter(field => 
+      !config[field as keyof SourcePluginConfig]);
+    
+    if (missingFields.length > 0) {
+      const error = `Plugin configuration missing required fields: ${missingFields.join(', ')}`;
+      this.logger.error(error);
+      throw new Error(error);
+    }
+    
+    // URL patterns must be an array with at least one pattern
+    if (!Array.isArray(config.urlPatterns) || config.urlPatterns.length === 0) {
+      const error = `Plugin ${config.id} has no URL patterns`;
+      this.logger.error(error);
+      throw new Error(error);
+    }
+    
+    // Validate function fields
+    if (typeof config.idExtractor !== 'function') {
+      const error = `Plugin ${config.id} has invalid idExtractor: not a function`;
+      this.logger.error(error);
+      throw new Error(error);
+    }
+    
+    if (typeof config.formatId !== 'function') {
+      const error = `Plugin ${config.id} has invalid formatId: not a function`;
+      this.logger.error(error);
+      throw new Error(error);
+    }
+    
+    // Content script extractor code must be a non-empty string
+    if (typeof config.contentScriptExtractorCode !== 'string' || 
+        config.contentScriptExtractorCode.trim() === '') {
+      const error = `Plugin ${config.id} has invalid contentScriptExtractorCode: empty or not a string`;
+      this.logger.error(error);
+      throw new Error(error);
+    }
+    
+    // If apiDataFetcher is provided, it must be a function
+    if (config.apiDataFetcher !== undefined && typeof config.apiDataFetcher !== 'function') {
+      const error = `Plugin ${config.id} has invalid apiDataFetcher: not a function`;
+      this.logger.error(error);
+      throw new Error(error);
+    }
+    
+    // If evaluateMetadataQuality is provided, it must be a function
+    if (config.evaluateMetadataQuality !== undefined && 
+        typeof config.evaluateMetadataQuality !== 'function') {
+      const error = `Plugin ${config.id} has invalid evaluateMetadataQuality: not a function`;
+      this.logger.error(error);
+      throw new Error(error);
+    }
   }
 }
 
