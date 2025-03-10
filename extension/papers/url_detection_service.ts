@@ -76,8 +76,8 @@ class URLDetectionService {
         const sourceInfo: DetectedSourceInfo = {
           type: result.plugin.id,
           id: result.id,
-          primary_id: result.plugin.serviceWorker && plugin.serviceWorker.formatId ? 
-            plugin.serviceWorker.formatId(result.id) : 
+          primary_id: result.plugin.serviceWorker && result.plugin.serviceWorker.formatId ? 
+            result.plugin.serviceWorker.formatId(result.id) : 
             `${result.plugin.id}.${result.id}`,
           url: url,
           plugin: result.plugin
