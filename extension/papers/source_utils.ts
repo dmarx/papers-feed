@@ -59,3 +59,10 @@ export function parseId(prefixedId: string): { type: string; id: string } {
       }
     }
   }
+  
+  // Assume the prefix is the source type
+  return {
+    type: prefix,
+    id: prefix === 'doi' ? id.replace(/_/g, '/') : id
+  };
+}
