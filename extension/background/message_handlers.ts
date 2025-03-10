@@ -271,8 +271,21 @@ export class MessageHandlers {
    */
   async handleGetExtractorForUrl(url: string, sendResponse: (response: any) => void): Promise<void> {
     try {
-      const extractorCode = await urlDetectionService.getExtractorForUrl(url);
+      // Find plugin for the URL first
+      const sourceInfo = await urlDetectionService.detectSource(url);
+      if (!sourceInfo || !sourceInfo.plugin) {
+        sendResponse({
+          success: false,
+          error: 'No plugin available for this URL'
+        });
+        return;
+      }
       
+      // Get extractor code from plugin
+      const extractorCode = sourceInfo.plugin.contentScript.extractorModulePath ?
+        `// Load extractor from ${sourceInfo.plugin.contentScript.extractorModulePath}` :
+        null;
+        
       if (extractorCode) {
         sendResponse({
           success: true,
@@ -300,12 +313,12 @@ export class MessageHandlers {
    */
   handleGetPluginExtractor(pluginId: string, sendResponse: (response: any) => void): void {
     try {
-      const extractorCode = urlDetectionService.getExtractorInfoForPlugin(pluginId);
+      const extractorInfo = urlDetectionService.getExtractorInfoForPlugin(pluginId);
       
-      if (extractorCode) {
+      if (extractorInfo) {
         sendResponse({
           success: true,
-          extractorCode
+          extractorCode: extractorInfo
         });
       } else {
         sendResponse({
