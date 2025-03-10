@@ -98,8 +98,7 @@ export async function extractMetadataFromDOM(tabId: number, sourceInfo: Detected
           sourceId: sourceInfo.id,
           primary_id: sourceInfo.primary_id,
           url: sourceInfo.url,
-          title: `${sourceInfo.type.toUpperCase()} Paper: ${sourceInfo.id}`,
-          _note: `Would load extractor from: ${extractorModule}`
+          title: '',
         };
       } catch (parserError) {
         logger.error(`Error parsing HTML in service worker: ${parserError}`);
