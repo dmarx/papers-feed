@@ -1,0 +1,1990 @@
+---
+File: extension/content/annotator.ts
+---
+// content/annotator.ts - Paper annotation UI components and functionality
+
+import { fetchPaperMetadata } from './metadata_fetcher';
+import { getSourceLabel, formatPrimaryId } from './paper_detector';
+
+/**
+ * Paper metadata from API
+ */
+interface PaperMetadata {
+  title?: string;
+  authors?: string;
+  abstract?: string;
+  [key: string]: any;
+}
+
+/**
+ * Create a wrapper element for the popup
+ * @returns {HTMLElement} Popup wrapper element
+ */
+export function createPopupWrapper(): HTMLElement {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'paper-popup-container';
+  wrapper.style.position = 'relative';
+  return wrapper;
+}
+
+/**
+ * Create popup element for paper annotation
+ * @param {string} source Paper source
+ * @param {string} id Paper ID
+ * @param {string} initialTitle Optional initial title
+ * @returns {Promise<HTMLElement>} Popup element
+ */
+export async function createPopup(
+  source: string, 
+  id: string, 
+  initialTitle = ''
+): Promise<HTMLElement> {
+  console.log(`Creating popup for ${source}:${id}`);
+  
+  // Calculate the standardized primary ID
+  const primary_id = formatPrimaryId(source, id);
+  
+  // Fetch metadata
+  const metadata = await fetchPaperMetadata(source, id);
+  console.log('Fetched metadata:', metadata);
+
+  // Create the popup element
+  const popup = document.createElement('div');
+  popup.className = 'paper-popup';
+  
+  // Add enhanced styles
+  Object.assign(popup.style, {
+    position: 'absolute',
+    zIndex: '10000',
+    background: 'white',
+    border: '1px solid #ccc',
+    borderRadius: '4px',
+    boxShadow: '0 2px 10px rgba(0,0,0,0.1)',
+    padding: '12px',
+    width: '300px',
+    maxWidth: '90vw',
+    fontSize: '14px',
+    fontFamily: 'system-ui, sans-serif'
+  });
+  
+  // Create popup content
+  popup.innerHTML = `
+    <div class="paper-popup-source source-${source}" style="
+      display: inline-block;
+      font-size: 11px;
+      border-radius: 4px;
+      padding: 2px 6px;
+      margin-bottom: 10px;
+      color: white;
+      font-weight: 500;
+      background-color: ${getSourceColor(source)};
+    ">${getSourceLabel(source)}</div>
+    <div class="paper-popup-header" style="
+      font-weight: bold;
+      margin-bottom: 8px;
+      font-size: 14px;
+      line-height: 1.4;
+    ">${metadata?.title || initialTitle || id}</div>
+    <div class="paper-popup-meta" style="
+      font-size: 12px;
+      color: #666;
+      margin-bottom: 12px;
+      line-height: 1.4;
+    ">${metadata?.authors || ''}</div>
+    <div class="paper-popup-buttons" style="
+      display: flex;
+      gap: 10px;
+      margin-bottom: 10px;
+    ">
+      <button class="vote-button" data-vote="thumbsup" style="
+        flex: 1;
+        padding: 8px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        background: #f5f5f5;
+        cursor: pointer;
+      ">👍 Interesting</button>
+      <button class="vote-button" data-vote="thumbsdown" style="
+        flex: 1;
+        padding: 8px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        background: #f5f5f5;
+        cursor: pointer;
+      ">👎 Not Relevant</button>
+    </div>
+    <textarea placeholder="Add notes..." style="
+      width: 100%;
+      min-height: 80px;
+      padding: 8px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      box-sizing: border-box;
+      font-family: inherit;
+      font-size: 13px;
+      margin-bottom: 10px;
+      resize: vertical;
+    "></textarea>
+    <div class="paper-popup-actions" style="
+      display: flex;
+      justify-content: flex-end;
+    ">
+      <button class="save-button" style="
+        padding: 8px 16px;
+        border: none;
+        border-radius: 4px;
+        background: #0366d6;
+        color: white;
+        cursor: pointer;
+        font-weight: 500;
+      ">Save</button>
+    </div>
+  `;
+
+  // Add event listeners for voting
+  popup.querySelectorAll('.vote-button').forEach(button => {
+    button.addEventListener('click', () => {
+      popup.querySelectorAll('.vote-button').forEach(b => {
+        (b as HTMLElement).style.background = '#f5f5f5';
+        (b as HTMLElement).style.borderColor = '#ddd';
+        b.classList.remove('active');
+      });
+      
+      button.classList.add('active');
+      (button as HTMLElement).style.background = '#e0f7fa';
+      (button as HTMLElement).style.borderColor = '#4dd0e1';
+    });
+  });
+
+  // Add event listener for save button
+  const saveButton = popup.querySelector('.save-button');
+  
+  if (saveButton) {
+    saveButton.addEventListener('click', () => {
+      const vote = popup.querySelector('.vote-button.active')?.getAttribute('data-vote');
+      const notes = (popup.querySelector('textarea') as HTMLTextAreaElement).value;
+      
+      // Format data for the background script with primary_id
+      if (vote || notes) {
+        chrome.runtime.sendMessage({
+          type: 'updateAnnotation',
+          annotationType: notes ? 'notes' : 'vote',
+          data: {
+            paperId: primary_id, // Use the formatted primary ID
+            source: source,
+            vote,
+            notes,
+            title: metadata?.title,
+            authors: metadata?.authors,
+            abstract: metadata?.abstract,
+            timestamp: new Date().toISOString()
+          }
+        }, (response) => {
+          console.log('Annotation saved:', response);
+          
+          // Add success feedback
+          const feedbackEl = document.createElement('div');
+          feedbackEl.textContent = 'Saved successfully!';
+          feedbackEl.style.color = '#4CAF50';
+          feedbackEl.style.padding = '8px';
+          feedbackEl.style.textAlign = 'center';
+          feedbackEl.style.fontWeight = 'bold';
+          
+          const actionsContainer = popup.querySelector('.paper-popup-actions');
+          if (actionsContainer) {
+            actionsContainer.parentElement!.insertBefore(feedbackEl, actionsContainer);
+          }
+          
+          // Remove the popup after a delay
+          setTimeout(() => {
+            popup.parentElement?.remove();
+          }, 1500);
+        });
+      }
+    });
+  }
+
+  // Store source info on the popup element - use simple property access
+  // Use Object.defineProperties to attach properties
+  Object.defineProperties(popup, {
+    paperSource: {
+      value: source,
+      writable: true,
+      enumerable: true
+    },
+    paperId: {
+      value: id,
+      writable: true,
+      enumerable: true
+    },
+    primary_id: {
+      value: primary_id,
+      writable: true,
+      enumerable: true
+    }
+  });
+  
+  return popup;
+}
+
+/**
+ * Get color for source branding
+ * @param {string} source Source type
+ * @returns {string} CSS color
+ */
+function getSourceColor(source: string): string {
+  const colors: Record<string, string> = {
+    'arxiv': '#B31B1B',
+    'semanticscholar': '#2e7d32',
+    'doi': '#0277bd',
+    'acm': '#0277bd',
+    'openreview': '#6d4c41'
+  };
+  
+  return colors[source] || '#666666';
+}
+
+/**
+ * Initialize annotator module
+ */
+export function initializeAnnotator(): void {
+  console.log('Initializing paper annotator module');
+  
+  // CSS is now imported in index.ts via import './styles.css'
+  // which is more maintainable than injecting it here
+  
+  // Initialize any event listeners or other setup needed
+  document.addEventListener('click', (e) => {
+    // Close popups when clicking outside them
+    if (
+      e.target && 
+      !(e.target as HTMLElement).closest('.paper-popup') && 
+      !(e.target as HTMLElement).closest('.paper-annotator')
+    ) {
+      // Get all popup containers and remove them
+      document.querySelectorAll('.paper-popup-container').forEach(container => {
+        if (container.contains(document.activeElement)) {
+          // Don't remove if it contains the active element (like a focused textarea)
+          return;
+        }
+        container.remove();
+      });
+    }
+  });
+}
+
+
+
+---
+File: extension/content/index.ts
+---
+// extension/content/index.ts
+// Main entry point for content script using the plugin system
+
+import { loguru } from '../utils/logger';
+import { initializeMessageHandlers, extractCurrentPageMetadata, reportExtractedMetadata } from './message_handlers';
+import { setupPaperUIOverlay } from './paper_overlay';
+import { detectPaperSource, processPaperLink } from './paper_detector';
+import { fetchPaperMetadata } from './metadata_fetcher';
+import './styles.css';
+
+const logger = loguru.getLogger('ContentScript');
+
+/**
+ * Initialize the content script
+ */
+function initialize(): void {
+  logger.info('Academic Paper Tracker content script initialized');
+  
+  // Initialize message handlers
+  initializeMessageHandlers();
+  
+  // Set up paper UI overlay (annotations, etc.)
+  setupPaperUIOverlay();
+  
+  // Analyze the current page
+  analyzeCurrentPage();
+  
+  // Expose global functions for API access
+  exposeGlobalFunctions();
+}
+
+/**
+ * Analyze the current page for paper metadata
+ */
+async function analyzeCurrentPage(): Promise<void> {
+  try {
+    logger.info(`Analyzing current page: ${window.location.href}`);
+    
+    // Try to extract metadata from the current page
+    const metadata = await extractCurrentPageMetadata();
+    
+    if (metadata) {
+      logger.info(`Extracted metadata: ${metadata.title || 'Untitled'}`);
+      
+      // Report extracted metadata to background script
+      const success = await reportExtractedMetadata(metadata);
+      
+      if (success) {
+        logger.info('Successfully processed paper metadata');
+      } else {
+        logger.warning('Failed to process paper metadata');
+      }
+    } else {
+      logger.info('Current page is not a recognized paper or metadata extraction failed');
+    }
+  } catch (error) {
+    logger.error(`Error analyzing current page: ${error}`);
+  }
+}
+
+/**
+ * Expose critical functions to window for API access
+ */
+function exposeGlobalFunctions(): void {
+  const paperTracker = {
+    // Import functions directly from their modules
+    detectPaperSource,
+    fetchPaperMetadata,
+    processPaperLink,
+    
+    // Extract metadata from the current page
+    extractMetadata: async () => {
+      try {
+        const metadata = await extractCurrentPageMetadata();
+        return metadata;
+      } catch (error) {
+        logger.error(`Error extracting metadata: ${error}`);
+        return null;
+      }
+    },
+    
+    // Track a paper URL
+    trackPaper: (url: string) => {
+      chrome.runtime.sendMessage({
+        type: 'trackPaper',
+        url: url
+      }, response => {
+        if (response && response.success) {
+          logger.info(`Paper tracked: ${response.paperData?.title || url}`);
+        } else {
+          logger.warning(`Failed to track paper: ${response?.error || 'Unknown error'}`);
+        }
+      });
+    },
+    
+    // Check if a URL is a supported paper source
+    isPaperUrl: async (url: string): Promise<boolean> => {
+      return new Promise(resolve => {
+        chrome.runtime.sendMessage({
+          type: 'detectPaperSource',
+          url: url
+        }, response => {
+          resolve(response && response.success && response.detected);
+        });
+      });
+    }
+  };
+  
+  // Expose the API
+  window.paperTracker = paperTracker;
+  
+  // Legacy support for direct trackPaper function
+  window.trackPaper = paperTracker.trackPaper;
+}
+
+// Run initialization when DOM is fully loaded
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initialize);
+} else {
+  // DOM is already loaded, initialize immediately
+  initialize();
+}
+
+
+
+---
+File: extension/content/message_handlers.ts
+---
+// extension/content/message_handlers.ts
+// Handle messages between content script and background
+
+import { loguru } from '../utils/logger';
+
+const logger = loguru.getLogger('ContentMessageHandlers');
+
+/**
+ * Initialize message handlers for content script
+ */
+export function initializeMessageHandlers(): void {
+  logger.info('Initializing content script message handlers');
+  
+  // Listen for messages from the background script
+  chrome.runtime.onMessage.addListener(handleMessage);
+  
+  // Listen for messages from the page script
+  window.addEventListener('message', handleWindowMessage);
+}
+
+/**
+ * Handle messages from the background script
+ * @param {any} message Message data
+ * @param {chrome.runtime.MessageSender} sender Message sender
+ * @param {Function} sendResponse Response callback
+ * @returns {boolean} Whether to use sendResponse asynchronously
+ */
+function handleMessage(
+  message: any, 
+  sender: chrome.runtime.MessageSender, 
+  sendResponse: (response?: any) => void
+): boolean {
+  logger.info('Content script received message:', message);
+
+  // Handle different message types
+  switch (message.type) {
+    case 'extractPageMetadata':
+      // Execute the extractor code on the current page
+      executeExtractor(message.extractorCode, window.location.href)
+        .then(metadata => {
+          sendResponse({ 
+            success: true, 
+            metadata 
+          });
+        })
+        .catch(error => {
+          logger.error('Error executing extractor:', error);
+          sendResponse({ 
+            success: false, 
+            error: String(error) 
+          });
+        });
+      break;
+
+    case 'getPluginForUrl':
+      // We don't need to do anything here, just report success
+      // This is handled by the background script
+      sendResponse({ success: true });
+      break;
+      
+    default:
+      // Unhandled message type
+      logger.info('Unhandled message type:', message.type);
+      sendResponse({ 
+        success: false, 
+        error: `Unhandled message type: ${message.type}` 
+      });
+  }
+
+  return true; // Keep channel open for async response
+}
+
+/**
+ * Handle messages from the page script
+ * @param {MessageEvent} event Window message event
+ */
+function handleWindowMessage(event: MessageEvent): void {
+  // Ensure message is from the same origin
+  if (event.source !== window) {
+    return;
+  }
+
+  const message = event.data;
+  
+  // Check if it's a message for our extension
+  if (typeof message !== 'object' || message === null || message.target !== 'paper_tracker_extension') {
+    return;
+  }
+
+  logger.info('Content script received window message:', message);
+
+  // Handle different action types
+  switch (message.action) {
+    case 'extractMetadata':
+      // Request the extractor from the background script
+      chrome.runtime.sendMessage({
+        type: 'getExtractorForUrl',
+        url: window.location.href
+      }, async (response) => {
+        if (response && response.success && response.extractorCode) {
+          try {
+            // Execute the extractor code
+            const metadata = await executeExtractor(response.extractorCode, window.location.href);
+            
+            // Send result back to the page
+            window.postMessage({
+              source: 'paper_tracker_extension',
+              response: 'extractMetadata',
+              success: true,
+              metadata
+            }, '*');
+          } catch (error) {
+            window.postMessage({
+              source: 'paper_tracker_extension',
+              response: 'extractMetadata',
+              success: false,
+              error: String(error)
+            }, '*');
+          }
+        } else {
+          window.postMessage({
+            source: 'paper_tracker_extension',
+            response: 'extractMetadata',
+            success: false,
+            error: response?.error || 'No extractor available'
+          }, '*');
+        }
+      });
+      break;
+
+    default:
+      logger.info('Unhandled window message action:', message.action);
+  }
+}
+
+/**
+ * Execute extractor code in the content script context
+ * @param {string} extractorCode Code to execute
+ * @param {string} url Page URL
+ * @returns {Promise<any>} Extracted metadata
+ */
+async function executeExtractor(extractorCode: string, url: string): Promise<any> {
+  try {
+    // Create a function from the extractor code string
+    const extractorFn = new Function('document', 'url', `
+      return (async function(document, url) {
+        ${extractorCode}
+      })(document, url);
+    `);
+    
+    // Execute the extractor function
+    const metadata = await extractorFn(document, url);
+    
+    if (metadata) {
+      logger.info(`Extracted metadata: ${metadata.title || 'Untitled'}`);
+      return metadata;
+    } else {
+      logger.warning('Extractor returned no metadata');
+      return null;
+    }
+  } catch (error) {
+    logger.error(`Error executing extractor: ${error}`);
+    throw error;
+  }
+}
+
+/**
+ * Extract metadata from the current page
+ * @returns {Promise<any>} Extracted metadata
+ */
+export async function extractCurrentPageMetadata(): Promise<any> {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage({
+      type: 'getExtractorForUrl',
+      url: window.location.href
+    }, async response => {
+      if (!response || !response.success || !response.extractorCode) {
+        return resolve(null);
+      }
+      
+      try {
+        const metadata = await executeExtractor(response.extractorCode, window.location.href);
+        resolve(metadata);
+      } catch (error) {
+        reject(error);
+      }
+    });
+  });
+}
+
+/**
+ * Report extracted metadata to the background script
+ * @param {any} metadata Extracted metadata
+ * @returns {Promise<boolean>} Success status
+ */
+export async function reportExtractedMetadata(metadata: any): Promise<boolean> {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage({
+      type: 'metadataExtracted',
+      data: metadata
+    }, response => {
+      resolve(response && response.success);
+    });
+  });
+}
+
+
+
+---
+File: extension/content/metadata_fetcher.ts
+---
+// content/metadata_fetcher.ts - Fetch paper metadata from services
+
+/**
+ * Paper metadata interface
+ */
+export interface PaperMetadata {
+  title?: string;
+  authors?: string;
+  abstract?: string;
+  url?: string;
+  source?: string;
+  id?: string;
+  primary_id?: string;
+  [key: string]: any;
+}
+
+/**
+ * Cache for paper metadata to avoid repeated API calls
+ */
+const metadataCache = new Map<string, PaperMetadata>();
+
+/**
+ * Fetch paper metadata from APIs or background service
+ * @param {string} source Paper source type
+ * @param {string} id Paper ID
+ * @returns {Promise<PaperMetadata>} Paper metadata
+ */
+export async function fetchPaperMetadata(source: string, id: string): Promise<PaperMetadata> {
+  // Create cache key
+  const cacheKey = `${source}:${id}`;
+  
+  // Check cache first
+  if (metadataCache.has(cacheKey)) {
+    return metadataCache.get(cacheKey)!;
+  }
+  
+  try {
+    // Try to get metadata from the extension's background script first
+    const backgroundMetadata = await getMetadataFromBackground(source, id);
+    
+    if (backgroundMetadata) {
+      // Cache the result
+      metadataCache.set(cacheKey, backgroundMetadata);
+      return backgroundMetadata;
+    }
+
+    // Fall back to directly fetching from APIs
+    let metadata: PaperMetadata;
+    
+    switch (source) {
+      case 'arxiv':
+        metadata = await fetchArxivMetadata(id);
+        break;
+      case 'semanticscholar':
+        metadata = await fetchSemanticScholarMetadata(id);
+        break;
+      case 'openreview':
+        metadata = await fetchOpenReviewMetadata(id);
+        break;
+      default:
+        // For other sources, use minimal data
+        metadata = {
+          title: `${source.toUpperCase()} Paper: ${id}`,
+          id: id,
+          source: source
+        };
+    }
+    
+    // Cache and return the result
+    metadataCache.set(cacheKey, metadata);
+    return metadata;
+  } catch (error) {
+    console.error(`Error fetching metadata for ${source}:${id}:`, error);
+    
+    // Return minimal metadata on error
+    return {
+      title: `${source.toUpperCase()} Paper: ${id}`,
+      id: id,
+      source: source
+    };
+  }
+}
+
+/**
+ * Get metadata from background script
+ * @param {string} source Paper source
+ * @param {string} id Paper ID
+ * @returns {Promise<PaperMetadata|null>} Paper metadata or null
+ */
+async function getMetadataFromBackground(source: string, id: string): Promise<PaperMetadata | null> {
+  return new Promise(resolve => {
+    chrome.runtime.sendMessage({
+      type: 'getPaperMetadata',
+      source: source,
+      id: id
+    }, (response) => {
+      // Check if we got valid metadata
+      if (response && response.title) {
+        resolve(response);
+      } else {
+        resolve(null);
+      }
+    });
+  });
+}
+
+/**
+ * Fetch arXiv metadata from the arXiv API
+ * @param {string} id arXiv paper ID
+ * @returns {Promise<PaperMetadata>} Paper metadata
+ */
+async function fetchArxivMetadata(id: string): Promise<PaperMetadata> {
+  try {
+    const apiUrl = `https://export.arxiv.org/api/query?id_list=${id}`;
+    const response = await fetch(apiUrl);
+    
+    if (!response.ok) {
+      throw new Error(`arXiv API error: ${response.status}`);
+    }
+    
+    const text = await response.text();
+    
+    // Extract data using regex since we're in content script
+    // (DOMParser is available but a little more complex to handle)
+    const titleMatch = text.match(/<title>(.*?)<\/title>/);
+    const authorsMatch = text.match(/<author>(.*?)<\/author>/g);
+    const summaryMatch = text.match(/<summary>(.*?)<\/summary>/s);
+    
+    const title = titleMatch ? titleMatch[1].trim() : `arXiv Paper: ${id}`;
+    
+    // Process authors
+    let authors = '';
+    if (authorsMatch) {
+      const authorNames = authorsMatch.map(authorTag => {
+        const nameMatch = authorTag.match(/<name>(.*?)<\/name>/);
+        return nameMatch ? nameMatch[1].trim() : '';
+      }).filter(Boolean);
+      
+      authors = authorNames.join(', ');
+    }
+    
+    const abstract = summaryMatch ? summaryMatch[1].trim() : '';
+    
+    return {
+      title,
+      authors,
+      abstract,
+      id,
+      source: 'arxiv',
+      url: `https://arxiv.org/abs/${id}`
+    };
+  } catch (error) {
+    console.error('Error fetching arXiv metadata:', error);
+    return {
+      title: `arXiv Paper: ${id}`,
+      id,
+      source: 'arxiv',
+      url: `https://arxiv.org/abs/${id}`
+    };
+  }
+}
+
+/**
+ * Fetch Semantic Scholar metadata
+ * @param {string} id Semantic Scholar paper ID
+ * @returns {Promise<PaperMetadata>} Paper metadata
+ */
+async function fetchSemanticScholarMetadata(id: string): Promise<PaperMetadata> {
+  try {
+    const apiUrl = `https://api.semanticscholar.org/v1/paper/${id}`;
+    const response = await fetch(apiUrl);
+    
+    if (!response.ok) {
+      throw new Error(`Semantic Scholar API error: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    
+    // Extract authors as a string
+    const authors = data.authors
+      ? data.authors.map((author: { name: string }) => author.name).join(', ')
+      : '';
+    
+    return {
+      title: data.title || `Semantic Scholar Paper: ${id}`,
+      authors,
+      abstract: data.abstract || '',
+      id,
+      source: 'semanticscholar',
+      url: `https://www.semanticscholar.org/paper/${id}`,
+      year: data.year,
+      citationCount: data.citationCount
+    };
+  } catch (error) {
+    console.error('Error fetching Semantic Scholar metadata:', error);
+    return {
+      title: `Semantic Scholar Paper: ${id}`,
+      id,
+      source: 'semanticscholar',
+      url: `https://www.semanticscholar.org/paper/${id}`
+    };
+  }
+}
+
+/**
+ * Fetch OpenReview metadata
+ * @param {string} id OpenReview paper ID
+ * @returns {Promise<PaperMetadata>} Paper metadata
+ */
+async function fetchOpenReviewMetadata(id: string): Promise<PaperMetadata> {
+  try {
+    const apiUrl = `https://api.openreview.net/notes?id=${id}`;
+    const response = await fetch(apiUrl);
+    
+    if (!response.ok) {
+      throw new Error(`OpenReview API error: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    
+    // Check if we have valid data
+    if (data.notes && data.notes.length > 0) {
+      const note = data.notes[0];
+      const content = note.content || {};
+      
+      // Handle different content structures
+      const getContentValue = (field: string): any => {
+        if (!content[field]) return '';
+        return typeof content[field] === 'object' && 'value' in content[field]
+          ? content[field].value
+          : content[field];
+      };
+      
+      // Get title
+      const title = getContentValue('title') || `OpenReview Paper: ${id}`;
+      
+      // Handle authors (could be in different formats)
+      let authors = '';
+      const authorsData = getContentValue('authors');
+      if (Array.isArray(authorsData)) {
+        authors = authorsData.join(', ');
+      } else if (typeof authorsData === 'string') {
+        authors = authorsData;
+      }
+      
+      // Get abstract
+      const abstract = getContentValue('abstract') || '';
+      
+      return {
+        title,
+        authors,
+        abstract,
+        id,
+        source: 'openreview',
+        url: `https://openreview.net/forum?id=${id}`,
+        venue: getContentValue('venue') || note.venue,
+        forum_id: note.forum
+      };
+    }
+    
+    // If no valid data found
+    return {
+      title: `OpenReview Paper: ${id}`,
+      id,
+      source: 'openreview',
+      url: `https://openreview.net/forum?id=${id}`
+    };
+  } catch (error) {
+    console.error('Error fetching OpenReview metadata:', error);
+    return {
+      title: `OpenReview Paper: ${id}`,
+      id,
+      source: 'openreview',
+      url: `https://openreview.net/forum?id=${id}`
+    };
+  }
+}
+
+
+
+---
+File: extension/content/paper_detector.ts
+---
+// extension/content/paper_detector.ts - Paper link detection and processing
+
+import { fetchPaperMetadata } from './metadata_fetcher';
+import { createPopup, createPopupWrapper } from './annotator';
+import { SourceInfo } from '../types/common'; // Import from common types
+
+// Reference to active popup
+let activePopup: HTMLElement | null = null;
+
+/**
+ * Format a primary ID properly using a consistent approach
+ * @param {string} source Source type (e.g., 'arxiv', 'doi')
+ * @param {string} id Original ID from the source
+ * @returns {string} Formatted primary ID
+ */
+export function formatPrimaryId(source: string, id: string): string {
+  // Sanitize the ID by replacing problematic characters
+  const safeId = id
+    .replace(/\//g, '_')
+    .replace(/:/g, '.')
+    .replace(/\s/g, '_')
+    .replace(/\\/g, '_');
+  
+  return `${source}.${safeId}`;
+}
+
+/**
+ * Get a human-readable label for a source
+ * @param {string} source Source type identifier
+ * @returns {string} Human-readable label
+ */
+export function getSourceLabel(source: string): string {
+  const labels: Record<string, string> = {
+    'arxiv': 'arXiv',
+    'semanticscholar': 'Semantic Scholar',
+    'doi': 'DOI',
+    'acm': 'ACM Digital Library',
+    'openreview': 'OpenReview'
+  };
+  
+  return labels[source] || source.charAt(0).toUpperCase() + source.slice(1);
+}
+
+/**
+ * Paper sources configuration
+ */
+const PAPER_SOURCES = [
+  {
+    type: 'arxiv',
+    urlPatterns: [
+      /arxiv\.org\/abs\/([0-9.]+)(v[0-9]+)?/,
+      /arxiv\.org\/pdf\/([0-9.]+)(v[0-9]+)?\.pdf/
+    ],
+    getIdFromMatch: (match: RegExpMatchArray) => match[1] + (match[2] || '')
+  },
+  {
+    type: 'semanticscholar',
+    urlPatterns: [
+      /semanticscholar\.org\/paper\/([a-f0-9]+)/,
+      /s2-research\.org\/papers\/([a-f0-9]+)/
+    ],
+    getIdFromMatch: (match: RegExpMatchArray) => match[1]
+  },
+  {
+    type: 'doi',
+    urlPatterns: [
+      /doi\.org\/(10\.[0-9.]+\/[^\s&\/?#]+[^\s&\/?#.:])/
+    ],
+    getIdFromMatch: (match: RegExpMatchArray) => match[1]
+  },
+  {
+    type: 'acm',
+    urlPatterns: [
+      /dl\.acm\.org\/doi\/(10\.[0-9.]+\/[^\s&\/?#]+[^\s&\/?#.:])/
+    ],
+    getIdFromMatch: (match: RegExpMatchArray) => match[1]
+  },
+  {
+    type: 'openreview',
+    urlPatterns: [
+      /openreview\.net\/forum\?id=([a-zA-Z0-9_\-]+)/,
+      /openreview\.net\/pdf\?id=([a-zA-Z0-9_\-]+)/
+    ],
+    getIdFromMatch: (match: RegExpMatchArray) => match[1]
+  }
+];
+
+/**
+ * Detect paper source and ID from URL
+ * @param {string} url URL to check for paper identifiers
+ * @returns {SourceInfo|null} Source information or null if not a paper URL
+ */
+export function detectPaperSource(url: string): SourceInfo | null {
+  // Check each source type
+  for (const source of PAPER_SOURCES) {
+    for (let i = 0; i < source.urlPatterns.length; i++) {
+      const match = url.match(source.urlPatterns[i]);
+      if (match) {
+        const id = source.getIdFromMatch(match);
+        const primary_id = formatPrimaryId(source.type, id);
+        return {
+          type: source.type,
+          id: id,
+          primary_id: primary_id, // Include primary_id to match common.ts SourceInfo
+          url: url
+        };
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Process paper link and add annotation functionality
+ * @param {HTMLAnchorElement} link Link element to process
+ */
+export async function processPaperLink(link: HTMLAnchorElement): Promise<void> {
+  // Skip if already processed
+  if (link.classList.contains('paper-processed')) return;
+  link.classList.add('paper-processed');
+
+  // Detect paper source from URL
+  const sourceInfo = detectPaperSource(link.href);
+  if (!sourceInfo) return;
+  
+  const { type: source, id } = sourceInfo;
+
+  // Create annotator button with source-specific class
+  const annotator = document.createElement('span');
+  annotator.className = `paper-annotator annotator-${source}`;
+  annotator.title = `Add ${getSourceLabel(source)} annotation`;
+  
+  // Update the click handler
+  annotator.addEventListener('click', async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  
+    // Remove existing popup if any
+    if (activePopup) {
+      activePopup.parentElement?.remove(); // Remove the wrapper
+      if (
+        // Access properties directly - they're properly defined 
+        // on the HTMLElement with Object.defineProperties
+        activePopup.hasOwnProperty('paperSource') && 
+        activePopup.hasOwnProperty('paperId') &&
+        (activePopup as any).paperSource === source && 
+        (activePopup as any).paperId === id
+      ) {
+        activePopup = null;
+        return;
+      }
+    }
+  
+    // Create popup
+    const popup = await createPopup(source, id);
+    
+    // Create wrapper and add popup to it
+    const wrapper = createPopupWrapper();
+    wrapper.appendChild(popup);
+    
+    // Position popup relative to annotator
+    const annotatorRect = annotator.getBoundingClientRect();
+    const available_width = window.innerWidth - annotatorRect.left;
+    
+    if (available_width < 320) { // if not enough space on right
+      popup.style.right = '0';  // align to right edge
+      popup.style.left = 'auto';
+    } else {
+      popup.style.left = '0';
+    }
+    popup.style.top = `${annotatorRect.height + 5}px`;
+    
+    // Add to page and store reference
+    annotator.parentNode!.insertBefore(wrapper, annotator.nextSibling);
+    activePopup = popup;
+  });
+  
+  // Add to page
+  link.parentNode!.insertBefore(annotator, link.nextSibling);
+}
+
+/**
+ * Track a paper via the background script
+ * @param {string} url Paper URL to track
+ */
+export function trackPaper(url: string): void {
+  const sourceInfo = detectPaperSource(url);
+  if (!sourceInfo) {
+    console.log('Not a recognized paper URL:', url);
+    return;
+  }
+  
+  // Get the page title if possible
+  const title = document.title || `${sourceInfo.type.toUpperCase()} Paper: ${sourceInfo.id}`;
+  
+  // Send message to background script with proper data format
+  chrome.runtime.sendMessage({
+    type: 'trackPaper',
+    source: sourceInfo.type,
+    id: sourceInfo.id,
+    url: url,
+    title: title
+  }, (response) => {
+    console.log('Paper tracking result:', response);
+  });
+}
+
+/**
+ * Setup automatic link detection on page
+ */
+export function setupLinkDetection(): void {
+  // Process existing links
+  document.querySelectorAll('a[href]').forEach(link => {
+    processPaperLink(link as HTMLAnchorElement);
+  });
+  
+  // Set up a MutationObserver to detect new links
+  const observer = new MutationObserver(mutations => {
+    mutations.forEach(mutation => {
+      // Process added nodes
+      mutation.addedNodes.forEach(node => {
+        if (node.nodeType === Node.ELEMENT_NODE) {
+          // Check if node is a link
+          if ((node as Element).tagName === 'A' && (node as HTMLAnchorElement).href) {
+            processPaperLink(node as HTMLAnchorElement);
+          }
+          
+          // Check for links within the node
+          (node as Element).querySelectorAll('a[href]').forEach(link => {
+            processPaperLink(link as HTMLAnchorElement);
+          });
+        }
+      });
+    });
+  });
+  
+  // Start observing the document
+  observer.observe(document.body, {
+    childList: true,
+    subtree: true
+  });
+}
+
+
+
+---
+File: extension/content/paper_overlay.ts
+---
+// extension/content/paper_overlay.ts
+// UI overlay for annotating papers
+
+import { loguru } from '../utils/logger';
+
+const logger = loguru.getLogger('PaperOverlay');
+
+/**
+ * Set up paper UI overlay 
+ */
+export function setupPaperUIOverlay(): void {
+  logger.info('Setting up paper UI overlay');
+  
+  // Set up annotation for paper links
+  setupLinkAnnotation();
+  
+  // Set up floating action button for current page if it's a paper
+  checkCurrentPageForPaper();
+}
+
+/**
+ * Set up annotation for paper links
+ */
+function setupLinkAnnotation(): void {
+  // Process existing links
+  processExistingLinks();
+  
+  // Set up a MutationObserver to detect new links
+  const observer = new MutationObserver((mutations) => {
+    mutations.forEach((mutation) => {
+      // Process added nodes
+      mutation.addedNodes.forEach((node) => {
+        if (node.nodeType === Node.ELEMENT_NODE) {
+          // Check if node is a link
+          if ((node as Element).tagName === 'A' && (node as HTMLAnchorElement).href) {
+            processLink(node as HTMLAnchorElement);
+          }
+          
+          // Check for links within the node
+          (node as Element).querySelectorAll('a[href]').forEach((link) => {
+            processLink(link as HTMLAnchorElement);
+          });
+        }
+      });
+    });
+  });
+  
+  // Start observing the document
+  observer.observe(document.body, {
+    childList: true,
+    subtree: true
+  });
+}
+
+/**
+ * Process existing links in the document
+ */
+function processExistingLinks(): void {
+  document.querySelectorAll('a[href]').forEach((link) => {
+    processLink(link as HTMLAnchorElement);
+  });
+}
+
+/**
+ * Process a link to see if it's a paper link
+ * @param link Link element to process
+ */
+function processLink(link: HTMLAnchorElement): void {
+  // Skip if already processed
+  if (link.classList.contains('paper-processed')) {
+    return;
+  }
+  
+  link.classList.add('paper-processed');
+  
+  // Use isPaperUrl from the paperTracker API
+  window.paperTracker.isPaperUrl(link.href)
+    .then((isPaper: boolean) => {
+      if (isPaper) {
+        // Add paper indicator icon
+        addPaperIndicator(link);
+      }
+    })
+    .catch((error: Error) => {
+      logger.error(`Error checking if URL is paper: ${error}`);
+    });
+}
+
+/**
+ * Add paper indicator icon to a link
+ * @param link Link element to annotate
+ */
+function addPaperIndicator(link: HTMLAnchorElement): void {
+  // Create indicator element
+  const indicator = document.createElement('span');
+  indicator.className = 'paper-indicator';
+  indicator.title = 'Academic paper - Click to track';
+  
+  // Add click handler
+  indicator.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    // Track the paper
+    window.paperTracker.trackPaper(link.href);
+    
+    // Show feedback
+    showTrackingFeedback(indicator);
+  });
+  
+  // Insert after the link
+  link.parentNode?.insertBefore(indicator, link.nextSibling);
+}
+
+/**
+ * Show feedback when a paper is tracked
+ * @param element Element to show feedback on
+ */
+function showTrackingFeedback(element: HTMLElement): void {
+  // Add success class for animation
+  element.classList.add('tracked');
+  
+  // Create tooltip
+  const tooltip = document.createElement('div');
+  tooltip.className = 'paper-tooltip';
+  tooltip.textContent = 'Paper tracked!';
+  
+  // Position tooltip
+  const rect = element.getBoundingClientRect();
+  tooltip.style.top = `${rect.top - 30}px`;
+  tooltip.style.left = `${rect.left}px`;
+  
+  // Add to document
+  document.body.appendChild(tooltip);
+  
+  // Remove after animation
+  setTimeout(() => {
+    tooltip.remove();
+    element.classList.remove('tracked');
+  }, 2000);
+}
+
+/**
+ * Check if the current page is a paper and add UI if needed
+ */
+function checkCurrentPageForPaper(): void {
+  // Use extractMetadata from the paperTracker API
+  window.paperTracker.extractMetadata()
+    .then((metadata: any) => {
+      if (metadata) {
+        logger.info('Current page is a paper. Adding overlay UI');
+        addPageOverlay(metadata);
+      }
+    })
+    .catch((error: Error) => {
+      logger.error(`Error checking if current page is paper: ${error}`);
+    });
+}
+
+/**
+ * Add overlay UI to the current page
+ * @param metadata Paper metadata
+ */
+function addPageOverlay(metadata: any): void {
+  // Create a floating action button
+  const fab = document.createElement('div');
+  fab.className = 'paper-fab';
+  fab.title = 'Paper actions';
+  
+  // Add icon
+  const icon = document.createElement('span');
+  icon.className = 'paper-fab-icon';
+  icon.textContent = '📝';
+  fab.appendChild(icon);
+  
+  // Add click handler
+  fab.addEventListener('click', () => {
+    // Toggle popup
+    if (document.querySelector('.paper-action-popup')) {
+      removeActionPopup();
+    } else {
+      showActionPopup(fab, metadata);
+    }
+  });
+  
+  // Add to document
+  document.body.appendChild(fab);
+}
+
+/**
+ * Show action popup with paper information
+ * @param trigger Trigger element
+ * @param metadata Paper metadata
+ */
+function showActionPopup(trigger: HTMLElement, metadata: any): void {
+  // Create popup
+  const popup = document.createElement('div');
+  popup.className = 'paper-action-popup';
+  
+  // Add content
+  popup.innerHTML = `
+    <div class="paper-popup-header">
+      <div class="paper-popup-title">${metadata.title || 'Untitled Paper'}</div>
+      <div class="paper-popup-source">${getSourceLabel(metadata.source)}</div>
+    </div>
+    <div class="paper-popup-authors">${metadata.authors || ''}</div>
+    ${metadata.abstract ? `<div class="paper-popup-abstract">${metadata.abstract}</div>` : ''}
+    <div class="paper-popup-actions">
+      <button class="paper-action-button" data-action="rate-up">👍 Interesting</button>
+      <button class="paper-action-button" data-action="rate-down">👎 Not interesting</button>
+    </div>
+    <textarea class="paper-notes" placeholder="Add notes..."></textarea>
+    <button class="paper-save-button">Save</button>
+  `;
+  
+  // Position popup
+  const rect = trigger.getBoundingClientRect();
+  popup.style.bottom = `${window.innerHeight - rect.top + 10}px`;
+  popup.style.right = `${window.innerWidth - rect.right + 10}px`;
+  
+  // Add to document
+  document.body.appendChild(popup);
+  
+  // Add event listeners
+  popup.querySelector('.paper-save-button')?.addEventListener('click', () => {
+    const notes = (popup.querySelector('.paper-notes') as HTMLTextAreaElement).value;
+    if (notes) {
+      saveNotes(metadata, notes);
+    }
+    
+    // Close popup
+    removeActionPopup();
+  });
+  
+  // Add rating buttons handlers
+  popup.querySelectorAll('.paper-action-button').forEach(button => {
+    button.addEventListener('click', () => {
+      const action = (button as HTMLElement).dataset.action;
+      if (action === 'rate-up') {
+        rateCurrentPaper('thumbsup');
+      } else if (action === 'rate-down') {
+        rateCurrentPaper('thumbsdown');
+      }
+      
+      // Mark button as active
+      popup.querySelectorAll('.paper-action-button').forEach(b => 
+        b.classList.remove('active'));
+      button.classList.add('active');
+    });
+  });
+  
+  // Close on outside click
+  document.addEventListener('click', outsideClickHandler);
+}
+
+/**
+ * Remove action popup
+ */
+function removeActionPopup(): void {
+  document.querySelector('.paper-action-popup')?.remove();
+  document.removeEventListener('click', outsideClickHandler);
+}
+
+/**
+ * Handle clicks outside the popup
+ */
+function outsideClickHandler(e: MouseEvent): void {
+  const popup = document.querySelector('.paper-action-popup');
+  const fab = document.querySelector('.paper-fab');
+  
+  if (popup && fab && !popup.contains(e.target as Node) && !fab.contains(e.target as Node)) {
+    removeActionPopup();
+  }
+}
+
+/**
+ * Save notes for the current paper
+ * @param metadata Paper metadata
+ * @param notes Notes to save
+ */
+function saveNotes(metadata: any, notes: string): void {
+  chrome.runtime.sendMessage({
+    type: 'updateAnnotation',
+    annotationType: 'notes',
+    data: {
+      paperId: metadata.primary_id,
+      source: metadata.source,
+      notes,
+      title: metadata.title
+    }
+  }, response => {
+    if (response && response.success) {
+      showSaveSuccess();
+    }
+  });
+}
+
+/**
+ * Rate the current paper
+ * @param rating Rating value
+ */
+function rateCurrentPaper(rating: string): void {
+  chrome.runtime.sendMessage({
+    type: 'updateRating',
+    rating
+  }, response => {
+    if (response && response.success) {
+      showSaveSuccess();
+    }
+  });
+}
+
+/**
+ * Show save success message
+ */
+function showSaveSuccess(): void {
+  // Create toast
+  const toast = document.createElement('div');
+  toast.className = 'paper-toast';
+  toast.textContent = 'Saved successfully!';
+  
+  // Add to document
+  document.body.appendChild(toast);
+  
+  // Remove after animation
+  setTimeout(() => {
+    toast.remove();
+  }, 3000);
+}
+
+/**
+ * Get a human-readable label for a source
+ * @param source Paper source type
+ * @returns Human-readable label
+ */
+function getSourceLabel(source: string): string {
+  const labels: Record<string, string> = {
+    'arxiv': 'arXiv',
+    'semanticscholar': 'Semantic Scholar',
+    'doi': 'DOI',
+    'acm': 'ACM Digital Library',
+    'openreview': 'OpenReview'
+  };
+  
+  return labels[source] || source.charAt(0).toUpperCase() + source.slice(1);
+}
+
+
+
+---
+File: extension/content/styles.css
+---
+/* content/styles.css - Styles for content script UI elements */
+
+/* Paper annotator buttons */
+.paper-annotator {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  margin-left: 5px;
+  vertical-align: middle;
+  cursor: pointer;
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+  opacity: 0.7;
+  transition: opacity 0.2s ease;
+}
+
+.paper-annotator:hover {
+  opacity: 1;
+}
+
+/* Paper popups */
+.paper-popup-container {
+  position: relative;
+}
+
+.paper-popup {
+  position: absolute;
+  z-index: 10000;
+  background: white;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+  padding: 12px;
+  width: 300px;
+  max-width: 90vw;
+  font-size: 14px;
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+.paper-popup-source {
+  display: inline-block;
+  font-size: 11px;
+  border-radius: 4px;
+  padding: 2px 6px;
+  margin-bottom: 10px;
+  color: white;
+  font-weight: 500;
+}
+
+.paper-popup-header {
+  font-weight: bold;
+  margin-bottom: 8px;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.paper-popup-meta {
+  font-size: 12px;
+  color: #666;
+  margin-bottom: 12px;
+  line-height: 1.4;
+}
+
+.paper-popup-buttons {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.paper-popup-buttons button {
+  flex: 1;
+  padding: 8px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  background: #f5f5f5;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.paper-popup-buttons button:hover {
+  background: #e5e5e5;
+}
+
+.paper-popup-buttons button.active {
+  background: #e0f7fa !important;
+  border-color: #4dd0e1 !important;
+}
+
+.paper-popup textarea {
+  width: 100%;
+  min-height: 80px;
+  padding: 8px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  box-sizing: border-box;
+  font-family: inherit;
+  font-size: 13px;
+  margin-bottom: 10px;
+  resize: vertical;
+}
+
+.paper-popup-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.paper-popup-actions button {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 4px;
+  background: #0366d6;
+  color: white;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.paper-popup-actions button:hover {
+  background: #0255b3;
+}
+
+/* Source-specific styling */
+.source-arxiv {
+  background-color: #B31B1B;
+}
+
+.source-semanticscholar {
+  background-color: #2e7d32;
+}
+
+.source-doi, .source-acm {
+  background-color: #0277bd;
+}
+
+.source-openreview {
+  background-color: #6d4c41;
+}
+
+/* Paper annotator icons */
+.annotator-arxiv {
+  background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%23B31B1B"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14h-2V9h-2V7h4v10z"/></svg>');
+}
+
+.annotator-semanticscholar {
+  background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%232e7d32"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>');
+}
+
+.annotator-doi, .annotator-acm {
+  background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%230277bd"><path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H8V4h12v12zM10 9h8v2h-8zm0 3h4v2h-4zm0-6h8v2h-8z"/></svg>');
+}
+
+.annotator-openreview {
+  background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%236d4c41"><path d="M20 2H4c-1.1 0-1.99.9-1.99 2L2 22l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-7 9h-2V5h2v6zm0 4h-2v-2h2v2z"/></svg>');
+}
+
+/* extension/content/styles.css */
+/* Styles for content script UI elements */
+
+/* Paper indicator for links */
+.paper-indicator {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  margin-left: 5px;
+  vertical-align: middle;
+  cursor: pointer;
+  background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%234285F4"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14h-2V9h-2V7h4v10z"/></svg>');
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+  opacity: 0.7;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.paper-indicator:hover {
+  opacity: 1;
+}
+
+.paper-indicator.tracked {
+  transform: scale(1.5);
+  opacity: 1;
+  animation: pulse 1s ease-out;
+}
+
+@keyframes pulse {
+  0% { transform: scale(1); opacity: 0.7; }
+  50% { transform: scale(1.5); opacity: 1; }
+  100% { transform: scale(1); opacity: 0.7; }
+}
+
+/* Tooltip */
+.paper-tooltip {
+  position: absolute;
+  z-index: 10000;
+  background: rgba(0, 0, 0, 0.8);
+  color: white;
+  padding: 5px 10px;
+  border-radius: 4px;
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: 12px;
+  pointer-events: none;
+  opacity: 0;
+  animation: fadeInOut 2s ease-in-out;
+}
+
+@keyframes fadeInOut {
+  0% { opacity: 0; transform: translateY(10px); }
+  20% { opacity: 1; transform: translateY(0); }
+  80% { opacity: 1; transform: translateY(0); }
+  100% { opacity: 0; transform: translateY(-10px); }
+}
+
+/* Floating action button for current page */
+.paper-fab {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background-color: #4285F4;
+  color: white;
+  box-shadow: 0 3px 5px rgba(0, 0, 0, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 9999;
+  transition: transform 0.2s ease, background-color 0.2s ease;
+}
+
+.paper-fab:hover {
+  transform: scale(1.1);
+  background-color: #1A73E8;
+}
+
+.paper-fab-icon {
+  font-size: 24px;
+}
+
+/* Action popup */
+.paper-action-popup {
+  position: fixed;
+  z-index: 10000;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  padding: 16px;
+  width: 300px;
+  max-width: 90vw;
+  max-height: 80vh;
+  overflow-y: auto;
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+.paper-popup-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  margin-bottom: 12px;
+}
+
+.paper-popup-title {
+  font-weight: 600;
+  font-size: 16px;
+  line-height: 1.4;
+  flex: 1;
+}
+
+.paper-popup-source {
+  font-size: 11px;
+  padding: 2px 6px;
+  background-color: #4285F4;
+  color: white;
+  border-radius: 4px;
+  margin-left: 8px;
+  white-space: nowrap;
+}
+
+.paper-popup-authors {
+  font-size: 12px;
+  color: #666;
+  margin-bottom: 12px;
+}
+
+.paper-popup-abstract {
+  font-size: 12px;
+  line-height: 1.5;
+  margin-bottom: 16px;
+  border-left: 2px solid #f0f0f0;
+  padding-left: 8px;
+  color: #444;
+  max-height: 150px;
+  overflow-y: auto;
+}
+
+.paper-popup-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.paper-action-button {
+  flex: 1;
+  padding: 8px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  background: #f5f5f5;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.paper-action-button:hover {
+  background: #e5e5e5;
+}
+
+.paper-action-button.active {
+  background: #e3f2fd;
+  border-color: #2196F3;
+}
+
+.paper-notes {
+  width: 100%;
+  height: 80px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 8px;
+  margin-bottom: 12px;
+  font-family: inherit;
+  font-size: 13px;
+  resize: vertical;
+}
+
+.paper-save-button {
+  background-color: #4285F4;
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 500;
+  float: right;
+  transition: background-color 0.2s ease;
+}
+
+.paper-save-button:hover {
+  background-color: #1A73E8;
+}
+
+/* Toast notification */
+.paper-toast {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.8);
+  color: white;
+  padding: 8px 16px;
+  border-radius: 4px;
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: 14px;
+  z-index: 10000;
+  animation: fadeInOut 3s ease-in-out;
+}
+
+/* Source-specific styling */
+[class*="source-arxiv"] {
+  background-color: #B31B1B !important;
+}
+
+[class*="source-semanticscholar"] {
+  background-color: #2e7d32 !important;
+}
+
+[class*="source-doi"], [class*="source-acm"] {
+  background-color: #0277bd !important;
+}
+
+[class*="source-openreview"] {
+  background-color: #6d4c41 !important;
+}
+
+
+
+---
+File: extension/content/tsconfig.json
+---
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ESNext",
+    "moduleResolution": "node",
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "esModuleInterop": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "types": ["chrome"],
+    "outDir": "../dist/content",
+    "baseUrl": ".",
+    "paths": {
+      "*": ["*", "../types/*"]
+    }
+  },
+  "include": [
+    "**/*.ts",
+    "../types/**/*.d.ts"
+  ],
+  "exclude": [
+    "../node_modules"
+  ]
+}
+
+
+
+---
+File: extension/content/types.d.ts
+---
+// extension/content/types.d.ts - Type declarations for content script
+
+import { SourceInfo, PaperMetadata } from '../types/common';
+
+/**
+ * Paper Tracker API exposed to page scripts
+ */
+interface PaperTracker {
+  /**
+   * Detect paper source and ID from URL
+   * @param url Paper URL to detect
+   */
+  detectPaperSource: (url: string) => SourceInfo | null;
+  
+  /**
+   * Fetch metadata for a paper
+   * @param source Paper source type
+   * @param id Paper ID
+   */
+  fetchPaperMetadata: (source: string, id: string) => Promise<PaperMetadata>;
+  
+  /**
+   * Track paper with the extension
+   * @param url Paper URL to track
+   */
+  trackPaper: (url: string) => void;
+  
+  /**
+   * Extract metadata from the current page
+   * @returns Promise resolving to page metadata
+   */
+  extractMetadata: () => Promise<any>;
+  
+  /**
+   * Check if a URL is a supported paper source
+   * @param url URL to check
+   * @returns Promise resolving to true if supported
+   */
+  isPaperUrl: (url: string) => Promise<boolean>;
+  
+  /**
+   * Process a paper link to add annotation functionality
+   * @param link Link element to process
+   */
+  processPaperLink?: (link: HTMLAnchorElement) => Promise<void>;
+}
+
+/**
+ * Window interface extended with paper tracker
+ */
+declare global {
+  interface Window {
+    /**
+     * Paper Tracker API exposed to page scripts
+     */
+    paperTracker: PaperTracker;
+    
+    /**
+     * Legacy function to track a paper
+     * @param url Paper URL to track
+     */
+    trackPaper: (url: string) => void;
+  }
+}
+
+// Export empty object to make this a module
+export {};
+
+
