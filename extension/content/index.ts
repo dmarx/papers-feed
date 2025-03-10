@@ -4,18 +4,11 @@
 import { loguru } from '../utils/logger';
 import { initializeMessageHandlers, extractCurrentPageMetadata, reportExtractedMetadata } from './message_handlers';
 import { setupPaperUIOverlay } from './paper_overlay';
+import { detectPaperSource, processPaperLink } from './paper_detector';
+import { fetchPaperMetadata } from './metadata_fetcher';
 import './styles.css';
 
 const logger = loguru.getLogger('ContentScript');
-
-/**
- * Paper tracker functionality available to page script
- */
-interface PaperTracker {
-  extractMetadata: () => Promise<any>;
-  trackPaper: (url: string) => void;
-  isPaperUrl: (url: string) => Promise<boolean>;
-}
 
 /**
  * Initialize the content script
@@ -69,9 +62,24 @@ async function analyzeCurrentPage(): Promise<void> {
  * Expose critical functions to window for API access
  */
 function exposeGlobalFunctions(): void {
-  const paperTracker: PaperTracker = {
-    extractMetadata: extractCurrentPageMetadata,
+  const paperTracker = {
+    // Import functions directly from their modules
+    detectPaperSource,
+    fetchPaperMetadata,
+    processPaperLink,
     
+    // Extract metadata from the current page
+    extractMetadata: async () => {
+      try {
+        const metadata = await extractCurrentPageMetadata();
+        return metadata;
+      } catch (error) {
+        logger.error(`Error extracting metadata: ${error}`);
+        return null;
+      }
+    },
+    
+    // Track a paper URL
     trackPaper: (url: string) => {
       chrome.runtime.sendMessage({
         type: 'trackPaper',
@@ -111,13 +119,4 @@ if (document.readyState === 'loading') {
 } else {
   // DOM is already loaded, initialize immediately
   initialize();
-}
-
-// Extend Window interface to include our API
-// And then update the global declaration:
-declare global {
-  interface Window {
-    paperTracker: PaperTracker;
-    trackPaper: (url: string) => void;
-  }
 }
