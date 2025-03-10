@@ -4,6 +4,8 @@ import { loguru } from "../utils/logger";
 import { processUrl, processTab, processNavigation } from './detection_service';
 import { extractPaperMetadata } from './metadata_service';
 
+import { sanitizeMetadata } from '../utils/metadata_sanitizer';
+
 const logger = loguru.getLogger('PaperProcessor');
 
 /**
@@ -25,7 +27,24 @@ export async function fullyProcessUrl(url: string, tabId: number | null = null):
     logger.info(`Detected ${sourceInfo.type} paper: ${sourceInfo.id}`);
     
     // Then extract metadata using the appropriate plugin
-    return await extractPaperMetadata(sourceInfo, tabId);
+    //return await extractPaperMetadata(sourceInfo, tabId);
+    let paperData = await extractPaperMetadata(sourceInfo, tabId);
+
+    // After extracting metadata from any source
+    if (paperData) {
+      // Sanitize metadata before storing or displaying
+      paperData = sanitizeMetadata(paperData);
+      
+      // Check for missing critical fields
+      const hasMissingFields = !paperData.title || !paperData.authors;
+      if (hasMissingFields) {
+        paperData.metadata_quality = 'incomplete';
+        // Flag for future enhancement attempts
+      }
+      return paperData;
+    }
+    return null;
+    
   } catch (error) {
     logger.error(`Error fully processing URL ${url}:`, error);
     return null;
