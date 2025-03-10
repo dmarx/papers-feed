@@ -341,12 +341,8 @@ export class MessageHandlers {
         return;
       }
       
-      logger.info('Received metadata from content script:', metadata.title);
-      
-      // Validate metadata
+      // Validate metadata and ensure primary_id exists
       if (!metadata.primary_id) {
-        logger.warning('Metadata missing primary_id');
-        
         // Try to generate primary_id if possible
         if (metadata.source && metadata.sourceId) {
           const plugin = pluginRegistry.get(metadata.source);
@@ -362,12 +358,7 @@ export class MessageHandlers {
         }
       }
       
-      // Ensure we have a timestamp
-      if (!metadata.timestamp) {
-        metadata.timestamp = new Date().toISOString();
-      }
-      
-      // Create GitHub issue for the paper
+      // Now metadata.primary_id is guaranteed to exist
       const storedPaper = await githubIntegration.createGithubIssue(metadata);
       
       if (storedPaper) {
