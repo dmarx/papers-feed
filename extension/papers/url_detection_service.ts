@@ -97,14 +97,14 @@ class URLDetectionService {
         for (const pattern of plugin.urlPatterns) {
           const match = url.match(pattern);
           if (match) {
-            const id = plugin.serviceWorker && plugin.serviceWorker.detectSourceId(url);
+            const id = plugin.serviceWorker && plugin.serviceWorker.detectSourceId && plugin.serviceWorker.detectSourceId(url);
             if (id) {
               const sourceInfo: DetectedSourceInfo = {
                 type: plugin.id,
                 id: id,
                 primary_id: plugin.serviceWorker && plugin.serviceWorker.formatId ? 
                   plugin.serviceWorker.formatId(id) : 
-                  `${result.plugin.id}.${result.id}`,
+                  `${plugin.id}.${id}`,
                 url: url,
                 plugin: plugin
               };
