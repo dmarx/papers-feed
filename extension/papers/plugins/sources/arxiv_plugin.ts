@@ -1,218 +1,160 @@
 // extension/papers/plugins/sources/arxiv_plugin.ts
+// ArXiv plugin implementation using the new context-separated architecture
 
-import { SourcePlugin } from '../source_plugin';
-import { UnifiedPaperData } from '../../types';
+import { sourcePluginFactory } from '../source_factory';
+import { UnifiedPaperData } from '../../../types/common';
 import { loguru } from '../../../utils/logger';
 import { parseXML } from '../../../utils/worker_safe_parser';
-import { pluginRegistry } from '../registry';
-import { createServiceWorkerDOM } from '../../../utils/service_worker_parser';
 
 const logger = loguru.getLogger('ArXivPlugin');
 
-export const arxivPlugin: SourcePlugin = {
+/**
+ * Create the arXiv plugin using the factory with proper context separation
+ */
+export const arxivPlugin = sourcePluginFactory.createPlugin({
   id: 'arxiv',
   name: 'arXiv',
   description: 'Support for arXiv papers',
   version: '1.0.0',
+  color: '#B31B1B',
+  icon: '📝',
   
+  // URL patterns for detecting arXiv papers (used in both contexts)
   urlPatterns: [
     /arxiv\.org\/abs\/([0-9.]+)(v[0-9]+)?/,
     /arxiv\.org\/pdf\/([0-9.]+)(v[0-9]+)?\.pdf/,
     /arxiv\.org\/[a-z]+\/([0-9.]+)(v[0-9]+)?/
   ],
   
-  extractId(url: string): string | null {
-    for (const pattern of this.urlPatterns) {
-      const match = url.match(pattern);
-      if (match) {
-        // Include version if available
-        return match[1] + (match[2] || '');
+  // Service worker specific functionality
+  serviceWorker: {
+    // Extract ID from URL (service worker context)
+    detectSourceId: (url: string): string | null => {
+      for (const pattern of [
+        /arxiv\.org\/abs\/([0-9.]+)(v[0-9]+)?/,
+        /arxiv\.org\/pdf\/([0-9.]+)(v[0-9]+)?\.pdf/,
+        /arxiv\.org\/[a-z]+\/([0-9.]+)(v[0-9]+)?/
+      ]) {
+        const match = url.match(pattern);
+        if (match) {
+          return match[1] + (match[2] || '');
+        }
       }
-    }
-    return null;
-  },
-  
-  async extractMetadata(document: any, url: string): Promise<Partial<UnifiedPaperData>> {
-    logger.info(`Extracting metadata from ${url}`);
+      return null;
+    },
     
-    try {
-      // Check if we're in a service worker context (document is not a real DOM)
-      const isServiceWorker = typeof document !== 'object' || 
-                             !document.querySelector || 
-                             typeof document.querySelector !== 'function';
+    // Format ID consistently
+    formatId: (id: string): string => `arxiv.${id}`,
+    
+    // API-based metadata fetching (service worker context)
+    fetchApiData: async (id: string): Promise<Partial<UnifiedPaperData>> => {
+      logger.info(`Fetching arXiv API data for ID: ${id}`);
       
-      if (isServiceWorker) {
-        // Use our service worker DOM utility instead of bespoke string processing
-        logger.info('Service worker context detected, using service worker DOM parser');
-        const htmlContent = typeof document === 'string' 
-          ? document 
-          : (document.innerHTML || document.outerHTML || '');
+      try {
+        const apiUrl = `https://export.arxiv.org/api/query?id_list=${id}`;
         
-        // Create a lightweight DOM-like object we can query
-        const swDOM = createServiceWorkerDOM(htmlContent);
+        // Use fetch for service worker compatibility
+        const response = await fetch(apiUrl);
         
-        // Now we can use querySelector-like methods
-        let title = swDOM.querySelector('.title')?.textContent?.trim();
-        if (title?.startsWith('Title:')) {
-          title = title.substring(6).trim();
+        if (!response.ok) {
+          throw new Error(`API error: ${response.status}`);
         }
         
-        // Extract authors - properly type the elements from service worker DOM
-        let authors = '';
-        const authorElements = swDOM.querySelectorAll('.authors a');
-        if (authorElements.length > 0) {
-          // Convert to string array with proper typing
-          const authorTexts: string[] = [];
-          authorElements.forEach((el: any) => {
-            const text = el.textContent?.trim();
-            if (text) authorTexts.push(text);
-          });
-          authors = authorTexts.join(', ');
-        }
+        const text = await response.text();
         
-        // Extract abstract
-        let abstract = swDOM.querySelector('.abstract')?.textContent?.trim();
-        if (abstract?.startsWith('Abstract:')) {
-          abstract = abstract.substring(9).trim();
-        }
+        // Use our service-worker safe XML parser
+        const parser = parseXML(text);
+        
+        // Extract entry data
+        const entryContent = parser.getEntry();
+        
+        // Extract title
+        const title = parser.getTagContent('title');
+        
+        // Extract authors
+        const authorsList = parser.getAuthor();
+        const authors = authorsList.join(', ');
+        
+        // Extract summary
+        const abstract = parser.getTagContent('summary');
         
         // Extract categories
-        const categories: string[] = [];
-        const categoryElements = swDOM.querySelectorAll('.subjects .tag');
-        categoryElements.forEach((el: any) => {
-          const text = el.textContent?.trim();
-          if (text) categories.push(text);
-        });
+        const categories = parser.getCategories();
         
+        // Extract published date
+        const published = parser.getPublishedDate();
+        
+        // Format primary ID
+        const primary_id = `arxiv.${id}`;
+        
+        // Return structured metadata
         return {
-          title: title || '',
-          authors: authors || '',
-          abstract: abstract || '',
+          primary_id,
+          source: 'arxiv',
+          sourceId: id,
+          url: `https://arxiv.org/abs/${id}`,
+          title,
+          authors,
+          abstract,
+          timestamp: new Date().toISOString(),
           source_specific_metadata: {
             arxiv_tags: categories,
-            published_date: '' // Will be filled by API if available
+            published_date: published
           }
         };
+      } catch (error) {
+        logger.error(`Error fetching arXiv API data: ${error}`);
+        return {};
       }
+    },
+    
+    // Custom metadata quality evaluation
+    evaluateMetadataQuality: (paperData: Partial<UnifiedPaperData>) => {
+      // Define required fields for different quality levels
+      const essentialFields = ['title', 'primary_id', 'url'];
+      const standardFields = [...essentialFields, 'authors'];
+      const completeFields = [...standardFields, 'abstract', 'source_specific_metadata'];
       
-      // Browser context - use real DOM methods
-      const getMetaContent = (selector: string): string | undefined => {
-        const element = document.querySelector(selector);
-        return element && 'content' in element ? 
-          (element as HTMLMetaElement).content : undefined;
-      };
+      // Check which fields are missing
+      const missingEssential = essentialFields.filter(field => 
+        !paperData[field] || paperData[field] === '');
       
-      // Try to extract title and authors
-      let title = document.querySelector('.title')?.textContent?.trim();
-      if (title?.startsWith('Title:')) {
-        title = title.substring(6).trim();
-      }
-      
-      // Extract authors using forEach instead of map to avoid type issues
-      let authors = '';
-      const authorElements = document.querySelectorAll('.authors a');
-      if (authorElements.length > 0) {
-        const authorTexts: string[] = [];
-        authorElements.forEach((el: Element) => {
-          const text = el.textContent?.trim();
-          if (text) authorTexts.push(text);
-        });
-        authors = authorTexts.join(', ');
-      }
-      
-      // Extract abstract
-      let abstract = document.querySelector('.abstract')?.textContent?.trim();
-      if (abstract?.startsWith('Abstract:')) {
-        abstract = abstract.substring(9).trim();
-      }
-      
-      // Extract categories
-      const categories: string[] = [];
-      const categoryElements = document.querySelectorAll('.subjects .tag');
-      categoryElements.forEach((el: Element) => {
-        const text = el.textContent?.trim();
-        if (text) categories.push(text);
+      const missingComplete = completeFields.filter(field => {
+        if (field === 'source_specific_metadata') {
+          return !paperData.source_specific_metadata || 
+                !paperData.source_specific_metadata.arxiv_tags || 
+                !Array.isArray(paperData.source_specific_metadata.arxiv_tags) || 
+                paperData.source_specific_metadata.arxiv_tags.length === 0;
+        }
+        return !paperData[field] || paperData[field] === '';
       });
       
-      return {
-        title: title || '',
-        authors: authors || '',
-        abstract: abstract || '',
-        source_specific_metadata: {
-          arxiv_tags: categories,
-          published_date: '' // Will be filled by API if available
-        }
-      };
-    } catch (error) {
-      logger.error('Error extracting metadata from arXiv page', error);
-      return {};
-    }
-  },
-  
-  hasApi: true,
-  
-  async fetchApiData(id: string): Promise<Partial<UnifiedPaperData>> {
-    logger.info(`Fetching API data for arXiv:${id}`);
-    
-    try {
-      const apiUrl = `https://export.arxiv.org/api/query?id_list=${id}`;
+      // Calculate quality level
+      let quality: 'minimal' | 'partial' | 'complete';
       
-      // Use self.fetch (available in service worker) instead of window.fetch
-      const response = await self.fetch(apiUrl);
-      
-      if (!response.ok) {
-        throw new Error(`API error: ${response.status}`);
+      if (missingEssential.length > 0) {
+        quality = 'minimal';
+      } else if (missingComplete.length > 0) {
+        quality = 'partial';
+      } else {
+        quality = 'complete';
       }
       
-      const text = await response.text();
-      
-      // Use the worker-safe XML parser
-      const parser = parseXML(text);
-      
-      // Extract entry data
-      const entryContent = parser.getEntry();
-      
-      // Extract title
-      const title = parser.getTagContent('title');
-      
-      // Extract authors using the author parser
-      const authorsList = parser.getAuthor();
-      const authors = authorsList.join(', ');
-      
-      // Extract summary
-      const abstract = parser.getTagContent('summary');
-      
-      // Extract categories using the categories parser
-      const categories = parser.getCategories();
-      
-      // Extract published date
-      const published = parser.getPublishedDate();
-      
       return {
-        title,
-        authors,
-        abstract,
-        source_specific_metadata: {
-          arxiv_tags: categories,
-          published_date: published
-        }
+        quality,
+        missingFields: missingComplete,
+        hasEssentialFields: missingEssential.length === 0
       };
-    } catch (error) {
-      logger.error('Error fetching arXiv API data', error);
-      return {};
     }
   },
   
-  color: '#B31B1B',
-  icon: '📝',
-  
-  formatId(id: string): string {
-    return `arxiv.${id}`;
+  // Content script specific functionality
+  contentScript: {
+    // Path to the content script extractor module
+    // This will be imported at build time
+    extractorModulePath: './extractors/arxiv_extractor'
   }
-};
+});
 
-// Register the plugin
-pluginRegistry.register(arxivPlugin);
-
-// Export the plugin for direct import by the loader
+// Export the plugin for direct import
 export default arxivPlugin;

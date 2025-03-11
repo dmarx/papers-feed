@@ -193,11 +193,6 @@ export class EnhancedReadingSession {
   }
 }
 
-// The legacy MultiSourceReadingSession is removed as it's replaced by EnhancedReadingSession
-
-/**
- * Unified paper data structure
- */
 export interface UnifiedPaperData {
   // Core fields required for all sources
   primary_id: string;  // Standardized ID format: {source}.{id}
@@ -211,14 +206,15 @@ export interface UnifiedPaperData {
   rating: string;      // User rating (thumbsup, thumbsdown, novote)
   
   // Cross-reference identifiers
-  // Fix for TS2411: Using string index signature
   identifiers?: {
     [key: string]: string;     // Other identifier types
   };
   
   // Source-specific metadata
-  // Fix for TS2411: Using string index signature
   source_specific_metadata?: {
     [key: string]: any;
   };
+  
+  // Allow string indexing for evaluation checks
+  [key: string]: any;
 }

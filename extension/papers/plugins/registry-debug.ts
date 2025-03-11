@@ -31,8 +31,9 @@ export function enhancePluginRegistry(registry: any): void {
       registryDebugLogger.warning(`Plugin ${plugin.id} has no URL patterns`);
     }
     
-    if (!plugin.extractId || typeof plugin.extractId !== 'function') {
-      registryDebugLogger.error(`Plugin ${plugin.id} missing required extractId method`);
+    if (!plugin.serviceWorker || !plugin.serviceWorker.detectSourceId || 
+        typeof plugin.serviceWorker.detectSourceId !== 'function') {
+      registryDebugLogger.error(`Plugin ${plugin.id} missing required serviceWorker.detectSourceId method`);
       return;
     }
     
@@ -40,7 +41,7 @@ export function enhancePluginRegistry(registry: any): void {
     originalRegister.call(this, plugin);
     
     registryDebugLogger.info(`Successfully registered plugin: ${plugin.name} (${plugin.id})`);
-    registryDebugLogger.info(`Plugin capabilities: hasApi=${!!plugin.hasApi}, formatId=${!!plugin.formatId}`);
+    registryDebugLogger.info(`Plugin capabilities: hasApi=${!!plugin.serviceWorker.fetchApiData}, formatId=${!!plugin.serviceWorker.formatId}`);
   };
   
   // Enhanced getAll method

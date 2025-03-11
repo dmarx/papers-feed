@@ -76,9 +76,9 @@ class URLDetectionService {
         const sourceInfo: DetectedSourceInfo = {
           type: result.plugin.id,
           id: result.id,
-          primary_id: result.plugin.formatId ? 
-            result.plugin.formatId(result.id) : 
-            formatPrimaryId(result.plugin.id, result.id),
+          primary_id: result.plugin.serviceWorker && result.plugin.serviceWorker.formatId ? 
+            result.plugin.serviceWorker.formatId(result.id) : 
+            `${result.plugin.id}.${result.id}`,
           url: url,
           plugin: result.plugin
         };
@@ -97,14 +97,14 @@ class URLDetectionService {
         for (const pattern of plugin.urlPatterns) {
           const match = url.match(pattern);
           if (match) {
-            const id = plugin.extractId(url);
+            const id = plugin.serviceWorker && plugin.serviceWorker.detectSourceId && plugin.serviceWorker.detectSourceId(url);
             if (id) {
               const sourceInfo: DetectedSourceInfo = {
                 type: plugin.id,
                 id: id,
-                primary_id: plugin.formatId ? 
-                  plugin.formatId(id) : 
-                  formatPrimaryId(plugin.id, id),
+                primary_id: plugin.serviceWorker && plugin.serviceWorker.formatId ? 
+                  plugin.serviceWorker.formatId(id) : 
+                  `${plugin.id}.${id}`,
                 url: url,
                 plugin: plugin
               };

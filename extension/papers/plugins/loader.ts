@@ -7,8 +7,8 @@ import { pluginRegistry } from './registry';
 // Import plugins directly (static imports only)
 // This is the key change - we need to use static imports only in service workers
 import { arxivPlugin } from './sources/arxiv_plugin';
-import { semanticScholarPlugin } from './sources/semantic_scholar_plugin';
-import { openreviewPlugin } from './sources/openreview_plugin';
+//import { semanticScholarPlugin } from './sources/semantic_scholar_plugin';
+//import { openreviewPlugin } from './sources/openreview_plugin';
 
 const logger = loguru.getLogger('PluginLoader');
 
@@ -31,8 +31,8 @@ function registerCorePlugins(): void {
     
     // Register each plugin manually - static imports
     pluginRegistry.register(arxivPlugin);
-    pluginRegistry.register(semanticScholarPlugin);
-    pluginRegistry.register(openreviewPlugin);
+    //pluginRegistry.register(semanticScholarPlugin);
+    //pluginRegistry.register(openreviewPlugin);
     
     const pluginCount = pluginRegistry.getAll().length;
     logger.info(`Registered ${pluginCount} core plugins manually`);
@@ -62,8 +62,8 @@ async function loadBuiltinPlugins(): Promise<void> {
       try {
         // These are the same plugins, but we try again in case of registration issues
         pluginRegistry.register(arxivPlugin);
-        pluginRegistry.register(semanticScholarPlugin);
-        pluginRegistry.register(openreviewPlugin);
+        //pluginRegistry.register(semanticScholarPlugin);
+        //pluginRegistry.register(openreviewPlugin);
         
         // Check if emergency registration worked
         const emergencyCount = pluginRegistry.getAll().length;

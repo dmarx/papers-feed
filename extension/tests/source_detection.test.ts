@@ -2,7 +2,7 @@
 // Tests for proper URL detection of different paper sources
 
 import { MultiSourceDetector } from '../papers/detector';
-import { parseId, formatPrimaryId, isNewFormat } from '../papers/source_utils';
+import { parseId, formatPrimaryId } from '../papers/source_utils';
 
 // Test URLs for each supported source
 const TEST_URLS = {
@@ -69,7 +69,4 @@ TEST_IDS.forEach(test => {
     console.error(`❌ Parse error: expected ${test.source}+${test.id}, got ${parsed.type}+${parsed.id}`);
   }
   
-  // Test format detection
-  console.log(`Is new format: ${isNewFormat(primaryId)} (should be true)`);
-  console.log(`Is new format: ${isNewFormat(test.id)} (should be false for plain IDs)`);
 });
