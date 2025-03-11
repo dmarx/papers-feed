@@ -3,7 +3,6 @@
 
 import { GitHubStoreClient } from 'gh-store-client';
 import { PaperManager } from '../papers/manager';
-import { MultiSourceDetector } from '../papers/detector';
 import { ReadingSessionData } from '../papers/types';
 
 /**
