@@ -2,7 +2,7 @@
 // Handle messages between content script and background
 
 import { loguru } from '../utils/logger';
-import { loadExtractor, extractMetadata } from '../dist/extractors/loader';
+import { loadExtractor, extractMetadata } from '../dist/extractors';
 
 const logger = loguru.getLogger('ContentMessageHandlers');
 
