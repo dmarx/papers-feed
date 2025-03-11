@@ -190,16 +190,5 @@ export const registry = EXTRACTOR_REGISTRY;
   logger.info(`Generated extractor loader script at ${loaderPath}`);
 }
 
-// Run as script if called directly
-// ES module compatible direct execution check
-if (import.meta.url === import.meta.main) {
-  compileExtractors()
-    .then(count => {
-      logger.info(`Successfully compiled ${count} extractors`);
-      process.exit(0);
-    })
-    .catch(error => {
-      logger.error(`Compilation failed: ${error}`);
-      process.exit(1);
-    });
-}
+// Export the function for use in build scripts
+export { compileExtractors };
