@@ -191,4 +191,5 @@ export const registry = EXTRACTOR_REGISTRY;
 }
 
 // Export the function for use in build scripts
-export { compileExtractors };
+//export { compileExtractors };
+// ... it's already being exported...
