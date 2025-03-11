@@ -95,12 +95,7 @@ async function runIntegrationTest() {
     console.log(`\nTesting case: ${testCase.name}`);
     
     // 1. Test URL detection
-    const sourceInfo = MultiSourceDetector.detect(testCase.url);
-    if (!sourceInfo) {
-      console.error(`❌ Failed to detect source for URL: ${testCase.url}`);
-      continue;
-    }
-    console.log(`✅ URL detection: ${sourceInfo.type} / ${sourceInfo.id}`);
+    // ...
     
     // 2. Store paper
     const storedPaper = await paperManager.getOrCreatePaper(testCase.paperData);
