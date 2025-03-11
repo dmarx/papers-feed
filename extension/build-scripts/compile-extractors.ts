@@ -191,7 +191,8 @@ export const registry = EXTRACTOR_REGISTRY;
 }
 
 // Run as script if called directly
-if (require.main === module) {
+// ES module compatible direct execution check
+if (import.meta.url === import.meta.main) {
   compileExtractors()
     .then(count => {
       logger.info(`Successfully compiled ${count} extractors`);
