@@ -79,6 +79,9 @@ export async function compileExtractors() {
   fs.writeFileSync(registryPath, JSON.stringify(registry, null, 2));
   logger.info(`Created extractor registry with ${Object.keys(registry).length} entries`);
   
+  // Generate loader script
+  await generateLoaderScript(registry);
+  
   return Object.keys(registry).length;
 }
 
