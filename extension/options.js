@@ -1,5 +1,5 @@
 // options.js
-import { loadSessionConfig, DEFAULT_CONFIG, saveSessionConfig } from './config/session.js';
+import { loadSessionConfig, DEFAULT_CONFIG, saveSessionConfig } from './config/session.ts';
 
 // Helper to set form field values
 function setFormValues(settings) {
