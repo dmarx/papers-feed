@@ -2,39 +2,52 @@
 // Handle messages between content script and background
 
 import { loguru } from '../utils/logger';
-
-// Import interfaces for the loader functions (we'll create these)
-import { ExtractorLoader } from '../types/extractors';
+import type { ExtractorLoader } from '../types/extractors';
+import { UnifiedPaperData } from '../types/common';
 
 const logger = loguru.getLogger('ContentMessageHandlers');
 
-// Define the loader functions that will be provided at runtime
-// These aren't available during type checking but will be at runtime
-const loaderFunctions: ExtractorLoader = {
-  loadExtractor: async (pluginId: string) => {
-    // This is just a type stub - real implementation comes from the loader module
-    return null;
-  },
-  extractMetadata: async (pluginId: string, document: Document, url: string) => {
-    // This is just a type stub - real implementation comes from the loader module
-    return null;
-  }
+// Type definitions for loader functions
+type ExtractMetadataFn = (
+  pluginId: string, 
+  document: Document, 
+  url: string
+) => Promise<Partial<UnifiedPaperData> | null>;
+
+type LoadExtractorFn = (pluginId: string) => Promise<any>;
+
+// We declare these variables but don't assign them yet
+// They'll be assigned at runtime through the dynamic import
+let extractMetadata: ExtractMetadataFn;
+let loadExtractor: LoadExtractorFn;
+
+// Initialize with stub functions that will be replaced at runtime
+extractMetadata = async (pluginId: string, doc: Document, url: string) => {
+  logger.warning(`Using stub extractMetadata function. Real loader not initialized for plugin: ${pluginId}`);
+  return null;
 };
 
-// At runtime, try to load the real functions if available
-let extractMetadata = loaderFunctions.extractMetadata;
-let loadExtractor = loaderFunctions.loadExtractor;
+loadExtractor = async (pluginId: string) => {
+  logger.warning(`Using stub loadExtractor function. Real loader not initialized for plugin: ${pluginId}`);
+  return null;
+};
 
-// Try to load the real functions at runtime
-try {
-  const loaderModule = await import('../dist/extractors/loader');
-  if (loaderModule) {
-    extractMetadata = loaderModule.extractMetadata;
-    loadExtractor = loaderModule.loadExtractor;
-  }
-} catch (error) {
-  logger.error('Failed to load extractor module:', error);
-  // Continue with the stub functions
+// This code runs at runtime but not during type-checking
+// Use a dynamic import to avoid TypeScript requiring the file during compilation
+// @ts-ignore
+if (typeof window !== 'undefined') {
+  // We're in a browser environment, so try to load the module
+  import('../dist/extractors/loader')
+    .then((loaderModule) => {
+      // Replace stubs with real functions
+      extractMetadata = loaderModule.extractMetadata;
+      loadExtractor = loaderModule.loadExtractor;
+      logger.info('Successfully loaded extractor module');
+    })
+    .catch((error) => {
+      logger.error('Failed to load extractor module:', error);
+      // Continue with stub functions
+    });
 }
 
 /**
