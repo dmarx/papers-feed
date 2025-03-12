@@ -15,40 +15,52 @@ type ExtractMetadataFn = (
 
 type LoadExtractorFn = (pluginId: string) => Promise<any>;
 
-// Define the extractor functions with default implementations
-// Will be replaced at runtime with the real ones from the loader module
+// Default stub implementations
 let extractMetadata: ExtractMetadataFn = async (pluginId, doc, url) => {
-  logger.warning(`Using stub extractMetadata function. Real loader not initialized for plugin: ${pluginId}`);
+  logger.warning(`Stub extractMetadata called for plugin ${pluginId}. Loader not initialized.`);
   return null;
 };
 
 let loadExtractor: LoadExtractorFn = async (pluginId) => {
-  logger.warning(`Using stub loadExtractor function. Real loader not initialized for plugin: ${pluginId}`);
+  logger.warning(`Stub loadExtractor called for plugin ${pluginId}. Loader not initialized.`);
   return null;
 };
 
-// This will run at runtime but not during type checking
-// We need to use a conditional with a constant expression that TypeScript can evaluate at compile time
-const IS_RUNTIME = true;
-if (IS_RUNTIME) {
-  // We need to use eval to prevent TypeScript from resolving the import at compile time
-  // This is safe because we're only using it to load our own module
-  setTimeout(() => {
-    // Use Function constructor to create a dynamic import that won't be analyzed during type checking
-    const importDynamic = new Function('modulePath', 'return import(modulePath)');
-    importDynamic('../dist/extractors/loader')
-      .then((loaderModule: any) => {
-        // Replace stubs with real functions
+// Load the real extractor module at runtime
+// This will be loaded dynamically after the application starts
+// We wrap it in a function to avoid TypeScript analyzing the import during compilation
+let loaderInitialized = false;
+
+async function initializeLoader() {
+  if (loaderInitialized) return;
+  
+  try {
+    logger.info('Initializing extractor loader...');
+    
+    // Use globalThis to access global objects safely in any environment
+    if (typeof globalThis.fetch === 'function') {
+      // We're in a browser-like environment
+      // Use a dynamic import that won't be analyzed at compile time
+      // This is intentionally constructed to prevent TypeScript from analyzing the path
+      const loaderPath = '../dist/extractors/loader';
+      const importLoader = new Function('path', 'return import(path)');
+      
+      const loaderModule = await importLoader(loaderPath);
+      
+      if (loaderModule) {
         extractMetadata = loaderModule.extractMetadata;
         loadExtractor = loaderModule.loadExtractor;
-        logger.info('Successfully loaded extractor module');
-      })
-      .catch((error: Error) => {
-        logger.error('Failed to load extractor module:', error);
-        // Continue with stub functions
-      });
-  }, 0);
+        loaderInitialized = true;
+        logger.info('Extractor loader initialized successfully');
+      }
+    }
+  } catch (error) {
+    logger.error('Failed to initialize extractor loader:', error);
+  }
 }
+
+// Try to initialize the loader
+initializeLoader();
 
 /**
  * Initialize message handlers for content script
