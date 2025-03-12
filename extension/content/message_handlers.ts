@@ -2,8 +2,7 @@
 // Handle messages between content script and background
 
 import { loguru } from '../utils/logger';
-import type { ExtractorLoader } from '../types/extractors';
-import { UnifiedPaperData } from '../types/common';
+import type { UnifiedPaperData } from '../types/common';
 
 const logger = loguru.getLogger('ContentMessageHandlers');
 
@@ -16,38 +15,39 @@ type ExtractMetadataFn = (
 
 type LoadExtractorFn = (pluginId: string) => Promise<any>;
 
-// We declare these variables but don't assign them yet
-// They'll be assigned at runtime through the dynamic import
-let extractMetadata: ExtractMetadataFn;
-let loadExtractor: LoadExtractorFn;
-
-// Initialize with stub functions that will be replaced at runtime
-extractMetadata = async (pluginId: string, doc: Document, url: string) => {
+// Define the extractor functions with default implementations
+// Will be replaced at runtime with the real ones from the loader module
+let extractMetadata: ExtractMetadataFn = async (pluginId, doc, url) => {
   logger.warning(`Using stub extractMetadata function. Real loader not initialized for plugin: ${pluginId}`);
   return null;
 };
 
-loadExtractor = async (pluginId: string) => {
+let loadExtractor: LoadExtractorFn = async (pluginId) => {
   logger.warning(`Using stub loadExtractor function. Real loader not initialized for plugin: ${pluginId}`);
   return null;
 };
 
-// This code runs at runtime but not during type-checking
-// Use a dynamic import to avoid TypeScript requiring the file during compilation
-// @ts-ignore
-if (typeof window !== 'undefined') {
-  // We're in a browser environment, so try to load the module
-  import('../dist/extractors/loader')
-    .then((loaderModule) => {
-      // Replace stubs with real functions
-      extractMetadata = loaderModule.extractMetadata;
-      loadExtractor = loaderModule.loadExtractor;
-      logger.info('Successfully loaded extractor module');
-    })
-    .catch((error) => {
-      logger.error('Failed to load extractor module:', error);
-      // Continue with stub functions
-    });
+// This will run at runtime but not during type checking
+// We need to use a conditional with a constant expression that TypeScript can evaluate at compile time
+const IS_RUNTIME = true;
+if (IS_RUNTIME) {
+  // We need to use eval to prevent TypeScript from resolving the import at compile time
+  // This is safe because we're only using it to load our own module
+  setTimeout(() => {
+    // Use Function constructor to create a dynamic import that won't be analyzed during type checking
+    const importDynamic = new Function('modulePath', 'return import(modulePath)');
+    importDynamic('../dist/extractors/loader')
+      .then((loaderModule: any) => {
+        // Replace stubs with real functions
+        extractMetadata = loaderModule.extractMetadata;
+        loadExtractor = loaderModule.loadExtractor;
+        logger.info('Successfully loaded extractor module');
+      })
+      .catch((error: Error) => {
+        logger.error('Failed to load extractor module:', error);
+        // Continue with stub functions
+      });
+  }, 0);
 }
 
 /**
