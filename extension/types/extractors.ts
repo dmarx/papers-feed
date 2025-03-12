@@ -14,6 +14,11 @@ export interface ExtractorModule {
    * @returns Extracted paper data
    */
   extractMetadata: (document: Document, url: string) => Promise<Partial<UnifiedPaperData>>;
+  
+  /**
+   * ID of the plugin this extractor belongs to
+   */
+  pluginId: string;
 }
 
 /**
@@ -39,10 +44,15 @@ export interface ExtractorLoader {
     document: Document, 
     url: string
   ) => Promise<Partial<UnifiedPaperData> | null>;
+  
+  /**
+   * Registry of available extractors
+   */
+  registry: Record<string, string>;
 }
 
 /**
- * Interface for the registry of extractors
+ * Interface for the generated registry of extractors
  */
 export interface ExtractorRegistry {
   [pluginId: string]: string;
