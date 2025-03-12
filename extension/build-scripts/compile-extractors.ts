@@ -79,6 +79,9 @@ export async function compileExtractors() {
   fs.writeFileSync(registryPath, JSON.stringify(registry, null, 2));
   logger.info(`Created extractor registry with ${Object.keys(registry).length} entries`);
   
+  // Generate loader script
+  await generateLoaderScript(registry);
+  
   return Object.keys(registry).length;
 }
 
@@ -187,15 +190,6 @@ export const registry = EXTRACTOR_REGISTRY;
   logger.info(`Generated extractor loader script at ${loaderPath}`);
 }
 
-// Run as script if called directly
-if (require.main === module) {
-  compileExtractors()
-    .then(count => {
-      logger.info(`Successfully compiled ${count} extractors`);
-      process.exit(0);
-    })
-    .catch(error => {
-      logger.error(`Compilation failed: ${error}`);
-      process.exit(1);
-    });
-}
+// Export the function for use in build scripts
+//export { compileExtractors };
+// ... it's already being exported...

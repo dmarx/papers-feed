@@ -1,5 +1,6 @@
+import { l as loadSessionConfig, D as DEFAULT_CONFIG, s as saveSessionConfig } from './assets/session-CpmC_lj6.js';
+
 // options.js
-import { loadSessionConfig, DEFAULT_CONFIG, saveSessionConfig } from './config/session.ts';
 
 // Helper to set form field values
 function setFormValues(settings) {
@@ -118,3 +119,4 @@ document.addEventListener('DOMContentLoaded', async () => {
     showStatus(`Error loading settings: ${error.message}`, true);
   }
 });
+//# sourceMappingURL=options.bundle.js.map

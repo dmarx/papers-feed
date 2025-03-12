@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite';
 import { resolve } from 'path';
+import { compileExtractors } from './build-scripts/compile-extractors';
 
 export default defineConfig({
   build: {
@@ -11,9 +12,8 @@ export default defineConfig({
       input: {
         background: resolve(__dirname, 'background/index.ts'),
         content: resolve(__dirname, 'content/index.ts'),
-        popup: resolve(__dirname, 'popup.js')
-        //popup: resolve(__dirname, 'popup/index.ts'),
-        //options: resolve(__dirname, 'options/index.ts')
+        popup: resolve(__dirname, 'popup.js'),
+        options: resolve(__dirname, 'options.js')
       },
       output: {
         dir: resolve(__dirname, 'dist'),
@@ -59,5 +59,23 @@ export default defineConfig({
     include: ['gh-store-client'],
     // Exclude problematic dependencies that might reference window
     exclude: []
-  }
+  },
+  
+  // Custom plugins
+  plugins: [
+    // Add a custom plugin to run the extractor compiler
+    {
+      name: 'compile-extractors',
+      buildStart: async () => {
+        console.log('Compiling paper extractors...');
+        try {
+          const count = await compileExtractors();
+          console.log(`Successfully compiled ${count} extractors`);
+        } catch (error) {
+          console.error('Failed to compile extractors:', error);
+          throw error; // Fail the build if extractor compilation fails
+        }
+      }
+    }
+  ]
 });

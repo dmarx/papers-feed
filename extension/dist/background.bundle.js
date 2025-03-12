@@ -1,4 +1,5 @@
 import { l as loguru } from './assets/logger-Cyvnc9vo.js';
+import { l as loadSessionConfig, g as getConfigurationInMs, D as DEFAULT_CONFIG } from './assets/session-CpmC_lj6.js';
 
 function extractIdWithPlugin(plugin, url) {
   const id = plugin.serviceWorker.detectSourceId(url);
@@ -1048,31 +1049,6 @@ class CredentialManager {
   }
 }
 const credentialManager = new CredentialManager();
-
-const DEFAULT_CONFIG = {
-  idleThresholdMinutes: 5,
-  minSessionDurationSeconds: 30,
-  // Adding more granular control
-  requireContinuousActivity: true,
-  // If true, resets timer on idle
-  logPartialSessions: false,
-  // If true, logs sessions even if under minimum duration
-  activityUpdateIntervalSeconds: 1
-  // How often to update active time
-};
-async function loadSessionConfig() {
-  const items = await chrome.storage.sync.get("sessionConfig");
-  return { ...DEFAULT_CONFIG, ...items.sessionConfig };
-}
-function getConfigurationInMs(config) {
-  return {
-    idleThreshold: config.idleThresholdMinutes * 60 * 1e3,
-    minSessionDuration: config.minSessionDurationSeconds * 1e3,
-    activityUpdateInterval: config.activityUpdateIntervalSeconds * 1e3,
-    requireContinuousActivity: config.requireContinuousActivity,
-    logPartialSessions: config.logPartialSessions
-  };
-}
 
 const logger$6 = loguru.getLogger("SessionManager");
 class EnhancedReadingSession {
