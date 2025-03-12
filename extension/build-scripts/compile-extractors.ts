@@ -9,14 +9,6 @@ import { loguru } from '../utils/logger';
 const logger = loguru.getLogger('ExtractorCompiler');
 
 /**
- * Interface for extracted plugin info
- */
-interface PluginInfo {
-  id: string;
-  extractorModulePath: string;
-}
-
-/**
  * Compile extractor modules from TypeScript to JavaScript
  * and create a registry of compiled extractors
  */
@@ -79,44 +71,10 @@ export async function compileExtractors() {
   fs.writeFileSync(registryPath, JSON.stringify(registry, null, 2));
   logger.info(`Created extractor registry with ${Object.keys(registry).length} entries`);
   
+  // Generate loader script
+  await generateLoaderScript(registry);
+  
   return Object.keys(registry).length;
-}
-
-/**
- * Import plugin configuration and extract extractor module paths
- */
-async function extractPluginInfo(): Promise<PluginInfo[]> {
-  const pluginsDir = path.join(__dirname, '../papers/plugins/sources');
-  const pluginFiles = fs.readdirSync(pluginsDir)
-    .filter(file => file.endsWith('_plugin.ts') && !file.endsWith('.d.ts'));
-  
-  const plugins: PluginInfo[] = [];
-  
-  for (const file of pluginFiles) {
-    try {
-      const filePath = path.join(pluginsDir, file);
-      const content = fs.readFileSync(filePath, 'utf8');
-      
-      // Extract plugin ID
-      const idMatch = content.match(/id:\s*['"]([a-zA-Z0-9_-]+)['"]/);
-      if (!idMatch) continue;
-      
-      const id = idMatch[1];
-      
-      // Extract extractor module path
-      const pathMatch = content.match(/extractorModulePath:\s*['"]([^'"]+)['"]/);
-      if (!pathMatch) continue;
-      
-      const extractorModulePath = pathMatch[1];
-      
-      plugins.push({ id, extractorModulePath });
-      logger.info(`Found plugin ${id} with extractor path ${extractorModulePath}`);
-    } catch (error) {
-      logger.error(`Error processing plugin file ${file}: ${error}`);
-    }
-  }
-  
-  return plugins;
 }
 
 /**
