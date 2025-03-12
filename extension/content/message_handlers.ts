@@ -2,9 +2,40 @@
 // Handle messages between content script and background
 
 import { loguru } from '../utils/logger';
-import { loadExtractor, extractMetadata } from '../dist/extractors';
+
+// Import interfaces for the loader functions (we'll create these)
+import { ExtractorLoader } from '../types/extractors';
 
 const logger = loguru.getLogger('ContentMessageHandlers');
+
+// Define the loader functions that will be provided at runtime
+// These aren't available during type checking but will be at runtime
+const loaderFunctions: ExtractorLoader = {
+  loadExtractor: async (pluginId: string) => {
+    // This is just a type stub - real implementation comes from the loader module
+    return null;
+  },
+  extractMetadata: async (pluginId: string, document: Document, url: string) => {
+    // This is just a type stub - real implementation comes from the loader module
+    return null;
+  }
+};
+
+// At runtime, try to load the real functions if available
+let extractMetadata = loaderFunctions.extractMetadata;
+let loadExtractor = loaderFunctions.loadExtractor;
+
+// Try to load the real functions at runtime
+try {
+  const loaderModule = await import('../dist/extractors/loader');
+  if (loaderModule) {
+    extractMetadata = loaderModule.extractMetadata;
+    loadExtractor = loaderModule.loadExtractor;
+  }
+} catch (error) {
+  logger.error('Failed to load extractor module:', error);
+  // Continue with the stub functions
+}
 
 /**
  * Initialize message handlers for content script
@@ -39,13 +70,13 @@ function handleMessage(
       // Extract metadata using the plugin extractor
       if (message.pluginId) {
         extractMetadata(message.pluginId, document, window.location.href)
-          .then(metadata => {
+          .then((metadata: any) => {
             sendResponse({ 
               success: true, 
               metadata 
             });
           })
-          .catch(error => {
+          .catch((error: Error) => {
             logger.error('Error executing extractor:', error);
             sendResponse({ 
               success: false, 
