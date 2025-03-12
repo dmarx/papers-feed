@@ -1,26 +1,46 @@
 // extension/papers/plugins/registry.ts
-// Updated registry to work with context-separated plugins
+// Registry for service worker plugins
 
-import { SourcePlugin, extractIdWithPlugin } from './source_plugin';
+import { ServiceWorkerPlugin } from './service_worker_plugin';
 import { loguru } from '../../utils/logger';
 
 const logger = loguru.getLogger('PluginRegistry');
 const debugLogger = loguru.getLogger('PluginRegistryDebug');
 
 /**
- * Registry for paper source plugins with context-awareness
+ * Helper function to extract ID from URL using a plugin
  */
-class PluginRegistry {
-  private plugins = new Map<string, SourcePlugin>();
+export function extractIdWithPlugin(plugin: ServiceWorkerPlugin, url: string): string | null {
+  // First try the dedicated method
+  const id = plugin.detectSourceId(url);
+  if (id) return id;
+  
+  // Fall back to pattern matching if the method doesn't return an ID
+  for (const pattern of plugin.urlPatterns) {
+    const match = url.match(pattern);
+    if (match) {
+      // Return the first capture group as the ID
+      return match[1] || null;
+    }
+  }
+  
+  return null;
+}
+
+/**
+ * Registry for paper source plugins
+ */
+export class PluginRegistry {
+  private plugins = new Map<string, ServiceWorkerPlugin>();
   
   /**
    * Register a plugin with the registry
    * @param plugin Plugin to register
    */
-  register(plugin: SourcePlugin): void {
+  register(plugin: ServiceWorkerPlugin): void {
     debugLogger.info(`Registering plugin: ${plugin.id} (${plugin.name})`);
     
-    // Validate plugin has required fields and components
+    // Validate plugin has required fields
     if (!plugin.id || typeof plugin.id !== 'string') {
       debugLogger.error(`Plugin missing valid id: ${JSON.stringify(plugin)}`);
       return;
@@ -30,30 +50,18 @@ class PluginRegistry {
       debugLogger.warning(`Plugin ${plugin.id} has no URL patterns`);
     }
     
-    // Validate service worker component
-    if (!plugin.serviceWorker) {
-      debugLogger.error(`Plugin ${plugin.id} missing required serviceWorker component`);
-      return;
-    }
-    
-    if (!plugin.serviceWorker.detectSourceId || typeof plugin.serviceWorker.detectSourceId !== 'function') {
+    if (!plugin.detectSourceId || typeof plugin.detectSourceId !== 'function') {
       debugLogger.error(`Plugin ${plugin.id} missing required detectSourceId method`);
       return;
     }
     
-    if (!plugin.serviceWorker.formatId || typeof plugin.serviceWorker.formatId !== 'function') {
+    if (!plugin.formatId || typeof plugin.formatId !== 'function') {
       debugLogger.error(`Plugin ${plugin.id} missing required formatId method`);
       return;
     }
     
-    // Validate content script component
-    if (!plugin.contentScript) {
-      debugLogger.error(`Plugin ${plugin.id} missing required contentScript component`);
-      return;
-    }
-    
-    if (!plugin.contentScript.extractorModulePath) {
-      debugLogger.error(`Plugin ${plugin.id} missing required extractorModulePath`);
+    if (!plugin.extractorPath) {
+      debugLogger.error(`Plugin ${plugin.id} missing required extractorPath`);
       return;
     }
     
@@ -64,7 +72,7 @@ class PluginRegistry {
     
     this.plugins.set(plugin.id, plugin);
     debugLogger.info(`Successfully registered plugin: ${plugin.name} (${plugin.id})`);
-    debugLogger.info(`Plugin capabilities: hasApi=${!!plugin.serviceWorker.fetchApiData}, formatId=${!!plugin.serviceWorker.formatId}`);
+    debugLogger.info(`Plugin capabilities: hasApi=${!!plugin.fetchApiData}, formatId=${!!plugin.formatId}`);
     logger.info(`Registered plugin: ${plugin.name} (${plugin.id})`);
   }
   
@@ -72,7 +80,7 @@ class PluginRegistry {
    * Get all registered plugins
    * @returns Array of registered plugins
    */
-  getAll(): SourcePlugin[] {
+  getAll(): ServiceWorkerPlugin[] {
     debugLogger.info(`Getting all plugins, currently ${this.plugins.size} registered`);
     return Array.from(this.plugins.values());
   }
@@ -82,7 +90,7 @@ class PluginRegistry {
    * @param id Plugin ID
    * @returns Plugin instance or undefined if not found
    */
-  get(id: string): SourcePlugin | undefined {
+  get(id: string): ServiceWorkerPlugin | undefined {
     debugLogger.info(`Looking up plugin by id: ${id}`);
     const plugin = this.plugins.get(id);
     if (!plugin) {
@@ -98,15 +106,11 @@ class PluginRegistry {
    * @param url URL to find a plugin for
    * @returns Object with plugin and extracted ID, or null if no match
    */
-  findForUrl(url: string): { plugin: SourcePlugin; id: string } | null {
+  findForUrl(url: string): { plugin: ServiceWorkerPlugin; id: string } | null {
     debugLogger.info(`Finding plugin for URL: ${url}`);
-    
     for (const plugin of this.plugins.values()) {
       debugLogger.info(`Testing URL against plugin: ${plugin.id}`);
-      
-      // Use the plugin's service worker component to detect the ID
       const id = extractIdWithPlugin(plugin, url);
-      
       if (id) {
         debugLogger.info(`URL matches plugin ${plugin.id}, extracted ID: ${id}`);
         return { plugin, id };
@@ -115,20 +119,6 @@ class PluginRegistry {
     
     debugLogger.warning(`No plugin found for URL: ${url}`);
     return null;
-  }
-  
-  /**
-   * Get the path to the extractor module for a plugin
-   * @param id Plugin ID
-   * @returns Path to extractor module or null if plugin not found
-   */
-  getExtractorPath(id: string): string | null {
-    const plugin = this.get(id);
-    if (!plugin) {
-      return null;
-    }
-    
-    return plugin.contentScript.extractorModulePath;
   }
   
   /**
@@ -144,19 +134,13 @@ class PluginRegistry {
    * Get information about all registered plugins
    * @returns Array of plugin information objects
    */
-  getPluginInfo(): Array<{
-    id: string;
-    name: string;
-    description: string;
-    version: string;
-    hasApi: boolean;
-  }> {
-    return this.getAll().map(plugin => ({
+  getPluginInfo() {
+    return this.getAll().map((plugin) => ({
       id: plugin.id,
       name: plugin.name,
       description: plugin.description,
       version: plugin.version,
-      hasApi: !!plugin.serviceWorker.fetchApiData
+      hasApi: !!plugin.fetchApiData
     }));
   }
 }
