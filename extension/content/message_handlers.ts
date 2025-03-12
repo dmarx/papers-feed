@@ -3,7 +3,39 @@
 
 import { loguru } from '../utils/logger';
 
+// Import interfaces for the loader functions (we'll create these)
+import { ExtractorLoader } from '../types/extractors';
+
 const logger = loguru.getLogger('ContentMessageHandlers');
+
+// Define the loader functions that will be provided at runtime
+// These aren't available during type checking but will be at runtime
+const loaderFunctions: ExtractorLoader = {
+  loadExtractor: async (pluginId: string) => {
+    // This is just a type stub - real implementation comes from the loader module
+    return null;
+  },
+  extractMetadata: async (pluginId: string, document: Document, url: string) => {
+    // This is just a type stub - real implementation comes from the loader module
+    return null;
+  }
+};
+
+// At runtime, try to load the real functions if available
+let extractMetadata = loaderFunctions.extractMetadata;
+let loadExtractor = loaderFunctions.loadExtractor;
+
+// Try to load the real functions at runtime
+try {
+  const loaderModule = await import('../dist/extractors/loader');
+  if (loaderModule) {
+    extractMetadata = loaderModule.extractMetadata;
+    loadExtractor = loaderModule.loadExtractor;
+  }
+} catch (error) {
+  logger.error('Failed to load extractor module:', error);
+  // Continue with the stub functions
+}
 
 /**
  * Initialize message handlers for content script
@@ -35,21 +67,29 @@ function handleMessage(
   // Handle different message types
   switch (message.type) {
     case 'extractPageMetadata':
-      // Execute the extractor code on the current page
-      executeExtractor(message.extractorCode, window.location.href)
-        .then(metadata => {
-          sendResponse({ 
-            success: true, 
-            metadata 
+      // Extract metadata using the plugin extractor
+      if (message.pluginId) {
+        extractMetadata(message.pluginId, document, window.location.href)
+          .then((metadata: any) => {
+            sendResponse({ 
+              success: true, 
+              metadata 
+            });
+          })
+          .catch((error: Error) => {
+            logger.error('Error executing extractor:', error);
+            sendResponse({ 
+              success: false, 
+              error: String(error) 
+            });
           });
-        })
-        .catch(error => {
-          logger.error('Error executing extractor:', error);
-          sendResponse({ 
-            success: false, 
-            error: String(error) 
-          });
+      } else {
+        // No plugin ID provided
+        sendResponse({ 
+          success: false, 
+          error: 'No plugin ID provided for extraction' 
         });
+      }
       break;
 
     case 'getPluginForUrl':
@@ -92,15 +132,15 @@ function handleWindowMessage(event: MessageEvent): void {
   // Handle different action types
   switch (message.action) {
     case 'extractMetadata':
-      // Request the extractor from the background script
+      // Request the plugin ID from the background script
       chrome.runtime.sendMessage({
-        type: 'getExtractorForUrl',
+        type: 'getPluginForUrl',
         url: window.location.href
       }, async (response) => {
-        if (response && response.success && response.extractorCode) {
+        if (response && response.success && response.pluginId) {
           try {
-            // Execute the extractor code
-            const metadata = await executeExtractor(response.extractorCode, window.location.href);
+            // Extract metadata using the plugin system
+            const metadata = await extractMetadata(response.pluginId, document, window.location.href);
             
             // Send result back to the page
             window.postMessage({
@@ -122,7 +162,7 @@ function handleWindowMessage(event: MessageEvent): void {
             source: 'paper_tracker_extension',
             response: 'extractMetadata',
             success: false,
-            error: response?.error || 'No extractor available'
+            error: 'No plugin available for this URL'
           }, '*');
         }
       });
@@ -134,53 +174,24 @@ function handleWindowMessage(event: MessageEvent): void {
 }
 
 /**
- * Execute extractor code in the content script context
- * @param {string} extractorCode Code to execute
- * @param {string} url Page URL
- * @returns {Promise<any>} Extracted metadata
- */
-async function executeExtractor(extractorCode: string, url: string): Promise<any> {
-  try {
-    // Create a function from the extractor code string
-    const extractorFn = new Function('document', 'url', `
-      return (async function(document, url) {
-        ${extractorCode}
-      })(document, url);
-    `);
-    
-    // Execute the extractor function
-    const metadata = await extractorFn(document, url);
-    
-    if (metadata) {
-      logger.info(`Extracted metadata: ${metadata.title || 'Untitled'}`);
-      return metadata;
-    } else {
-      logger.warning('Extractor returned no metadata');
-      return null;
-    }
-  } catch (error) {
-    logger.error(`Error executing extractor: ${error}`);
-    throw error;
-  }
-}
-
-/**
  * Extract metadata from the current page
  * @returns {Promise<any>} Extracted metadata
  */
 export async function extractCurrentPageMetadata(): Promise<any> {
   return new Promise((resolve, reject) => {
     chrome.runtime.sendMessage({
-      type: 'getExtractorForUrl',
+      type: 'getPluginForUrl',
       url: window.location.href
     }, async response => {
-      if (!response || !response.success || !response.extractorCode) {
-        return resolve(null);
-      }
-      
       try {
-        const metadata = await executeExtractor(response.extractorCode, window.location.href);
-        resolve(metadata);
+        if (response && response.success && response.pluginId) {
+          // Use the plugin system to extract metadata
+          const metadata = await extractMetadata(response.pluginId, document, window.location.href);
+          resolve(metadata);
+        } else {
+          // No plugin found for this URL
+          resolve(null);
+        }
       } catch (error) {
         reject(error);
       }
