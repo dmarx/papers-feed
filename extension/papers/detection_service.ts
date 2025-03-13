@@ -240,21 +240,6 @@ export class URLDetectionService {
     this.detectionCache.clear();
   }
   
-  /**
-   * Get information about extractor module for a plugin
-   * @param id Plugin ID
-   * @returns Extractor information or null
-   */
-  getExtractorInfoForPlugin(id: string): { path: string } | null {
-    const plugin = pluginRegistry.get(id);
-    if (!plugin || !plugin.extractorPath) {
-      return null;
-    }
-    
-    return {
-      path: plugin.extractorPath
-    };
-  }
   
   /**
    * Reset the service state
