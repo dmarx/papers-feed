@@ -76,8 +76,8 @@ class URLDetectionService {
         const sourceInfo: DetectedSourceInfo = {
           type: result.plugin.id,
           id: result.id,
-          primary_id: result.plugin.serviceWorker && result.plugin.serviceWorker.formatId ? 
-            result.plugin.serviceWorker.formatId(result.id) : 
+          primary_id: result.plugin.formatId ? 
+            result.plugin.formatId(result.id) : 
             `${result.plugin.id}.${result.id}`,
           url: url,
           plugin: result.plugin
@@ -88,35 +88,6 @@ class URLDetectionService {
         
         logger.info(`Detected source using plugin registry: ${sourceInfo.type}:${sourceInfo.id}`);
         return sourceInfo;
-      }
-      
-      // Fall back to checking each plugin manually
-      const plugins = pluginRegistry.getAll();
-      
-      for (const plugin of plugins) {
-        for (const pattern of plugin.urlPatterns) {
-          const match = url.match(pattern);
-          if (match) {
-            const id = plugin.serviceWorker && plugin.serviceWorker.detectSourceId && plugin.serviceWorker.detectSourceId(url);
-            if (id) {
-              const sourceInfo: DetectedSourceInfo = {
-                type: plugin.id,
-                id: id,
-                primary_id: plugin.serviceWorker && plugin.serviceWorker.formatId ? 
-                  plugin.serviceWorker.formatId(id) : 
-                  `${plugin.id}.${id}`,
-                url: url,
-                plugin: plugin
-              };
-              
-              // Add to cache
-              this.addToCache(url, sourceInfo);
-              
-              logger.info(`Detected source using manual check: ${sourceInfo.type}:${sourceInfo.id}`);
-              return sourceInfo;
-            }
-          }
-        }
       }
       
       logger.info(`No matching source found for URL: ${url}`);
@@ -234,6 +205,22 @@ class URLDetectionService {
    */
   clearCache(): void {
     this.detectionCache.clear();
+  }
+  
+  /**
+   * Get information about extractor module for a plugin
+   * @param id Plugin ID
+   * @returns Extractor information or null
+   */
+  getExtractorInfoForPlugin(id: string): { path: string } | null {
+    const plugin = pluginRegistry.get(id);
+    if (!plugin || !plugin.extractorModulePath) {
+      return null;
+    }
+    
+    return {
+      path: plugin.extractorModulePath
+    };
   }
   
   /**
