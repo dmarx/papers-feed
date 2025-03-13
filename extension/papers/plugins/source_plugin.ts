@@ -59,20 +59,23 @@ export interface ContentScriptPlugin {
  * Core plugin interface with context-specific components
  */
 export interface SourcePlugin {
-  // Basic plugin information
   id: string;
   name: string;
   description: string;
   version: string;
-  
-  // URL detection (shared but used differently in each context)
   urlPatterns: RegExp[];
   
-  // Context-specific components
-  serviceWorker: ServiceWorkerPlugin;
-  contentScript: ContentScriptPlugin;
+  // Methods directly on the plugin
+  detectSourceId: (url: string) => string | null;
+  formatId: (id: string) => string;
   
-  // UI customization
+  // API data fetching (optional)
+  fetchApiData?: (id: string) => Promise<Partial<UnifiedPaperData>>;
+  
+  // Reference to content extractor
+  extractorModulePath: string;
+  
+  // Optional properties
   color?: string;
   icon?: string;
 }
