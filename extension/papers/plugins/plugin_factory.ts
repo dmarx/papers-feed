@@ -1,15 +1,72 @@
 // extension/papers/plugins/plugin_factory.ts
-// Factory for creating plugins and extractors
+// Factory for creating plugins with clean separation of contexts
 
 import { loguru } from '../../utils/logger';
-import { ServiceWorkerPlugin, ServiceWorkerPluginConfig, defaultQualityEvaluation } from './service_worker_plugin';
-import { ContentExtractor, ContentExtractorConfig } from './content_extractor';
+import { UnifiedPaperData, MetadataQualityResult } from '../../types/common';
 import { pluginRegistry } from './registry';
 
 const logger = loguru.getLogger('PluginFactory');
 
 /**
- * Factory for creating plugins and extractors
+ * Service worker plugin - only contains what's needed in the service worker context
+ */
+export interface ServiceWorkerPlugin {
+  // Basic plugin information
+  id: string;
+  name: string;
+  description: string;
+  version: string;
+  urlPatterns: RegExp[];
+  
+  // Service worker methods
+  detectSourceId: (url: string) => string | null;
+  formatId: (id: string) => string;
+  fetchApiData?: (id: string) => Promise<Partial<UnifiedPaperData>>;
+  evaluateMetadataQuality?: (paperData: Partial<UnifiedPaperData>) => MetadataQualityResult;
+  
+  // Optional UI customization
+  color?: string;
+  icon?: string;
+}
+
+/**
+ * Content script extractor - only contains what's needed in content script context
+ */
+export interface ContentExtractor {
+  // ID to match with the service worker plugin
+  pluginId: string;
+  
+  // Content extraction function
+  extractMetadata: (document: Document, url: string) => Promise<Partial<UnifiedPaperData>>;
+}
+
+/**
+ * Configuration for creating a service worker plugin
+ */
+export interface ServiceWorkerPluginConfig {
+  id: string;
+  name: string;
+  description: string;
+  version: string;
+  urlPatterns: RegExp[];
+  detectSourceId: (url: string) => string | null;
+  formatId: (id: string) => string;
+  fetchApiData?: (id: string) => Promise<Partial<UnifiedPaperData>>;
+  evaluateMetadataQuality?: (paperData: Partial<UnifiedPaperData>) => MetadataQualityResult;
+  color?: string;
+  icon?: string;
+}
+
+/**
+ * Configuration for creating a content extractor
+ */
+export interface ContentExtractorConfig {
+  pluginId: string;
+  extractMetadata: (document: Document, url: string) => Promise<Partial<UnifiedPaperData>>;
+}
+
+/**
+ * Factory for creating plugins with clean context separation
  */
 export class PluginFactory {
   /**
@@ -31,9 +88,8 @@ export class PluginFactory {
       urlPatterns: config.urlPatterns,
       detectSourceId: config.detectSourceId,
       formatId: config.formatId,
-      extractorPath: config.extractorPath,
       fetchApiData: config.fetchApiData,
-      evaluateMetadataQuality: config.evaluateMetadataQuality || defaultQualityEvaluation,
+      evaluateMetadataQuality: config.evaluateMetadataQuality || this.defaultQualityEvaluation,
       color: config.color,
       icon: config.icon
     };
@@ -70,7 +126,7 @@ export class PluginFactory {
   private validateServiceWorkerConfig(config: ServiceWorkerPluginConfig): void {
     const requiredFields = [
       'id', 'name', 'description', 'version', 'urlPatterns', 
-      'detectSourceId', 'formatId', 'extractorPath'
+      'detectSourceId', 'formatId'
     ];
     
     const missingFields = requiredFields.filter(field => 
@@ -106,9 +162,45 @@ export class PluginFactory {
       throw new Error(error);
     }
   }
+  
+  /**
+   * Default quality evaluation implementation
+   */
+  defaultQualityEvaluation(paperData: Partial<UnifiedPaperData>): MetadataQualityResult {
+    // Define required fields for different quality levels
+    const essentialFields = ['title', 'primary_id', 'url'];
+    const standardFields = [...essentialFields, 'authors'];
+    const completeFields = [...standardFields, 'abstract', 'timestamp'];
+    
+    // Check which fields are missing
+    const missingEssential = essentialFields.filter(field => {
+      const value = paperData[field as keyof typeof paperData];
+      return value === undefined || value === null || value === '';
+    });
+    
+    const missingComplete = completeFields.filter(field => {
+      const value = paperData[field as keyof typeof paperData];
+      return value === undefined || value === null || value === '';
+    });
+    
+    // Calculate quality level
+    let quality: 'minimal' | 'partial' | 'complete';
+    
+    if (missingEssential.length > 0) {
+      quality = 'minimal';
+    } else if (missingComplete.length > 0) {
+      quality = 'partial';
+    } else {
+      quality = 'complete';
+    }
+    
+    return {
+      quality,
+      missingFields: missingComplete,
+      hasEssentialFields: missingEssential.length === 0
+    };
+  }
 }
 
-/**
- * Singleton plugin factory
- */
+// Export singleton instance
 export const pluginFactory = new PluginFactory();
