@@ -1,15 +1,30 @@
 // extension/papers/plugins/source_factory.ts
-// Updated factory to create context-separated plugins
+// Updated to solve type error
 
-import { SourcePlugin, ServiceWorkerPlugin, ContentScriptPlugin } from './source_plugin';
-import { pluginRegistry } from './registry';
-import { UnifiedPaperData, MetadataQualityResult } from '../../types/common';
 import { loguru } from '../../utils/logger';
+import { UnifiedPaperData, MetadataQualityResult } from '../../types/common';
+import { pluginRegistry } from './registry';
 
 const logger = loguru.getLogger('SourcePluginFactory');
 
+// Define plugin interfaces appropriate for the new structure
+export interface SourcePlugin {
+  id: string;
+  name: string;
+  description: string;
+  version: string;
+  urlPatterns: RegExp[];
+  detectSourceId: (url: string) => string | null;
+  formatId: (id: string) => string;
+  fetchApiData?: (id: string) => Promise<Partial<UnifiedPaperData>>;
+  evaluateMetadataQuality?: (paperData: Partial<UnifiedPaperData>) => MetadataQualityResult;
+  extractorModulePath: string;
+  color?: string;
+  icon?: string;
+}
+
 /**
- * Configuration for creating a source plugin with context separation
+ * Configuration for creating a source plugin
  */
 export interface SourcePluginConfig {
   id: string;
@@ -35,7 +50,7 @@ export interface SourcePluginConfig {
 }
 
 /**
- * Factory for creating source plugins with proper context separation
+ * Factory for creating source plugins with context separation
  */
 export class SourcePluginFactory {
   /**
@@ -45,60 +60,9 @@ export class SourcePluginFactory {
    */
   createPlugin(config: SourcePluginConfig): SourcePlugin {
     logger.info(`Creating plugin: ${config.id}`);
-    
-    // Validate required fields
     this.validateConfig(config);
     
-    // Build service worker plugin component
-    const serviceWorker: ServiceWorkerPlugin = {
-      detectSourceId: config.serviceWorker.detectSourceId,
-      formatId: config.serviceWorker.formatId,
-      fetchApiData: config.serviceWorker.fetchApiData,
-      
-      // Default quality evaluation if not provided
-      evaluateMetadataQuality: config.serviceWorker.evaluateMetadataQuality || 
-        ((paperData: Partial<UnifiedPaperData>): MetadataQualityResult => {
-          // Define required fields for different quality levels
-          const essentialFields = ['title', 'primary_id', 'url'];
-          const standardFields = [...essentialFields, 'authors'];
-          const completeFields = [...standardFields, 'abstract', 'timestamp'];
-          
-          // Check which fields are missing
-          const missingEssential = essentialFields.filter(field => {
-            const value = paperData[field];
-            return value === undefined || value === null || value === '';
-          });
-          
-          const missingComplete = completeFields.filter(field => {
-            const value = paperData[field];
-            return value === undefined || value === null || value === '';
-          });
-          
-          // Calculate quality level
-          let quality: 'minimal' | 'partial' | 'complete';
-          
-          if (missingEssential.length > 0) {
-            quality = 'minimal';
-          } else if (missingComplete.length > 0) {
-            quality = 'partial';
-          } else {
-            quality = 'complete';
-          }
-          
-          return {
-            quality,
-            missingFields: missingComplete,
-            hasEssentialFields: missingEssential.length === 0
-          };
-        })
-    };
-    
-    // Build content script plugin component
-    const contentScript: ContentScriptPlugin = {
-      extractorModulePath: config.contentScript.extractorModulePath
-    };
-    
-    // Create the complete plugin
+    // Create the plugin with the correct structure
     const plugin: SourcePlugin = {
       id: config.id,
       name: config.name,
@@ -107,8 +71,15 @@ export class SourcePluginFactory {
       urlPatterns: config.urlPatterns,
       color: config.color,
       icon: config.icon,
-      serviceWorker,
-      contentScript
+      
+      // Map service worker functions directly to plugin
+      detectSourceId: config.serviceWorker.detectSourceId,
+      formatId: config.serviceWorker.formatId,
+      fetchApiData: config.serviceWorker.fetchApiData,
+      evaluateMetadataQuality: config.serviceWorker.evaluateMetadataQuality || this.defaultQualityEvaluation,
+      
+      // Store extractor path for content script
+      extractorModulePath: config.contentScript.extractorModulePath
     };
     
     // Register the plugin
@@ -122,15 +93,18 @@ export class SourcePluginFactory {
    * @param config Configuration to validate
    * @throws Error if required fields are missing
    */
-  private validateConfig(config: SourcePluginConfig): void {
-    // Required fields must exist
+  validateConfig(config: SourcePluginConfig): void {
     const requiredFields = [
-      'id', 'name', 'description', 'version', 'urlPatterns',
-      'serviceWorker', 'contentScript'
+      'id',
+      'name',
+      'description',
+      'version',
+      'urlPatterns',
+      'serviceWorker',
+      'contentScript'
     ];
     
-    const missingFields = requiredFields.filter(field => 
-      !config[field as keyof SourcePluginConfig]);
+    const missingFields = requiredFields.filter(field => !config[field as keyof SourcePluginConfig]);
     
     if (missingFields.length > 0) {
       const error = `Plugin configuration missing required fields: ${missingFields.join(', ')}`;
@@ -138,17 +112,14 @@ export class SourcePluginFactory {
       throw new Error(error);
     }
     
-    // URL patterns must be an array with at least one pattern
     if (!Array.isArray(config.urlPatterns) || config.urlPatterns.length === 0) {
       const error = `Plugin ${config.id} has no URL patterns`;
       logger.error(error);
       throw new Error(error);
     }
     
-    // Validate service worker component
     const requiredSWFields = ['detectSourceId', 'formatId'];
-    const missingSWFields = requiredSWFields.filter(field => 
-      !config.serviceWorker[field as keyof typeof config.serviceWorker]);
+    const missingSWFields = requiredSWFields.filter(field => !config.serviceWorker[field as keyof typeof config.serviceWorker]);
     
     if (missingSWFields.length > 0) {
       const error = `Plugin ${config.id} service worker is missing required fields: ${missingSWFields.join(', ')}`;
@@ -156,14 +127,48 @@ export class SourcePluginFactory {
       throw new Error(error);
     }
     
-    // Validate content script component
     if (!config.contentScript.extractorModulePath) {
       const error = `Plugin ${config.id} content script is missing required extractorModulePath`;
       logger.error(error);
       throw new Error(error);
     }
   }
+  
+  /**
+   * Default quality evaluation implementation
+   */
+  defaultQualityEvaluation(paperData: Partial<UnifiedPaperData>): MetadataQualityResult {
+    const essentialFields = ['title', 'primary_id', 'url'];
+    const standardFields = [...essentialFields, 'authors'];
+    const completeFields = [...standardFields, 'abstract', 'timestamp'];
+    
+    const missingEssential = essentialFields.filter(field => {
+      const value = paperData[field];
+      return value === undefined || value === null || value === '';
+    });
+    
+    const missingComplete = completeFields.filter(field => {
+      const value = paperData[field];
+      return value === undefined || value === null || value === '';
+    });
+    
+    let quality: 'minimal' | 'partial' | 'complete';
+    
+    if (missingEssential.length > 0) {
+      quality = 'minimal';
+    } else if (missingComplete.length > 0) {
+      quality = 'partial';
+    } else {
+      quality = 'complete';
+    }
+    
+    return {
+      quality,
+      missingFields: missingComplete,
+      hasEssentialFields: missingEssential.length === 0
+    };
+  }
 }
 
-// Export a singleton instance
+// Export singleton instance
 export const sourcePluginFactory = new SourcePluginFactory();
