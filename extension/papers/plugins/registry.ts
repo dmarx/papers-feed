@@ -1,8 +1,8 @@
 // extension/papers/plugins/registry.ts
-// Registry for service worker plugins
+// Updated registry to match new plugin structure
 
-import { ServiceWorkerPlugin } from './service_worker_plugin';
 import { loguru } from '../../utils/logger';
+import { SourcePlugin } from './source_factory';
 
 const logger = loguru.getLogger('PluginRegistry');
 const debugLogger = loguru.getLogger('PluginRegistryDebug');
@@ -10,7 +10,7 @@ const debugLogger = loguru.getLogger('PluginRegistryDebug');
 /**
  * Helper function to extract ID from URL using a plugin
  */
-export function extractIdWithPlugin(plugin: ServiceWorkerPlugin, url: string): string | null {
+export function extractIdWithPlugin(plugin: SourcePlugin, url: string): string | null {
   // First try the dedicated method
   const id = plugin.detectSourceId(url);
   if (id) return id;
@@ -30,14 +30,14 @@ export function extractIdWithPlugin(plugin: ServiceWorkerPlugin, url: string): s
 /**
  * Registry for paper source plugins
  */
-export class PluginRegistry {
-  private plugins = new Map<string, ServiceWorkerPlugin>();
+class PluginRegistry {
+  private plugins = new Map<string, SourcePlugin>();
   
   /**
    * Register a plugin with the registry
    * @param plugin Plugin to register
    */
-  register(plugin: ServiceWorkerPlugin): void {
+  register(plugin: SourcePlugin): void {
     debugLogger.info(`Registering plugin: ${plugin.id} (${plugin.name})`);
     
     // Validate plugin has required fields
@@ -60,8 +60,8 @@ export class PluginRegistry {
       return;
     }
     
-    if (!plugin.extractorPath) {
-      debugLogger.error(`Plugin ${plugin.id} missing required extractorPath`);
+    if (!plugin.extractorModulePath) {
+      debugLogger.error(`Plugin ${plugin.id} missing required extractorModulePath`);
       return;
     }
     
@@ -80,7 +80,7 @@ export class PluginRegistry {
    * Get all registered plugins
    * @returns Array of registered plugins
    */
-  getAll(): ServiceWorkerPlugin[] {
+  getAll(): SourcePlugin[] {
     debugLogger.info(`Getting all plugins, currently ${this.plugins.size} registered`);
     return Array.from(this.plugins.values());
   }
@@ -90,7 +90,7 @@ export class PluginRegistry {
    * @param id Plugin ID
    * @returns Plugin instance or undefined if not found
    */
-  get(id: string): ServiceWorkerPlugin | undefined {
+  get(id: string): SourcePlugin | undefined {
     debugLogger.info(`Looking up plugin by id: ${id}`);
     const plugin = this.plugins.get(id);
     if (!plugin) {
@@ -106,7 +106,7 @@ export class PluginRegistry {
    * @param url URL to find a plugin for
    * @returns Object with plugin and extracted ID, or null if no match
    */
-  findForUrl(url: string): { plugin: ServiceWorkerPlugin; id: string } | null {
+  findForUrl(url: string): { plugin: SourcePlugin; id: string } | null {
     debugLogger.info(`Finding plugin for URL: ${url}`);
     for (const plugin of this.plugins.values()) {
       debugLogger.info(`Testing URL against plugin: ${plugin.id}`);
