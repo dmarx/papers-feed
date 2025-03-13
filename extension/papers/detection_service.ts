@@ -84,9 +84,7 @@ export class URLDetectionService {
         const sourceInfo: DetectedSourceInfo = {
           type: result.plugin.id,
           id: result.id,
-          primary_id: result.plugin.serviceWorker.formatId ? 
-            result.plugin.serviceWorker.formatId(result.id) : 
-            `${result.plugin.id}.${result.id}`,
+          primary_id: result.plugin.formatId(result.id),
           url: url,
           plugin: result.plugin
         };
@@ -105,14 +103,12 @@ export class URLDetectionService {
         for (const pattern of plugin.urlPatterns) {
           const match = url.match(pattern);
           if (match) {
-            const id = plugin.serviceWorker.detectSourceId(url);
+            const id = plugin.detectSourceId(url);
             if (id) {
               const sourceInfo: DetectedSourceInfo = {
                 type: plugin.id,
                 id: id,
-                primary_id: plugin.serviceWorker.formatId ? 
-                  plugin.serviceWorker.formatId(id) : 
-                  `${plugin.id}.${id}`,
+                primary_id: plugin.formatId(id),
                 url: url,
                 plugin: plugin
               };
@@ -251,12 +247,12 @@ export class URLDetectionService {
    */
   getExtractorInfoForPlugin(id: string): { path: string } | null {
     const plugin = pluginRegistry.get(id);
-    if (!plugin || !plugin.contentScript || !plugin.contentScript.extractorModulePath) {
+    if (!plugin || !plugin.extractorPath) {
       return null;
     }
     
     return {
-      path: plugin.contentScript.extractorModulePath
+      path: plugin.extractorPath
     };
   }
   
