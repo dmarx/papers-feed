@@ -232,31 +232,30 @@ export class MessageHandlers {
       });
     }
   }
-
+  
   /**
-   * Handle get plugin for URL message
-   * @param {string} url - URL to find plugin for
+   * Handle get plugin extractor message
+   * @param {string} pluginId - Plugin ID
    * @param {Function} sendResponse - Send response function
    */
-  async handleGetPluginForUrl(url: string, sendResponse: (response: any) => void): Promise<void> {
+  handleGetPluginExtractor(pluginId: string, sendResponse: (response: any) => void): void {
     try {
-      const sourceInfo = await urlDetectionService.detectSource(url);
+      // We only need to verify the plugin exists
+      const plugin = pluginRegistry.get(pluginId);
       
-      if (sourceInfo && sourceInfo.plugin) {
+      if (plugin) {
         sendResponse({
           success: true,
-          pluginId: sourceInfo.plugin.id,
-          sourceId: sourceInfo.id,
-          primaryId: sourceInfo.primary_id
+          pluginId: pluginId
         });
       } else {
         sendResponse({
-          success: true,
-          pluginId: null
+          success: false,
+          error: `No plugin found with ID: ${pluginId}`
         });
       }
     } catch (error) {
-      logger.error(`Error finding plugin for URL: ${error}`);
+      logger.error(`Error getting plugin extractor: ${error}`);
       sendResponse({
         success: false,
         error: String(error)
