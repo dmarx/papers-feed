@@ -1,5 +1,5 @@
 // extension/papers/source_utils.ts
-// Fixed to export isNewFormat function
+// Fixed to use the new plugin structure
 
 import { pluginRegistry } from './plugins/registry';
 import { loguru } from '../utils/logger';
@@ -18,9 +18,9 @@ export function formatPrimaryId(source: string, id: string): string {
   // First check if we have a plugin for this source
   const plugin = pluginRegistry.get(source);
   
-  // Use plugin's serviceWorker.formatId method if available
-  if (plugin && plugin.serviceWorker && plugin.serviceWorker.formatId) {
-    return plugin.serviceWorker.formatId(id);
+  // Use plugin's formatId method if available
+  if (plugin && plugin.formatId) {
+    return plugin.formatId(id);
   }
   
   // Sanitize the ID by replacing problematic characters
@@ -48,8 +48,8 @@ export function parseId(prefixedId: string): { type: string; id: string } {
   const plugins = pluginRegistry.getAll();
   for (const plugin of plugins) {
     // Check if the plugin's ID format matches the prefix
-    if (plugin.serviceWorker && plugin.serviceWorker.formatId) {
-      const sampleId = plugin.serviceWorker.formatId('test');
+    if (plugin.formatId) {
+      const sampleId = plugin.formatId('test');
       const samplePrefix = sampleId.split('.')[0];
       if (samplePrefix === prefix) {
         return {
