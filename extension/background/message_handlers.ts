@@ -263,7 +263,38 @@ export class MessageHandlers {
       });
     }
   }
-
+  
+  // Update this function to use the new plugin structure
+  
+  /**
+   * Handle get plugin extractor message
+   * @param {string} pluginId - Plugin ID
+   * @param {Function} sendResponse - Send response function
+   */
+  handleGetPluginExtractor(pluginId: string, sendResponse: (response: any) => void): void {
+    try {
+      const extractorInfo = urlDetectionService.getExtractorInfoForPlugin(pluginId);
+      
+      if (extractorInfo) {
+        sendResponse({
+          success: true,
+          pluginId: pluginId
+        });
+      } else {
+        sendResponse({
+          success: false,
+          error: `No extractor found for plugin: ${pluginId}`
+        });
+      }
+    } catch (error) {
+      logger.error(`Error getting plugin extractor: ${error}`);
+      sendResponse({
+        success: false,
+        error: String(error)
+      });
+    }
+  }
+  
   /**
    * Handle get extractor for URL message
    * @param {string} url - URL to get extractor for
@@ -281,22 +312,11 @@ export class MessageHandlers {
         return;
       }
       
-      // Get extractor code from plugin
-      const extractorCode = sourceInfo.plugin.contentScript.extractorModulePath ?
-        `// Load extractor from ${sourceInfo.plugin.contentScript.extractorModulePath}` :
-        null;
-        
-      if (extractorCode) {
-        sendResponse({
-          success: true,
-          extractorCode
-        });
-      } else {
-        sendResponse({
-          success: false,
-          error: 'No extractor available for this URL'
-        });
-      }
+      // Return the plugin ID for the content script to use with the loader
+      sendResponse({
+        success: true,
+        pluginId: sourceInfo.plugin.id
+      });
     } catch (error) {
       logger.error(`Error getting extractor for URL: ${error}`);
       sendResponse({
@@ -305,36 +325,7 @@ export class MessageHandlers {
       });
     }
   }
-
-  /**
-   * Handle get plugin extractor message
-   * @param {string} pluginId - Plugin ID
-   * @param {Function} sendResponse - Send response function
-   */
-  handleGetPluginExtractor(pluginId: string, sendResponse: (response: any) => void): void {
-    try {
-      const extractorInfo = urlDetectionService.getExtractorInfoForPlugin(pluginId);
-      
-      if (extractorInfo) {
-        sendResponse({
-          success: true,
-          extractorCode: extractorInfo
-        });
-      } else {
-        sendResponse({
-          success: false,
-          error: `No extractor found for plugin: ${pluginId}`
-        });
-      }
-    } catch (error) {
-      logger.error(`Error getting plugin extractor: ${error}`);
-      sendResponse({
-        success: false,
-        error: String(error)
-      });
-    }
-  }
-
+  
   /**
    * Handle metadata extracted message
    * @param {any} metadata - Extracted metadata
@@ -361,7 +352,7 @@ export class MessageHandlers {
         if (metadata.source && metadata.sourceId) {
           const plugin = pluginRegistry.get(metadata.source);
           metadata.primary_id = plugin ? 
-            plugin.serviceWorker.formatId(metadata.sourceId) : 
+            plugin.formatId(metadata.sourceId) : 
             `${metadata.source}.${metadata.sourceId}`;
         } else {
           sendResponse({
