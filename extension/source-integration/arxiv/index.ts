@@ -1,4 +1,4 @@
-// source-integration/arxiv/index.ts
+// extension/source-integration/arxiv/index.ts
 // ArXiv integration using metadata transformer
 
 import { SourceIntegration } from '../types';
