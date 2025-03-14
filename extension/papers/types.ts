@@ -1,7 +1,45 @@
-// papers/types.ts
+// extension/papers/types.ts
 // Type definitions for paper data
 
 import type { Json } from 'gh-store-client';
+
+/**
+ * Paper metadata from any source
+ */
+export interface PaperMetadata {
+  // Source identifier
+  sourceId: string;
+  
+  // Paper identifier within the source
+  paperId: string;
+  
+  // Full URL to the paper
+  url: string;
+  
+  // Paper title
+  title: string;
+  
+  // Authors (comma-separated)
+  authors: string;
+  
+  // Abstract or summary
+  abstract: string;
+  
+  // When this paper was first added
+  timestamp: string;
+  
+  // Publication date
+  publishedDate: string;
+  
+  // Tags or categories
+  tags: string[];
+  
+  // User-assigned rating (novote, thumbsup, thumbsdown)
+  rating: string;
+  
+  // Allow additional source-specific properties
+  [key: string]: any;
+}
 
 /**
  * Reading session data
@@ -24,8 +62,6 @@ export interface ReadingSessionData {
   
   // Total elapsed time (active + idle) in seconds
   total_elapsed_seconds: number;
-
-  [key: string]: any;
 }
 
 /**
@@ -46,45 +82,14 @@ export interface Interaction {
  * Interaction log
  */
 export interface InteractionLog {
-  // Full paper ID (sourceId:paperId)
-  paper_id: string;
+  // Source identifier
+  sourceId: string;
+  
+  // Paper identifier within the source
+  paperId: string;
   
   // List of interactions
   interactions: Interaction[];
-
-  [key: string]: any;
-}
-
-// In papers/types.ts, add:
-export interface PaperMetadata {
-  sourceId: string;
-  paperId: string;
-  url: string;
-  title: string;
-  authors: string;
-  abstract: string;
-  timestamp: string;
-  publishedDate: string;
-  tags: string[];
-  rating: string;
-  [key: string]: any; // Index signature for additional properties
-}
-
-/**
- * Type guard for reading session data
- */
-export function isReadingSession(data: unknown): data is ReadingSessionData {
-  const session = data as ReadingSessionData;
-  return (
-    typeof session === 'object' &&
-    session !== null &&
-    typeof session.session_id === 'string' &&
-    typeof session.duration_seconds === 'number' &&
-    typeof session.idle_seconds === 'number' &&
-    typeof session.start_time === 'string' &&
-    typeof session.end_time === 'string' &&
-    typeof session.total_elapsed_seconds === 'number'
-  );
 }
 
 /**
@@ -95,7 +100,8 @@ export function isInteractionLog(data: unknown): data is InteractionLog {
   return (
     typeof log === 'object' &&
     log !== null &&
-    typeof log.paper_id === 'string' &&
+    typeof log.sourceId === 'string' &&
+    typeof log.paperId === 'string' &&
     Array.isArray(log.interactions)
   );
 }
