@@ -213,7 +213,7 @@ export class PaperManager {
   private async addInteraction(sourceId: string, paperId: string, interaction: Interaction): Promise<void> {
     const log = await this.getOrCreateInteractionLog(sourceId, paperId);
     log.interactions.push(interaction);
-    await this.client.updateObject(`interactions:${sourceId}:${paperId}`, log);
+    await this.client.updateObject(`interactions:${sourceId}:${paperId}`, log as unknown as { [key: string]: Json });
   }
 
   /**
