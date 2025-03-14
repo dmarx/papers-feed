@@ -90,6 +90,9 @@ export interface InteractionLog {
   
   // List of interactions
   interactions: Interaction[];
+
+  // Index signature to make it compatible with Json type
+  [key: string]: string | Interaction[] | any;
 }
 
 /**
