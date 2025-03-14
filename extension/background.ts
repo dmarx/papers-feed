@@ -1,5 +1,5 @@
 // extension/background.ts
-// Enhanced background script with source manager
+// Background script with direct source imports
 
 import { GitHubStoreClient } from 'gh-store-client';
 import { PaperManager } from './papers/manager';
@@ -7,8 +7,11 @@ import { loadSessionConfig, getConfigurationInMs } from './config/session';
 import { SessionTracker } from './utils/session-tracker';
 import { PopupManager } from './utils/popup-manager';
 import { SourceIntegrationManager } from './source-integration/source-manager';
-import { ArXivIntegration } from './source-integration/arxiv/index';
 import { loguru } from './utils/logger';
+
+// Import source plugins directly
+import { arxivIntegration } from './source-integration/arxiv';
+import { Message } from './source-integration/types';
 
 const logger = loguru.getLogger('background');
 
@@ -26,10 +29,8 @@ let sourceManager: SourceIntegrationManager | null = null;
 function initializeSources() {
   sourceManager = new SourceIntegrationManager();
   
-  // Register built-in sources
-  sourceManager.registerSource(new ArXivIntegration());
-  
-  // TODO: Add mechanism to load additional sources from config or storage
+  // Register built-in sources directly
+  sourceManager.registerSource(arxivIntegration);
   
   logger.info('Source manager initialized');
   return sourceManager;
@@ -82,19 +83,9 @@ async function initialize() {
 
 // Set up message listeners
 function setupMessageListeners() {
-  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (message.type === 'getCurrentPaper') {
-      logger.debug('Popup requested current paper', currentPaperData);
-      sendResponse(currentPaperData);
-      return true;
-    }
-    
-    if (message.type === 'contentScriptReady' && sender.tab?.id && sender.tab?.url) {
+  chrome.runtime.onMessage.addListener((message: Message, sender, sendResponse) => {
+    if (message.type === 'contentScriptReady' && sender.tab?.id) {
       logger.debug('Content script ready:', sender.tab.url);
-      
-      // Send sources to content script
-      sendSourcesToContentScript(sender.tab.id);
-      
       sendResponse({ success: true });
       return true;
     }
@@ -106,18 +97,26 @@ function setupMessageListeners() {
       return true;
     }
     
+    if (message.type === 'getCurrentPaper') {
+      logger.debug('Popup requested current paper', currentPaperData);
+      sendResponse(currentPaperData);
+      return true;
+    }
+    
     if (message.type === 'updateRating') {
       logger.debug('Rating update requested:', message.rating);
       handleUpdateRating(message.rating, sendResponse);
       return true; // Will respond asynchronously
     }
     
-    if (message.type === 'updateAnnotation') {
-      logger.debug('Annotation update requested:', message.annotationType, message.data);
-      handleAnnotationUpdate(message.annotationType, message.data)
-        .then(response => sendResponse(response))
-        .catch(error => sendResponse({ success: false, error: error.message }));
-      return true; // Will respond asynchronously
+    if (message.type === 'showAnnotationPopup') {
+      // This is now handled directly by the PopupManager
+      return false;
+    }
+    
+    if (message.type === 'popupAction') {
+      // This is now handled directly by the PopupManager
+      return false;
     }
     
     return false;
@@ -164,65 +163,13 @@ async function handleUpdateRating(rating: string, sendResponse: (response: any) 
     await paperManager.updateRating(
       currentPaperData.sourceId,
       currentPaperData.paperId, 
-      rating, 
-      currentPaperData
+      rating
     );
     currentPaperData.rating = rating;
     sendResponse({ success: true });
   } catch (error) {
     logger.error('Error updating rating:', error);
     sendResponse({ success: false, error: error instanceof Error ? error.message : 'Unknown error' });
-  }
-}
-
-// Handle annotation update
-async function handleAnnotationUpdate(type: string, data: any) {
-  if (!paperManager) {
-    throw new Error('Paper manager not initialized');
-  }
-
-  try {
-    if (type === 'notes') {
-      await paperManager.logAnnotation(
-        data.sourceId,
-        data.paperId,
-        'notes',
-        data.notes,
-        data // Additional metadata
-      );
-    } else if (type === 'vote') {
-      await paperManager.updateRating(
-        data.sourceId,
-        data.paperId,
-        data.vote,
-        data // Additional metadata
-      );
-    }
-
-    return { success: true };
-  } catch (error) {
-    logger.error('Error logging interaction:', error);
-    throw error;
-  }
-}
-
-// Send sources to content script
-async function sendSourcesToContentScript(tabId: number): Promise<void> {
-  if (!sourceManager) {
-    return;
-  }
-  
-  try {
-    const sources = sourceManager.getAllSources();
-    
-    await chrome.tabs.sendMessage(tabId, {
-      type: 'registerSources',
-      sources
-    });
-    
-    logger.debug('Sent sources to content script', tabId);
-  } catch (error) {
-    logger.error('Error sending sources to content script', error);
   }
 }
 
