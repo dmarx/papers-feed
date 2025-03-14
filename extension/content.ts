@@ -19,7 +19,10 @@ const metadataExtractors = new Map<string, MetadataExtractor>();
 let activePopup: HTMLElement | null = null;
 
 // Create link processor
-const linkProcessor = new LinkProcessor();
+const linkProcessor = new LinkProcessor((sourceId, paperId, link) => {
+  // Callback when link is found
+  injectAnnotationButton(link, sourceId, paperId);
+});
 
 // Inject common styles
 function injectStyles() {
@@ -178,6 +181,46 @@ function registerSource(source: SourceDefinition) {
   }
 }
 
+// Add annotation button to link
+function injectAnnotationButton(link: HTMLAnchorElement, sourceId: string, paperId: string): void {
+  // Skip if already processed
+  if (link.nextSibling && 
+      link.nextSibling.nodeType === Node.ELEMENT_NODE &&
+      (link.nextSibling as Element).classList.contains('paper-annotator')) {
+    return;
+  }
+  
+  // Create annotator button
+  const annotator = document.createElement('span');
+  annotator.className = 'paper-annotator';
+  annotator.textContent = '📝';
+  annotator.title = 'Add annotation';
+  
+  // Store data attributes
+  annotator.dataset.sourceId = sourceId;
+  annotator.dataset.paperId = paperId;
+  
+  // Add click handler
+  annotator.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    // Send message to background script to show popup
+    chrome.runtime.sendMessage({
+      type: 'showAnnotationPopup',
+      sourceId,
+      paperId,
+      position: {
+        x: e.clientX,
+        y: e.clientY
+      }
+    });
+  });
+  
+  // Add to page next to link
+  link.parentNode?.insertBefore(annotator, link.nextSibling);
+}
+
 // Get source that can handle a URL
 function getSourceForUrl(url: string): SourceDefinition | null {
   for (const source of sources) {
@@ -307,8 +350,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
               sourceId: message.sourceId,
               paperId: message.paperId,
               data: {
-                value: (element as HTMLInputElement).value,
-                checked: (element as HTMLInputElement).checked,
+                value: element.tagName === 'TEXTAREA' ? 
+                  (element as HTMLTextAreaElement).value : 
+                  (element as HTMLElement).getAttribute('data-vote'),
+                checked: element.tagName === 'INPUT' ? 
+                  (element as HTMLInputElement).checked : undefined,
                 id: (element as HTMLElement).id
               }
             });
