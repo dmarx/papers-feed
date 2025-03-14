@@ -51,6 +51,21 @@ export interface InteractionLog {
   interactions: Interaction[];
 }
 
+// In papers/types.ts, add:
+export interface PaperMetadata {
+  sourceId: string;
+  paperId: string;
+  url: string;
+  title: string;
+  authors: string;
+  abstract: string;
+  timestamp: string;
+  publishedDate: string;
+  tags: string[];
+  rating: string;
+  [key: string]: any; // Index signature for additional properties
+}
+
 /**
  * Type guard for reading session data
  */
