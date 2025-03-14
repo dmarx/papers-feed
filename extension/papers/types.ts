@@ -24,6 +24,8 @@ export interface ReadingSessionData {
   
   // Total elapsed time (active + idle) in seconds
   total_elapsed_seconds: number;
+
+  [key: string]: any;
 }
 
 /**
@@ -49,6 +51,8 @@ export interface InteractionLog {
   
   // List of interactions
   interactions: Interaction[];
+
+  [key: string]: any;
 }
 
 // In papers/types.ts, add:
