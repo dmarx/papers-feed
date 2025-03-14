@@ -120,3 +120,4 @@ export class TemplateIntegration implements SourceIntegration {
   getContentScriptMatches(): string[] {
     return ["*://*.example.com/*", "*://*.example.org/*"];
   }
+}
