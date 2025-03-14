@@ -273,7 +273,7 @@ async function processCurrentPage() {
 }
 
 // Message handler for background script
-chrome.runtime.onMessage.addListener((message: Message, sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
   logger.debug('Received message', message);
   
   if (message.type === 'showPopup') {
