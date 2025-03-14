@@ -7,7 +7,7 @@ const isInteractionLog = (data) => {
   return typeof log === "object" && log !== null && typeof log.paper_id === "string" && Array.isArray(log.interactions);
 };
 
-const logger$8 = loguru.getLogger("paper-manager");
+const logger$7 = loguru.getLogger("paper-manager");
 class PaperManager {
   constructor(client) {
     this.client = client;
@@ -17,14 +17,14 @@ class PaperManager {
     try {
       const obj = await this.client.getObject(objectId);
       const data = obj.data;
-      logger$8.debug("Retrieved existing paper", {
+      logger$7.debug("Retrieved existing paper", {
         source: paperData.sourceId,
         paperId: paperData.paperId
       });
       return data;
     } catch (error) {
       if (error instanceof Error && error.message.includes("No object found")) {
-        logger$8.info("Creating new paper record", {
+        logger$7.info("Creating new paper record", {
           source: paperData.sourceId,
           paperId: paperData.paperId
         });
@@ -191,13 +191,13 @@ class PaperManager {
       }
       return papers;
     } catch (error) {
-      logger$8.error("Error listing papers", error);
+      logger$7.error("Error listing papers", error);
       return [];
     }
   }
 }
 
-const logger$7 = loguru.getLogger("session-config");
+const logger$6 = loguru.getLogger("session-config");
 const DEFAULT_CONFIG = {
   idleThresholdMinutes: 5,
   minSessionDurationSeconds: 30,
@@ -212,10 +212,10 @@ async function loadSessionConfig() {
   try {
     const items = await chrome.storage.sync.get("sessionConfig");
     const config = { ...DEFAULT_CONFIG, ...items.sessionConfig };
-    logger$7.debug("Loaded session config", config);
+    logger$6.debug("Loaded session config", config);
     return config;
   } catch (error) {
-    logger$7.error("Error loading session config", error);
+    logger$6.error("Error loading session config", error);
     return DEFAULT_CONFIG;
   }
 }
@@ -229,27 +229,27 @@ function getConfigurationInMs(config) {
   };
 }
 
-const logger$6 = loguru.getLogger("integration-manager");
+const logger$5 = loguru.getLogger("integration-manager");
 class SourceIntegrationManager {
   constructor() {
     this.integrations = /* @__PURE__ */ new Map();
-    logger$6.info("Source integration manager initialized");
+    logger$5.info("Source integration manager initialized");
   }
   registerIntegration(integration) {
     if (this.integrations.has(integration.id)) {
-      logger$6.warning(`Integration with ID '${integration.id}' already registered, overwriting`);
+      logger$5.warning(`Integration with ID '${integration.id}' already registered, overwriting`);
     }
     this.integrations.set(integration.id, integration);
-    logger$6.info(`Registered integration: ${integration.name} (${integration.id})`);
+    logger$5.info(`Registered integration: ${integration.name} (${integration.id})`);
   }
   getIntegrationForUrl(url) {
     for (const integration of this.integrations.values()) {
       if (integration.canHandleUrl(url)) {
-        logger$6.debug(`Found integration for URL '${url}': ${integration.id}`);
+        logger$5.debug(`Found integration for URL '${url}': ${integration.id}`);
         return integration;
       }
     }
-    logger$6.debug(`No integration found for URL: ${url}`);
+    logger$5.debug(`No integration found for URL: ${url}`);
     return null;
   }
   getAllIntegrations() {
@@ -261,50 +261,6 @@ class SourceIntegrationManager {
       patterns.push(...integration.getContentScriptMatches());
     }
     return patterns;
-  }
-}
-
-const logger$5 = loguru.getLogger("arxiv-xml-parser");
-async function parseXMLText(xmlText) {
-  logger$5.debug("Parsing ArXiv XML response");
-  try {
-    const parser = new DOMParser();
-    const xmlDoc = parser.parseFromString(xmlText, "text/xml");
-    const parseError = xmlDoc.querySelector("parsererror");
-    if (parseError) {
-      throw new Error("XML parsing error: " + parseError.textContent);
-    }
-    const entry = xmlDoc.querySelector("entry");
-    if (!entry) {
-      throw new Error("No entry element found in XML");
-    }
-    const title = entry.querySelector("title")?.textContent?.trim() || "";
-    const summary = entry.querySelector("summary")?.textContent?.trim() || "";
-    const published = entry.querySelector("published")?.textContent?.trim() || "";
-    const authors = Array.from(entry.querySelectorAll("author name")).map((name) => name.textContent?.trim() || "");
-    const categories = /* @__PURE__ */ new Set();
-    const primaryCategory = entry.querySelector("arxiv\\:primary_category, primary_category");
-    if (primaryCategory && primaryCategory.hasAttribute("term")) {
-      categories.add(primaryCategory.getAttribute("term") || "");
-    }
-    const categoryElements = entry.querySelectorAll("category");
-    categoryElements.forEach((cat) => {
-      if (cat.hasAttribute("term")) {
-        categories.add(cat.getAttribute("term") || "");
-      }
-    });
-    const result = {
-      title,
-      summary,
-      authors,
-      published_date: published,
-      arxiv_tags: Array.from(categories)
-    };
-    logger$5.debug("XML parsing completed successfully");
-    return result;
-  } catch (error) {
-    logger$5.error("Error parsing ArXiv XML", error);
-    return null;
   }
 }
 
@@ -416,16 +372,40 @@ class ArXivIntegration {
       if (!response.ok) {
         throw new Error(`ArXiv API error: ${response.status}`);
       }
-      const text = await response.text();
-      const parsedXml = await parseXMLText(text);
-      if (!parsedXml) {
+      const xmlText = await response.text();
+      logger$3.debug("Delegating XML parsing to content script");
+      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (tabs.length === 0) {
+        throw new Error("No active tab found to parse XML");
+      }
+      const parsedData = await new Promise((resolve, reject) => {
+        chrome.tabs.sendMessage(
+          tabs[0].id,
+          {
+            type: "parseArXivXML",
+            xmlText
+          },
+          (response2) => {
+            if (chrome.runtime.lastError) {
+              reject(new Error(`Error parsing XML: ${chrome.runtime.lastError.message}`));
+              return;
+            }
+            if (response2.error) {
+              reject(new Error(`Error in content script: ${response2.error}`));
+              return;
+            }
+            resolve(response2.data);
+          }
+        );
+      });
+      if (!parsedData) {
         logger$3.error("Failed to parse API response");
         return null;
       }
       const paperData = transformMetadata(
         this.id,
         arxivId,
-        parsedXml,
+        parsedData,
         this.METADATA_MAPPING,
         `https://arxiv.org/abs/${arxivId}`
       );

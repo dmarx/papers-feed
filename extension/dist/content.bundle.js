@@ -269,6 +269,47 @@ document.addEventListener("click", (e) => {
 });
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   logger.debug("Received message", message);
+  if (message.type === "parseArXivXML") {
+    try {
+      const parser = new DOMParser();
+      const xmlDoc = parser.parseFromString(message.xmlText, "text/xml");
+      const parseError = xmlDoc.querySelector("parsererror");
+      if (parseError) {
+        throw new Error("XML parsing error: " + parseError.textContent);
+      }
+      const entry = xmlDoc.querySelector("entry");
+      if (!entry) {
+        throw new Error("No entry element found in XML");
+      }
+      const title = entry.querySelector("title")?.textContent?.trim() || "";
+      const summary = entry.querySelector("summary")?.textContent?.trim() || "";
+      const published = entry.querySelector("published")?.textContent?.trim() || "";
+      const authors = Array.from(entry.querySelectorAll("author name")).map((name) => name.textContent?.trim() || "");
+      const categories = /* @__PURE__ */ new Set();
+      const primaryCategory = entry.querySelector("arxiv\\:primary_category, primary_category");
+      if (primaryCategory && primaryCategory.hasAttribute("term")) {
+        categories.add(primaryCategory.getAttribute("term") || "");
+      }
+      const categoryElements = entry.querySelectorAll("category");
+      categoryElements.forEach((cat) => {
+        if (cat.hasAttribute("term")) {
+          categories.add(cat.getAttribute("term") || "");
+        }
+      });
+      const result = {
+        title,
+        summary,
+        authors,
+        published_date: published,
+        arxiv_tags: Array.from(categories)
+      };
+      sendResponse({ success: true, data: result });
+    } catch (error) {
+      logger.error("Error parsing ArXiv XML", error);
+      sendResponse({ success: false, error: error.message });
+    }
+    return true;
+  }
   if (message.type === "registerPatterns") {
     message.patterns.forEach((patternInfo) => {
       linkProcessor.registerPattern({
