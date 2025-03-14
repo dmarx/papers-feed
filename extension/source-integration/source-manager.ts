@@ -1,7 +1,7 @@
-// extension/source-integration/source-manager.ts
+// source-integration/source-manager.ts
 // Manager for source integrations
 
-import { SourceDefinition, SourceIntegration, SourceManager } from './types';
+import { SourceIntegration, SourceManager } from './types';
 import { loguru } from '../utils/logger';
 
 const logger = loguru.getLogger('source-manager');
@@ -29,21 +29,10 @@ export class SourceIntegrationManager implements SourceManager {
   }
   
   /**
-   * Get all registered sources as source definitions for content script
+   * Get all registered sources
    */
-  getAllSources(): SourceDefinition[] {
-    return Array.from(this.sources.values()).map(source => ({
-      id: source.id,
-      name: source.name,
-      urlPatterns: source.getLinkPatterns().map(pattern => pattern.pattern),
-      extractorCode: source.extractPaperId.toString(),
-      metadataExtractorCode: async function(document: Document, paperId: string) {
-        const integration = Array.from(this.sources.values()).find(s => s.id === source.id);
-        if (!integration) return null;
-        return integration.fetchPaperMetadata(paperId);
-      }.toString(),
-      contentScriptMatches: source.getContentScriptMatches()
-    }));
+  getAllSources(): SourceIntegration[] {
+    return Array.from(this.sources.values());
   }
   
   /**
@@ -86,7 +75,7 @@ export class SourceIntegrationManager implements SourceManager {
     const patterns: string[] = [];
     
     for (const source of this.sources.values()) {
-      patterns.push(...source.getContentScriptMatches());
+      patterns.push(...source.contentScriptMatches);
     }
     
     return patterns;
