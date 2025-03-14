@@ -8,6 +8,27 @@ import { loguru } from './logger';
 const logger = loguru.getLogger('popup-manager');
 
 /**
+ * Popup handler information
+ */
+interface PopupHandler {
+  selector: string;
+  event: string;
+  action: string;
+}
+
+/**
+ * Popup message type
+ */
+interface ShowPopupMessage {
+  type: 'showPopup';
+  sourceId: string;
+  paperId: string;
+  html: string;
+  handlers: PopupHandler[];
+  position?: { x: number, y: number };
+}
+
+/**
  * Manages all popup-related functionality
  */
 export class PopupManager {
@@ -123,14 +144,16 @@ export class PopupManager {
       const handlers = this.getStandardPopupHandlers();
       
       // Send message to content script to show popup
-      await chrome.tabs.sendMessage(tabId, {
+      const message: ShowPopupMessage = {
         type: 'showPopup',
         sourceId,
         paperId,
         html,
         handlers,
         position
-      });
+      };
+      
+      await chrome.tabs.sendMessage(tabId, message);
       
       logger.debug(`Sent popup to content script for ${sourceId}:${paperId}`);
     } catch (error) {
@@ -197,11 +220,7 @@ export class PopupManager {
   /**
    * Get standard popup event handlers
    */
-  private getStandardPopupHandlers(): Array<{
-    selector: string;
-    event: string;
-    action: string;
-  }> {
+  private getStandardPopupHandlers(): PopupHandler[] {
     return [
       { selector: '#btn-thumbsup', event: 'click', action: 'rate' },
       { selector: '#btn-thumbsdown', event: 'click', action: 'rate' },
