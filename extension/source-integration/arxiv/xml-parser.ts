@@ -1,16 +1,17 @@
-// extension/source-integration/arxiv/xml-parser.ts
+// source-integration/arxiv/xml-parser.ts
 // ArXiv API XML response parser - simplified for use with metadata transformer
 
 import { loguru } from '../../utils/logger';
 
 const logger = loguru.getLogger('arxiv-xml-parser');
 
-interface ArXivParsedData {
+export interface ArXivParsedData {
   title: string;
   summary: string;
   authors: string[];
   published_date: string;
   arxiv_tags: string[];
+  [key: string]: any; // Add index signature to satisfy Json type requirements
 }
 
 /**
