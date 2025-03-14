@@ -1,20 +1,23 @@
 // extension/content.ts
-// Generic content script with source plugin support
+// Content script with direct source plugin imports
 
 import { LinkProcessor } from './source-integration/link-processor';
-import { SourceDefinition, MetadataExtractor } from './source-integration/types';
+import { SourceIntegration, Message } from './source-integration/types';
 import { PaperMetadata } from './papers/types';
 import { loguru } from './utils/logger';
+
+// Import source plugins directly
+import { arxivIntegration } from './source-integration/arxiv';
 
 const logger = loguru.getLogger('content-script');
 
 logger.info('Paper Tracker content script loaded');
 
-// Track sources we know about
-const sources: SourceDefinition[] = [];
-
-// Track metadata extractors
-const metadataExtractors = new Map<string, MetadataExtractor>();
+// Available source integrations
+const sourceIntegrations: SourceIntegration[] = [
+  arxivIntegration,
+  // Add more sources as they become available
+];
 
 // Track active popup
 let activePopup: HTMLElement | null = null;
@@ -24,6 +27,23 @@ const linkProcessor = new LinkProcessor((sourceId, paperId, link) => {
   // Callback when link is found
   injectAnnotationButton(link, sourceId, paperId);
 });
+
+// Initialize sources
+function initializeSources() {
+  // Register each source with the link processor
+  for (const source of sourceIntegrations) {
+    logger.debug(`Initializing source: ${source.id}`);
+    
+    // Register patterns with link processor
+    source.urlPatterns.forEach(pattern => {
+      linkProcessor.registerPattern({
+        sourceId: source.id,
+        pattern,
+        extractPaperId: (url: string) => source.extractPaperId(url)
+      });
+    });
+  }
+}
 
 // Inject common styles
 function injectStyles() {
@@ -148,40 +168,6 @@ function injectStyles() {
   logger.debug('Injected styles');
 }
 
-// Register a source definition
-function registerSource(source: SourceDefinition) {
-  logger.debug(`Registering source: ${source.id}`);
-  
-  // Add to sources array
-  sources.push(source);
-  
-  // Create metadata extractor function
-  try {
-    const extractorFn = new Function('document', 'paperId', source.metadataExtractorCode) as MetadataExtractor;
-    metadataExtractors.set(source.id, extractorFn);
-    
-    // Register URL pattern with link processor
-    source.urlPatterns.forEach(pattern => {
-      linkProcessor.registerPattern({
-        sourceId: source.id,
-        pattern: new RegExp(pattern),
-        extractPaperId: (url: string) => {
-          try {
-            return new Function('url', source.extractorCode)(url);
-          } catch (error) {
-            logger.error(`Error extracting paper ID for ${source.id}`, error);
-            return null;
-          }
-        }
-      });
-    });
-    
-    logger.debug(`Source ${source.id} registered successfully`);
-  } catch (error) {
-    logger.error(`Error creating metadata extractor for ${source.id}`, error);
-  }
-}
-
 // Add annotation button to link
 function injectAnnotationButton(link: HTMLAnchorElement, sourceId: string, paperId: string): void {
   // Skip if already processed
@@ -223,12 +209,10 @@ function injectAnnotationButton(link: HTMLAnchorElement, sourceId: string, paper
 }
 
 // Get source that can handle a URL
-function getSourceForUrl(url: string): SourceDefinition | null {
-  for (const source of sources) {
-    for (const pattern of source.urlPatterns) {
-      if (new RegExp(pattern).test(url)) {
-        return source;
-      }
+function getSourceForUrl(url: string): SourceIntegration | null {
+  for (const source of sourceIntegrations) {
+    if (source.canHandleUrl(url)) {
+      return source;
     }
   }
   return null;
@@ -236,14 +220,12 @@ function getSourceForUrl(url: string): SourceDefinition | null {
 
 // Extract paper ID from URL
 function extractPaperId(url: string): { sourceId: string, paperId: string } | null {
-  for (const source of sources) {
-    try {
-      const paperId = new Function('url', source.extractorCode)(url);
+  for (const source of sourceIntegrations) {
+    if (source.canHandleUrl(url)) {
+      const paperId = source.extractPaperId(url);
       if (paperId) {
         return { sourceId: source.id, paperId };
       }
-    } catch (error) {
-      logger.error(`Error extracting paper ID for ${source.id}`, error);
     }
   }
   return null;
@@ -268,11 +250,11 @@ async function processCurrentPage() {
     logger.info(`Detected paper: ${paperInfo.sourceId}:${paperInfo.paperId}`);
     
     const { sourceId, paperId } = paperInfo;
-    const extractor = metadataExtractors.get(sourceId);
+    const source = sourceIntegrations.find(s => s.id === sourceId);
     
-    if (extractor) {
+    if (source) {
       try {
-        const metadata = await extractor(document, paperId);
+        const metadata = await source.extractMetadata(document, paperId);
         
         if (metadata) {
           // Send metadata to background script
@@ -291,27 +273,8 @@ async function processCurrentPage() {
 }
 
 // Message handler for background script
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message: Message, sender, sendResponse) => {
   logger.debug('Received message', message);
-  
-  if (message.type === 'registerSources') {
-    // Register source integrations
-    message.sources.forEach((source: SourceDefinition) => {
-      registerSource(source);
-    });
-    
-    // Process existing links
-    linkProcessor.processLinks(document);
-    
-    // Start observing for new links
-    linkProcessor.startObserving(document);
-    
-    // Process current page
-    processCurrentPage();
-    
-    sendResponse({ success: true });
-    return true;
-  }
   
   if (message.type === 'showPopup') {
     // Remove existing popup
@@ -384,6 +347,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 (async function initialize() {
   // Inject styles
   injectStyles();
+  
+  // Initialize sources
+  initializeSources();
+  
+  // Process links
+  linkProcessor.processLinks(document);
+  
+  // Start observing for new links
+  linkProcessor.startObserving(document);
+  
+  // Process current page
+  processCurrentPage();
   
   // Tell background script we're ready and what page we're on
   chrome.runtime.sendMessage(
