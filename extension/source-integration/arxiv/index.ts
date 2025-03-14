@@ -1,4 +1,4 @@
-// extension/source-integration/arxiv/index.ts
+// source-integration/arxiv/index.ts
 // ArXiv integration using metadata transformer
 
 import { SourceIntegration } from '../types';
@@ -14,9 +14,14 @@ export class ArXivIntegration implements SourceIntegration {
   readonly name = 'arXiv.org';
   
   // URL patterns for papers
-  private readonly URL_PATTERNS = [
+  readonly urlPatterns = [
     /arxiv\.org\/(abs|pdf|html)\/([0-9.]+)/,
     /arxiv\.org\/\w+\/([0-9.]+)/
+  ];
+  
+  // Content script matches
+  readonly contentScriptMatches = [
+    "*://*.arxiv.org/*"
   ];
   
   // Metadata mapping for ArXiv
@@ -40,14 +45,14 @@ export class ArXivIntegration implements SourceIntegration {
    * Check if this integration can handle the given URL
    */
   canHandleUrl(url: string): boolean {
-    return this.URL_PATTERNS.some(pattern => pattern.test(url));
+    return this.urlPatterns.some(pattern => pattern.test(url));
   }
 
   /**
    * Extract paper ID from URL
    */
   extractPaperId(url: string): string | null {
-    for (const pattern of this.URL_PATTERNS) {
+    for (const pattern of this.urlPatterns) {
       const match = url.match(pattern);
       if (match) {
         return match[2] || match[1]; // The capture group with the paper ID
@@ -57,22 +62,74 @@ export class ArXivIntegration implements SourceIntegration {
   }
 
   /**
-   * Get patterns for the content script to detect links
+   * Extract metadata from page or fetch from API
    */
-  getLinkPatterns() {
-    return this.URL_PATTERNS.map(pattern => ({
-      sourceId: this.id,
-      pattern: pattern.toString().slice(1, -1), // Convert to string without slashes
-      extractorCode: this.extractPaperId.toString()
-    }));
-  }
-
-  /**
-   * Fetch paper metadata from ArXiv API
-   */
-  async fetchPaperMetadata(arxivId: string): Promise<PaperMetadata | null> {
-    logger.info(`Fetching metadata for arXiv ID: ${arxivId}`);
+  async extractMetadata(document: Document, paperId: string): Promise<PaperMetadata | null> {
+    logger.info(`Extracting metadata for arXiv ID: ${paperId}`);
     
+    // Try to extract from page first
+    const pageMetadata = this.extractFromPage(document, paperId);
+    if (pageMetadata) {
+      logger.debug('Extracted metadata from page');
+      return pageMetadata;
+    }
+    
+    // If page extraction fails, fetch from API
+    logger.debug('Falling back to API for metadata');
+    return this.fetchFromApi(paperId);
+  }
+  
+  /**
+   * Extract metadata from ArXiv page
+   */
+  private extractFromPage(document: Document, paperId: string): PaperMetadata | null {
+    try {
+      // Extract title
+      const titleElement = document.querySelector('.title');
+      if (!titleElement) return null;
+      
+      const title = titleElement.textContent?.replace('Title:', '').trim() || '';
+      
+      // Extract authors
+      const authorsElement = document.querySelector('.authors');
+      const authors = authorsElement?.textContent?.replace('Authors:', '').trim() || '';
+      
+      // Extract abstract
+      const abstractElement = document.querySelector('.abstract');
+      const abstract = abstractElement?.textContent?.replace('Abstract:', '').trim() || '';
+      
+      // Extract categories
+      const categoriesElement = document.querySelector('.subjects');
+      const categoriesText = categoriesElement?.textContent?.replace('Subjects:', '').trim() || '';
+      const tags = categoriesText.split(';').map(tag => tag.trim());
+      
+      // Extract publication date
+      const dateElement = document.querySelector('.dateline');
+      const publishedDate = dateElement?.textContent?.trim() || '';
+      
+      // Create metadata object
+      return {
+        sourceId: this.id,
+        paperId,
+        url: window.location.href,
+        title,
+        authors,
+        abstract,
+        timestamp: new Date().toISOString(),
+        rating: 'novote',
+        publishedDate,
+        tags
+      };
+    } catch (error) {
+      logger.error('Error extracting from page:', error);
+      return null;
+    }
+  }
+  
+  /**
+   * Fetch metadata from ArXiv API
+   */
+  private async fetchFromApi(arxivId: string): Promise<PaperMetadata | null> {
     try {
       const apiUrl = `https://export.arxiv.org/api/query?id_list=${arxivId}`;
       logger.debug(`API URL: ${apiUrl}`);
@@ -107,11 +164,7 @@ export class ArXivIntegration implements SourceIntegration {
       return null;
     }
   }
-
-  /**
-   * Get domain patterns this integration should be activated on
-   */
-  getContentScriptMatches(): string[] {
-    return ["*://*.arxiv.org/*"];
-  }
 }
+
+// Export a singleton instance that can be used by both background and content scripts
+export const arxivIntegration = new ArXivIntegration();
