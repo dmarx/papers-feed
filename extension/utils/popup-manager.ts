@@ -1,4 +1,4 @@
-// utils/popup-manager.ts
+// extension/utils/popup-manager.ts
 // Popup management system integrated with source manager
 
 import { SourceManager } from '../source-integration/types';
@@ -47,7 +47,7 @@ export class PopupManager {
           logger.error('Error handling popup action', error);
           sendResponse({ 
             success: false, 
-            error: error.message 
+            error: error instanceof Error ? error.message : 'Unknown error' 
           });
         });
         
@@ -67,7 +67,7 @@ export class PopupManager {
           logger.error('Error showing popup', error);
           sendResponse({ 
             success: false, 
-            error: error.message 
+            error: error instanceof Error ? error.message : 'Unknown error'
           });
         });
         
@@ -105,12 +105,19 @@ export class PopupManager {
       // Get paper data
       const paper = await paperManager.getPaper(sourceId, paperId);
       
-      if (!paper) {
-        throw new Error(`Paper not found: ${sourceId}:${paperId}`);
-      }
-      
       // Create popup HTML
-      const html = this.createPopupHtml(paper);
+      const html = this.createPopupHtml(paper || { 
+        sourceId, 
+        paperId,
+        title: paperId,
+        authors: '',
+        abstract: '',
+        url: '',
+        timestamp: new Date().toISOString(),
+        publishedDate: '',
+        tags: [],
+        rating: 'novote'
+      });
       
       // Get handlers
       const handlers = this.getStandardPopupHandlers();
@@ -147,7 +154,7 @@ export class PopupManager {
       throw new Error('Paper manager not initialized');
     }
     
-    logger.debug(`Handling popup action: ${action}`, { sourceId, paperId, data });
+    logger.debug(`Handling popup action: ${action}`, { sourceId, paperId });
     
     try {
       if (action === 'rate') {
@@ -194,11 +201,10 @@ export class PopupManager {
     selector: string;
     event: string;
     action: string;
-    value?: string;
   }> {
     return [
-      { selector: '#btn-thumbsup', event: 'click', action: 'rate', value: 'thumbsup' },
-      { selector: '#btn-thumbsdown', event: 'click', action: 'rate', value: 'thumbsdown' },
+      { selector: '#btn-thumbsup', event: 'click', action: 'rate' },
+      { selector: '#btn-thumbsdown', event: 'click', action: 'rate' },
       { selector: '#btn-save', event: 'click', action: 'saveNotes' }
     ];
   }
