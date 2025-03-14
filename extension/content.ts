@@ -3,7 +3,7 @@
 
 import { LinkProcessor } from './source-integration/link-processor';
 import { SourceDefinition, MetadataExtractor } from './source-integration/types';
-import { PaperMetadata } from '../papers/types';
+import { PaperMetadata } from './papers/types';
 import { loguru } from './utils/logger';
 
 const logger = loguru.getLogger('content-script');
