@@ -287,7 +287,7 @@ function initializeDebugObjects() {
     get sessionTracker() { return sessionTracker; },
     get popupManager() { return popupManager; },
     get sourceManager() { return sourceManager; },
-    getGithubClient: () => paperManager?.client,
+    getGithubClient: () => paperManager ? paperManager.getClient() : null,
     getCurrentPaper: () => currentPaperData,
     getSessionConfig: () => sessionConfig,
     getSessionMetadata: () => sessionTracker?.getCurrentSessionMetadata(),
