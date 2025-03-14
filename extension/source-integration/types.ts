@@ -1,10 +1,37 @@
-// source-integration/types.ts
+// extension/source-integration/types.ts
 // Enhanced source integration types for plugin architecture
 
 import type { Json } from 'gh-store-client';
+import { PaperMetadata } from '../papers/types';
 
 /**
- * Source definition with URL patterns and extractor code
+ * Source integration interface
+ */
+export interface SourceIntegration {
+  // Unique identifier
+  readonly id: string;
+  
+  // Human-readable name
+  readonly name: string;
+  
+  // Check if this integration can handle a URL
+  canHandleUrl(url: string): boolean;
+  
+  // Extract paper ID from URL
+  extractPaperId(url: string): string | null;
+  
+  // Get link patterns for the content script
+  getLinkPatterns(): LinkPattern[];
+  
+  // Fetch paper metadata from API
+  fetchPaperMetadata(paperId: string): Promise<PaperMetadata | null>;
+  
+  // Get content script matches
+  getContentScriptMatches(): string[];
+}
+
+/**
+ * Source definition for content script
  */
 export interface SourceDefinition {
   // Unique identifier
@@ -24,41 +51,6 @@ export interface SourceDefinition {
   
   // Domain match patterns (for content script)
   contentScriptMatches: string[];
-}
-
-/**
- * Paper metadata that all source integrations should provide
- */
-export interface PaperMetadata {
-  // Source integration ID
-  sourceId: string;
-  
-  // Paper ID within the source
-  paperId: string;
-  
-  // Full URL to the paper
-  url: string;
-  
-  // Paper title
-  title: string;
-  
-  // Authors (comma-separated)
-  authors: string;
-  
-  // Abstract or summary
-  abstract: string;
-  
-  // When this was first seen by the extension
-  timestamp: string;
-  
-  // When paper was published
-  publishedDate: string;
-  
-  // Categories or tags
-  tags: string[];
-  
-  // User rating (novote, thumbsup, thumbsdown)
-  rating: string;
 }
 
 /**
@@ -104,7 +96,7 @@ export interface SourceManager {
   getAllSources(): SourceDefinition[];
   
   // Get source for a given URL
-  getSourceForUrl(url: string): SourceDefinition | null;
+  getSourceForUrl(url: string): SourceIntegration | null;
   
   // Extract paper ID from URL using appropriate source
   extractPaperId(url: string): { sourceId: string, paperId: string } | null;
