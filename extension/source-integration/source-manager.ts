@@ -1,7 +1,7 @@
-// source-integration/source-manager.ts
+// extension/source-integration/source-manager.ts
 // Manager for source integrations
 
-import { SourceDefinition, SourceManager } from './types';
+import { SourceDefinition, SourceIntegration, SourceManager } from './types';
 import { loguru } from '../utils/logger';
 
 const logger = loguru.getLogger('source-manager');
@@ -10,7 +10,7 @@ const logger = loguru.getLogger('source-manager');
  * Manages source integrations
  */
 export class SourceIntegrationManager implements SourceManager {
-  private sources: Map<string, SourceDefinition> = new Map();
+  private sources: Map<string, SourceIntegration> = new Map();
   
   constructor() {
     logger.info('Source integration manager initialized');
@@ -19,7 +19,7 @@ export class SourceIntegrationManager implements SourceManager {
   /**
    * Register a source integration
    */
-  registerSource(source: SourceDefinition): void {
+  registerSource(source: SourceIntegration): void {
     if (this.sources.has(source.id)) {
       logger.warning(`Source with ID '${source.id}' already registered, overwriting`);
     }
@@ -29,27 +29,31 @@ export class SourceIntegrationManager implements SourceManager {
   }
   
   /**
-   * Get all registered sources
+   * Get all registered sources as source definitions for content script
    */
   getAllSources(): SourceDefinition[] {
-    return Array.from(this.sources.values());
+    return Array.from(this.sources.values()).map(source => ({
+      id: source.id,
+      name: source.name,
+      urlPatterns: source.getLinkPatterns().map(pattern => pattern.pattern),
+      extractorCode: source.extractPaperId.toString(),
+      metadataExtractorCode: async function(document: Document, paperId: string) {
+        const integration = Array.from(this.sources.values()).find(s => s.id === source.id);
+        if (!integration) return null;
+        return integration.fetchPaperMetadata(paperId);
+      }.toString(),
+      contentScriptMatches: source.getContentScriptMatches()
+    }));
   }
   
   /**
    * Get source that can handle a URL
    */
-  getSourceForUrl(url: string): SourceDefinition | null {
+  getSourceForUrl(url: string): SourceIntegration | null {
     for (const source of this.sources.values()) {
-      for (const patternStr of source.urlPatterns) {
-        try {
-          const pattern = new RegExp(patternStr);
-          if (pattern.test(url)) {
-            logger.debug(`Found source for URL '${url}': ${source.id}`);
-            return source;
-          }
-        } catch (error) {
-          logger.error(`Invalid pattern in source ${source.id}:`, error);
-        }
+      if (source.canHandleUrl(url)) {
+        logger.debug(`Found source for URL '${url}': ${source.id}`);
+        return source;
       }
     }
     
@@ -62,17 +66,12 @@ export class SourceIntegrationManager implements SourceManager {
    */
   extractPaperId(url: string): { sourceId: string, paperId: string } | null {
     for (const source of this.sources.values()) {
-      try {
-        // Create function from extractor code
-        const extractorFn = new Function('url', source.extractorCode);
-        const paperId = extractorFn(url);
-        
+      if (source.canHandleUrl(url)) {
+        const paperId = source.extractPaperId(url);
         if (paperId) {
           logger.debug(`Extracted paper ID '${paperId}' from URL using ${source.id}`);
           return { sourceId: source.id, paperId };
         }
-      } catch (error) {
-        logger.error(`Error extracting paper ID with ${source.id}:`, error);
       }
     }
     
@@ -87,7 +86,7 @@ export class SourceIntegrationManager implements SourceManager {
     const patterns: string[] = [];
     
     for (const source of this.sources.values()) {
-      patterns.push(...source.contentScriptMatches);
+      patterns.push(...source.getContentScriptMatches());
     }
     
     return patterns;
