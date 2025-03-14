@@ -48,9 +48,7 @@ export interface SourceManager {
   extractPaperId(url: string): { sourceId: string, paperId: string } | null;
 }
 
-/**
- * Message types for communication between background and content scripts
- */
+// Message types for communication between background and content scripts
 
 // Content script ready notification
 export interface ContentScriptReadyMessage {
@@ -81,9 +79,43 @@ export interface PopupActionMessage {
   data: any;
 }
 
+// Show popup message
+export interface ShowPopupMessage {
+  type: 'showPopup';
+  sourceId: string;
+  paperId: string;
+  html: string;
+  handlers: Array<{
+    selector: string;
+    event: string;
+    action: string;
+  }>;
+  position?: { x: number, y: number };
+}
+
+// Process page message
+export interface ProcessPageMessage {
+  type: 'processPage';
+}
+
+// Get current paper message
+export interface GetCurrentPaperMessage {
+  type: 'getCurrentPaper';
+}
+
+// Update rating message
+export interface UpdateRatingMessage {
+  type: 'updateRating';
+  rating: string;
+}
+
 // Union type for all message types
 export type Message = 
   | ContentScriptReadyMessage
   | PaperMetadataMessage
   | ShowAnnotationPopupMessage
-  | PopupActionMessage;
+  | PopupActionMessage
+  | ShowPopupMessage
+  | ProcessPageMessage
+  | GetCurrentPaperMessage
+  | UpdateRatingMessage;
