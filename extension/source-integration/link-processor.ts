@@ -1,4 +1,4 @@
-// source-integration/link-processor.ts
+// extension/source-integration/link-processor.ts
 // Generic link detection and processing module
 
 import { loguru } from '../utils/logger';
