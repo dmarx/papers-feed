@@ -250,7 +250,7 @@ async function endCurrentSession() {
         currentPaper.sourceId,
         currentPaper.paperId,
         sessionData,
-        currentPaperData
+        //currentPaperData
       );
     }
     
