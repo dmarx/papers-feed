@@ -1,4 +1,4 @@
-// background.ts
+// extension/background.ts
 // Enhanced background script with source manager
 
 import { GitHubStoreClient } from 'gh-store-client';
@@ -7,7 +7,7 @@ import { loadSessionConfig, getConfigurationInMs } from './config/session';
 import { SessionTracker } from './utils/session-tracker';
 import { PopupManager } from './utils/popup-manager';
 import { SourceIntegrationManager } from './source-integration/source-manager';
-import { arxivSource } from './source-integration/plugins/arxiv';
+import { ArXivIntegration } from './source-integration/arxiv/index';
 import { loguru } from './utils/logger';
 
 const logger = loguru.getLogger('background');
@@ -27,7 +27,7 @@ function initializeSources() {
   sourceManager = new SourceIntegrationManager();
   
   // Register built-in sources
-  sourceManager.registerSource(arxivSource);
+  sourceManager.registerSource(new ArXivIntegration());
   
   // TODO: Add mechanism to load additional sources from config or storage
   
@@ -106,6 +106,20 @@ function setupMessageListeners() {
       return true;
     }
     
+    if (message.type === 'updateRating') {
+      logger.debug('Rating update requested:', message.rating);
+      handleUpdateRating(message.rating, sendResponse);
+      return true; // Will respond asynchronously
+    }
+    
+    if (message.type === 'updateAnnotation') {
+      logger.debug('Annotation update requested:', message.annotationType, message.data);
+      handleAnnotationUpdate(message.annotationType, message.data)
+        .then(response => sendResponse(response))
+        .catch(error => sendResponse({ success: false, error: error.message }));
+      return true; // Will respond asynchronously
+    }
+    
     return false;
   });
 }
@@ -131,6 +145,84 @@ async function handlePaperMetadata(metadata: any, tabId?: number) {
     }
   } catch (error) {
     logger.error('Error handling paper metadata', error);
+  }
+}
+
+// Handle rating update
+async function handleUpdateRating(rating: string, sendResponse: (response: any) => void) {
+  if (!paperManager) {
+    sendResponse({ success: false, error: 'Paper manager not initialized' });
+    return;
+  }
+
+  if (!currentPaperData) {
+    sendResponse({ success: false, error: 'No current paper' });
+    return;
+  }
+
+  try {
+    await paperManager.updateRating(
+      currentPaperData.sourceId,
+      currentPaperData.paperId, 
+      rating, 
+      currentPaperData
+    );
+    currentPaperData.rating = rating;
+    sendResponse({ success: true });
+  } catch (error) {
+    logger.error('Error updating rating:', error);
+    sendResponse({ success: false, error: error instanceof Error ? error.message : 'Unknown error' });
+  }
+}
+
+// Handle annotation update
+async function handleAnnotationUpdate(type: string, data: any) {
+  if (!paperManager) {
+    throw new Error('Paper manager not initialized');
+  }
+
+  try {
+    if (type === 'notes') {
+      await paperManager.logAnnotation(
+        data.sourceId,
+        data.paperId,
+        'notes',
+        data.notes,
+        data // Additional metadata
+      );
+    } else if (type === 'vote') {
+      await paperManager.updateRating(
+        data.sourceId,
+        data.paperId,
+        data.vote,
+        data // Additional metadata
+      );
+    }
+
+    return { success: true };
+  } catch (error) {
+    logger.error('Error logging interaction:', error);
+    throw error;
+  }
+}
+
+// Send sources to content script
+async function sendSourcesToContentScript(tabId: number): Promise<void> {
+  if (!sourceManager) {
+    return;
+  }
+  
+  try {
+    const sources = sourceManager.getAllSources();
+    
+    await chrome.tabs.sendMessage(tabId, {
+      type: 'registerSources',
+      sources
+    });
+    
+    logger.debug('Sent sources to content script', tabId);
+  } catch (error) {
+    logger.error('Error sending sources to content script', error);
   }
 }
 
@@ -164,10 +256,6 @@ chrome.storage.onChanged.addListener(async (changes) => {
   }
 });
 
-// Initialize extension
-initialize();
-
-// Tab and window management
 // Tab and window management
 chrome.tabs.onActivated.addListener(async (activeInfo) => {
   const tab = await chrome.tabs.get(activeInfo.tabId);
@@ -226,14 +314,14 @@ async function handleTabChange(tab: chrome.tabs.Tab) {
 }
 
 async function endCurrentSession() {
-  if (!sessionTracker || !paperManager) {
+  if (!sessionTracker) {
     return;
   }
   
   // Get current paper info
   const currentPaper = sessionTracker.getCurrentPaper();
   
-  if (currentPaper.sourceId && currentPaper.paperId) {
+  if (currentPaper.sourceId && currentPaper.paperId && paperManager) {
     logger.info('Ending session for paper', { 
       source: currentPaper.sourceId,
       paperId: currentPaper.paperId
@@ -250,32 +338,12 @@ async function endCurrentSession() {
         currentPaper.sourceId,
         currentPaper.paperId,
         sessionData,
-        //currentPaperData
+        currentPaperData
       );
     }
     
     // Clear current paper data
     currentPaperData = null;
-  }
-}
-
-// Send sources to content script
-async function sendSourcesToContentScript(tabId: number): Promise<void> {
-  if (!sourceManager) {
-    return;
-  }
-  
-  try {
-    const sources = sourceManager.getAllSources();
-    
-    await chrome.tabs.sendMessage(tabId, {
-      type: 'registerSources',
-      sources
-    });
-    
-    logger.debug('Sent sources to content script', tabId);
-  } catch (error) {
-    logger.error('Error sending sources to content script', error);
   }
 }
 
@@ -296,3 +364,6 @@ function initializeDebugObjects() {
 
   logger.info('Debug objects registered');
 }
+
+// Initialize extension
+initialize();
