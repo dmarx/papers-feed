@@ -1,4 +1,4 @@
-// utils/metadata-transformer.ts
+// extension/utils/metadata-transformer.ts
 // Generic metadata transformation utilities
 
 import { PaperMetadata } from '../papers/types';
