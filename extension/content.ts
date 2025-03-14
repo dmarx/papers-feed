@@ -2,7 +2,8 @@
 // Generic content script with source plugin support
 
 import { LinkProcessor } from './source-integration/link-processor';
-import { SourceDefinition, PaperMetadata, MetadataExtractor } from './source-integration/types';
+import { SourceDefinition, MetadataExtractor } from './source-integration/types';
+import { PaperMetadata } from '../papers/types';
 import { loguru } from './utils/logger';
 
 const logger = loguru.getLogger('content-script');
