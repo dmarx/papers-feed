@@ -1,9 +1,8 @@
 // source-integration/arxiv/index.ts
-// ArXiv integration using metadata transformer
+// Updated to delegate XML parsing to content script
 
 import { SourceIntegration } from '../types';
 import { PaperMetadata } from '../../papers/types';
-import { parseXMLText } from './xml-parser';
 import { transformMetadata, MetadataMapping } from '../../utils/metadata-transformer';
 import { loguru } from '../../utils/logger';
 
@@ -83,10 +82,41 @@ export class ArXivIntegration implements SourceIntegration {
         throw new Error(`ArXiv API error: ${response.status}`);
       }
       
-      const text = await response.text();
-      const parsedXml = await parseXMLText(text);
+      const xmlText = await response.text();
       
-      if (!parsedXml) {
+      // Ask content script to parse XML
+      logger.debug('Delegating XML parsing to content script');
+      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+      
+      if (tabs.length === 0) {
+        throw new Error('No active tab found to parse XML');
+      }
+      
+      // Request XML parsing from content script
+      const parsedData = await new Promise<any>((resolve, reject) => {
+        chrome.tabs.sendMessage(
+          tabs[0].id!,
+          { 
+            type: 'parseArXivXML', 
+            xmlText 
+          },
+          (response) => {
+            if (chrome.runtime.lastError) {
+              reject(new Error(`Error parsing XML: ${chrome.runtime.lastError.message}`));
+              return;
+            }
+            
+            if (response.error) {
+              reject(new Error(`Error in content script: ${response.error}`));
+              return;
+            }
+            
+            resolve(response.data);
+          }
+        );
+      });
+      
+      if (!parsedData) {
         logger.error('Failed to parse API response');
         return null;
       }
@@ -95,7 +125,7 @@ export class ArXivIntegration implements SourceIntegration {
       const paperData = transformMetadata(
         this.id,
         arxivId,
-        parsedXml,
+        parsedData,
         this.METADATA_MAPPING,
         `https://arxiv.org/abs/${arxivId}`
       );
