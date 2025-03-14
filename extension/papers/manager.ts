@@ -82,7 +82,7 @@ export class PaperManager {
           paperId,
           interactions: []
         };
-        await this.client.createObject(objectId, newLog);
+        await this.client.createObject(objectId, newLog as unknown as { [key: string]: Json });
         logger.debug(`Created new interaction log: ${sourceId}:${paperId}`);
         return newLog;
       }
