@@ -126,7 +126,7 @@ export class PaperManager {
     await this.addInteraction(sourceId, paperId, {
       type: 'reading_session',
       timestamp: new Date().toISOString(),
-      data: session
+      data: session as unknown as { [key: string]: Json }
     });
     
     logger.info(`Logged reading session for ${sourceId}:${paperId}`, { duration: session.duration_seconds });
