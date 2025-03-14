@@ -82,8 +82,9 @@ async function initialize() {
 }
 
 // Set up message listeners
+// Set up message listeners
 function setupMessageListeners() {
-  chrome.runtime.onMessage.addListener((message: Message, sender, sendResponse) => {
+  chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
     if (message.type === 'contentScriptReady' && sender.tab?.id) {
       logger.debug('Content script ready:', sender.tab.url);
       sendResponse({ success: true });
