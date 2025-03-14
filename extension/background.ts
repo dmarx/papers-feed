@@ -3,7 +3,7 @@
 
 import { GitHubStoreClient } from 'gh-store-client';
 import { PaperManager } from './papers/manager';
-import { loadSessionConfig, getConfigurationInMs } from './config/session.js';
+import { loadSessionConfig, getConfigurationInMs } from './config/session';
 import { SessionTracker } from './utils/session-tracker';
 import { PopupManager } from './utils/popup-manager';
 import { SourceIntegrationManager } from './source-integration/source-manager';
