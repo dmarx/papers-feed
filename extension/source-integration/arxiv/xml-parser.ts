@@ -1,4 +1,4 @@
-// source-integration/arxiv/xml-parser.ts
+// extension/source-integration/arxiv/xml-parser.ts
 // ArXiv API XML response parser - simplified for use with metadata transformer
 
 import { loguru } from '../../utils/logger';
