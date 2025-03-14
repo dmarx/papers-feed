@@ -1,4 +1,4 @@
-// content.ts
+// extension/content.ts
 // Generic content script with source plugin support
 
 import { LinkProcessor } from './source-integration/link-processor';
