@@ -62,7 +62,11 @@ export class PaperManager {
       throw error;
     }
   }
-
+  
+  getClient(): GitHubStoreClient {
+    return this.client;
+  }
+  
   async logReadingSession(
     arxivId: string,
     session: ReadingSessionData,
