@@ -12,7 +12,21 @@ import {
 
 export class PaperManager {
   constructor(private client: GitHubStoreClient) {}
-
+  
+  async getPaper(sourceId: string, paperId: string): Promise<any | null> {
+    const objectId = `paper:${sourceId}:${paperId}`;
+    
+    try {
+      const obj = await this.client.getObject(objectId);
+      return obj.data;
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('No object found')) {
+        return null;
+      }
+      throw error;
+    }
+  }
+  
   async getOrCreatePaper(paperData: Partial<PaperMetadata> & { arxivId: string }): Promise<PaperMetadata> {
     const objectId = `paper:${paperData.arxivId}`;
     try {
