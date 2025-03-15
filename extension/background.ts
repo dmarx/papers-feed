@@ -1,9 +1,9 @@
 // extension/background.ts
-// Background script with direct source imports
+// Background script with heartbeat-based session tracking
 
 import { GitHubStoreClient } from 'gh-store-client';
 import { PaperManager } from './papers/manager';
-import { loadSessionConfig, getConfigurationInMs } from './config/session';
+import { loadSessionConfig } from './config/session';
 import { SessionTracker } from './utils/session-tracker';
 import { PopupManager } from './utils/popup-manager';
 import { SourceIntegrationManager } from './source-integration/source-manager';
@@ -19,11 +19,14 @@ const logger = loguru.getLogger('background');
 let githubToken = '';
 let githubRepo = '';
 let currentPaperData: any = null;
-let sessionConfig: any = null;
 let paperManager: PaperManager | null = null;
 let sessionTracker: SessionTracker | null = null;
 let popupManager: PopupManager | null = null;
 let sourceManager: SourceIntegrationManager | null = null;
+
+// Heartbeat timeout check
+const HEARTBEAT_TIMEOUT = 15000; // 15 seconds (3 times the 5-second heartbeat interval)
+let heartbeatTimeoutId: number | null = null;
 
 // Initialize sources
 function initializeSources() {
@@ -55,13 +58,8 @@ async function initialize() {
       logger.info('Paper manager initialized');
     }
     
-    // Load session configuration
-    const rawConfig = await loadSessionConfig();
-    sessionConfig = getConfigurationInMs(rawConfig);
-    logger.info('Session configuration loaded', sessionConfig);
-    
     // Initialize session tracker
-    sessionTracker = new SessionTracker(sessionConfig);
+    sessionTracker = new SessionTracker();
     logger.info('Session tracker initialized');
     
     // Initialize popup manager
@@ -82,7 +80,6 @@ async function initialize() {
 }
 
 // Set up message listeners
-// Set up message listeners
 function setupMessageListeners() {
   chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
     if (message.type === 'contentScriptReady' && sender.tab?.id) {
@@ -93,7 +90,7 @@ function setupMessageListeners() {
     
     if (message.type === 'paperMetadata' && message.metadata) {
       // Store metadata received from content script
-      handlePaperMetadata(message.metadata, sender.tab?.id);
+      handlePaperMetadata(message.metadata);
       sendResponse({ success: true });
       return true;
     }
@@ -110,22 +107,32 @@ function setupMessageListeners() {
       return true; // Will respond asynchronously
     }
     
-    if (message.type === 'showAnnotationPopup') {
-      // This is now handled directly by the PopupManager
-      return false;
+    if (message.type === 'startSession') {
+      handleStartSession(message.sourceId, message.paperId);
+      sendResponse({ success: true });
+      return true;
     }
     
-    if (message.type === 'popupAction') {
-      // This is now handled directly by the PopupManager
-      return false;
+    if (message.type === 'sessionHeartbeat') {
+      handleSessionHeartbeat(message.sourceId, message.paperId, message.timestamp);
+      sendResponse({ success: true });
+      return true;
     }
+    
+    if (message.type === 'endSession') {
+      handleEndSession(message.sourceId, message.paperId, message.reason || 'user_action');
+      sendResponse({ success: true });
+      return true;
+    }
+    
+    // Other message handlers are managed by PopupManager
     
     return false;
   });
 }
 
 // Handle paper metadata from content script
-async function handlePaperMetadata(metadata: any, tabId?: number) {
+async function handlePaperMetadata(metadata: any) {
   logger.info(`Received metadata for ${metadata.sourceId}:${metadata.paperId}`);
   
   try {
@@ -136,12 +143,6 @@ async function handlePaperMetadata(metadata: any, tabId?: number) {
     if (paperManager) {
       await paperManager.getOrCreatePaper(metadata);
       logger.debug('Paper metadata stored in GitHub');
-    }
-    
-    // Start tracking session
-    if (sessionTracker) {
-      sessionTracker.startSession(metadata.sourceId, metadata.paperId);
-      logger.debug('Started tracking session');
     }
   } catch (error) {
     logger.error('Error handling paper metadata', error);
@@ -174,6 +175,98 @@ async function handleUpdateRating(rating: string, sendResponse: (response: any) 
   }
 }
 
+// Handle session start request
+function handleStartSession(sourceId: string, paperId: string) {
+  if (!sessionTracker) {
+    logger.error('Session tracker not initialized');
+    return;
+  }
+  
+  sessionTracker.startSession(sourceId, paperId);
+  logger.info(`Started session for ${sourceId}:${paperId}`);
+  
+  // Schedule heartbeat check
+  scheduleHeartbeatCheck();
+}
+
+// Handle session heartbeat
+function handleSessionHeartbeat(sourceId: string, paperId: string, timestamp: number) {
+  if (!sessionTracker) {
+    logger.error('Session tracker not initialized');
+    return;
+  }
+  
+  const session = sessionTracker.getCurrentSession();
+  
+  // Verify session matches
+  if (session && session.sourceId === sourceId && session.paperId === paperId) {
+    sessionTracker.recordHeartbeat();
+    
+    // Reschedule heartbeat check
+    scheduleHeartbeatCheck();
+    
+    logger.debug(`Heartbeat received for ${sourceId}:${paperId}`);
+  } else {
+    // Heartbeat for non-current session - probably a race condition
+    logger.warning(`Received heartbeat for non-current session: ${sourceId}:${paperId}`);
+    
+    // Start new session if needed
+    if (!session) {
+      handleStartSession(sourceId, paperId);
+    }
+  }
+}
+
+// Handle session end request
+function handleEndSession(sourceId: string, paperId: string, reason: string) {
+  const session = sessionTracker?.getCurrentSession();
+  
+  // Only end if it matches current session
+  if (session && session.sourceId === sourceId && session.paperId === paperId) {
+    logger.info(`Ending session for ${sourceId}:${paperId}`, { reason });
+    endCurrentSession();
+  } else {
+    logger.warning(`Received end request for non-current session: ${sourceId}:${paperId}`);
+  }
+}
+
+// Schedule heartbeat timeout check
+function scheduleHeartbeatCheck() {
+  // Clear any existing timeout
+  if (heartbeatTimeoutId !== null) {
+    clearTimeout(heartbeatTimeoutId);
+    heartbeatTimeoutId = null;
+  }
+  
+  // Only schedule if we have an active session
+  if (!sessionTracker || !sessionTracker.hasActiveSession()) {
+    return;
+  }
+  
+  // Set timeout to check for missed heartbeats
+  heartbeatTimeoutId = self.setTimeout(() => {
+    checkHeartbeat();
+  }, HEARTBEAT_TIMEOUT);
+}
+
+// Check if we've missed too many heartbeats
+function checkHeartbeat() {
+  if (!sessionTracker || !sessionTracker.hasActiveSession()) {
+    return;
+  }
+  
+  const timeSinceLastHeartbeat = sessionTracker.getTimeSinceLastHeartbeat();
+  
+  if (timeSinceLastHeartbeat && timeSinceLastHeartbeat > HEARTBEAT_TIMEOUT) {
+    // Too much time since last heartbeat, end the session
+    logger.info('Heartbeat timeout, ending session');
+    endCurrentSession();
+  } else {
+    // Still active, reschedule check
+    scheduleHeartbeatCheck();
+  }
+}
+
 // Listen for credential changes
 chrome.storage.onChanged.addListener(async (changes) => {
   logger.debug('Storage changes detected', Object.keys(changes));
@@ -183,15 +276,6 @@ chrome.storage.onChanged.addListener(async (changes) => {
   }
   if (changes.githubRepo) {
     githubRepo = changes.githubRepo.newValue;
-  }
-  if (changes.sessionConfig) {
-    sessionConfig = getConfigurationInMs(changes.sessionConfig.newValue);
-    logger.info('Session configuration updated', sessionConfig);
-    
-    // Update session tracker with new config
-    if (sessionTracker && sessionConfig) {
-      sessionTracker = new SessionTracker(sessionConfig);
-    }
   }
   
   // Reinitialize paper manager if credentials changed
@@ -204,94 +288,44 @@ chrome.storage.onChanged.addListener(async (changes) => {
   }
 });
 
-// Tab and window management
-chrome.tabs.onActivated.addListener(async (activeInfo) => {
-  const tab = await chrome.tabs.get(activeInfo.tabId);
-  handleTabChange(tab);
-});
-
-chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (changeInfo.status === 'complete') {
-    handleTabChange(tab);
-  }
-});
-
-chrome.windows.onFocusChanged.addListener((windowId) => {
-  if (windowId === chrome.windows.WINDOW_ID_NONE) {
-    // Window lost focus, end current session
-    endCurrentSession();
-  }
-});
-
-async function handleTabChange(tab: chrome.tabs.Tab) {
-  if (!tab.url || !sessionTracker || !sourceManager) {
-    return;
-  }
-  
-  // Check if URL matches any registered source
-  const source = sourceManager.getSourceForUrl(tab.url);
-  
-  if (!source) {
-    logger.debug('No supported paper source detected, ending session');
-    await endCurrentSession();
-    return;
-  }
-  
-  // Extract paper ID
-  const extractedInfo = sourceManager.extractPaperId(tab.url);
-  
-  if (!extractedInfo) {
-    logger.debug('No paper ID found in URL, ending session');
-    await endCurrentSession();
-    return;
-  }
-  
-  // Get current session info
-  const currentPaper = sessionTracker.getCurrentPaper();
-  
-  // End session if different paper
-  if (currentPaper.sourceId && currentPaper.paperId && 
-      (currentPaper.sourceId !== extractedInfo.sourceId || 
-       currentPaper.paperId !== extractedInfo.paperId)) {
-    logger.debug('Different paper detected, ending existing session');
-    await endCurrentSession();
-  }
-  
-  // Note: We don't start a new session here as we'll wait for the content script
-  // to send us the metadata first
-}
-
+// End current session and save data
 async function endCurrentSession() {
   if (!sessionTracker) {
     return;
   }
   
-  // Get current paper info
-  const currentPaper = sessionTracker.getCurrentPaper();
+  // Get current session
+  const session = sessionTracker.getCurrentSession();
+  if (!session) {
+    return;
+  }
   
-  if (currentPaper.sourceId && currentPaper.paperId && paperManager) {
-    logger.info('Ending session for paper', { 
-      source: currentPaper.sourceId,
-      paperId: currentPaper.paperId
-    });
+  // End the session
+  const sessionData = sessionTracker.endSession();
+  
+  // Store session data if we have it and a paper manager
+  if (sessionData && paperManager) {
+    logger.debug('Creating reading event', sessionData);
     
-    // End session and get data
-    const sessionData = sessionTracker.endSession();
-    
-    if (sessionData && currentPaperData) {
-      logger.debug('Creating reading event', sessionData);
-      
+    try {
       // Store reading session
       await paperManager.logReadingSession(
-        currentPaper.sourceId,
-        currentPaper.paperId,
+        session.sourceId,
+        session.paperId,
         sessionData,
         currentPaperData
       );
+      
+      logger.info(`Session saved to GitHub for ${session.sourceId}:${session.paperId}`);
+    } catch (error) {
+      logger.error('Error saving session', error);
     }
-    
-    // Clear current paper data
-    currentPaperData = null;
+  }
+  
+  // Clear heartbeat timeout
+  if (heartbeatTimeoutId !== null) {
+    clearTimeout(heartbeatTimeoutId);
+    heartbeatTimeoutId = null;
   }
 }
 
@@ -305,9 +339,9 @@ function initializeDebugObjects() {
     get sourceManager() { return sourceManager; },
     getGithubClient: () => paperManager ? paperManager.getClient() : null,
     getCurrentPaper: () => currentPaperData,
-    getSessionConfig: () => sessionConfig,
-    getSessionMetadata: () => sessionTracker?.getCurrentSessionMetadata(),
-    getSources: () => sourceManager?.getAllSources()
+    getSessionInfo: () => sessionTracker?.getCurrentSessionMetadata(),
+    getSources: () => sourceManager?.getAllSources(),
+    forceEndSession: () => endCurrentSession()
   };
 
   logger.info('Debug objects registered');
