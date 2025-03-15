@@ -13,7 +13,7 @@ export default defineConfig({
         background: resolve(__dirname, 'background.ts'),
         content: resolve(__dirname, 'content.ts'),
         popup: resolve(__dirname, 'popup.js'),
-        options: resolve(__dirname, 'options.js')
+        options: resolve(__dirname, 'options.ts')
       },
       output: {
         dir: resolve(__dirname, 'dist'),
