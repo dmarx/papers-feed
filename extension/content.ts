@@ -26,6 +26,9 @@ let activePopup: HTMLElement | null = null;
 let heartbeatInterval: number | null = null;
 const HEARTBEAT_INTERVAL = 5000; // 5 seconds
 
+// Track tab visibility
+let isTabVisible = true;
+
 // Create link processor
 const linkProcessor = new LinkProcessor((sourceId, paperId, link) => {
   // Callback when link is found
@@ -250,6 +253,12 @@ function startSessionTracking(sourceId: string, paperId: string) {
   // Stop any existing heartbeat
   stopHeartbeat();
   
+  // Only start tracking if tab is visible
+  if (!isTabVisible) {
+    logger.debug(`Not starting session for ${sourceId}:${paperId} because tab is not visible`);
+    return;
+  }
+  
   // Tell background script to start a new session
   chrome.runtime.sendMessage({
     type: 'startSession',
@@ -309,8 +318,10 @@ async function processCurrentPage() {
           
           logger.debug(`Sent metadata to background script for ${sourceId}:${paperId}`);
           
-          // Start session tracking
-          startSessionTracking(sourceId, paperId);
+          // Start session tracking if tab is visible
+          if (isTabVisible) {
+            startSessionTracking(sourceId, paperId);
+          }
         }
       } catch (error) {
         logger.error(`Error extracting metadata for ${sourceId}:${paperId}`, error);
@@ -318,6 +329,66 @@ async function processCurrentPage() {
     }
   }
 }
+
+// Visibility change listener
+document.addEventListener('visibilitychange', () => {
+  const wasVisible = isTabVisible;
+  isTabVisible = document.visibilityState === 'visible';
+  
+  const paperInfo = extractPaperId(window.location.href);
+  if (!paperInfo) return;
+  
+  if (isTabVisible && !wasVisible) {
+    // Tab has become visible again - restart session
+    logger.info(`Tab became visible again for ${paperInfo.sourceId}:${paperInfo.paperId}`);
+    startSessionTracking(paperInfo.sourceId, paperInfo.paperId);
+  } else if (!isTabVisible && wasVisible) {
+    // Tab has become hidden - end current session
+    logger.info(`Tab hidden for ${paperInfo.sourceId}:${paperInfo.paperId}`);
+    
+    // Send end session message
+    chrome.runtime.sendMessage({
+      type: 'endSession',
+      sourceId: paperInfo.sourceId,
+      paperId: paperInfo.paperId,
+      reason: 'tab_hidden'
+    });
+    
+    // Stop heartbeat
+    stopHeartbeat();
+  }
+});
+
+// Focus/blur listeners
+window.addEventListener('focus', () => {
+  const paperInfo = extractPaperId(window.location.href);
+  if (!paperInfo) return;
+  
+  // Tab gained focus - restart session if it wasn't already running
+  if (!heartbeatInterval) {
+    logger.info(`Tab gained focus for ${paperInfo.sourceId}:${paperInfo.paperId}`);
+    startSessionTracking(paperInfo.sourceId, paperInfo.paperId);
+  }
+});
+
+window.addEventListener('blur', () => {
+  const paperInfo = extractPaperId(window.location.href);
+  if (!paperInfo) return;
+  
+  // Tab lost focus - end current session
+  logger.info(`Tab lost focus for ${paperInfo.sourceId}:${paperInfo.paperId}`);
+  
+  // Send end session message
+  chrome.runtime.sendMessage({
+    type: 'endSession',
+    sourceId: paperInfo.sourceId,
+    paperId: paperInfo.paperId,
+    reason: 'tab_blur'
+  });
+  
+  // Stop heartbeat
+  stopHeartbeat();
+});
 
 // Inform background when page is unloaded
 window.addEventListener('beforeunload', () => {
@@ -421,6 +492,9 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
   
   // Start observing for new links
   linkProcessor.startObserving(document);
+  
+  // Set initial tab visibility
+  isTabVisible = document.visibilityState === 'visible';
   
   // Process current page
   processCurrentPage();
