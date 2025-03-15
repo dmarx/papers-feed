@@ -1,32 +1,52 @@
-// extension/utils/logger.ts
+// utils/logger.ts
+// Logging utility wrapping loguru
 
 /**
- * Simple logger utility inspired by loguru
+ * Logger class for consistent logging throughout the extension
  */
-class Logger {
-  private name: string;
+export class Logger {
+  constructor(private module: string) {}
   
-  constructor(name: string) {
-    this.name = name;
+  /**
+   * Log debug message
+   */
+  debug(message: string, data?: any): void {
+    console.debug(`[${this.module}] ${message}`, data !== undefined ? data : '');
   }
   
-  info(message: string, ...args: any[]): void {
-    console.log(`[INFO] ${this.name}: ${message}`, ...args);
+  /**
+   * Log info message
+   */
+  info(message: string, data?: any): void {
+    console.info(`[${this.module}] ${message}`, data !== undefined ? data : '');
   }
   
-  warning(message: string, ...args: any[]): void {
-    console.warn(`[WARNING] ${this.name}: ${message}`, ...args);
+  /**
+   * Log warning message
+   */
+  warning(message: string, data?: any): void {
+    console.warn(`[${this.module}] ${message}`, data !== undefined ? data : '');
   }
   
-  error(message: string, ...args: any[]): void {
-    console.error(`[ERROR] ${this.name}: ${message}`, ...args);
-  }
-  
-  debug(message: string, ...args: any[]): void {
-    console.debug(`[DEBUG] ${this.name}: ${message}`, ...args);
+  /**
+   * Log error message
+   */
+  error(message: string, data?: any): void {
+    console.error(`[${this.module}] ${message}`, data !== undefined ? data : '');
   }
 }
 
-export const loguru = {
-  getLogger: (name: string) => new Logger(name)
-};
+/**
+ * Loguru mock for browser extension use
+ */
+class LoguruMock {
+  /**
+   * Get logger for a module
+   */
+  getLogger(module: string): Logger {
+    return new Logger(module);
+  }
+}
+
+// Export singleton instance
+export const loguru = new LoguruMock();
