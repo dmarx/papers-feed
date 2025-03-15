@@ -1,5 +1,5 @@
 // extension/papers/types.ts
-// Type definitions for paper data
+// Updated for heartbeat-based session tracking
 
 import type { Json } from 'gh-store-client';
 
@@ -42,26 +42,29 @@ export interface PaperMetadata {
 }
 
 /**
- * Reading session data
+ * Reading session data - updated for heartbeat tracking
  */
 export interface ReadingSessionData {
   // Session identifier
   session_id: string;
   
-  // Active reading time in seconds
-  duration_seconds: number;
+  // Paper identifiers
+  source_id?: string;
+  paper_id?: string;
   
-  // Idle time in seconds
-  idle_seconds: number;
-  
-  // Session start time
+  // Session timing
   start_time: string;
-  
-  // Session end time
   end_time: string;
   
-  // Total elapsed time (active + idle) in seconds
-  total_elapsed_seconds: number;
+  // Heartbeat data
+  heartbeat_count: number;
+  
+  // Duration in seconds (derived from heartbeat count)
+  duration_seconds: number;
+  
+  // Legacy properties for backward compatibility
+  idle_seconds?: number;
+  total_elapsed_seconds?: number;
 }
 
 /**
