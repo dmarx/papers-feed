@@ -1,5 +1,5 @@
 // extension/content.ts
-// Content script with direct source plugin imports
+// Content script with heartbeat session tracking
 
 import { LinkProcessor } from './source-integration/link-processor';
 import { SourceIntegration, Message } from './source-integration/types';
@@ -21,6 +21,10 @@ const sourceIntegrations: SourceIntegration[] = [
 
 // Track active popup
 let activePopup: HTMLElement | null = null;
+
+// Heartbeat interval
+let heartbeatInterval: number | null = null;
+const HEARTBEAT_INTERVAL = 5000; // 5 seconds
 
 // Create link processor
 const linkProcessor = new LinkProcessor((sourceId, paperId, link) => {
@@ -241,6 +245,46 @@ document.addEventListener('click', (e) => {
   }
 });
 
+// Start heartbeat for session tracking
+function startSessionTracking(sourceId: string, paperId: string) {
+  // Stop any existing heartbeat
+  stopHeartbeat();
+  
+  // Tell background script to start a new session
+  chrome.runtime.sendMessage({
+    type: 'startSession',
+    sourceId,
+    paperId
+  }, response => {
+    if (response?.success) {
+      logger.debug(`Started session for ${sourceId}:${paperId}`);
+    } else {
+      logger.error(`Failed to start session for ${sourceId}:${paperId}`, response?.error);
+    }
+  });
+  
+  // Start sending heartbeats
+  heartbeatInterval = window.setInterval(() => {
+    chrome.runtime.sendMessage({
+      type: 'sessionHeartbeat',
+      sourceId,
+      paperId,
+      timestamp: Date.now()
+    });
+  }, HEARTBEAT_INTERVAL);
+  
+  logger.info(`Started heartbeat for ${sourceId}:${paperId}`);
+}
+
+// Stop heartbeat
+function stopHeartbeat() {
+  if (heartbeatInterval !== null) {
+    clearInterval(heartbeatInterval);
+    heartbeatInterval = null;
+    logger.debug('Stopped heartbeat');
+  }
+}
+
 // Process current page if it's a paper
 async function processCurrentPage() {
   const url = window.location.href;
@@ -264,6 +308,9 @@ async function processCurrentPage() {
           });
           
           logger.debug(`Sent metadata to background script for ${sourceId}:${paperId}`);
+          
+          // Start session tracking
+          startSessionTracking(sourceId, paperId);
         }
       } catch (error) {
         logger.error(`Error extracting metadata for ${sourceId}:${paperId}`, error);
@@ -271,6 +318,24 @@ async function processCurrentPage() {
     }
   }
 }
+
+// Inform background when page is unloaded
+window.addEventListener('beforeunload', () => {
+  const url = window.location.href;
+  const paperInfo = extractPaperId(url);
+  
+  if (paperInfo) {
+    // Try to send one last message before page unloads
+    chrome.runtime.sendMessage({
+      type: 'endSession',
+      sourceId: paperInfo.sourceId,
+      paperId: paperInfo.paperId,
+      reason: 'page_unload'
+    });
+  }
+  
+  stopHeartbeat();
+});
 
 // Message handler for background script
 chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
