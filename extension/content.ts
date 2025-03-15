@@ -1,143 +1,56 @@
-import { l as loguru } from './assets/logger-BXFtlJ3r.js';
-import { a as arxivIntegration } from './assets/index-q428Duvn.js';
+// extension/content.ts
+// Content script with direct source plugin imports
 
-const logger$1 = loguru.getLogger("link-processor");
-class LinkProcessor {
-  constructor(onLinkFound) {
-    this.patterns = [];
-    this.observer = null;
-    this.processedLinks = /* @__PURE__ */ new Set();
-    this.onLinkFound = onLinkFound;
-    logger$1.debug("Link processor initialized");
-  }
-  /**
-   * Register a new link pattern
-   */
-  registerPattern(pattern) {
-    this.patterns.push(pattern);
-    logger$1.debug(`Registered pattern for ${pattern.sourceId}`);
-  }
-  /**
-   * Process all links in the document
-   */
-  processLinks(document2) {
-    const links = document2.querySelectorAll("a[href]");
-    links.forEach((link) => {
-      const linkId = this.getLinkId(link);
-      if (this.processedLinks.has(linkId)) {
-        return;
-      }
-      this.processedLinks.add(linkId);
-      for (const pattern of this.patterns) {
-        if (pattern.pattern.test(link.href)) {
-          const paperId = pattern.extractPaperId(link.href);
-          if (paperId) {
-            this.onLinkFound(pattern.sourceId, paperId, link);
-            break;
-          }
-        }
-      }
-    });
-  }
-  /**
-   * Start observing for DOM changes
-   */
-  startObserving(document2) {
-    if (this.observer) {
-      this.observer.disconnect();
-    }
-    this.observer = new MutationObserver((mutations) => {
-      let newLinks = false;
-      mutations.forEach((mutation) => {
-        mutation.addedNodes.forEach((node) => {
-          if (node.nodeType === Node.ELEMENT_NODE) {
-            if (node.tagName === "A") {
-              newLinks = true;
-            }
-            const links = node.querySelectorAll("a[href]");
-            if (links.length > 0) {
-              newLinks = true;
-            }
-          }
-        });
-      });
-      if (newLinks) {
-        this.processLinks(document2);
-      }
-    });
-    this.observer.observe(document2.body, {
-      childList: true,
-      subtree: true
-    });
-    logger$1.debug("Started observing for DOM changes");
-  }
-  /**
-   * Create a unique ID for a link
-   */
-  getLinkId(link) {
-    const path = this.getElementPath(link);
-    return `${link.href}|${path}`;
-  }
-  /**
-   * Get element path in DOM for identification
-   */
-  getElementPath(element) {
-    const path = [];
-    let current = element;
-    while (current && current !== document.body) {
-      let selector = current.tagName.toLowerCase();
-      if (current.id) {
-        selector += `#${current.id}`;
-      } else {
-        const siblings = Array.from(current.parentElement?.children || []);
-        const index = siblings.indexOf(current) + 1;
-        if (siblings.length > 1) {
-          selector += `:nth-child(${index})`;
-        }
-      }
-      path.unshift(selector);
-      current = current.parentElement;
-    }
-    return path.join(" > ");
-  }
-  /**
-   * Stop observing DOM changes
-   */
-  stopObserving() {
-    if (this.observer) {
-      this.observer.disconnect();
-      this.observer = null;
-      logger$1.debug("Stopped observing DOM changes");
-    }
-  }
-}
+import { LinkProcessor } from './source-integration/link-processor';
+import { SourceIntegration, Message } from './source-integration/types';
+import { PaperMetadata } from './papers/types';
+import { loguru } from './utils/logger';
 
-const logger = loguru.getLogger("content-script");
-logger.info("Paper Tracker content script loaded");
-const sourceIntegrations = [
-  arxivIntegration
+// Import source plugins directly
+import { arxivIntegration } from './source-integration/arxiv';
+
+const logger = loguru.getLogger('content-script');
+
+logger.info('Paper Tracker content script loaded');
+
+// Available source integrations
+const sourceIntegrations: SourceIntegration[] = [
+  arxivIntegration,
   // Add more sources as they become available
 ];
-let activePopup = null;
+
+// Track active popup
+let activePopup: HTMLElement | null = null;
+
+// Create link processor
 const linkProcessor = new LinkProcessor((sourceId, paperId, link) => {
+  // Callback when link is found
   injectAnnotationButton(link, sourceId, paperId);
 });
+
+// Initialize sources
 function initializeSources() {
+  // Register each source with the link processor
   for (const source of sourceIntegrations) {
     logger.debug(`Initializing source: ${source.id}`);
-    source.urlPatterns.forEach((pattern) => {
+    
+    // Register patterns with link processor
+    source.urlPatterns.forEach(pattern => {
       linkProcessor.registerPattern({
         sourceId: source.id,
         pattern,
-        extractPaperId: (url) => source.extractPaperId(url)
+        extractPaperId: (url: string) => source.extractPaperId(url)
       });
     });
   }
 }
+
+// Inject common styles
 function injectStyles() {
-  if (document.getElementById("paper-tracker-styles")) {
-    return;
+  if (document.getElementById('paper-tracker-styles')) {
+    return; // Already injected
   }
+  
   const styles = `
   .paper-annotator {
     display: inline-block;
@@ -246,27 +159,42 @@ function injectStyles() {
     border-color: #1d4ed8;
   }
   `;
-  const styleSheet = document.createElement("style");
-  styleSheet.id = "paper-tracker-styles";
+  
+  const styleSheet = document.createElement('style');
+  styleSheet.id = 'paper-tracker-styles';
   styleSheet.textContent = styles;
   document.head.appendChild(styleSheet);
-  logger.debug("Injected styles");
+  
+  logger.debug('Injected styles');
 }
-function injectAnnotationButton(link, sourceId, paperId) {
-  if (link.nextSibling && link.nextSibling.nodeType === Node.ELEMENT_NODE && link.nextSibling.classList.contains("paper-annotator")) {
+
+// Add annotation button to link
+function injectAnnotationButton(link: HTMLAnchorElement, sourceId: string, paperId: string): void {
+  // Skip if already processed
+  if (link.nextSibling && 
+      link.nextSibling.nodeType === Node.ELEMENT_NODE &&
+      (link.nextSibling as Element).classList.contains('paper-annotator')) {
     return;
   }
-  const annotator = document.createElement("span");
-  annotator.className = "paper-annotator";
-  annotator.textContent = "📝";
-  annotator.title = "Add annotation";
+  
+  // Create annotator button
+  const annotator = document.createElement('span');
+  annotator.className = 'paper-annotator';
+  annotator.textContent = '📝';
+  annotator.title = 'Add annotation';
+  
+  // Store data attributes
   annotator.dataset.sourceId = sourceId;
   annotator.dataset.paperId = paperId;
-  annotator.addEventListener("click", (e) => {
+  
+  // Add click handler
+  annotator.addEventListener('click', (e) => {
     e.preventDefault();
     e.stopPropagation();
+    
+    // Send message to background script to show popup
     chrome.runtime.sendMessage({
-      type: "showAnnotationPopup",
+      type: 'showAnnotationPopup',
       sourceId,
       paperId,
       position: {
@@ -275,9 +203,23 @@ function injectAnnotationButton(link, sourceId, paperId) {
       }
     });
   });
+  
+  // Add to page next to link
   link.parentNode?.insertBefore(annotator, link.nextSibling);
 }
-function extractPaperId(url) {
+
+// Get source that can handle a URL
+function getSourceForUrl(url: string): SourceIntegration | null {
+  for (const source of sourceIntegrations) {
+    if (source.canHandleUrl(url)) {
+      return source;
+    }
+  }
+  return null;
+}
+
+// Extract paper ID from URL
+function extractPaperId(url: string): { sourceId: string, paperId: string } | null {
   for (const source of sourceIntegrations) {
     if (source.canHandleUrl(url)) {
       const paperId = source.extractPaperId(url);
@@ -288,27 +230,39 @@ function extractPaperId(url) {
   }
   return null;
 }
-document.addEventListener("click", (e) => {
-  if (activePopup && !activePopup.contains(e.target) && !e.target.classList.contains("paper-annotator")) {
+
+// Set up click-outside handler for popups
+document.addEventListener('click', (e) => {
+  if (activePopup && 
+      !activePopup.contains(e.target as Node) && 
+      !(e.target as Element).classList.contains('paper-annotator')) {
     activePopup.parentElement?.remove();
     activePopup = null;
   }
 });
+
+// Process current page if it's a paper
 async function processCurrentPage() {
   const url = window.location.href;
   const paperInfo = extractPaperId(url);
+  
   if (paperInfo) {
     logger.info(`Detected paper: ${paperInfo.sourceId}:${paperInfo.paperId}`);
+    
     const { sourceId, paperId } = paperInfo;
-    const source = sourceIntegrations.find((s) => s.id === sourceId);
+    const source = sourceIntegrations.find(s => s.id === sourceId);
+    
     if (source) {
       try {
         const metadata = await source.extractMetadata(document, paperId);
+        
         if (metadata) {
+          // Send metadata to background script
           chrome.runtime.sendMessage({
-            type: "paperMetadata",
+            type: 'paperMetadata',
             metadata
           });
+          
           logger.debug(`Sent metadata to background script for ${sourceId}:${paperId}`);
         }
       } catch (error) {
@@ -317,73 +271,110 @@ async function processCurrentPage() {
     }
   }
 }
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  logger.debug("Received message", message);
-  if (message.type === "showPopup") {
+
+// Message handler for background script
+chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
+  logger.debug('Received message', message);
+  
+  if (message.type === 'showPopup') {
+    // Remove existing popup
     if (activePopup) {
       activePopup.parentElement?.remove();
       activePopup = null;
     }
-    const wrapper = document.createElement("div");
-    wrapper.className = "paper-popup-wrapper";
+    
+    // Create popup wrapper
+    const wrapper = document.createElement('div');
+    wrapper.className = 'paper-popup-wrapper';
+    
+    // Position near click or element
     if (message.position) {
       wrapper.style.left = `${message.position.x}px`;
       wrapper.style.top = `${message.position.y}px`;
     }
-    const popup = document.createElement("div");
-    popup.className = "paper-popup";
+    
+    // Create popup
+    const popup = document.createElement('div');
+    popup.className = 'paper-popup';
     popup.innerHTML = message.html;
+    
+    // Add to page
     wrapper.appendChild(popup);
     document.body.appendChild(wrapper);
+    
+    // Set up event handlers
     if (message.handlers) {
       for (const handler of message.handlers) {
         const elements = popup.querySelectorAll(handler.selector);
-        elements.forEach((element) => {
+        elements.forEach(element => {
           element.addEventListener(handler.event, () => {
             chrome.runtime.sendMessage({
-              type: "popupAction",
+              type: 'popupAction',
               action: handler.action,
               sourceId: message.sourceId,
               paperId: message.paperId,
               data: {
-                value: element.tagName === "TEXTAREA" ? element.value : element.getAttribute("data-vote"),
-                checked: element.tagName === "INPUT" ? element.checked : void 0,
-                id: element.id
+                value: element.tagName === 'TEXTAREA' ? 
+                  (element as HTMLTextAreaElement).value : 
+                  (element as HTMLElement).getAttribute('data-vote'),
+                checked: element.tagName === 'INPUT' ? 
+                  (element as HTMLInputElement).checked : undefined,
+                id: (element as HTMLElement).id
               }
             });
           });
         });
       }
     }
+    
+    // Save reference
     activePopup = popup;
+    
     sendResponse({ success: true });
     return true;
   }
-  if (message.type === "processPage") {
+  
+  if (message.type === 'processPage') {
+    // Re-process the entire page
     linkProcessor.processLinks(document);
     processCurrentPage();
     sendResponse({ success: true });
     return true;
   }
 });
+
+// Initialize
 (async function initialize() {
+  // Inject styles
   injectStyles();
+  
+  // Initialize sources
   initializeSources();
+  
+  // Process links
   linkProcessor.processLinks(document);
+  
+  // Start observing for new links
   linkProcessor.startObserving(document);
+  
+  // Process current page
   processCurrentPage();
+  
+  // Tell background script we're ready and what page we're on
   chrome.runtime.sendMessage(
-    {
-      type: "contentScriptReady",
-      url: window.location.href
+    { 
+      type: 'contentScriptReady', 
+      url: window.location.href 
     },
     (response) => {
       if (response?.success) {
-        logger.debug("Background script acknowledged ready status");
+        logger.debug('Background script acknowledged ready status');
       }
     }
   );
 })();
+
+// Set up observer for URL changes (single page apps)
 let lastUrl = location.href;
 new MutationObserver(() => {
   const url = location.href;
@@ -392,4 +383,3 @@ new MutationObserver(() => {
     processCurrentPage();
   }
 }).observe(document, { subtree: true, childList: true });
-//# sourceMappingURL=content.bundle.js.map
