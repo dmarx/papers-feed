@@ -2,27 +2,34 @@
 // Reading session tracking with simplified heartbeat-based approach
 
 import { loguru } from './logger';
+import { ReadingSessionData as PaperReadingSessionData } from '../papers/types';
 
 const logger = loguru.getLogger('session-tracker');
 
 /**
  * Reading session data structure
  */
-export interface ReadingSessionData {
+export interface ReadingSessionData extends PaperReadingSessionData {
   // Session identifier
   session_id: string;
   
   // Paper identifiers
-  paper_id: string;
   source_id: string;
+  paper_id: string;
   
   // Session timing
   start_time: string;
   end_time: string;
   
-  // Tracking data
+  // Heartbeat data
   heartbeat_count: number;
+  
+  // Duration in seconds (derived from heartbeat count)
   duration_seconds: number;
+  
+  // Legacy properties needed for compatibility
+  idle_seconds: number;
+  total_elapsed_seconds: number;
 }
 
 /**
@@ -70,6 +77,13 @@ class ReadingSession {
     // This gives us the actual "proven" reading time
     const duration = this.heartbeatCount * 5; // 5 seconds per heartbeat
     
+    // Calculate total elapsed time
+    const totalElapsed = this.endTime.getTime() - this.startTime.getTime();
+    const totalElapsedSeconds = Math.round(totalElapsed / 1000);
+    
+    // Set idle seconds to the difference (for backward compatibility)
+    const idleSeconds = Math.max(0, totalElapsedSeconds - duration);
+    
     const sessionData: ReadingSessionData = {
       session_id: this.sessionId,
       paper_id: this.paperId,
@@ -77,7 +91,11 @@ class ReadingSession {
       start_time: this.startTime.toISOString(),
       end_time: this.endTime.toISOString(),
       heartbeat_count: this.heartbeatCount,
-      duration_seconds: duration
+      duration_seconds: duration,
+      
+      // Legacy properties for backward compatibility
+      idle_seconds: idleSeconds,
+      total_elapsed_seconds: totalElapsedSeconds
     };
     
     logger.debug(`Ended session ${this.sessionId} with ${this.heartbeatCount} heartbeats (${duration}s)`);
