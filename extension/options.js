@@ -1,7 +1,7 @@
 // options.js
-import { loadSessionConfig, DEFAULT_CONFIG, saveSessionConfig } from './config/session.js';
+import { loadSessionConfig, DEFAULT_CONFIG, saveSessionConfig } from './config/session.ts';
 
-// Helper to set form field values
+// Helper to set form values
 function setFormValues(settings) {
   // GitHub settings
   if (settings.githubRepo) {
