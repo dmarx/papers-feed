@@ -1,3 +1,4 @@
+// vite.config.ts
 import { defineConfig } from 'vite';
 import { resolve } from 'path';
 
@@ -11,14 +12,15 @@ export default defineConfig({
       input: {
         background: resolve(__dirname, 'background.ts'),
         content: resolve(__dirname, 'content.ts'),
-        popup: resolve(__dirname, 'popup.js')
+        popup: resolve(__dirname, 'popup.js'),
+        options: resolve(__dirname, 'options.js')
       },
       output: {
         dir: resolve(__dirname, 'dist'),
         entryFileNames: '[name].bundle.js',
         format: 'es',
         // Ensure all files go in dist directory
-        assetFileNames: 'assets/[name].[ext]'
+        assetFileNames: 'assets/[name]-[hash].[ext]'
       }
     },
     
