@@ -1,5 +1,5 @@
 // source-integration/types.ts
-// Type definitions for source integrations
+// Type definitions for source integrations with added heartbeat message types
 
 import type { Json } from 'gh-store-client';
 import type { PaperMetadata } from '../papers/types';
@@ -62,6 +62,29 @@ export interface PaperMetadataMessage {
   metadata: PaperMetadata;
 }
 
+// Start session message (new)
+export interface StartSessionMessage {
+  type: 'startSession';
+  sourceId: string;
+  paperId: string;
+}
+
+// Session heartbeat message (new)
+export interface SessionHeartbeatMessage {
+  type: 'sessionHeartbeat';
+  sourceId: string;
+  paperId: string;
+  timestamp: number;
+}
+
+// End session message (new)
+export interface EndSessionMessage {
+  type: 'endSession';
+  sourceId: string;
+  paperId: string;
+  reason?: string;
+}
+
 // Show annotation popup request
 export interface ShowAnnotationPopupMessage {
   type: 'showAnnotationPopup';
@@ -113,6 +136,9 @@ export interface UpdateRatingMessage {
 export type Message = 
   | ContentScriptReadyMessage
   | PaperMetadataMessage
+  | StartSessionMessage
+  | SessionHeartbeatMessage
+  | EndSessionMessage
   | ShowAnnotationPopupMessage
   | PopupActionMessage
   | ShowPopupMessage
