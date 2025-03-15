@@ -1,248 +1,226 @@
 // extension/papers/manager.ts
-// Refactored to remove legacy ID handling
-
 import { GitHubStoreClient } from 'gh-store-client';
 import type { Json } from 'gh-store-client';
 import { 
   type PaperMetadata, 
   type InteractionLog, 
   type Interaction,
-  type ReadingSessionData
+  type ReadingSessionData,
+  isInteractionLog
 } from './types';
-import { formatPrimaryId } from './source_utils';
 import { loguru } from '../utils/logger';
 
-const logger = loguru.getLogger('PaperManager');
-
-/**
- * Checks if data is an interaction log
- */
-function isInteractionLog(data: any): data is InteractionLog {
-  return typeof data === "object" && 
-         data !== null && 
-         typeof data.paper_id === "string" && 
-         Array.isArray(data.interactions);
-}
+const logger = loguru.getLogger('paper-manager');
 
 export class PaperManager {
-  private client: GitHubStoreClient;
-  // Concurrency control locks
-  private creationLocks = new Map<string, Promise<any>>();
-  
-  constructor(client: GitHubStoreClient) {
-    this.client = client;
+  constructor(private client: GitHubStoreClient) {
+    logger.debug('Paper manager initialized');
   }
-
+  
   /**
-   * Get or create a paper record
+   * Get paper by source and ID
    */
-  async getOrCreatePaper(paperData: any): Promise<any> {
-    // Ensure paperData has a primary_id
-    if (!paperData.primary_id) {
-      if (paperData.source && paperData.sourceId) {
-        paperData.primary_id = formatPrimaryId(paperData.source, paperData.sourceId);
-      } else {
-        throw new Error("Invalid paper data: missing primary_id and cannot generate it");
-      }
-    }
-    
-    const objectId = `paper:${paperData.primary_id}`;
-    logger.info(`Getting or creating paper: ${objectId}`);
+  async getPaper(sourceId: string, paperId: string): Promise<PaperMetadata | null> {
+    const objectId = `paper:${sourceId}:${paperId}`;
     
     try {
-      // Try to get the paper
       const obj = await this.client.getObject(objectId);
-      const data = obj.data as Record<string, any>;
-      
-      logger.info(`Found existing paper: ${objectId}`);
+      return obj.data as PaperMetadata;
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('No object found')) {
+        return null;
+      }
+      throw error;
+    }
+  }
+  
+  /**
+   * Get or create paper metadata
+   */
+  async getOrCreatePaper(paperData: PaperMetadata): Promise<PaperMetadata> {
+    const { sourceId, paperId } = paperData;
+    const objectId = `paper:${sourceId}:${paperId}`;
+    
+    try {
+      const obj = await this.client.getObject(objectId);
+      const data = obj.data as PaperMetadata;
+      logger.debug(`Retrieved existing paper: ${sourceId}:${paperId}`);
       return data;
     } catch (error) {
-      if (error instanceof Error && error.message.includes("No object found")) {
-        // Create new paper with appropriate fields
-        const defaultPaperData: Record<string, any> = {
-          primary_id: paperData.primary_id,
-          source: paperData.source,
-          sourceId: paperData.sourceId,
-          url: paperData.url || '',
-          title: paperData.title || paperData.sourceId,
-          authors: paperData.authors || '',
-          abstract: paperData.abstract || '',
+      if (error instanceof Error && error.message.includes('No object found')) {
+        // Create new paper
+        const defaultPaperData: PaperMetadata = {
+          ...paperData,
           timestamp: new Date().toISOString(),
-          rating: 'novote'
+          rating: paperData.rating || 'novote'
         };
-        
-        // Add source-specific data directly
-        if (paperData.source_specific_metadata) {
-          defaultPaperData.source_specific_metadata = paperData.source_specific_metadata;
-        }
-        
-        // Always add identifiers object
-        defaultPaperData.identifiers = {
-          original: paperData.sourceId,
-          url: paperData.url
-        };
-        
-        // Add cross-references if available
-        if (paperData.doi) {
-          defaultPaperData.identifiers.doi = paperData.doi;
-        }
-        
-        logger.info(`Creating new paper object: ${objectId}`);
-        try {
-          await this.client.createObject(objectId, defaultPaperData);
-          logger.info(`Successfully created paper: ${objectId}`);
-          return defaultPaperData;
-        } catch (createError) {
-          logger.error(`Error creating paper object: ${createError}`);
-          throw createError;
-        }
+
+        await this.client.createObject(objectId, defaultPaperData);
+        logger.debug(`Created new paper: ${sourceId}:${paperId}`);
+        return defaultPaperData;
       }
-      logger.error(`Error in getOrCreatePaper: ${error}`);
       throw error;
     }
   }
 
   /**
-   * Get or create an interaction log
+   * Get or create interaction log for a paper
    */
-  private async getOrCreateInteractionLog(paperId: string): Promise<InteractionLog> {
-    const objectId = `interactions:${paperId}`;
-    
-    // Check if we're already creating this log
-    if (this.creationLocks.has(objectId)) {
-      logger.info(`Waiting for existing creation of interaction log: ${objectId}`);
-      return this.creationLocks.get(objectId) as Promise<InteractionLog>;
-    }
-    
-    // Create a new promise for this operation
-    const creationPromise = (async () => {
-      try {
-        const obj = await this.client.getObject(objectId);
-        const data = obj.data;
-        
-        if (isInteractionLog(data)) {
-          return data;
-        }
-        
-        throw new Error('Invalid interaction log format');
-      } catch (error) {
-        if (error instanceof Error && error.message.includes('No object found')) {
-          // Create new log
-          const newLog: InteractionLog = {
-            paper_id: paperId,
-            interactions: []
-          };
-          
-          logger.info(`Creating new interaction log: ${objectId}`);
-          await this.client.createObject(objectId, newLog);
-          return newLog;
-        }
-        throw error;
-      } finally {
-        // Release the lock after a delay
-        setTimeout(() => {
-          this.creationLocks.delete(objectId);
-        }, 500);
+  private async getOrCreateInteractionLog(sourceId: string, paperId: string): Promise<InteractionLog> {
+    const objectId = `interactions:${sourceId}:${paperId}`;
+    try {
+      const obj = await this.client.getObject(objectId);
+      const data = obj.data as unknown;
+      if (isInteractionLog(data)) {
+        return data;
       }
-    })();
-    
-    // Store the promise
-    this.creationLocks.set(objectId, creationPromise);
-    
-    return creationPromise;
+      throw new Error('Invalid interaction log format');
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('No object found')) {
+        const newLog: InteractionLog = {
+          sourceId,
+          paperId,
+          interactions: []
+        };
+        await this.client.createObject(objectId, newLog as unknown as { [key: string]: Json });
+        logger.debug(`Created new interaction log: ${sourceId}:${paperId}`);
+        return newLog;
+      }
+      throw error;
+    }
   }
-
+  
   /**
-   * Log a reading session for a paper
+   * Get GitHub client instance
+   */
+  getClient(): GitHubStoreClient {
+    return this.client;
+  }
+  
+  /**
+   * Log a reading session
    */
   async logReadingSession(
+    sourceId: string,
     paperId: string,
     session: ReadingSessionData,
-    paperData?: any
+    paperData?: Partial<PaperMetadata>
   ): Promise<void> {
-    // Ensure paper exists with proper data
+    // Ensure paper exists
     if (paperData) {
-      if (!paperData.primary_id) {
-        paperData.primary_id = paperId;
-      }
-      await this.getOrCreatePaper(paperData);
+      await this.getOrCreatePaper({
+        sourceId,
+        paperId,
+        url: paperData.url || `${sourceId}:${paperId}`,
+        title: paperData.title || paperId,
+        authors: paperData.authors || '',
+        abstract: paperData.abstract || '',
+        timestamp: new Date().toISOString(),
+        rating: 'novote',
+        publishedDate: paperData.publishedDate || '',
+        tags: paperData.tags || []
+      });
     }
 
-    // Log the session as interaction
-    await this.addInteraction(paperId, {
-      type: "reading_session",
+    // Log the session as an interaction
+    await this.addInteraction(sourceId, paperId, {
+      type: 'reading_session',
       timestamp: new Date().toISOString(),
-      data: session
+      data: session as unknown as { [key: string]: Json }
     });
+    
+    logger.info(`Logged reading session for ${sourceId}:${paperId}`, { duration: session.duration_seconds });
   }
 
   /**
-   * Log an annotation for a paper
+   * Log an annotation
    */
   async logAnnotation(
+    sourceId: string,
     paperId: string,
     key: string,
     value: Json,
-    paperData?: any
+    paperData?: Partial<PaperMetadata>
   ): Promise<void> {
-    // Ensure paper exists with proper data
+    // Ensure paper exists
     if (paperData) {
-      if (!paperData.primary_id) {
-        paperData.primary_id = paperId;
-      }
-      await this.getOrCreatePaper(paperData);
+      await this.getOrCreatePaper({
+        sourceId,
+        paperId,
+        url: paperData.url || `${sourceId}:${paperId}`,
+        title: paperData.title || paperId,
+        authors: paperData.authors || '',
+        abstract: paperData.abstract || '',
+        timestamp: new Date().toISOString(),
+        rating: 'novote',
+        publishedDate: paperData.publishedDate || '',
+        tags: paperData.tags || []
+      });
     }
 
-    // Log the annotation as interaction
-    await this.addInteraction(paperId, {
-      type: "annotation",
+    // Log the annotation as an interaction
+    await this.addInteraction(sourceId, paperId, {
+      type: 'annotation',
       timestamp: new Date().toISOString(),
       data: { key, value }
     });
+    
+    logger.info(`Logged annotation for ${sourceId}:${paperId}`, { key });
   }
 
   /**
-   * Update a paper's rating
+   * Update paper rating
    */
   async updateRating(
+    sourceId: string,
     paperId: string,
     rating: string,
-    paperData?: any
+    paperData?: Partial<PaperMetadata>
   ): Promise<void> {
-    // Get existing paper data
-    const paper = await this.getOrCreatePaper(paperData || { primary_id: paperId });
+    // Ensure paper exists and get current data
+    const paper = await this.getOrCreatePaper({
+      sourceId,
+      paperId,
+      url: paperData?.url || `${sourceId}:${paperId}`,
+      title: paperData?.title || paperId,
+      authors: paperData?.authors || '',
+      abstract: paperData?.abstract || '',
+      timestamp: new Date().toISOString(),
+      rating: 'novote',
+      publishedDate: paperData?.publishedDate || '',
+      tags: paperData?.tags || []
+    });
 
-    // Update rating
-    const objectId = `paper:${paperId}`;
-    await this.client.updateObject(objectId, { 
+    // Update paper metadata with new rating
+    await this.client.updateObject(`paper:${sourceId}:${paperId}`, { 
       ...paper,
       rating 
     });
 
-    // Log rating change
-    await this.addInteraction(paperId, {
-      type: "rating",
+    // Log rating change as an interaction
+    await this.addInteraction(sourceId, paperId, {
+      type: 'rating',
       timestamp: new Date().toISOString(),
       data: { rating }
     });
+    
+    logger.info(`Updated rating for ${sourceId}:${paperId} to ${rating}`);
   }
 
   /**
-   * Add an interaction to a paper's log
+   * Add interaction to log
    */
-  private async addInteraction(paperId: string, interaction: Interaction): Promise<void> {
-    const log = await this.getOrCreateInteractionLog(paperId);
+  private async addInteraction(sourceId: string, paperId: string, interaction: Interaction): Promise<void> {
+    const log = await this.getOrCreateInteractionLog(sourceId, paperId);
     log.interactions.push(interaction);
-    
-    // Store with the standard format ID
-    const objectId = `interactions:${paperId}`;
-    await this.client.updateObject(objectId, log);
+    await this.client.updateObject(`interactions:${sourceId}:${paperId}`, log as unknown as { [key: string]: Json });
   }
 
   /**
    * Get interactions for a paper
    */
   async getInteractions(
+    sourceId: string,
     paperId: string,
     options: {
       type?: string;
@@ -251,7 +229,7 @@ export class PaperManager {
     } = {}
   ): Promise<Interaction[]> {
     try {
-      const log = await this.getOrCreateInteractionLog(paperId);
+      const log = await this.getOrCreateInteractionLog(sourceId, paperId);
       let interactions = log.interactions;
 
       if (options.type) {
@@ -275,12 +253,12 @@ export class PaperManager {
       throw error;
     }
   }
-  
+    
   /**
-   * Get total reading time for a paper
+   * Calculate total reading time for a paper
    */
-  async getPaperReadingTime(paperId: string): Promise<number> {
-    const interactions = await this.getInteractions(paperId, { type: 'reading_session' });
+  async getPaperReadingTime(sourceId: string, paperId: string): Promise<number> {
+    const interactions = await this.getInteractions(sourceId, paperId, { type: 'reading_session' });
     return interactions.reduce((total, i) => {
       const data = i.data;
       if (typeof data === 'object' && data !== null && 'duration_seconds' in data) {
@@ -291,10 +269,10 @@ export class PaperManager {
   }
 
   /**
-   * Get paper history
+   * Get history of paper changes
    */
-  async getPaperHistory(paperId: string): Promise<Json[]> {
-    const objectId = `paper:${paperId}`;
+  async getPaperHistory(sourceId: string, paperId: string): Promise<Json[]> {
+    const objectId = `paper:${sourceId}:${paperId}`;
     return this.client.getObjectHistory(objectId);
   }
 }

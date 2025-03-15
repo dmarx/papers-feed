@@ -1,106 +1,85 @@
+// popup.js
+
+// Function to get paper data from background script
 async function getCurrentPaper() {
   return new Promise((resolve) => {
-    chrome.runtime.sendMessage({ type: "getCurrentPaper" }, (response) => {
-      console.log("Got paper data from background:", response);
+    chrome.runtime.sendMessage({type: 'getCurrentPaper'}, response => {
+      console.log('Got paper data from background:', response);
       resolve(response);
     });
   });
 }
-function getSourceLabel(source) {
-  const labels = {
-    "arxiv": "arXiv",
-    "semanticscholar": "Semantic Scholar",
-    "doi": "DOI",
-    "acm": "ACM Digital Library",
-    "openreview": "OpenReview"
-  };
-  return labels[source] || source.charAt(0).toUpperCase() + source.slice(1);
-}
+
+// Function to update UI with paper data
 function updateUI(paperData) {
-  const titleElement = document.getElementById("paperTitle");
-  const authorsElement = document.getElementById("paperAuthors");
-  const statusElement = document.getElementById("status");
-  const sourceElement = document.getElementById("paperSource");
+  const titleElement = document.getElementById('paperTitle');
+  const authorsElement = document.getElementById('paperAuthors');
+  const statusElement = document.getElementById('status');
+
   if (paperData) {
-    if (!paperData.primary_id) {
-      console.error("Paper data missing required primary_id:", paperData);
-      titleElement.textContent = "Error: Missing paper identifier";
-      sourceElement.classList.add("hidden");
-      return;
-    }
-    titleElement.textContent = paperData.title || "Untitled Paper";
-    authorsElement.textContent = paperData.authors || "";
-    if (paperData.source) {
-      sourceElement.textContent = getSourceLabel(paperData.source);
-      sourceElement.classList.remove("hidden");
-      sourceElement.className = "paper-source";
-      sourceElement.classList.add(`source-${paperData.source}`);
-    } else {
-      sourceElement.classList.add("hidden");
-    }
-    statusElement.textContent = "Paper tracked! Data stored on GitHub.";
-    document.getElementById("thumbsUp").disabled = false;
-    document.getElementById("thumbsDown").disabled = false;
-    if (paperData.rating === "thumbsup") {
-      document.getElementById("thumbsUp").classList.add("active");
-    } else if (paperData.rating === "thumbsdown") {
-      document.getElementById("thumbsDown").classList.add("active");
-    }
+    titleElement.textContent = paperData.title || paperData.arxivId;
+    authorsElement.textContent = paperData.authors;
+    statusElement.textContent = 'Paper tracked! Issue created on GitHub.';
+    
+    // Enable rating buttons
+    document.getElementById('thumbsUp').disabled = false;
+    document.getElementById('thumbsDown').disabled = false;
   } else {
-    titleElement.textContent = "No academic paper detected";
-    authorsElement.textContent = "";
-    sourceElement.classList.add("hidden");
-    statusElement.textContent = "Visit a supported academic paper to track it";
-    document.getElementById("thumbsUp").disabled = true;
-    document.getElementById("thumbsDown").disabled = true;
+    titleElement.textContent = 'No arXiv paper detected';
+    authorsElement.textContent = '';
+    statusElement.textContent = 'Visit an arXiv paper to track it';
+    
+    // Disable rating buttons
+    document.getElementById('thumbsUp').disabled = true;
+    document.getElementById('thumbsDown').disabled = true;
   }
 }
-function isPaperUrl(url) {
-  return url.includes("arxiv.org/") || url.includes("semanticscholar.org/paper/") || url.includes("doi.org/") || url.includes("dl.acm.org/doi/") || url.includes("openreview.net/forum") || url.includes("openreview.net/pdf");
-}
-document.addEventListener("DOMContentLoaded", async () => {
-  console.log("Popup opened");
+
+// Initialize popup
+document.addEventListener('DOMContentLoaded', async () => {
+  console.log('Popup opened');
+  
+  // Get current tab
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  console.log("Current tab:", tab.url);
-  if (isPaperUrl(tab.url)) {
-    console.log("On academic paper page, getting paper data...");
+  console.log('Current tab:', tab.url);
+  
+  if (tab.url.includes('arxiv.org')) {
+    console.log('On arXiv page, getting paper data...');
+    // Try multiple times to get paper data, as it might not be ready immediately
     let retries = 3;
     let paperData = null;
+    
     while (retries > 0 && !paperData) {
       paperData = await getCurrentPaper();
       if (!paperData) {
-        await new Promise((resolve) => setTimeout(resolve, 500));
+        await new Promise(resolve => setTimeout(resolve, 500)); // Wait 500ms before retry
         retries--;
       }
     }
+    
     updateUI(paperData);
-    document.getElementById("thumbsUp").addEventListener("click", () => {
+    
+    // Set up rating handlers
+    document.getElementById('thumbsUp').addEventListener('click', () => {
       chrome.runtime.sendMessage({
-        type: "updateRating",
-        rating: "thumbsup"
-      }, (response) => {
+        type: 'updateRating',
+        rating: 'thumbsup'
+      }, response => {
         if (response && response.success) {
-          document.getElementById("status").textContent = "Rating updated to: thumbs up";
-          document.getElementById("thumbsUp").classList.add("active");
-          document.getElementById("thumbsDown").classList.remove("active");
-          setTimeout(() => self.close(), 1500);
-        } else if (response && response.error) {
-          document.getElementById("status").textContent = `Error: ${response.error}`;
+          document.getElementById('status').textContent = 'Rating updated to: thumbs up';
+          setTimeout(() => window.close(), 1500);
         }
       });
     });
-    document.getElementById("thumbsDown").addEventListener("click", () => {
+    
+    document.getElementById('thumbsDown').addEventListener('click', () => {
       chrome.runtime.sendMessage({
-        type: "updateRating",
-        rating: "thumbsdown"
-      }, (response) => {
+        type: 'updateRating',
+        rating: 'thumbsdown'
+      }, response => {
         if (response && response.success) {
-          document.getElementById("status").textContent = "Rating updated to: thumbs down";
-          document.getElementById("thumbsUp").classList.remove("active");
-          document.getElementById("thumbsDown").classList.add("active");
-          setTimeout(() => self.close(), 1500);
-        } else if (response && response.error) {
-          document.getElementById("status").textContent = `Error: ${response.error}`;
+          document.getElementById('status').textContent = 'Rating updated to: thumbs down';
+          setTimeout(() => window.close(), 1500);
         }
       });
     });
