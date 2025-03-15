@@ -6,43 +6,7 @@ async function getCurrentPaper() {
     chrome.runtime.sendMessage({type: 'getCurrentPaper'}, response => {
       console.log('Got paper data from background:', response);
       resolve(response);
-    }
-  
-  updateUI(paperData);
-  
-  // Set up rating handlers
-  document.getElementById('thumbsUp').addEventListener('click', () => {
-    chrome.runtime.sendMessage({
-      type: 'updateRating',
-      rating: 'thumbsup'
-    }, response => {
-      if (response && response.success) {
-        document.getElementById('status').textContent = 'Rating updated to: thumbs up';
-        document.getElementById('thumbsUp').classList.add('active');
-        document.getElementById('thumbsDown').classList.remove('active');
-        setTimeout(() => window.close(), 1500);
-      } else {
-        document.getElementById('status').textContent = 'Error: ' + (response?.error || 'Unknown error');
-      }
     });
-});
-  });
-  
-  document.getElementById('thumbsDown').addEventListener('click', () => {
-    chrome.runtime.sendMessage({
-      type: 'updateRating',
-      rating: 'thumbsdown'
-    }, response => {
-      if (response && response.success) {
-        document.getElementById('status').textContent = 'Rating updated to: thumbs down';
-        document.getElementById('thumbsDown').classList.add('active');
-        document.getElementById('thumbsUp').classList.remove('active');
-        setTimeout(() => window.close(), 1500);
-      } else {
-        document.getElementById('status').textContent = 'Error: ' + (response?.error || 'Unknown error');
-      }
-    });
-  }););
   });
 }
 
@@ -84,8 +48,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   console.log('Current tab:', tab.url);
   
   // Get paper from the session tracker
-  let retries = 3;
   let paperData = null;
+  let retries = 3;
   
   while (retries > 0 && !paperData) {
     paperData = await getCurrentPaper();
@@ -94,3 +58,39 @@ document.addEventListener('DOMContentLoaded', async () => {
       retries--;
     }
   }
+  
+  updateUI(paperData);
+  
+  // Set up rating handlers
+  document.getElementById('thumbsUp').addEventListener('click', () => {
+    chrome.runtime.sendMessage({
+      type: 'updateRating',
+      rating: 'thumbsup'
+    }, response => {
+      if (response && response.success) {
+        document.getElementById('status').textContent = 'Rating updated to: thumbs up';
+        document.getElementById('thumbsUp').classList.add('active');
+        document.getElementById('thumbsDown').classList.remove('active');
+        setTimeout(() => window.close(), 1500);
+      } else {
+        document.getElementById('status').textContent = 'Error: ' + (response?.error || 'Unknown error');
+      }
+    });
+  });
+  
+  document.getElementById('thumbsDown').addEventListener('click', () => {
+    chrome.runtime.sendMessage({
+      type: 'updateRating',
+      rating: 'thumbsdown'
+    }, response => {
+      if (response && response.success) {
+        document.getElementById('status').textContent = 'Rating updated to: thumbs down';
+        document.getElementById('thumbsDown').classList.add('active');
+        document.getElementById('thumbsUp').classList.remove('active');
+        setTimeout(() => window.close(), 1500);
+      } else {
+        document.getElementById('status').textContent = 'Error: ' + (response?.error || 'Unknown error');
+      }
+    });
+  });
+});
