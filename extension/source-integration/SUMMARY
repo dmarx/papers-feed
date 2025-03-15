@@ -1,0 +1,641 @@
+---
+File: extension/source-integration/arxiv/index.ts
+---
+// source-integration/arxiv/index.ts
+// ArXiv integration using metadata transformer
+
+import { SourceIntegration } from '../types';
+import { PaperMetadata } from '../../papers/types';
+import { parseXMLText } from './xml-parser';
+import { transformMetadata, MetadataMapping } from '../../utils/metadata-transformer';
+import { loguru } from '../../utils/logger';
+
+const logger = loguru.getLogger('arxiv-integration');
+
+export class ArXivIntegration implements SourceIntegration {
+  readonly id = 'arxiv';
+  readonly name = 'arXiv.org';
+  
+  // URL patterns for papers
+  readonly urlPatterns = [
+    /arxiv\.org\/(abs|pdf|html)\/([0-9.]+)/,
+    /arxiv\.org\/\w+\/([0-9.]+)/
+  ];
+  
+  // Content script matches
+  readonly contentScriptMatches = [
+    "*://*.arxiv.org/*"
+  ];
+  
+  // Metadata mapping for ArXiv
+  private readonly METADATA_MAPPING: MetadataMapping = {
+    titleField: 'title',
+    authorsField: 'authors',
+    abstractField: 'summary',
+    dateField: 'published_date',
+    tagsField: 'arxiv_tags',
+    
+    // Custom author extraction (since authors is an array)
+    extractAuthors: (data) => {
+      if (Array.isArray(data.authors)) {
+        return data.authors.join(', ');
+      }
+      return data.authors || '';
+    }
+  };
+
+  /**
+   * Check if this integration can handle the given URL
+   */
+  canHandleUrl(url: string): boolean {
+    return this.urlPatterns.some(pattern => pattern.test(url));
+  }
+
+  /**
+   * Extract paper ID from URL
+   */
+  extractPaperId(url: string): string | null {
+    for (const pattern of this.urlPatterns) {
+      const match = url.match(pattern);
+      if (match) {
+        return match[2] || match[1]; // The capture group with the paper ID
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Extract metadata from page or fetch from API
+   */
+  async extractMetadata(document: Document, paperId: string): Promise<PaperMetadata | null> {
+    logger.info(`Extracting metadata for arXiv ID: ${paperId}`);
+    
+    // Try to extract from page first
+    const pageMetadata = this.extractFromPage(document, paperId);
+    if (pageMetadata) {
+      logger.debug('Extracted metadata from page');
+      return pageMetadata;
+    }
+    
+    // If page extraction fails, fetch from API
+    logger.debug('Falling back to API for metadata');
+    return this.fetchFromApi(paperId);
+  }
+  
+  /**
+   * Extract metadata from ArXiv page
+   */
+  private extractFromPage(document: Document, paperId: string): PaperMetadata | null {
+    try {
+      // Extract title
+      const titleElement = document.querySelector('.title');
+      if (!titleElement) return null;
+      
+      const title = titleElement.textContent?.replace('Title:', '').trim() || '';
+      
+      // Extract authors
+      const authorsElement = document.querySelector('.authors');
+      const authors = authorsElement?.textContent?.replace('Authors:', '').trim() || '';
+      
+      // Extract abstract
+      const abstractElement = document.querySelector('.abstract');
+      const abstract = abstractElement?.textContent?.replace('Abstract:', '').trim() || '';
+      
+      // Extract categories
+      const categoriesElement = document.querySelector('.subjects');
+      const categoriesText = categoriesElement?.textContent?.replace('Subjects:', '').trim() || '';
+      const tags = categoriesText.split(';').map(tag => tag.trim());
+      
+      // Extract publication date
+      const dateElement = document.querySelector('.dateline');
+      const publishedDate = dateElement?.textContent?.trim() || '';
+      
+      // Create metadata object
+      return {
+        sourceId: this.id,
+        paperId,
+        url: window.location.href,
+        title,
+        authors,
+        abstract,
+        timestamp: new Date().toISOString(),
+        rating: 'novote',
+        publishedDate,
+        tags
+      };
+    } catch (error) {
+      logger.error('Error extracting from page:', error);
+      return null;
+    }
+  }
+  
+  /**
+   * Fetch metadata from ArXiv API
+   */
+  private async fetchFromApi(arxivId: string): Promise<PaperMetadata | null> {
+    try {
+      const apiUrl = `https://export.arxiv.org/api/query?id_list=${arxivId}`;
+      logger.debug(`API URL: ${apiUrl}`);
+      
+      const response = await fetch(apiUrl);
+      
+      if (!response.ok) {
+        throw new Error(`ArXiv API error: ${response.status}`);
+      }
+      
+      const text = await response.text();
+      const parsedXml = await parseXMLText(text);
+      
+      if (!parsedXml) {
+        logger.error('Failed to parse API response');
+        return null;
+      }
+      
+      // Use the metadata transformer to convert the parsed XML to standard format
+      const paperData = transformMetadata(
+        this.id,
+        arxivId,
+        parsedXml,
+        this.METADATA_MAPPING,
+        `https://arxiv.org/abs/${arxivId}`
+      );
+      
+      logger.debug('Paper metadata processed', paperData);
+      return paperData;
+    } catch (error) {
+      logger.error('Error processing arXiv metadata', error);
+      return null;
+    }
+  }
+}
+
+// Export a singleton instance that can be used by both background and content scripts
+export const arxivIntegration = new ArXivIntegration();
+
+
+
+---
+File: extension/source-integration/arxiv/xml-parser.ts
+---
+// source-integration/arxiv/xml-parser.ts
+// ArXiv API XML response parser - simplified for use with metadata transformer
+
+import { loguru } from '../../utils/logger';
+
+const logger = loguru.getLogger('arxiv-xml-parser');
+
+export interface ArXivParsedData {
+  title: string;
+  summary: string;
+  authors: string[];
+  published_date: string;
+  arxiv_tags: string[];
+  [key: string]: any; // Add index signature to satisfy Json type requirements
+}
+
+/**
+ * Parse ArXiv API XML response into a structured object
+ */
+export async function parseXMLText(xmlText: string): Promise<ArXivParsedData | null> {
+  logger.debug('Parsing ArXiv XML response');
+  
+  try {
+    // Parse XML to DOM
+    const parser = new DOMParser();
+    const xmlDoc = parser.parseFromString(xmlText, "text/xml");
+    
+    // Check for parse errors
+    const parseError = xmlDoc.querySelector('parsererror');
+    if (parseError) {
+      throw new Error('XML parsing error: ' + parseError.textContent);
+    }
+    
+    // Get entry element
+    const entry = xmlDoc.querySelector('entry');
+    if (!entry) {
+      throw new Error('No entry element found in XML');
+    }
+    
+    // Extract basic fields
+    const title = entry.querySelector('title')?.textContent?.trim() || '';
+    const summary = entry.querySelector('summary')?.textContent?.trim() || '';
+    const published = entry.querySelector('published')?.textContent?.trim() || '';
+    
+    // Extract authors
+    const authors = Array.from(entry.querySelectorAll('author name'))
+      .map(name => name.textContent?.trim() || '');
+    
+    // Extract categories/tags
+    const categories = new Set<string>();
+    
+    // Primary category
+    const primaryCategory = entry.querySelector('arxiv\\:primary_category, primary_category');
+    if (primaryCategory && primaryCategory.hasAttribute('term')) {
+      categories.add(primaryCategory.getAttribute('term') || '');
+    }
+    
+    // Other categories
+    const categoryElements = entry.querySelectorAll('category');
+    categoryElements.forEach(cat => {
+      if (cat.hasAttribute('term')) {
+        categories.add(cat.getAttribute('term') || '');
+      }
+    });
+    
+    const result: ArXivParsedData = {
+      title,
+      summary,
+      authors,
+      published_date: published,
+      arxiv_tags: Array.from(categories)
+    };
+    
+    logger.debug('XML parsing completed successfully');
+    return result;
+  } catch (error) {
+    logger.error('Error parsing ArXiv XML', error);
+    return null;
+  }
+}
+
+
+
+---
+File: extension/source-integration/link-processor.ts
+---
+// extension/source-integration/link-processor.ts
+// Generic link detection and processing module
+
+import { loguru } from '../utils/logger';
+
+const logger = loguru.getLogger('link-processor');
+
+interface LinkPattern {
+  // Source integration ID
+  sourceId: string;
+  
+  // Regular expression to match URLs
+  pattern: RegExp;
+  
+  // Function to extract paper ID from URL
+  extractPaperId: (url: string) => string | null;
+}
+
+export class LinkProcessor {
+  private patterns: LinkPattern[] = [];
+  private observer: MutationObserver | null = null;
+  private processedLinks = new Set<string>();
+  private onLinkFound: (sourceId: string, paperId: string, link: HTMLAnchorElement) => void;
+  
+  constructor(onLinkFound: (sourceId: string, paperId: string, link: HTMLAnchorElement) => void) {
+    this.onLinkFound = onLinkFound;
+    logger.debug('Link processor initialized');
+  }
+  
+  /**
+   * Register a new link pattern
+   */
+  registerPattern(pattern: LinkPattern): void {
+    this.patterns.push(pattern);
+    logger.debug(`Registered pattern for ${pattern.sourceId}`);
+  }
+  
+  /**
+   * Process all links in the document
+   */
+  processLinks(document: Document): void {
+    // Process all links in the document
+    const links = document.querySelectorAll<HTMLAnchorElement>('a[href]');
+    
+    links.forEach(link => {
+      // Use a unique identifier for this link
+      const linkId = this.getLinkId(link);
+      
+      // Skip if already processed
+      if (this.processedLinks.has(linkId)) {
+        return;
+      }
+      
+      this.processedLinks.add(linkId);
+      
+      // Check each pattern
+      for (const pattern of this.patterns) {
+        if (pattern.pattern.test(link.href)) {
+          const paperId = pattern.extractPaperId(link.href);
+          
+          if (paperId) {
+            // Call the callback
+            this.onLinkFound(pattern.sourceId, paperId, link);
+            break; // Stop after first match
+          }
+        }
+      }
+    });
+  }
+  
+  /**
+   * Start observing for DOM changes
+   */
+  startObserving(document: Document): void {
+    if (this.observer) {
+      this.observer.disconnect();
+    }
+    
+    this.observer = new MutationObserver((mutations) => {
+      let newLinks = false;
+      
+      mutations.forEach(mutation => {
+        mutation.addedNodes.forEach(node => {
+          if (node.nodeType === Node.ELEMENT_NODE) {
+            // If this is an anchor tag, check it
+            if ((node as Element).tagName === 'A') {
+              newLinks = true;
+            }
+            
+            // Check for any anchor tags within this element
+            const links = (node as Element).querySelectorAll('a[href]');
+            if (links.length > 0) {
+              newLinks = true;
+            }
+          }
+        });
+      });
+      
+      if (newLinks) {
+        this.processLinks(document);
+      }
+    });
+    
+    this.observer.observe(document.body, {
+      childList: true,
+      subtree: true
+    });
+    
+    logger.debug('Started observing for DOM changes');
+  }
+  
+  /**
+   * Create a unique ID for a link
+   */
+  private getLinkId(link: HTMLAnchorElement): string {
+    // Use href and position in document to create a unique ID
+    const path = this.getElementPath(link);
+    return `${link.href}|${path}`;
+  }
+  
+  /**
+   * Get element path in DOM for identification
+   */
+  private getElementPath(element: Element): string {
+    const path: string[] = [];
+    let current: Element | null = element;
+    
+    while (current && current !== document.body) {
+      let selector = current.tagName.toLowerCase();
+      
+      if (current.id) {
+        selector += `#${current.id}`;
+      } else {
+        const siblings = Array.from(current.parentElement?.children || []);
+        const index = siblings.indexOf(current) + 1;
+        if (siblings.length > 1) {
+          selector += `:nth-child(${index})`;
+        }
+      }
+      
+      path.unshift(selector);
+      current = current.parentElement;
+    }
+    
+    return path.join(' > ');
+  }
+  
+  /**
+   * Stop observing DOM changes
+   */
+  stopObserving(): void {
+    if (this.observer) {
+      this.observer.disconnect();
+      this.observer = null;
+      logger.debug('Stopped observing DOM changes');
+    }
+  }
+}
+
+
+
+---
+File: extension/source-integration/source-manager.ts
+---
+// source-integration/source-manager.ts
+// Manager for source integrations
+
+import { SourceIntegration, SourceManager } from './types';
+import { loguru } from '../utils/logger';
+
+const logger = loguru.getLogger('source-manager');
+
+/**
+ * Manages source integrations
+ */
+export class SourceIntegrationManager implements SourceManager {
+  private sources: Map<string, SourceIntegration> = new Map();
+  
+  constructor() {
+    logger.info('Source integration manager initialized');
+  }
+  
+  /**
+   * Register a source integration
+   */
+  registerSource(source: SourceIntegration): void {
+    if (this.sources.has(source.id)) {
+      logger.warning(`Source with ID '${source.id}' already registered, overwriting`);
+    }
+    
+    this.sources.set(source.id, source);
+    logger.info(`Registered source: ${source.name} (${source.id})`);
+  }
+  
+  /**
+   * Get all registered sources
+   */
+  getAllSources(): SourceIntegration[] {
+    return Array.from(this.sources.values());
+  }
+  
+  /**
+   * Get source that can handle a URL
+   */
+  getSourceForUrl(url: string): SourceIntegration | null {
+    for (const source of this.sources.values()) {
+      if (source.canHandleUrl(url)) {
+        logger.debug(`Found source for URL '${url}': ${source.id}`);
+        return source;
+      }
+    }
+    
+    logger.debug(`No source found for URL: ${url}`);
+    return null;
+  }
+  
+  /**
+   * Extract paper ID from URL using appropriate source
+   */
+  extractPaperId(url: string): { sourceId: string, paperId: string } | null {
+    for (const source of this.sources.values()) {
+      if (source.canHandleUrl(url)) {
+        const paperId = source.extractPaperId(url);
+        if (paperId) {
+          logger.debug(`Extracted paper ID '${paperId}' from URL using ${source.id}`);
+          return { sourceId: source.id, paperId };
+        }
+      }
+    }
+    
+    logger.debug(`Could not extract paper ID from URL: ${url}`);
+    return null;
+  }
+  
+  /**
+   * Get all content script match patterns
+   */
+  getAllContentScriptMatches(): string[] {
+    const patterns: string[] = [];
+    
+    for (const source of this.sources.values()) {
+      patterns.push(...source.contentScriptMatches);
+    }
+    
+    return patterns;
+  }
+}
+
+
+
+---
+File: extension/source-integration/types.ts
+---
+// source-integration/types.ts
+// Type definitions for source integrations
+
+import type { Json } from 'gh-store-client';
+import type { PaperMetadata } from '../papers/types';
+
+/**
+ * Source integration interface
+ * Implementations should be importable by both background and content scripts
+ */
+export interface SourceIntegration {
+  // Unique identifier
+  readonly id: string;
+  
+  // Human-readable name
+  readonly name: string;
+  
+  // URL patterns for matching papers from this source (as RegExp patterns)
+  readonly urlPatterns: RegExp[];
+  
+  // Domain match patterns for content script registration
+  readonly contentScriptMatches: string[];
+  
+  // Check if URL is from this source
+  canHandleUrl(url: string): boolean;
+  
+  // Extract paper ID from URL
+  extractPaperId(url: string): string | null;
+  
+  // Extract metadata from page or API
+  extractMetadata(document: Document, paperId: string): Promise<PaperMetadata | null>;
+}
+
+/**
+ * Manager interface for source integrations
+ */
+export interface SourceManager {
+  // Register a source integration
+  registerSource(source: SourceIntegration): void;
+  
+  // Get all registered sources
+  getAllSources(): SourceIntegration[];
+  
+  // Get source for a given URL
+  getSourceForUrl(url: string): SourceIntegration | null;
+  
+  // Extract paper ID from URL using appropriate source
+  extractPaperId(url: string): { sourceId: string, paperId: string } | null;
+}
+
+// Message types for communication between background and content scripts
+
+// Content script ready notification
+export interface ContentScriptReadyMessage {
+  type: 'contentScriptReady';
+  url: string;
+}
+
+// Paper metadata message
+export interface PaperMetadataMessage {
+  type: 'paperMetadata';
+  metadata: PaperMetadata;
+}
+
+// Show annotation popup request
+export interface ShowAnnotationPopupMessage {
+  type: 'showAnnotationPopup';
+  sourceId: string;
+  paperId: string;
+  position: { x: number, y: number };
+}
+
+// Popup action message
+export interface PopupActionMessage {
+  type: 'popupAction';
+  action: string;
+  sourceId: string;
+  paperId: string;
+  data: any;
+}
+
+// Show popup message
+export interface ShowPopupMessage {
+  type: 'showPopup';
+  sourceId: string;
+  paperId: string;
+  html: string;
+  handlers: Array<{
+    selector: string;
+    event: string;
+    action: string;
+  }>;
+  position?: { x: number, y: number };
+}
+
+// Process page message
+export interface ProcessPageMessage {
+  type: 'processPage';
+}
+
+// Get current paper message
+export interface GetCurrentPaperMessage {
+  type: 'getCurrentPaper';
+}
+
+// Update rating message
+export interface UpdateRatingMessage {
+  type: 'updateRating';
+  rating: string;
+}
+
+// Union type for all message types
+export type Message = 
+  | ContentScriptReadyMessage
+  | PaperMetadataMessage
+  | ShowAnnotationPopupMessage
+  | PopupActionMessage
+  | ShowPopupMessage
+  | ProcessPageMessage
+  | GetCurrentPaperMessage
+  | UpdateRatingMessage;
+
+
