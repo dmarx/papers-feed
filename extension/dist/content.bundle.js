@@ -1,4 +1,5 @@
-import { l as loguru, a as arxivIntegration } from './assets/index-CeCyCSyP.js';
+import { l as loguru } from './assets/logger-BXFtlJ3r.js';
+import { a as arxivIntegration } from './assets/index-q428Duvn.js';
 
 const logger$1 = loguru.getLogger("link-processor");
 class LinkProcessor {

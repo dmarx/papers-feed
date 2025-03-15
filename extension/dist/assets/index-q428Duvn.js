@@ -1,41 +1,4 @@
-class Logger {
-  constructor(module) {
-    this.module = module;
-  }
-  /**
-   * Log debug message
-   */
-  debug(message, data) {
-    console.debug(`[${this.module}] ${message}`, data !== void 0 ? data : "");
-  }
-  /**
-   * Log info message
-   */
-  info(message, data) {
-    console.info(`[${this.module}] ${message}`, data !== void 0 ? data : "");
-  }
-  /**
-   * Log warning message
-   */
-  warning(message, data) {
-    console.warn(`[${this.module}] ${message}`, data !== void 0 ? data : "");
-  }
-  /**
-   * Log error message
-   */
-  error(message, data) {
-    console.error(`[${this.module}] ${message}`, data !== void 0 ? data : "");
-  }
-}
-class LoguruMock {
-  /**
-   * Get logger for a module
-   */
-  getLogger(module) {
-    return new Logger(module);
-  }
-}
-const loguru = new LoguruMock();
+import { l as loguru } from './logger-BXFtlJ3r.js';
 
 const logger$2 = loguru.getLogger("arxiv-xml-parser");
 async function parseXMLText(xmlText) {
@@ -251,5 +214,5 @@ class ArXivIntegration {
 }
 const arxivIntegration = new ArXivIntegration();
 
-export { arxivIntegration as a, loguru as l };
-//# sourceMappingURL=index-CeCyCSyP.js.map
+export { arxivIntegration as a };
+//# sourceMappingURL=index-q428Duvn.js.map
