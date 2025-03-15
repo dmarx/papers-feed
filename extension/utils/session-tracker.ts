@@ -2,7 +2,7 @@
 // Reading session tracking with simplified heartbeat-based approach
 
 import { loguru } from './logger';
-import { ReadingSessionData as PaperReadingSessionData } from '../papers/types';
+import { ReadingSessionData as PaperReadingSessionData, PaperMetadata } from '../papers/types';
 
 const logger = loguru.getLogger('session-tracker');
 
@@ -131,6 +131,7 @@ class ReadingSession {
  */
 export class SessionTracker {
   private activeSession: ReadingSession | null = null;
+  private paperMetadata: Map<string, PaperMetadata> = new Map();
   
   constructor() {
     logger.debug('Session tracker initialized');
@@ -139,13 +140,20 @@ export class SessionTracker {
   /**
    * Start a new session
    */
-  startSession(sourceId: string, paperId: string): void {
+  startSession(sourceId: string, paperId: string, metadata?: PaperMetadata): void {
     // End any existing session
     this.endSession();
     
     // Create new session
     this.activeSession = new ReadingSession(sourceId, paperId);
     logger.info(`Started session for ${sourceId}:${paperId}`);
+    
+    // Store metadata if provided
+    if (metadata) {
+      const key = `${sourceId}:${paperId}`;
+      this.paperMetadata.set(key, metadata);
+      logger.debug(`Stored metadata for ${key}`);
+    }
   }
   
   /**
@@ -191,6 +199,19 @@ export class SessionTracker {
       sourceId: this.activeSession.sourceId,
       paperId: this.activeSession.paperId
     };
+  }
+  
+  /**
+   * Get paper metadata for the current or specified session
+   */
+  getPaperMetadata(sourceId?: string, paperId?: string): PaperMetadata | undefined {
+    if (!sourceId || !paperId) {
+      if (!this.activeSession) return undefined;
+      sourceId = this.activeSession.sourceId;
+      paperId = this.activeSession.paperId;
+    }
+    
+    return this.paperMetadata.get(`${sourceId}:${paperId}`);
   }
   
   /**
