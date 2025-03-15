@@ -3,6 +3,7 @@
 
 import { SourceManager } from '../source-integration/types';
 import { PaperManager } from '../papers/manager';
+import { PaperMetadata } from '../papers/types';
 import { loguru } from './logger';
 
 const logger = loguru.getLogger('popup-manager');
@@ -199,7 +200,7 @@ export class PopupManager {
   /**
    * Create HTML for paper popup
    */
-  private createPopupHtml(paper: any): string {
+  private createPopupHtml(paper: PaperMetadata): string {
     return `
       <div class="paper-popup-header">${paper.title || paper.paperId}</div>
       <div class="paper-popup-meta">${paper.authors || ''}</div>
