@@ -1,55 +1,144 @@
 // utils/session-tracker.ts
-// Reading session tracking
+// Reading session tracking with simplified heartbeat-based approach
 
-import { ReadingSessionData } from '../papers/types';
 import { loguru } from './logger';
 
 const logger = loguru.getLogger('session-tracker');
 
-export interface SessionConfig {
-  // Threshold for idle time in milliseconds
-  idleThreshold: number;
+/**
+ * Reading session data structure
+ */
+export interface ReadingSessionData {
+  // Session identifier
+  session_id: string;
   
-  // Minimum session duration to be considered valid, in milliseconds
-  minSessionDuration: number;
+  // Paper identifiers
+  paper_id: string;
+  source_id: string;
   
-  // How often to update active time in milliseconds
-  activityUpdateInterval: number;
+  // Session timing
+  start_time: string;
+  end_time: string;
   
-  // Whether to require continuous activity (reset timer on idle)
-  requireContinuousActivity: boolean;
-  
-  // Whether to log sessions shorter than minimum duration
-  logPartialSessions: boolean;
+  // Tracking data
+  heartbeat_count: number;
+  duration_seconds: number;
 }
 
-export class SessionTracker {
-  private activeSession: ReadingSession | null = null;
-  private updateInterval: number | null = null;
-  private currentPaperId: string | null = null;
-  private currentSourceId: string | null = null;
+/**
+ * Class representing a single reading session
+ */
+class ReadingSession {
+  readonly sessionId: string;
+  readonly sourceId: string;
+  readonly paperId: string;
+  readonly startTime: Date;
   
-  constructor(private config: SessionConfig) {
-    logger.debug('Session tracker initialized', config);
+  private heartbeatCount: number = 0;
+  private lastHeartbeatTime: Date;
+  private endTime: Date | null = null;
+  
+  constructor(sourceId: string, paperId: string) {
+    this.sessionId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    this.sourceId = sourceId;
+    this.paperId = paperId;
+    this.startTime = new Date();
+    this.lastHeartbeatTime = this.startTime;
+    
+    logger.debug(`Created new reading session: ${this.sessionId} for ${sourceId}:${paperId}`);
   }
   
   /**
-   * Start tracking a new session
+   * Record a heartbeat
+   */
+  recordHeartbeat(): void {
+    this.heartbeatCount++;
+    this.lastHeartbeatTime = new Date();
+    
+    if (this.heartbeatCount % 12 === 0) { // Log every minute (12 x 5sec heartbeats)
+      logger.debug(`Session ${this.sessionId} received ${this.heartbeatCount} heartbeats`);
+    }
+  }
+  
+  /**
+   * End the session and get data
+   */
+  endSession(): ReadingSessionData {
+    this.endTime = new Date();
+    
+    // Calculate duration based on heartbeat count
+    // This gives us the actual "proven" reading time
+    const duration = this.heartbeatCount * 5; // 5 seconds per heartbeat
+    
+    const sessionData: ReadingSessionData = {
+      session_id: this.sessionId,
+      paper_id: this.paperId,
+      source_id: this.sourceId,
+      start_time: this.startTime.toISOString(),
+      end_time: this.endTime.toISOString(),
+      heartbeat_count: this.heartbeatCount,
+      duration_seconds: duration
+    };
+    
+    logger.debug(`Ended session ${this.sessionId} with ${this.heartbeatCount} heartbeats (${duration}s)`);
+    
+    return sessionData;
+  }
+  
+  /**
+   * Get time since last heartbeat in milliseconds
+   */
+  getTimeSinceLastHeartbeat(): number {
+    return Date.now() - this.lastHeartbeatTime.getTime();
+  }
+  
+  /**
+   * Get session metadata for debugging
+   */
+  getMetadata(): any {
+    return {
+      sessionId: this.sessionId,
+      sourceId: this.sourceId,
+      paperId: this.paperId,
+      startTime: this.startTime.toISOString(),
+      heartbeatCount: this.heartbeatCount,
+      lastHeartbeatTime: this.lastHeartbeatTime.toISOString(),
+      elapsedTime: Math.round((Date.now() - this.startTime.getTime()) / 1000)
+    };
+  }
+}
+
+/**
+ * Manages reading session tracking
+ */
+export class SessionTracker {
+  private activeSession: ReadingSession | null = null;
+  
+  constructor() {
+    logger.debug('Session tracker initialized');
+  }
+  
+  /**
+   * Start a new session
    */
   startSession(sourceId: string, paperId: string): void {
-    // End any existing session first
+    // End any existing session
     this.endSession();
     
     // Create new session
-    this.activeSession = new ReadingSession(sourceId, paperId, this.config);
-    this.currentSourceId = sourceId;
-    this.currentPaperId = paperId;
-    
-    // Start update interval
-    this.startUpdateInterval();
-    
-    logger.info(`Started tracking session for ${sourceId}:${paperId}`, 
-      this.activeSession.getMetadata());
+    this.activeSession = new ReadingSession(sourceId, paperId);
+    logger.info(`Started session for ${sourceId}:${paperId}`);
+  }
+  
+  /**
+   * Record a heartbeat for the current session
+   */
+  recordHeartbeat(): boolean {
+    if (this.activeSession) {
+      this.activeSession.recordHeartbeat();
+      return true;
+    }
+    return false;
   }
   
   /**
@@ -60,165 +149,54 @@ export class SessionTracker {
       return null;
     }
     
-    // Stop the update interval
-    this.stopUpdateInterval();
+    const sessionData = this.activeSession.endSession();
+    logger.info(`Ended session for ${sessionData.source_id}:${sessionData.paper_id}`, {
+      duration: sessionData.duration_seconds,
+      heartbeats: sessionData.heartbeat_count
+    });
     
-    // Finalize the session
-    const sessionData = this.activeSession.finalize();
-    
-    logger.info(`Ended session for ${this.currentSourceId}:${this.currentPaperId}`,
-      sessionData ? {
-        duration: sessionData.duration_seconds,
-        idle: sessionData.idle_seconds
-      } : 'Session too short');
-    
-    // Clear current session
+    const result = sessionData;
     this.activeSession = null;
-    this.currentSourceId = null;
-    this.currentPaperId = null;
     
-    return sessionData;
+    return result;
   }
   
   /**
-   * Get the current session's metadata
+   * Get current session info
+   */
+  getCurrentSession(): { sourceId: string; paperId: string } | null {
+    if (!this.activeSession) {
+      return null;
+    }
+    
+    return {
+      sourceId: this.activeSession.sourceId,
+      paperId: this.activeSession.paperId
+    };
+  }
+  
+  /**
+   * Check if a session is active
+   */
+  hasActiveSession(): boolean {
+    return this.activeSession !== null;
+  }
+  
+  /**
+   * Get time since last heartbeat in milliseconds
+   */
+  getTimeSinceLastHeartbeat(): number | null {
+    if (!this.activeSession) {
+      return null;
+    }
+    
+    return this.activeSession.getTimeSinceLastHeartbeat();
+  }
+  
+  /**
+   * Get session metadata for debugging
    */
   getCurrentSessionMetadata(): any | null {
     return this.activeSession?.getMetadata() || null;
-  }
-  
-  /**
-   * Get current paper and source IDs
-   */
-  getCurrentPaper(): { sourceId: string | null, paperId: string | null } {
-    return {
-      sourceId: this.currentSourceId,
-      paperId: this.currentPaperId
-    };
-  }
-  
-  /**
-   * Start the activity update interval
-   */
-  private startUpdateInterval(): void {
-    if (this.updateInterval !== null) {
-      clearInterval(this.updateInterval);
-    }
-    
-    // Use 'self' instead of 'window' for service worker compatibility
-    // self works in both browser and service worker contexts
-    this.updateInterval = self.setInterval(() => {
-      this.activeSession?.update();
-    }, this.config.activityUpdateInterval);
-  }
-  
-  /**
-   * Stop the activity update interval
-   */
-  private stopUpdateInterval(): void {
-    if (this.updateInterval !== null) {
-      clearInterval(this.updateInterval);
-      this.updateInterval = null;
-    }
-  }
-}
-
-class ReadingSession {
-  // Session ID
-  readonly sessionId: string;
-  
-  // Timestamps
-  private startTime: Date;
-  private lastActiveTime: Date;
-  private endTime: Date | null = null;
-  
-  // Time tracking
-  private activeTime: number = 0;
-  private idleTime: number = 0;
-  
-  // State
-  private isTracking: boolean = true;
-  private finalizedData: ReadingSessionData | null = null;
-  
-  constructor(
-    public sourceId: string,
-    public paperId: string,
-    private config: SessionConfig
-  ) {
-    this.sessionId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-    this.startTime = new Date();
-    this.lastActiveTime = new Date();
-  }
-  
-  /**
-   * Update the session's active and idle time
-   */
-  update(): void {
-    if (!this.isTracking || this.finalizedData) {
-      return;
-    }
-    
-    const now = new Date();
-    const timeSinceLastActive = now.getTime() - this.lastActiveTime.getTime();
-    
-    if (timeSinceLastActive < this.config.idleThreshold) {
-      // User is active
-      this.activeTime += timeSinceLastActive;
-    } else {
-      // User is idle
-      this.idleTime += timeSinceLastActive;
-    }
-    
-    this.lastActiveTime = now;
-  }
-  
-  /**
-   * Finalize the session and get the data
-   */
-  finalize(): ReadingSessionData | null {
-    if (this.finalizedData) {
-      return this.finalizedData;
-    }
-    
-    // Update one last time
-    this.update();
-    
-    // Stop tracking
-    this.isTracking = false;
-    this.endTime = new Date();
-    
-    // Calculate total elapsed time
-    const totalElapsed = this.endTime.getTime() - this.startTime.getTime();
-    
-    // Check if session is long enough
-    if (this.activeTime >= this.config.minSessionDuration || this.config.logPartialSessions) {
-      this.finalizedData = {
-        session_id: this.sessionId,
-        duration_seconds: Math.round(this.activeTime / 1000),
-        idle_seconds: Math.round(this.idleTime / 1000),
-        start_time: this.startTime.toISOString(),
-        end_time: this.endTime.toISOString(),
-        total_elapsed_seconds: Math.round(totalElapsed / 1000)
-      };
-      
-      return this.finalizedData;
-    }
-    
-    return null;
-  }
-  
-  /**
-   * Get session metadata (for debugging/display)
-   */
-  getMetadata(): any {
-    return {
-      sessionId: this.sessionId,
-      sourceId: this.sourceId,
-      paperId: this.paperId,
-      startTime: this.startTime.toISOString(),
-      activeSeconds: Math.round(this.activeTime / 1000),
-      idleSeconds: Math.round(this.idleTime / 1000),
-      isTracking: this.isTracking
-    };
   }
 }
