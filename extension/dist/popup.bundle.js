@@ -17,17 +17,21 @@ function updateUI(paperData) {
   const statusElement = document.getElementById('status');
 
   if (paperData) {
-    titleElement.textContent = paperData.title || paperData.arxivId;
+    titleElement.textContent = paperData.title || paperData.paperId;
     authorsElement.textContent = paperData.authors;
     statusElement.textContent = 'Paper tracked! Issue created on GitHub.';
     
     // Enable rating buttons
     document.getElementById('thumbsUp').disabled = false;
     document.getElementById('thumbsDown').disabled = false;
+    
+    // Set active state on rating buttons
+    document.getElementById('thumbsUp').classList.toggle('active', paperData.rating === 'thumbsup');
+    document.getElementById('thumbsDown').classList.toggle('active', paperData.rating === 'thumbsdown');
   } else {
-    titleElement.textContent = 'No arXiv paper detected';
+    titleElement.textContent = 'No paper detected';
     authorsElement.textContent = '';
-    statusElement.textContent = 'Visit an arXiv paper to track it';
+    statusElement.textContent = 'Visit a supported paper to track it';
     
     // Disable rating buttons
     document.getElementById('thumbsUp').disabled = true;
@@ -43,48 +47,51 @@ document.addEventListener('DOMContentLoaded', async () => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   console.log('Current tab:', tab.url);
   
-  if (tab.url.includes('arxiv.org')) {
-    console.log('On arXiv page, getting paper data...');
-    // Try multiple times to get paper data, as it might not be ready immediately
-    let retries = 3;
-    let paperData = null;
-    
-    while (retries > 0 && !paperData) {
-      paperData = await getCurrentPaper();
-      if (!paperData) {
-        await new Promise(resolve => setTimeout(resolve, 500)); // Wait 500ms before retry
-        retries--;
-      }
+  // Get paper from the session tracker
+  let paperData = null;
+  let retries = 3;
+  
+  while (retries > 0 && !paperData) {
+    paperData = await getCurrentPaper();
+    if (!paperData) {
+      await new Promise(resolve => setTimeout(resolve, 500)); // Wait 500ms before retry
+      retries--;
     }
-    
-    updateUI(paperData);
-    
-    // Set up rating handlers
-    document.getElementById('thumbsUp').addEventListener('click', () => {
-      chrome.runtime.sendMessage({
-        type: 'updateRating',
-        rating: 'thumbsup'
-      }, response => {
-        if (response && response.success) {
-          document.getElementById('status').textContent = 'Rating updated to: thumbs up';
-          setTimeout(() => window.close(), 1500);
-        }
-      });
-    });
-    
-    document.getElementById('thumbsDown').addEventListener('click', () => {
-      chrome.runtime.sendMessage({
-        type: 'updateRating',
-        rating: 'thumbsdown'
-      }, response => {
-        if (response && response.success) {
-          document.getElementById('status').textContent = 'Rating updated to: thumbs down';
-          setTimeout(() => window.close(), 1500);
-        }
-      });
-    });
-  } else {
-    updateUI(null);
   }
+  
+  updateUI(paperData);
+  
+  // Set up rating handlers
+  document.getElementById('thumbsUp').addEventListener('click', () => {
+    chrome.runtime.sendMessage({
+      type: 'updateRating',
+      rating: 'thumbsup'
+    }, response => {
+      if (response && response.success) {
+        document.getElementById('status').textContent = 'Rating updated to: thumbs up';
+        document.getElementById('thumbsUp').classList.add('active');
+        document.getElementById('thumbsDown').classList.remove('active');
+        setTimeout(() => window.close(), 1500);
+      } else {
+        document.getElementById('status').textContent = 'Error: ' + (response?.error || 'Unknown error');
+      }
+    });
+  });
+  
+  document.getElementById('thumbsDown').addEventListener('click', () => {
+    chrome.runtime.sendMessage({
+      type: 'updateRating',
+      rating: 'thumbsdown'
+    }, response => {
+      if (response && response.success) {
+        document.getElementById('status').textContent = 'Rating updated to: thumbs down';
+        document.getElementById('thumbsDown').classList.add('active');
+        document.getElementById('thumbsUp').classList.remove('active');
+        setTimeout(() => window.close(), 1500);
+      } else {
+        document.getElementById('status').textContent = 'Error: ' + (response?.error || 'Unknown error');
+      }
+    });
+  });
 });
 //# sourceMappingURL=popup.bundle.js.map

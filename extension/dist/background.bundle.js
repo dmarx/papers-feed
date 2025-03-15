@@ -368,17 +368,24 @@ class ReadingSession {
 class SessionTracker {
     constructor() {
         this.activeSession = null;
+        this.paperMetadata = new Map();
         logger$6.debug('Session tracker initialized');
     }
     /**
      * Start a new session
      */
-    startSession(sourceId, paperId) {
+    startSession(sourceId, paperId, metadata) {
         // End any existing session
         this.endSession();
         // Create new session
         this.activeSession = new ReadingSession(sourceId, paperId);
         logger$6.info(`Started session for ${sourceId}:${paperId}`);
+        // Store metadata if provided
+        if (metadata) {
+            const key = `${sourceId}:${paperId}`;
+            this.paperMetadata.set(key, metadata);
+            logger$6.debug(`Stored metadata for ${key}`);
+        }
     }
     /**
      * Record a heartbeat for the current session
@@ -417,6 +424,18 @@ class SessionTracker {
             sourceId: this.activeSession.sourceId,
             paperId: this.activeSession.paperId
         };
+    }
+    /**
+     * Get paper metadata for the current or specified session
+     */
+    getPaperMetadata(sourceId, paperId) {
+        if (!sourceId || !paperId) {
+            if (!this.activeSession)
+                return undefined;
+            sourceId = this.activeSession.sourceId;
+            paperId = this.activeSession.paperId;
+        }
+        return this.paperMetadata.get(`${sourceId}:${paperId}`);
     }
     /**
      * Check if a session is active
@@ -928,7 +947,6 @@ const logger = loguru.getLogger('background');
 // Global state
 let githubToken = '';
 let githubRepo = '';
-let currentPaperData = null;
 let paperManager = null;
 let sessionTracker = null;
 let popupManager = null;
@@ -990,8 +1008,11 @@ function setupMessageListeners() {
             return true;
         }
         if (message.type === 'getCurrentPaper') {
-            logger.debug('Popup requested current paper', currentPaperData);
-            sendResponse(currentPaperData);
+            const paperMetadata = sessionTracker?.getCurrentSession()
+                ? sessionTracker?.getPaperMetadata()
+                : null;
+            logger.debug('Popup requested current paper', paperMetadata);
+            sendResponse(paperMetadata);
             return true;
         }
         if (message.type === 'updateRating') {
@@ -1022,8 +1043,6 @@ function setupMessageListeners() {
 async function handlePaperMetadata(metadata) {
     logger.info(`Received metadata for ${metadata.sourceId}:${metadata.paperId}`);
     try {
-        // Store current paper data
-        currentPaperData = metadata;
         // Store in GitHub if we have a paper manager
         if (paperManager) {
             await paperManager.getOrCreatePaper(metadata);
@@ -1036,17 +1055,24 @@ async function handlePaperMetadata(metadata) {
 }
 // Handle rating update
 async function handleUpdateRating(rating, sendResponse) {
-    if (!paperManager) {
-        sendResponse({ success: false, error: 'Paper manager not initialized' });
+    if (!paperManager || !sessionTracker) {
+        sendResponse({ success: false, error: 'Services not initialized' });
         return;
     }
-    if (!currentPaperData) {
-        sendResponse({ success: false, error: 'No current paper' });
+    const session = sessionTracker.getCurrentSession();
+    if (!session) {
+        sendResponse({ success: false, error: 'No current session' });
+        return;
+    }
+    const metadata = sessionTracker.getPaperMetadata();
+    if (!metadata) {
+        sendResponse({ success: false, error: 'No paper metadata available' });
         return;
     }
     try {
-        await paperManager.updateRating(currentPaperData.sourceId, currentPaperData.paperId, rating);
-        currentPaperData.rating = rating;
+        await paperManager.updateRating(session.sourceId, session.paperId, rating, metadata);
+        // Update stored metadata with new rating
+        metadata.rating = rating;
         sendResponse({ success: true });
     }
     catch (error) {
@@ -1060,7 +1086,10 @@ function handleStartSession(sourceId, paperId) {
         logger.error('Session tracker not initialized');
         return;
     }
-    sessionTracker.startSession(sourceId, paperId);
+    // Get metadata if available
+    const existingMetadata = sessionTracker.getPaperMetadata(sourceId, paperId);
+    // Start the session
+    sessionTracker.startSession(sourceId, paperId, existingMetadata);
     logger.info(`Started session for ${sourceId}:${paperId}`);
     // Schedule heartbeat check
     scheduleHeartbeatCheck();
@@ -1160,6 +1189,8 @@ async function endCurrentSession() {
     if (!session) {
         return;
     }
+    // Get paper metadata
+    const metadata = sessionTracker.getPaperMetadata();
     // End the session
     const sessionData = sessionTracker.endSession();
     // Store session data if we have it and a paper manager
@@ -1167,7 +1198,7 @@ async function endCurrentSession() {
         logger.debug('Creating reading event', sessionData);
         try {
             // Store reading session
-            await paperManager.logReadingSession(session.sourceId, session.paperId, sessionData, currentPaperData);
+            await paperManager.logReadingSession(session.sourceId, session.paperId, sessionData, metadata);
             logger.info(`Session saved to GitHub for ${session.sourceId}:${session.paperId}`);
         }
         catch (error) {
@@ -1189,7 +1220,7 @@ function initializeDebugObjects() {
         get popupManager() { return popupManager; },
         get sourceManager() { return sourceManager; },
         getGithubClient: () => paperManager ? paperManager.getClient() : null,
-        getCurrentPaper: () => currentPaperData,
+        getCurrentPaper: () => sessionTracker?.getPaperMetadata(),
         getSessionInfo: () => sessionTracker?.getCurrentSessionMetadata(),
         getSources: () => sourceManager?.getAllSources(),
         forceEndSession: () => endCurrentSession()
