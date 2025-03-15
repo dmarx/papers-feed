@@ -1,55 +1,80 @@
-// options.js
-import { loadSessionConfig, DEFAULT_CONFIG, saveSessionConfig } from './config/session.ts';
+// options.ts
+import { loadSessionConfig, DEFAULT_CONFIG, saveSessionConfig } from './config/session';
+import { RawSessionConfig } from './config/types';
 
 // Helper to set form values
-function setFormValues(settings) {
+function setFormValues(settings: {
+  githubRepo?: string;
+  githubToken?: string;
+  sessionConfig?: RawSessionConfig;
+}): void {
   // GitHub settings
   if (settings.githubRepo) {
-    document.getElementById('repo').value = settings.githubRepo;
+    (document.getElementById('repo') as HTMLInputElement).value = settings.githubRepo;
   }
   if (settings.githubToken) {
     // Don't show the actual token, just indicate it's set
-    document.getElementById('token').placeholder = '••••••••••••••••••••••';
+    (document.getElementById('token') as HTMLInputElement).placeholder = '••••••••••••••••••••••';
   }
 
   // Session settings
-  document.getElementById('idleThreshold').value = settings.sessionConfig?.idleThresholdMinutes ?? DEFAULT_CONFIG.idleThresholdMinutes;
-  document.getElementById('minDuration').value = settings.sessionConfig?.minSessionDurationSeconds ?? DEFAULT_CONFIG.minSessionDurationSeconds;
-  document.getElementById('requireContinuous').checked = settings.sessionConfig?.requireContinuousActivity ?? DEFAULT_CONFIG.requireContinuousActivity;
-  document.getElementById('logPartial').checked = settings.sessionConfig?.logPartialSessions ?? DEFAULT_CONFIG.logPartialSessions;
+  (document.getElementById('idleThreshold') as HTMLInputElement).value = 
+    String(settings.sessionConfig?.idleThresholdMinutes ?? DEFAULT_CONFIG.idleThresholdMinutes);
+    
+  (document.getElementById('minDuration') as HTMLInputElement).value = 
+    String(settings.sessionConfig?.minSessionDurationSeconds ?? DEFAULT_CONFIG.minSessionDurationSeconds);
+    
+  (document.getElementById('requireContinuous') as HTMLInputElement).checked = 
+    settings.sessionConfig?.requireContinuousActivity ?? DEFAULT_CONFIG.requireContinuousActivity;
+    
+  (document.getElementById('logPartial') as HTMLInputElement).checked = 
+    settings.sessionConfig?.logPartialSessions ?? DEFAULT_CONFIG.logPartialSessions;
 }
 
 // Helper to get form values
-function getFormValues() {
+function getFormValues(): {
+  githubRepo: string;
+  githubToken: string;
+  sessionConfig: RawSessionConfig;
+} {
   return {
-    githubRepo: document.getElementById('repo').value.trim(),
-    githubToken: document.getElementById('token').value.trim(),
+    githubRepo: (document.getElementById('repo') as HTMLInputElement).value.trim(),
+    githubToken: (document.getElementById('token') as HTMLInputElement).value.trim(),
     sessionConfig: {
-      idleThresholdMinutes: Number(document.getElementById('idleThreshold').value),
-      minSessionDurationSeconds: Number(document.getElementById('minDuration').value),
-      requireContinuousActivity: document.getElementById('requireContinuous').checked,
-      logPartialSessions: document.getElementById('logPartial').checked
+      idleThresholdMinutes: Number((document.getElementById('idleThreshold') as HTMLInputElement).value),
+      minSessionDurationSeconds: Number((document.getElementById('minDuration') as HTMLInputElement).value),
+      requireContinuousActivity: (document.getElementById('requireContinuous') as HTMLInputElement).checked,
+      logPartialSessions: (document.getElementById('logPartial') as HTMLInputElement).checked,
+      activityUpdateIntervalSeconds: DEFAULT_CONFIG.activityUpdateIntervalSeconds // Keep default
     }
   };
 }
 
 // Display status message
-function showStatus(message, isError = false) {
+function showStatus(message: string, isError = false): void {
   const status = document.getElementById('status');
+  if (!status) return;
+  
   status.textContent = message;
   status.className = `status ${isError ? 'error' : 'success'}`;
 
   // Clear status after 3 seconds if it's a success message
   if (!isError) {
     setTimeout(() => {
-      status.textContent = '';
-      status.className = 'status';
+      if (status) {
+        status.textContent = '';
+        status.className = 'status';
+      }
     }, 3000);
   }
 }
 
 // Validate settings before saving
-async function validateSettings(settings) {
+async function validateSettings(settings: {
+  githubRepo: string;
+  githubToken: string;
+  sessionConfig: RawSessionConfig;
+}): Promise<void> {
   // Validate repository format
   if (!/^[\w-]+\/[\w-]+$/.test(settings.githubRepo)) {
     throw new Error('Invalid repository format. Use username/repository');
@@ -78,7 +103,11 @@ async function validateSettings(settings) {
 }
 
 // Save settings
-async function saveSettings(settings) {
+async function saveSettings(settings: {
+  githubRepo: string;
+  githubToken: string;
+  sessionConfig: RawSessionConfig;
+}): Promise<void> {
   await chrome.storage.sync.set({
     githubRepo: settings.githubRepo,
     githubToken: settings.githubToken
@@ -98,23 +127,29 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Combine settings and display them
     setFormValues({
-      ...storageItems,
+      ...(storageItems as {
+        githubRepo?: string;
+        githubToken?: string;
+      }),
       sessionConfig
     });
 
     // Add save button handler
-    document.getElementById('save').addEventListener('click', async () => {
-      try {
-        const settings = getFormValues();
-        await validateSettings(settings);
-        await saveSettings(settings);
-        showStatus('Settings saved successfully!');
-      } catch (error) {
-        showStatus(`Error: ${error.message}`, true);
-      }
-    });
+    const saveButton = document.getElementById('save');
+    if (saveButton) {
+      saveButton.addEventListener('click', async () => {
+        try {
+          const settings = getFormValues();
+          await validateSettings(settings);
+          await saveSettings(settings);
+          showStatus('Settings saved successfully!');
+        } catch (error) {
+          showStatus(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`, true);
+        }
+      });
+    }
 
   } catch (error) {
-    showStatus(`Error loading settings: ${error.message}`, true);
+    showStatus(`Error loading settings: ${error instanceof Error ? error.message : 'Unknown error'}`, true);
   }
 });
