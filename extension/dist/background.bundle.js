@@ -393,7 +393,9 @@ class SessionTracker {
         if (this.updateInterval !== null) {
             clearInterval(this.updateInterval);
         }
-        this.updateInterval = window.setInterval(() => {
+        // Use 'self' instead of 'window' for service worker compatibility
+        // self works in both browser and service worker contexts
+        this.updateInterval = self.setInterval(() => {
             this.activeSession?.update();
         }, this.config.activityUpdateInterval);
     }
