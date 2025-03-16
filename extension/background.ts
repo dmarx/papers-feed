@@ -54,7 +54,9 @@ async function initialize() {
     // Initialize paper manager if we have credentials
     if (githubToken && githubRepo) {
       const githubClient = new GitHubStoreClient(githubToken, githubRepo);
-      paperManager = new PaperManager(githubClient);
+      
+      // Pass the source manager to the paper manager
+      paperManager = new PaperManager(githubClient, sourceManager!);
       logger.info('Paper manager initialized');
     }
     
@@ -298,7 +300,9 @@ chrome.storage.onChanged.addListener(async (changes) => {
   if (changes.githubToken || changes.githubRepo) {
     if (githubToken && githubRepo) {
       const githubClient = new GitHubStoreClient(githubToken, githubRepo);
-      paperManager = new PaperManager(githubClient);
+      
+      // Pass the source manager to the paper manager
+      paperManager = new PaperManager(githubClient, sourceManager!);
       logger.info('Paper manager reinitialized');
     }
   }
