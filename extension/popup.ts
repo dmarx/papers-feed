@@ -207,7 +207,7 @@ async function logCurrentPage(pageInfo: PageMetadata): Promise<void> {
     rating: 'novote'
   };
 
-  console.log("PaperMetadata:",PaperMetadata);
+  console.log("PaperMetadata:", metadata);
   
   // Send to background script
   chrome.runtime.sendMessage({
