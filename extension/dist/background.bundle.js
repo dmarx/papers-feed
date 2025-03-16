@@ -62,12 +62,12 @@ class LoguruMock {
 // Export singleton instance
 const loguru = new LoguruMock();
 
-const logger$8 = loguru.getLogger('paper-manager');
+const logger$9 = loguru.getLogger('paper-manager');
 class PaperManager {
     constructor(client, sourceManager) {
         this.client = client;
         this.sourceManager = sourceManager;
-        logger$8.debug('Paper manager initialized');
+        logger$9.debug('Paper manager initialized');
     }
     /**
      * Get paper by source and ID
@@ -95,7 +95,7 @@ class PaperManager {
         try {
             const obj = await this.client.getObject(objectId);
             const data = obj.data;
-            logger$8.debug(`Retrieved existing paper: ${paperIdentifier}`);
+            logger$9.debug(`Retrieved existing paper: ${paperIdentifier}`);
             return data;
         }
         catch (error) {
@@ -107,7 +107,7 @@ class PaperManager {
                     rating: paperData.rating || 'novote'
                 };
                 await this.client.createObject(objectId, defaultPaperData);
-                logger$8.debug(`Created new paper: ${paperIdentifier}`);
+                logger$9.debug(`Created new paper: ${paperIdentifier}`);
                 return defaultPaperData;
             }
             throw error;
@@ -135,7 +135,7 @@ class PaperManager {
                     interactions: []
                 };
                 await this.client.createObject(objectId, newLog);
-                logger$8.debug(`Created new interaction log: ${paperIdentifier}`);
+                logger$9.debug(`Created new interaction log: ${paperIdentifier}`);
                 return newLog;
             }
             throw error;
@@ -173,7 +173,7 @@ class PaperManager {
             data: session
         });
         const paperIdentifier = this.sourceManager.formatPaperId(sourceId, paperId);
-        logger$8.info(`Logged reading session for ${paperIdentifier}`, { duration: session.duration_seconds });
+        logger$9.info(`Logged reading session for ${paperIdentifier}`, { duration: session.duration_seconds });
     }
     /**
      * Log an annotation
@@ -201,7 +201,7 @@ class PaperManager {
             data: { key, value }
         });
         const paperIdentifier = this.sourceManager.formatPaperId(sourceId, paperId);
-        logger$8.info(`Logged annotation for ${paperIdentifier}`, { key });
+        logger$9.info(`Logged annotation for ${paperIdentifier}`, { key });
     }
     /**
      * Update paper rating
@@ -233,7 +233,7 @@ class PaperManager {
             data: { rating }
         });
         const paperIdentifier = this.sourceManager.formatPaperId(sourceId, paperId);
-        logger$8.info(`Updated rating for ${paperIdentifier} to ${rating}`);
+        logger$9.info(`Updated rating for ${paperIdentifier} to ${rating}`);
     }
     /**
      * Add interaction to log
@@ -247,7 +247,7 @@ class PaperManager {
 }
 
 // utils/session-tracker.ts
-const logger$7 = loguru.getLogger('session-tracker');
+const logger$8 = loguru.getLogger('session-tracker');
 /**
  * Class representing a single reading session
  */
@@ -260,7 +260,7 @@ class ReadingSession {
         this.paperId = paperId;
         this.startTime = new Date();
         this.lastHeartbeatTime = this.startTime;
-        logger$7.debug(`Created new reading session: ${this.sessionId} for ${sourceId}:${paperId}`);
+        logger$8.debug(`Created new reading session: ${this.sessionId} for ${sourceId}:${paperId}`);
     }
     /**
      * Record a heartbeat
@@ -269,7 +269,7 @@ class ReadingSession {
         this.heartbeatCount++;
         this.lastHeartbeatTime = new Date();
         if (this.heartbeatCount % 12 === 0) { // Log every minute (12 x 5sec heartbeats)
-            logger$7.debug(`Session ${this.sessionId} received ${this.heartbeatCount} heartbeats`);
+            logger$8.debug(`Session ${this.sessionId} received ${this.heartbeatCount} heartbeats`);
         }
     }
     /**
@@ -297,7 +297,7 @@ class ReadingSession {
             idle_seconds: idleSeconds,
             total_elapsed_seconds: totalElapsedSeconds
         };
-        logger$7.debug(`Ended session ${this.sessionId} with ${this.heartbeatCount} heartbeats (${duration}s)`);
+        logger$8.debug(`Ended session ${this.sessionId} with ${this.heartbeatCount} heartbeats (${duration}s)`);
         return sessionData;
     }
     /**
@@ -328,7 +328,7 @@ class SessionTracker {
     constructor() {
         this.activeSession = null;
         this.paperMetadata = new Map();
-        logger$7.debug('Session tracker initialized');
+        logger$8.debug('Session tracker initialized');
     }
     /**
      * Start a new session
@@ -338,12 +338,12 @@ class SessionTracker {
         this.endSession();
         // Create new session
         this.activeSession = new ReadingSession(sourceId, paperId);
-        logger$7.info(`Started session for ${sourceId}:${paperId}`);
+        logger$8.info(`Started session for ${sourceId}:${paperId}`);
         // Store metadata if provided
         if (metadata) {
             const key = `${sourceId}:${paperId}`;
             this.paperMetadata.set(key, metadata);
-            logger$7.debug(`Stored metadata for ${key}`);
+            logger$8.debug(`Stored metadata for ${key}`);
         }
     }
     /**
@@ -364,7 +364,7 @@ class SessionTracker {
             return null;
         }
         const sessionData = this.activeSession.endSession();
-        logger$7.info(`Ended session for ${sessionData.source_id}:${sessionData.paper_id}`, {
+        logger$8.info(`Ended session for ${sessionData.source_id}:${sessionData.paper_id}`, {
             duration: sessionData.duration_seconds,
             heartbeats: sessionData.heartbeat_count
         });
@@ -420,7 +420,7 @@ class SessionTracker {
 }
 
 // extension/utils/popup-manager.ts
-const logger$6 = loguru.getLogger('popup-manager');
+const logger$7 = loguru.getLogger('popup-manager');
 /**
  * Manages all popup-related functionality
  */
@@ -432,7 +432,7 @@ class PopupManager {
         this.sourceManagerProvider = sourceManagerProvider;
         this.paperManagerProvider = paperManagerProvider;
         this.setupMessageListeners();
-        logger$6.debug('Popup manager initialized');
+        logger$7.debug('Popup manager initialized');
     }
     /**
      * Set up message listeners for popup-related messages
@@ -444,7 +444,7 @@ class PopupManager {
                 this.handlePopupAction(message.sourceId, message.paperId, message.action, message.data).then(() => {
                     sendResponse({ success: true });
                 }).catch(error => {
-                    logger$6.error('Error handling popup action', error);
+                    logger$7.error('Error handling popup action', error);
                     sendResponse({
                         success: false,
                         error: error instanceof Error ? error.message : 'Unknown error'
@@ -457,7 +457,7 @@ class PopupManager {
                 this.handleShowAnnotationPopup(sender.tab.id, message.sourceId, message.paperId, message.position).then(() => {
                     sendResponse({ success: true });
                 }).catch(error => {
-                    logger$6.error('Error showing popup', error);
+                    logger$7.error('Error showing popup', error);
                     sendResponse({
                         success: false,
                         error: error instanceof Error ? error.message : 'Unknown error'
@@ -472,7 +472,7 @@ class PopupManager {
      * Handle a request to show an annotation popup
      */
     async handleShowAnnotationPopup(tabId, sourceId, paperId, position) {
-        logger$6.debug(`Showing annotation popup for ${sourceId}:${paperId}`);
+        logger$7.debug(`Showing annotation popup for ${sourceId}:${paperId}`);
         // Check if we have source and paper manager
         const sourceManager = this.sourceManagerProvider();
         const paperManager = this.paperManagerProvider();
@@ -510,10 +510,10 @@ class PopupManager {
                 position
             };
             await chrome.tabs.sendMessage(tabId, message);
-            logger$6.debug(`Sent popup to content script for ${sourceId}:${paperId}`);
+            logger$7.debug(`Sent popup to content script for ${sourceId}:${paperId}`);
         }
         catch (error) {
-            logger$6.error(`Error showing popup for ${sourceId}:${paperId}`, error);
+            logger$7.error(`Error showing popup for ${sourceId}:${paperId}`, error);
             throw error;
         }
     }
@@ -525,21 +525,21 @@ class PopupManager {
         if (!paperManager) {
             throw new Error('Paper manager not initialized');
         }
-        logger$6.debug(`Handling popup action: ${action}`, { sourceId, paperId });
+        logger$7.debug(`Handling popup action: ${action}`, { sourceId, paperId });
         try {
             if (action === 'rate') {
                 await paperManager.updateRating(sourceId, paperId, data.value);
-                logger$6.info(`Updated rating for ${sourceId}:${paperId} to ${data.value}`);
+                logger$7.info(`Updated rating for ${sourceId}:${paperId} to ${data.value}`);
             }
             else if (action === 'saveNotes') {
                 if (data.value) {
                     await paperManager.logAnnotation(sourceId, paperId, 'notes', data.value);
-                    logger$6.info(`Saved notes for ${sourceId}:${paperId}`);
+                    logger$7.info(`Saved notes for ${sourceId}:${paperId}`);
                 }
             }
         }
         catch (error) {
-            logger$6.error(`Error handling action ${action} for ${sourceId}:${paperId}`, error);
+            logger$7.error(`Error handling action ${action} for ${sourceId}:${paperId}`, error);
             throw error;
         }
     }
@@ -576,24 +576,24 @@ class PopupManager {
 }
 
 // extension/source-integration/source-manager.ts
-const logger$5 = loguru.getLogger('source-manager');
+const logger$6 = loguru.getLogger('source-manager');
 /**
  * Manages source integrations
  */
 class SourceIntegrationManager {
     constructor() {
         this.sources = new Map();
-        logger$5.info('Source integration manager initialized');
+        logger$6.info('Source integration manager initialized');
     }
     /**
      * Register a source integration
      */
     registerSource(source) {
         if (this.sources.has(source.id)) {
-            logger$5.warning(`Source with ID '${source.id}' already registered, overwriting`);
+            logger$6.warning(`Source with ID '${source.id}' already registered, overwriting`);
         }
         this.sources.set(source.id, source);
-        logger$5.info(`Registered source: ${source.name} (${source.id})`);
+        logger$6.info(`Registered source: ${source.name} (${source.id})`);
     }
     /**
      * Get all registered sources
@@ -607,11 +607,11 @@ class SourceIntegrationManager {
     getSourceForUrl(url) {
         for (const source of this.sources.values()) {
             if (source.canHandleUrl(url)) {
-                logger$5.debug(`Found source for URL '${url}': ${source.id}`);
+                logger$6.debug(`Found source for URL '${url}': ${source.id}`);
                 return source;
             }
         }
-        logger$5.debug(`No source found for URL: ${url}`);
+        logger$6.debug(`No source found for URL: ${url}`);
         return null;
     }
     /**
@@ -629,12 +629,12 @@ class SourceIntegrationManager {
             if (source.canHandleUrl(url)) {
                 const paperId = source.extractPaperId(url);
                 if (paperId) {
-                    logger$5.debug(`Extracted paper ID '${paperId}' from URL using ${source.id}`);
+                    logger$6.debug(`Extracted paper ID '${paperId}' from URL using ${source.id}`);
                     return { sourceId: source.id, paperId };
                 }
             }
         }
-        logger$5.debug(`Could not extract paper ID from URL: ${url}`);
+        logger$6.debug(`Could not extract paper ID from URL: ${url}`);
         return null;
     }
     /**
@@ -646,7 +646,7 @@ class SourceIntegrationManager {
             return source.formatPaperId(paperId);
         }
         // Fallback if source not found
-        logger$5.warning(`Source '${sourceId}' not found, using default format for paper ID`);
+        logger$6.warning(`Source '${sourceId}' not found, using default format for paper ID`);
         return `${sourceId}.${paperId}`;
     }
     /**
@@ -658,7 +658,7 @@ class SourceIntegrationManager {
             return source.formatObjectId(type, paperId);
         }
         // Fallback if source not found
-        logger$5.warning(`Source '${sourceId}' not found, using default format for object ID`);
+        logger$6.warning(`Source '${sourceId}' not found, using default format for object ID`);
         return `${type}:${sourceId}.${paperId}`;
     }
     /**
@@ -674,7 +674,7 @@ class SourceIntegrationManager {
 }
 
 // extension/source-integration/base-source.ts
-const logger$4 = loguru.getLogger('base-source');
+const logger$5 = loguru.getLogger('base-source');
 /**
  * Abstract base class for source integrations
  * Provides default implementations for identifier formatting methods
@@ -701,7 +701,7 @@ class BaseSourceIntegration {
         // Try legacy format (sourceId:paperId)
         const legacyPrefix = `${this.id}:`;
         if (identifier.startsWith(legacyPrefix)) {
-            logger$4.debug(`Parsed legacy format identifier: ${identifier}`);
+            logger$5.debug(`Parsed legacy format identifier: ${identifier}`);
             return identifier.substring(legacyPrefix.length);
         }
         return null;
@@ -717,12 +717,12 @@ class BaseSourceIntegration {
 }
 
 // source-integration/arxiv/xml-parser.ts
-const logger$3 = loguru.getLogger('arxiv-xml-parser');
+const logger$4 = loguru.getLogger('arxiv-xml-parser');
 /**
  * Parse ArXiv API XML response into a structured object
  */
 async function parseXMLText(xmlText) {
-    logger$3.debug('Parsing ArXiv XML response');
+    logger$4.debug('Parsing ArXiv XML response');
     try {
         // Parse XML to DOM
         const parser = new DOMParser();
@@ -765,17 +765,17 @@ async function parseXMLText(xmlText) {
             published_date: published,
             arxiv_tags: Array.from(categories)
         };
-        logger$3.debug('XML parsing completed successfully');
+        logger$4.debug('XML parsing completed successfully');
         return result;
     }
     catch (error) {
-        logger$3.error('Error parsing ArXiv XML', error);
+        logger$4.error('Error parsing ArXiv XML', error);
         return null;
     }
 }
 
 // extension/utils/metadata-transformer.ts
-const logger$2 = loguru.getLogger('metadata-transformer');
+const logger$3 = loguru.getLogger('metadata-transformer');
 /**
  * Transform source-specific API response to standard metadata
  */
@@ -834,12 +834,12 @@ function transformMetadata(sourceId, paperId, apiData, mapping, sourceUrl) {
         publishedDate,
         tags
     };
-    logger$2.debug('Transformed metadata', { sourceId, paperId });
+    logger$3.debug('Transformed metadata', { sourceId, paperId });
     return metadata;
 }
 
 // extension/source-integration/arxiv/index.ts
-const logger$1 = loguru.getLogger('arxiv-integration');
+const logger$2 = loguru.getLogger('arxiv-integration');
 class ArXivIntegration extends BaseSourceIntegration {
     constructor() {
         super(...arguments);
@@ -892,15 +892,15 @@ class ArXivIntegration extends BaseSourceIntegration {
      * Extract metadata from page or fetch from API
      */
     async extractMetadata(document, paperId) {
-        logger$1.info(`Extracting metadata for arXiv ID: ${paperId}`);
+        logger$2.info(`Extracting metadata for arXiv ID: ${paperId}`);
         // Try to extract from page first
         const pageMetadata = this.extractFromPage(document, paperId);
         if (pageMetadata) {
-            logger$1.debug('Extracted metadata from page');
+            logger$2.debug('Extracted metadata from page');
             return pageMetadata;
         }
         // If page extraction fails, fetch from API
-        logger$1.debug('Falling back to API for metadata');
+        logger$2.debug('Falling back to API for metadata');
         return this.fetchFromApi(paperId);
     }
     /**
@@ -941,7 +941,7 @@ class ArXivIntegration extends BaseSourceIntegration {
             };
         }
         catch (error) {
-            logger$1.error('Error extracting from page:', error);
+            logger$2.error('Error extracting from page:', error);
             return null;
         }
     }
@@ -951,7 +951,7 @@ class ArXivIntegration extends BaseSourceIntegration {
     async fetchFromApi(arxivId) {
         try {
             const apiUrl = `https://export.arxiv.org/api/query?id_list=${arxivId}`;
-            logger$1.debug(`API URL: ${apiUrl}`);
+            logger$2.debug(`API URL: ${apiUrl}`);
             const response = await fetch(apiUrl);
             if (!response.ok) {
                 throw new Error(`ArXiv API error: ${response.status}`);
@@ -959,22 +959,153 @@ class ArXivIntegration extends BaseSourceIntegration {
             const text = await response.text();
             const parsedXml = await parseXMLText(text);
             if (!parsedXml) {
-                logger$1.error('Failed to parse API response');
+                logger$2.error('Failed to parse API response');
                 return null;
             }
             // Use the metadata transformer to convert the parsed XML to standard format
             const paperData = transformMetadata(this.id, arxivId, parsedXml, this.METADATA_MAPPING, `https://arxiv.org/abs/${arxivId}`);
-            logger$1.debug('Paper metadata processed', paperData);
+            logger$2.debug('Paper metadata processed', paperData);
             return paperData;
         }
         catch (error) {
-            logger$1.error('Error processing arXiv metadata', error);
+            logger$2.error('Error processing arXiv metadata', error);
             return null;
         }
     }
 }
 // Export a singleton instance that can be used by both background and content scripts
 const arxivIntegration = new ArXivIntegration();
+
+// extension/source-integration/generic/index.ts
+const logger$1 = loguru.getLogger('generic-integration');
+/**
+ * Generic integration for auto-detected and manually logged papers
+ */
+class GenericIntegration extends BaseSourceIntegration {
+    constructor() {
+        super(...arguments);
+        this.id = 'generic';
+        this.name = 'Generic Papers';
+        // We'll only provide limited auto-detection patterns
+        // The goal is NOT to auto-detect, but to support manual logging
+        this.urlPatterns = [
+            /\.pdf$/i // Just to identify PDFs for source type
+        ];
+        // No content script matches - we don't want to auto-detect
+        this.contentScriptMatches = [];
+    }
+    /**
+     * Check if this integration can handle the given URL
+     * For generic integration, we deliberately return false to prevent auto-detection
+     * Manual logging will be handled explicitly through the popup
+     */
+    canHandleUrl(url) {
+        // Always return false - we don't want to auto-detect
+        // This ensures the generic source won't interfere with normal browsing
+        return false;
+    }
+    /**
+     * Extract paper ID from URL - this is for auto-detection
+     */
+    extractPaperId(url) {
+        // Generate a hash from the URL
+        let hash = 0;
+        for (let i = 0; i < url.length; i++) {
+            const char = url.charCodeAt(i);
+            hash = ((hash << 5) - hash) + char;
+            hash = hash & hash; // Convert to 32bit integer
+        }
+        // Create a positive hexadecimal string
+        const positiveHash = Math.abs(hash).toString(16).toUpperCase();
+        // Use the first 8 characters as the ID
+        return positiveHash.substring(0, 8);
+    }
+    /**
+     * Extract metadata from a generic page or PDF
+     */
+    async extractMetadata(document, paperId) {
+        try {
+            logger$1.debug(`Extracting metadata for generic document with ID: ${paperId}`);
+            // Default values
+            let title = document.title || paperId;
+            let authors = '';
+            let abstract = '';
+            let publishedDate = '';
+            // Try to extract Open Graph metadata
+            const ogTitle = document.querySelector('meta[property="og:title"]')?.getAttribute('content');
+            if (ogTitle) {
+                title = ogTitle;
+            }
+            // Try to get authors
+            const ogAuthor = document.querySelector('meta[property="article:author"]')?.getAttribute('content') ||
+                document.querySelector('meta[name="author"]')?.getAttribute('content');
+            if (ogAuthor) {
+                authors = ogAuthor;
+            }
+            // Try to get description/abstract
+            const ogDescription = document.querySelector('meta[property="og:description"]')?.getAttribute('content') ||
+                document.querySelector('meta[name="description"]')?.getAttribute('content');
+            if (ogDescription) {
+                abstract = ogDescription;
+            }
+            // Try to get published date
+            const ogPublishedTime = document.querySelector('meta[property="article:published_time"]')?.getAttribute('content');
+            if (ogPublishedTime) {
+                publishedDate = ogPublishedTime;
+            }
+            // Determine if it's a PDF or generic URL
+            const isPdf = document.location.href.toLowerCase().endsWith('.pdf');
+            const sourceId = isPdf ? 'pdf' : 'url';
+            return {
+                sourceId,
+                paperId,
+                url: document.location.href,
+                title,
+                authors,
+                abstract,
+                timestamp: new Date().toISOString(),
+                rating: 'novote',
+                publishedDate,
+                tags: []
+            };
+        }
+        catch (error) {
+            logger$1.error('Error extracting metadata from generic source', error);
+            return null;
+        }
+    }
+    /**
+     * Format a paper identifier for this source
+     * Override to handle both PDF and URL sources
+     */
+    formatPaperId(paperId, sourceType) {
+        // Allow override of source type (pdf vs url)
+        const actualSourceId = sourceType || 'url';
+        return `${actualSourceId}.${paperId}`;
+    }
+    /**
+     * Parse a paper identifier
+     * Override to handle both PDF and URL sources
+     */
+    parsePaperId(identifier) {
+        // Handle pdf.XXXXXXXX or url.XXXXXXXX formats
+        if (identifier.startsWith('pdf.') || identifier.startsWith('url.')) {
+            return identifier.substring(identifier.indexOf('.') + 1);
+        }
+        return null;
+    }
+    /**
+     * Format object ID
+     * Override to handle both PDF and URL sources
+     */
+    formatObjectId(type, paperId, sourceType) {
+        // Create the paper ID with the correct sourceType prefix
+        const formattedId = this.formatPaperId(paperId, sourceType);
+        return `${type}:${formattedId}`;
+    }
+}
+// Export a singleton instance
+const genericIntegration = new GenericIntegration();
 
 // extension/background.ts
 const logger = loguru.getLogger('background');
@@ -993,6 +1124,7 @@ function initializeSources() {
     sourceManager = new SourceIntegrationManager();
     // Register built-in sources directly
     sourceManager.registerSource(arxivIntegration);
+    sourceManager.registerSource(genericIntegration);
     logger.info('Source manager initialized');
     return sourceManager;
 }
@@ -1069,6 +1201,19 @@ function setupMessageListeners() {
             handleEndSession(message.sourceId, message.paperId, message.reason || 'user_action');
             sendResponse({ success: true });
             return true;
+        }
+        // New handler for manual paper logging from popup
+        if (message.type === 'manualPaperLog' && message.metadata) {
+            handleManualPaperLog(message.metadata)
+                .then(() => sendResponse({ success: true }))
+                .catch(error => {
+                logger.error('Error handling manual paper log', error);
+                sendResponse({
+                    success: false,
+                    error: error instanceof Error ? error.message : 'Unknown error'
+                });
+            });
+            return true; // Will respond asynchronously
         }
         // Other message handlers are managed by PopupManager
         return false;
@@ -1162,6 +1307,20 @@ function handleEndSession(sourceId, paperId, reason) {
     }
     else {
         logger.warning(`Received end request for non-current session: ${sourceId}:${paperId}`);
+    }
+}
+async function handleManualPaperLog(metadata) {
+    logger.info(`Received manual paper log: ${metadata.sourceId}:${metadata.paperId}`);
+    try {
+        // Store in GitHub if we have a paper manager
+        if (paperManager) {
+            await paperManager.getOrCreatePaper(metadata);
+            logger.debug('Manually logged paper stored in GitHub');
+        }
+    }
+    catch (error) {
+        logger.error('Error handling manual paper log', error);
+        throw error;
     }
 }
 // Schedule heartbeat timeout check

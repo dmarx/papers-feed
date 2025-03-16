@@ -12,6 +12,7 @@ import { PaperMetadata } from './papers/types';
 
 // Import source plugins directly
 import { arxivIntegration } from './source-integration/arxiv';
+import { genericIntegration } from './source-integration/generic';
 import { Message } from './source-integration/types';
 
 const logger = loguru.getLogger('background');
@@ -34,6 +35,7 @@ function initializeSources() {
   
   // Register built-in sources directly
   sourceManager.registerSource(arxivIntegration);
+  sourceManager.registerSource(genericIntegration);
   
   logger.info('Source manager initialized');
   return sourceManager;
@@ -129,6 +131,20 @@ function setupMessageListeners() {
       handleEndSession(message.sourceId, message.paperId, message.reason || 'user_action');
       sendResponse({ success: true });
       return true;
+    }
+
+    // New handler for manual paper logging from popup
+    if (message.type === 'manualPaperLog' && message.metadata) {
+      handleManualPaperLog(message.metadata)
+        .then(() => sendResponse({ success: true }))
+        .catch(error => {
+          logger.error('Error handling manual paper log', error);
+          sendResponse({ 
+            success: false, 
+            error: error instanceof Error ? error.message : 'Unknown error' 
+          });
+        });
+      return true; // Will respond asynchronously
     }
     
     // Other message handlers are managed by PopupManager
@@ -245,6 +261,21 @@ function handleEndSession(sourceId: string, paperId: string, reason: string) {
     endCurrentSession();
   } else {
     logger.warning(`Received end request for non-current session: ${sourceId}:${paperId}`);
+  }
+}
+
+async function handleManualPaperLog(metadata: PaperMetadata): Promise<void> {
+  logger.info(`Received manual paper log: ${metadata.sourceId}:${metadata.paperId}`);
+  
+  try {
+    // Store in GitHub if we have a paper manager
+    if (paperManager) {
+      await paperManager.getOrCreatePaper(metadata);
+      logger.debug('Manually logged paper stored in GitHub');
+    }
+  } catch (error) {
+    logger.error('Error handling manual paper log', error);
+    throw error;
   }
 }
 

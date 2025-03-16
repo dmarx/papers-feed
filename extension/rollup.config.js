@@ -48,15 +48,16 @@ export default [
       commonjs()
     ]
   },
-  // Popup script 
+  // Popup script - converted to TypeScript
   {
-    input: 'popup.js',
+    input: 'popup.ts',
     output: {
       file: 'dist/popup.bundle.js',
       format: 'es',
       sourcemap: true
     },
     plugins: [
+      typescript(),
       resolve(),
       commonjs()
     ]
