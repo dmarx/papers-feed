@@ -8,12 +8,16 @@ import {
   type ReadingSessionData,
   isInteractionLog
 } from './types';
+import { SourceManager } from '../source-integration/types';
 import { loguru } from '../utils/logger';
 
 const logger = loguru.getLogger('paper-manager');
 
 export class PaperManager {
-  constructor(private client: GitHubStoreClient) {
+  constructor(
+    private client: GitHubStoreClient,
+    private sourceManager: SourceManager
+  ) {
     logger.debug('Paper manager initialized');
   }
   
@@ -21,7 +25,7 @@ export class PaperManager {
    * Get paper by source and ID
    */
   async getPaper(sourceId: string, paperId: string): Promise<PaperMetadata | null> {
-    const objectId = `paper:${sourceId}:${paperId}`;
+    const objectId = this.sourceManager.formatObjectId('paper', sourceId, paperId);
     
     try {
       const obj = await this.client.getObject(objectId);
@@ -39,12 +43,13 @@ export class PaperManager {
    */
   async getOrCreatePaper(paperData: PaperMetadata): Promise<PaperMetadata> {
     const { sourceId, paperId } = paperData;
-    const objectId = `paper:${sourceId}:${paperId}`;
+    const objectId = this.sourceManager.formatObjectId('paper', sourceId, paperId);
+    const paperIdentifier = this.sourceManager.formatPaperId(sourceId, paperId);
     
     try {
       const obj = await this.client.getObject(objectId);
       const data = obj.data as PaperMetadata;
-      logger.debug(`Retrieved existing paper: ${sourceId}:${paperId}`);
+      logger.debug(`Retrieved existing paper: ${paperIdentifier}`);
       return data;
     } catch (error) {
       if (error instanceof Error && error.message.includes('No object found')) {
@@ -56,7 +61,7 @@ export class PaperManager {
         };
 
         await this.client.createObject(objectId, defaultPaperData);
-        logger.debug(`Created new paper: ${sourceId}:${paperId}`);
+        logger.debug(`Created new paper: ${paperIdentifier}`);
         return defaultPaperData;
       }
       throw error;
@@ -67,7 +72,9 @@ export class PaperManager {
    * Get or create interaction log for a paper
    */
   private async getOrCreateInteractionLog(sourceId: string, paperId: string): Promise<InteractionLog> {
-    const objectId = `interactions:${sourceId}:${paperId}`;
+    const objectId = this.sourceManager.formatObjectId('interactions', sourceId, paperId);
+    const paperIdentifier = this.sourceManager.formatPaperId(sourceId, paperId);
+    
     try {
       const obj = await this.client.getObject(objectId);
       const data = obj.data as unknown;
@@ -83,7 +90,7 @@ export class PaperManager {
           interactions: []
         };
         await this.client.createObject(objectId, newLog as unknown as { [key: string]: Json });
-        logger.debug(`Created new interaction log: ${sourceId}:${paperId}`);
+        logger.debug(`Created new interaction log: ${paperIdentifier}`);
         return newLog;
       }
       throw error;
@@ -111,7 +118,7 @@ export class PaperManager {
       await this.getOrCreatePaper({
         sourceId,
         paperId,
-        url: paperData.url || `${sourceId}:${paperId}`,
+        url: paperData.url || this.sourceManager.formatPaperId(sourceId, paperId),
         title: paperData.title || paperId,
         authors: paperData.authors || '',
         abstract: paperData.abstract || '',
@@ -129,7 +136,8 @@ export class PaperManager {
       data: session as unknown as { [key: string]: Json }
     });
     
-    logger.info(`Logged reading session for ${sourceId}:${paperId}`, { duration: session.duration_seconds });
+    const paperIdentifier = this.sourceManager.formatPaperId(sourceId, paperId);
+    logger.info(`Logged reading session for ${paperIdentifier}`, { duration: session.duration_seconds });
   }
 
   /**
@@ -147,7 +155,7 @@ export class PaperManager {
       await this.getOrCreatePaper({
         sourceId,
         paperId,
-        url: paperData.url || `${sourceId}:${paperId}`,
+        url: paperData.url || this.sourceManager.formatPaperId(sourceId, paperId),
         title: paperData.title || paperId,
         authors: paperData.authors || '',
         abstract: paperData.abstract || '',
@@ -165,7 +173,8 @@ export class PaperManager {
       data: { key, value }
     });
     
-    logger.info(`Logged annotation for ${sourceId}:${paperId}`, { key });
+    const paperIdentifier = this.sourceManager.formatPaperId(sourceId, paperId);
+    logger.info(`Logged annotation for ${paperIdentifier}`, { key });
   }
 
   /**
@@ -181,7 +190,7 @@ export class PaperManager {
     const paper = await this.getOrCreatePaper({
       sourceId,
       paperId,
-      url: paperData?.url || `${sourceId}:${paperId}`,
+      url: paperData?.url || this.sourceManager.formatPaperId(sourceId, paperId),
       title: paperData?.title || paperId,
       authors: paperData?.authors || '',
       abstract: paperData?.abstract || '',
@@ -191,8 +200,10 @@ export class PaperManager {
       tags: paperData?.tags || []
     });
 
+    const objectId = this.sourceManager.formatObjectId('paper', sourceId, paperId);
+    
     // Update paper metadata with new rating
-    await this.client.updateObject(`paper:${sourceId}:${paperId}`, { 
+    await this.client.updateObject(objectId, { 
       ...paper,
       rating 
     });
@@ -204,7 +215,8 @@ export class PaperManager {
       data: { rating }
     });
     
-    logger.info(`Updated rating for ${sourceId}:${paperId} to ${rating}`);
+    const paperIdentifier = this.sourceManager.formatPaperId(sourceId, paperId);
+    logger.info(`Updated rating for ${paperIdentifier} to ${rating}`);
   }
 
   /**
@@ -213,66 +225,8 @@ export class PaperManager {
   private async addInteraction(sourceId: string, paperId: string, interaction: Interaction): Promise<void> {
     const log = await this.getOrCreateInteractionLog(sourceId, paperId);
     log.interactions.push(interaction);
-    await this.client.updateObject(`interactions:${sourceId}:${paperId}`, log as unknown as { [key: string]: Json });
-  }
-
-  /**
-   * Get interactions for a paper
-   */
-  async getInteractions(
-    sourceId: string,
-    paperId: string,
-    options: {
-      type?: string;
-      startTime?: Date;
-      endTime?: Date;
-    } = {}
-  ): Promise<Interaction[]> {
-    try {
-      const log = await this.getOrCreateInteractionLog(sourceId, paperId);
-      let interactions = log.interactions;
-
-      if (options.type) {
-        interactions = interactions.filter((i: Interaction) => i.type === options.type);
-      }
-
-      if (options.startTime || options.endTime) {
-        interactions = interactions.filter((i: Interaction) => {
-          const time = new Date(i.timestamp);
-          if (options.startTime && time < options.startTime) return false;
-          if (options.endTime && time > options.endTime) return false;
-          return true;
-        });
-      }
-
-      return interactions;
-    } catch (error) {
-      if (error instanceof Error && error.message.includes('No object found')) {
-        return [];
-      }
-      throw error;
-    }
-  }
     
-  /**
-   * Calculate total reading time for a paper
-   */
-  async getPaperReadingTime(sourceId: string, paperId: string): Promise<number> {
-    const interactions = await this.getInteractions(sourceId, paperId, { type: 'reading_session' });
-    return interactions.reduce((total, i) => {
-      const data = i.data;
-      if (typeof data === 'object' && data !== null && 'duration_seconds' in data) {
-        return total + (data.duration_seconds as number);
-      }
-      return total;
-    }, 0);
-  }
-
-  /**
-   * Get history of paper changes
-   */
-  async getPaperHistory(sourceId: string, paperId: string): Promise<Json[]> {
-    const objectId = `paper:${sourceId}:${paperId}`;
-    return this.client.getObjectHistory(objectId);
+    const objectId = this.sourceManager.formatObjectId('interactions', sourceId, paperId);
+    await this.client.updateObject(objectId, log as unknown as { [key: string]: Json });
   }
 }
