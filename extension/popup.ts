@@ -71,7 +71,7 @@ async function getCurrentTabInfo(): Promise<PageMetadata> {
         // Execute script to extract metadata from page
         chrome.scripting.executeScript({
           target: { tabId: tabs[0].id },
-          function: extractPageMetadata
+          func: extractPageMetadata
         }, (results) => {
           if (results && results[0] && results[0].result) {
             resolve({
