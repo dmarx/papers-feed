@@ -275,6 +275,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const logPageButton = document.getElementById('logPageButton');
     if (logPageButton) {
         logPageButton.addEventListener('click', () => {
+            console.log("logPageButton clicked...");
             logCurrentPage(tabInfo);
         });
     }
