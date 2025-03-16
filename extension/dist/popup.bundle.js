@@ -149,8 +149,10 @@ function updateUI(paperData) {
 }
 // Function to log current page as a paper (one-click experience)
 async function logCurrentPage(pageInfo) {
+    console.log("attempting to log paper");
     // Generate a paper ID from the URL
     const paperId = generatePaperIdFromUrl(pageInfo.url);
+    console.log("generated paperId:", paperId);
     // Use 'pdf' or 'url' as the source identifier
     const sourceId = pageInfo.url.toLowerCase().endsWith('.pdf') ? 'pdf' : 'url';
     // Create paper metadata with extracted info
@@ -166,6 +168,7 @@ async function logCurrentPage(pageInfo) {
         tags: [],
         rating: 'novote'
     };
+    console.log("PaperMetadata:", metadata);
     // Send to background script
     chrome.runtime.sendMessage({
         type: 'manualPaperLog',
