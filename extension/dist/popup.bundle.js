@@ -1,5 +1,6 @@
 // popup.ts
 // TypeScript conversion of popup.js
+console.log('Popup script starting...');
 // Function to get paper data from background script
 async function getCurrentPaper() {
     return new Promise((resolve) => {
@@ -274,6 +275,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Set up one-click logging button
     const logPageButton = document.getElementById('logPageButton');
     if (logPageButton) {
+        console.log("Attaching logPageButton event listener...");
         logPageButton.addEventListener('click', () => {
             console.log("logPageButton clicked...");
             logCurrentPage(tabInfo);
