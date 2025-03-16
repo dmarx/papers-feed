@@ -22,46 +22,109 @@ interface PageMetadata {
   authors: string;
   description: string;
   publishedDate: string;
+  // new fields, may cause issues downstream
+  doi?: string;
+  journalName?: string;
+  tags?: string[];
 }
 
-// Function to extract metadata from the page
+// Function to extract metadata from the page with support for Dublin Core and Citation metadata
+// TODO: move this to generic or base source-integration
 function extractPageMetadata(): Partial<PageMetadata> {
   const metadata: Partial<PageMetadata> = {
     title: '',
     authors: '',
     description: '',
-    publishedDate: ''
+    publishedDate: '',
+    doi: '',
+    journalName: '',
+    tags: []
   };
 
-  // Try to get Open Graph title
-  const ogTitle = document.querySelector('meta[property="og:title"]')?.getAttribute('content');
-  if (ogTitle) {
-    metadata.title = ogTitle;
-  } else {
-    // Fallback to document title
-    metadata.title = document.title;
-  }
+  // Helper function to get content from meta tags
+  const getMetaContent = (selector: string): string => {
+    const element = document.querySelector(selector);
+    return element ? element.getAttribute('content') || '' : '';
+  };
 
-  // Try to get authors from Open Graph
-  const ogAuthor = document.querySelector('meta[property="og:article:author"]')?.getAttribute('content') || 
-                  document.querySelector('meta[name="author"]')?.getAttribute('content');
-  if (ogAuthor) {
+  // Title extraction - priority order
+  metadata.title = 
+    // Dublin Core
+    getMetaContent('meta[name="DC.Title"]') ||
+    // Citation
+    getMetaContent('meta[name="citation_title"]') ||
+    // Open Graph
+    getMetaContent('meta[property="og:title"]') ||
+    // Standard meta
+    getMetaContent('meta[name="title"]') ||
+    // Fallback to document title
+    document.title;
+
+  // Author extraction - multiple possibilities and potentially multiple authors
+  const dcCreator = getMetaContent('meta[name="DC.Creator.PersonalName"]');
+  const citationAuthor = getMetaContent('meta[name="citation_author"]');
+  const ogAuthor = getMetaContent('meta[property="og:article:author"]') || 
+                  getMetaContent('meta[name="author"]');
+  
+  // Get all citation authors (some pages have multiple citation_author tags)
+  const citationAuthors: string[] = [];
+  document.querySelectorAll('meta[name="citation_author"]').forEach(el => {
+    const content = el.getAttribute('content');
+    if (content) citationAuthors.push(content);
+  });
+  
+  // Get all DC creators
+  const dcCreators: string[] = [];
+  document.querySelectorAll('meta[name="DC.Creator.PersonalName"]').forEach(el => {
+    const content = el.getAttribute('content');
+    if (content) dcCreators.push(content);
+  });
+  
+  // Set authors with priority
+  if (dcCreators.length > 0) {
+    metadata.authors = dcCreators.join(', ');
+  } else if (citationAuthors.length > 0) {
+    metadata.authors = citationAuthors.join(', ');
+  } else if (dcCreator) {
+    metadata.authors = dcCreator;
+  } else if (citationAuthor) {
+    metadata.authors = citationAuthor;
+  } else if (ogAuthor) {
     metadata.authors = ogAuthor;
   }
 
-  // Try to get description from Open Graph
-  const ogDescription = document.querySelector('meta[property="og:description"]')?.getAttribute('content') || 
-                        document.querySelector('meta[name="description"]')?.getAttribute('content');
-  if (ogDescription) {
-    metadata.description = ogDescription;
+  // Description/Abstract extraction
+  metadata.description = 
+    getMetaContent('meta[name="DC.Description"]') ||
+    getMetaContent('meta[name="citation_abstract"]') ||
+    getMetaContent('meta[property="og:description"]') || 
+    getMetaContent('meta[name="description"]');
+
+  // Publication date extraction
+  metadata.publishedDate = 
+    getMetaContent('meta[name="DC.Date.issued"]') ||
+    getMetaContent('meta[name="citation_date"]') ||
+    getMetaContent('meta[property="article:published_time"]');
+
+  // DOI extraction
+  metadata.doi = 
+    getMetaContent('meta[name="DC.Identifier.DOI"]') ||
+    getMetaContent('meta[name="citation_doi"]');
+
+  // Journal name extraction
+  metadata.journalName = 
+    getMetaContent('meta[name="DC.Source"]') ||
+    getMetaContent('meta[name="citation_journal_title"]');
+
+  // Extract keywords/tags if available
+  const keywords = getMetaContent('meta[name="keywords"]') || 
+                  getMetaContent('meta[name="DC.Subject"]');
+  
+  if (keywords) {
+    metadata.tags = keywords.split(',').map(tag => tag.trim());
   }
 
-  // Try to get published date
-  const ogPublishedTime = document.querySelector('meta[property="article:published_time"]')?.getAttribute('content');
-  if (ogPublishedTime) {
-    metadata.publishedDate = ogPublishedTime;
-  }
-
+  console.log('Extracted metadata:', metadata);
   return metadata;
 }
 
@@ -116,15 +179,6 @@ function generatePaperIdFromUrl(url: string): string {
   
   // Create a positive hexadecimal string
   const positiveHash = Math.abs(hash).toString(16).toUpperCase();
-  
-  // // Determine the source type based on URL
-  // let sourceType = 'url';
-  // if (url.toLowerCase().endsWith('.pdf')) {
-  //   sourceType = 'pdf';
-  // }
-  
-  // return `${sourceType}.${positiveHash.substring(0, 8)}`;
-  ///////
   
   // sourceType will get prepended elsewhere, this is just generating a 
   // "source-specific" `paperId`, not the system-internal `objectId`
