@@ -97,12 +97,16 @@ function generatePaperIdFromUrl(url) {
     }
     // Create a positive hexadecimal string
     const positiveHash = Math.abs(hash).toString(16).toUpperCase();
-    // Determine the source type based on URL
-    let sourceType = 'url';
-    if (url.toLowerCase().endsWith('.pdf')) {
-        sourceType = 'pdf';
-    }
-    return `${sourceType}.${positiveHash.substring(0, 8)}`;
+    // // Determine the source type based on URL
+    // let sourceType = 'url';
+    // if (url.toLowerCase().endsWith('.pdf')) {
+    //   sourceType = 'pdf';
+    // }
+    // return `${sourceType}.${positiveHash.substring(0, 8)}`;
+    ///////
+    // sourceType will get prepended elsewhere, this is just generating a 
+    // "source-specific" `paperId`, not the system-internal `objectId`
+    return `${positiveHash.substring(0, 8)}`;
 }
 // Function to update UI with paper data
 function updateUI(paperData) {
