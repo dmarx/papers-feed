@@ -1,7 +1,7 @@
-// source-integration/arxiv/index.ts
-// ArXiv integration using metadata transformer
+// extension/source-integration/arxiv/index.ts
+// ArXiv integration inheriting from BaseSourceIntegration
 
-import { SourceIntegration } from '../types';
+import { BaseSourceIntegration } from '../base-source';
 import { PaperMetadata } from '../../papers/types';
 import { parseXMLText } from './xml-parser';
 import { transformMetadata, MetadataMapping } from '../../utils/metadata-transformer';
@@ -9,7 +9,7 @@ import { loguru } from '../../utils/logger';
 
 const logger = loguru.getLogger('arxiv-integration');
 
-export class ArXivIntegration implements SourceIntegration {
+export class ArXivIntegration extends BaseSourceIntegration {
   readonly id = 'arxiv';
   readonly name = 'arXiv.org';
   

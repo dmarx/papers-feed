@@ -1,5 +1,5 @@
-// source-integration/types.ts
-// Type definitions for source integrations with added heartbeat message types
+// extension/source-integration/types.ts
+// Updated SourceIntegration interface with identifier formatting methods
 
 import type { Json } from 'gh-store-client';
 import type { PaperMetadata } from '../papers/types';
@@ -29,6 +29,15 @@ export interface SourceIntegration {
   
   // Extract metadata from page or API
   extractMetadata(document: Document, paperId: string): Promise<PaperMetadata | null>;
+  
+  // Format a paper identifier (sourceId + paperId) for this source
+  formatPaperId(paperId: string): string;
+  
+  // Parse a paper identifier specific to this source
+  parsePaperId(identifier: string): string | null;
+  
+  // Format a storage object ID for this source
+  formatObjectId(type: string, paperId: string): string;
 }
 
 /**
@@ -46,8 +55,15 @@ export interface SourceManager {
   
   // Extract paper ID from URL using appropriate source
   extractPaperId(url: string): { sourceId: string, paperId: string } | null;
+  
+  // Format a paper identifier using the appropriate source
+  formatPaperId(sourceId: string, paperId: string): string;
+  
+  // Format an object ID using the appropriate source
+  formatObjectId(type: string, sourceId: string, paperId: string): string;
 }
 
+// Other existing types...
 // Message types for communication between background and content scripts
 
 // Content script ready notification

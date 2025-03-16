@@ -1,5 +1,5 @@
-// source-integration/source-manager.ts
-// Manager for source integrations
+// extension/source-integration/source-manager.ts
+// Updated SourceIntegrationManager to use source-specific identifier formatting
 
 import { SourceIntegration, SourceManager } from './types';
 import { loguru } from '../utils/logger';
@@ -51,6 +51,14 @@ export class SourceIntegrationManager implements SourceManager {
   }
   
   /**
+   * Get source by ID
+   */
+  getSourceById(sourceId: string): SourceIntegration | null {
+    const source = this.sources.get(sourceId);
+    return source || null;
+  }
+  
+  /**
    * Extract paper ID from URL using appropriate source
    */
   extractPaperId(url: string): { sourceId: string, paperId: string } | null {
@@ -66,6 +74,36 @@ export class SourceIntegrationManager implements SourceManager {
     
     logger.debug(`Could not extract paper ID from URL: ${url}`);
     return null;
+  }
+  
+  /**
+   * Format a paper identifier using the appropriate source
+   */
+  formatPaperId(sourceId: string, paperId: string): string {
+    const source = this.sources.get(sourceId);
+    
+    if (source) {
+      return source.formatPaperId(paperId);
+    }
+    
+    // Fallback if source not found
+    logger.warning(`Source '${sourceId}' not found, using default format for paper ID`);
+    return `${sourceId}.${paperId}`;
+  }
+  
+  /**
+   * Format an object ID using the appropriate source
+   */
+  formatObjectId(type: string, sourceId: string, paperId: string): string {
+    const source = this.sources.get(sourceId);
+    
+    if (source) {
+      return source.formatObjectId(type, paperId);
+    }
+    
+    // Fallback if source not found
+    logger.warning(`Source '${sourceId}' not found, using default format for object ID`);
+    return `${type}:${sourceId}.${paperId}`;
   }
   
   /**
