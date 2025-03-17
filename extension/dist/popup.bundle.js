@@ -1,148 +1,228 @@
-// popup.ts
-// TypeScript conversion of popup.js
-console.log('Popup script starting...');
-// Function to get paper data from background script
-async function getCurrentPaper() {
-    return new Promise((resolve) => {
-        chrome.runtime.sendMessage({ type: 'getCurrentPaper' }, (response) => {
-            console.log('Got paper data from background:', response);
-            resolve(response);
-        });
-    });
+// utils/logger.ts
+// Logging utility wrapping loguru
+/**
+ * Logger class for consistent logging throughout the extension
+ */
+class Logger {
+    constructor(module) {
+        this.module = module;
+    }
+    /**
+     * Log debug message
+     */
+    debug(message, data) {
+        console.debug(`[${this.module}] ${message}`, data !== undefined ? data : '');
+    }
+    /**
+     * Log info message
+     */
+    info(message, data) {
+        console.info(`[${this.module}] ${message}`, data !== undefined ? data : '');
+    }
+    /**
+     * Log warning message
+     */
+    warning(message, data) {
+        console.warn(`[${this.module}] ${message}`, data !== undefined ? data : '');
+    }
+    /**
+     * Log error message
+     */
+    error(message, data) {
+        console.error(`[${this.module}] ${message}`, data !== undefined ? data : '');
+    }
 }
-// Function to extract metadata from the page with support for Dublin Core and Citation metadata
-// TODO: move this to generic or base source-integration
-function extractPageMetadata() {
-    const metadata = {
-        title: '',
-        authors: '',
-        description: '',
-        publishedDate: '',
-        doi: '',
-        journalName: '',
-        tags: []
-    };
-    // Helper function to get content from meta tags
-    const getMetaContent = (selector) => {
-        const element = document.querySelector(selector);
+/**
+ * Loguru mock for browser extension use
+ */
+class LoguruMock {
+    /**
+     * Get logger for a module
+     */
+    getLogger(module) {
+        return new Logger(module);
+    }
+}
+// Export singleton instance
+const loguru = new LoguruMock();
+
+// extension/utils/metadata-extractor.ts
+const logger = loguru.getLogger('metadata-extractor');
+// Constants for standard source types
+const SOURCE_TYPES = {
+    PDF: 'pdf',
+    URL: 'url',
+};
+/**
+ * Base class for metadata extraction with customizable extraction methods
+ * Each method can be overridden to provide source-specific extraction
+ */
+class MetadataExtractor {
+    /**
+     * Create a new metadata extractor for a document
+     */
+    constructor(document) {
+        this.document = document;
+        this.url = document.location.href;
+        logger.debug('Initialized metadata extractor for:', this.url);
+    }
+    /**
+     * Helper method to get content from meta tags
+     */
+    getMetaContent(selector) {
+        const element = this.document.querySelector(selector);
         return element ? element.getAttribute('content') || '' : '';
-    };
-    // Title extraction - priority order
-    metadata.title =
+    }
+    /**
+     * Extract and return all metadata fields
+     */
+    extract() {
+        logger.debug('Extracting metadata from page:', this.url);
+        const metadata = {
+            title: this.extractTitle(),
+            authors: this.extractAuthors(),
+            description: this.extractDescription(),
+            publishedDate: this.extractPublishedDate(),
+            doi: this.extractDoi(),
+            journalName: this.extractJournalName(),
+            tags: this.extractTags(),
+            url: this.url
+        };
+        logger.debug('Metadata extraction complete:', metadata);
+        return metadata;
+    }
+    /**
+     * Extract title from document
+     * Considers multiple metadata standards with priority order
+     */
+    extractTitle() {
+        // Title extraction - priority order
+        return (
         // Dublin Core
-        getMetaContent('meta[name="DC.Title"]') ||
+        this.getMetaContent('meta[name="DC.Title"]') ||
             // Citation
-            getMetaContent('meta[name="citation_title"]') ||
+            this.getMetaContent('meta[name="citation_title"]') ||
             // Open Graph
-            getMetaContent('meta[property="og:title"]') ||
+            this.getMetaContent('meta[property="og:title"]') ||
             // Standard meta
-            getMetaContent('meta[name="title"]') ||
+            this.getMetaContent('meta[name="title"]') ||
             // Fallback to document title
-            document.title;
-    // Author extraction - multiple possibilities and potentially multiple authors
-    const dcCreator = getMetaContent('meta[name="DC.Creator.PersonalName"]');
-    const citationAuthor = getMetaContent('meta[name="citation_author"]');
-    const ogAuthor = getMetaContent('meta[property="og:article:author"]') ||
-        getMetaContent('meta[name="author"]');
-    // Get all citation authors (some pages have multiple citation_author tags)
-    const citationAuthors = [];
-    document.querySelectorAll('meta[name="citation_author"]').forEach(el => {
-        const content = el.getAttribute('content');
-        if (content)
-            citationAuthors.push(content);
-    });
-    // Get all DC creators
-    const dcCreators = [];
-    document.querySelectorAll('meta[name="DC.Creator.PersonalName"]').forEach(el => {
-        const content = el.getAttribute('content');
-        if (content)
-            dcCreators.push(content);
-    });
-    // Set authors with priority
-    if (dcCreators.length > 0) {
-        metadata.authors = dcCreators.join(', ');
+            this.document.title);
     }
-    else if (citationAuthors.length > 0) {
-        metadata.authors = citationAuthors.join(', ');
-    }
-    else if (dcCreator) {
-        metadata.authors = dcCreator;
-    }
-    else if (citationAuthor) {
-        metadata.authors = citationAuthor;
-    }
-    else if (ogAuthor) {
-        metadata.authors = ogAuthor;
-    }
-    // Description/Abstract extraction
-    metadata.description =
-        getMetaContent('meta[name="DC.Description"]') ||
-            getMetaContent('meta[name="citation_abstract"]') ||
-            getMetaContent('meta[property="og:description"]') ||
-            getMetaContent('meta[name="description"]');
-    // Publication date extraction
-    metadata.publishedDate =
-        getMetaContent('meta[name="DC.Date.issued"]') ||
-            getMetaContent('meta[name="citation_date"]') ||
-            getMetaContent('meta[property="article:published_time"]');
-    // DOI extraction
-    metadata.doi =
-        getMetaContent('meta[name="DC.Identifier.DOI"]') ||
-            getMetaContent('meta[name="citation_doi"]');
-    // Journal name extraction
-    metadata.journalName =
-        getMetaContent('meta[name="DC.Source"]') ||
-            getMetaContent('meta[name="citation_journal_title"]');
-    // Extract keywords/tags if available
-    const keywords = getMetaContent('meta[name="keywords"]') ||
-        getMetaContent('meta[name="DC.Subject"]');
-    if (keywords) {
-        metadata.tags = keywords.split(',').map(tag => tag.trim());
-    }
-    console.log('Extracted metadata:', metadata);
-    return metadata;
-}
-// Function to get current tab info and metadata
-async function getCurrentTabInfo() {
-    return new Promise((resolve) => {
-        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-            if (tabs[0] && tabs[0].id) {
-                // Execute script to extract metadata from page
-                chrome.scripting.executeScript({
-                    target: { tabId: tabs[0].id },
-                    func: extractPageMetadata
-                }, (results) => {
-                    if (results && results[0] && results[0].result) {
-                        resolve({
-                            url: tabs[0].url || '',
-                            title: tabs[0].title || '',
-                            ...results[0].result
-                        });
-                    }
-                    else {
-                        resolve({
-                            url: tabs[0].url || '',
-                            title: tabs[0].title || '',
-                            authors: '',
-                            description: '',
-                            publishedDate: ''
-                        });
-                    }
-                });
-            }
-            else {
-                resolve({
-                    url: '',
-                    title: '',
-                    authors: '',
-                    description: '',
-                    publishedDate: ''
-                });
-            }
+    /**
+     * Extract authors from document
+     * Handles multiple author formats and sources
+     */
+    extractAuthors() {
+        // Get all citation authors (some pages have multiple citation_author tags)
+        const citationAuthors = [];
+        this.document.querySelectorAll('meta[name="citation_author"]').forEach(el => {
+            const content = el.getAttribute('content');
+            if (content)
+                citationAuthors.push(content);
         });
-    });
+        // Get all DC creators
+        const dcCreators = [];
+        this.document.querySelectorAll('meta[name="DC.Creator.PersonalName"]').forEach(el => {
+            const content = el.getAttribute('content');
+            if (content)
+                dcCreators.push(content);
+        });
+        // Individual author elements
+        const dcCreator = this.getMetaContent('meta[name="DC.Creator.PersonalName"]');
+        const citationAuthor = this.getMetaContent('meta[name="citation_author"]');
+        const ogAuthor = this.getMetaContent('meta[property="og:article:author"]') ||
+            this.getMetaContent('meta[name="author"]');
+        // Set authors with priority
+        if (dcCreators.length > 0) {
+            return dcCreators.join(', ');
+        }
+        else if (citationAuthors.length > 0) {
+            return citationAuthors.join(', ');
+        }
+        else if (dcCreator) {
+            return dcCreator;
+        }
+        else if (citationAuthor) {
+            return citationAuthor;
+        }
+        else if (ogAuthor) {
+            return ogAuthor;
+        }
+        return '';
+    }
+    /**
+     * Extract description/abstract from document
+     */
+    extractDescription() {
+        return (this.getMetaContent('meta[name="DC.Description"]') ||
+            this.getMetaContent('meta[name="citation_abstract"]') ||
+            this.getMetaContent('meta[property="og:description"]') ||
+            this.getMetaContent('meta[name="description"]'));
+    }
+    /**
+     * Extract publication date from document
+     */
+    extractPublishedDate() {
+        return (this.getMetaContent('meta[name="DC.Date.issued"]') ||
+            this.getMetaContent('meta[name="citation_date"]') ||
+            this.getMetaContent('meta[property="article:published_time"]'));
+    }
+    /**
+     * Extract DOI (Digital Object Identifier) from document
+     */
+    extractDoi() {
+        return (this.getMetaContent('meta[name="DC.Identifier.DOI"]') ||
+            this.getMetaContent('meta[name="citation_doi"]'));
+    }
+    /**
+     * Extract journal name from document
+     */
+    extractJournalName() {
+        return (this.getMetaContent('meta[name="DC.Source"]') ||
+            this.getMetaContent('meta[name="citation_journal_title"]'));
+    }
+    /**
+     * Extract keywords/tags from document
+     */
+    extractTags() {
+        const keywords = this.getMetaContent('meta[name="keywords"]') ||
+            this.getMetaContent('meta[name="DC.Subject"]');
+        if (keywords) {
+            return keywords.split(',').map(tag => tag.trim());
+        }
+        return [];
+    }
+    /**
+     * Determine if the current URL is a PDF
+     */
+    isPdf() {
+        return isPdfUrl(this.url);
+    }
+    /**
+     * Get the source type (PDF or URL)
+     */
+    getSourceType() {
+        return this.isPdf() ? SOURCE_TYPES.PDF : SOURCE_TYPES.URL;
+    }
+    /**
+     * Generate a paper ID for the current URL
+     */
+    generatePaperId() {
+        return generatePaperIdFromUrl(this.url);
+    }
 }
-// Generate a paper ID from a URL
+/**
+ * Create a common metadata extractor for a document
+ * Factory function for creating the default extractor
+ */
+function createMetadataExtractor(document) {
+    return new MetadataExtractor(document);
+}
+/**
+ * Generate a paper ID from a URL
+ * Creates a consistent hash-based identifier
+ */
 function generatePaperIdFromUrl(url) {
     // Use a basic hash function to create an ID from the URL
     let hash = 0;
@@ -153,9 +233,116 @@ function generatePaperIdFromUrl(url) {
     }
     // Create a positive hexadecimal string
     const positiveHash = Math.abs(hash).toString(16).toUpperCase();
-    // sourceType will get prepended elsewhere, this is just generating a 
-    // "source-specific" `paperId`, not the system-internal `objectId`
-    return `${positiveHash.substring(0, 8)}`;
+    // Use the first 8 characters as the ID
+    return positiveHash.substring(0, 8);
+}
+/**
+ * Determine if a URL is a PDF
+ */
+function isPdfUrl(url) {
+    return url.toLowerCase().endsWith('.pdf');
+}
+
+// popup.ts
+console.log('Popup script starting...');
+// Function to get paper data from background script
+async function getCurrentPaper() {
+    return new Promise((resolve) => {
+        chrome.runtime.sendMessage({ type: 'getCurrentPaper' }, (response) => {
+            console.log('Got paper data from background:', response);
+            resolve(response);
+        });
+    });
+}
+// Function to get current tab info and metadata
+async function getCurrentTabInfo() {
+    return new Promise((resolve) => {
+        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+            if (tabs[0] && tabs[0].id) {
+                // Execute script to extract metadata from page
+                chrome.scripting.executeScript({
+                    target: { tabId: tabs[0].id },
+                    // We can import the MetadataExtractor properly with rollup.js
+                    func: () => {
+                        // Import statements are handled by rollup and will be included in the bundle
+                        // Use the imported MetadataExtractor
+                        const extractor = createMetadataExtractor(document);
+                        const metadata = extractor.extract();
+                        return {
+                            ...metadata,
+                            url: window.location.href
+                        };
+                    }
+                }, (results) => {
+                    if (results && results[0] && results[0].result) {
+                        resolve({
+                            ...results[0].result
+                        });
+                    }
+                    else {
+                        resolve({
+                            url: tabs[0].url || '',
+                            title: tabs[0].title || '',
+                            authors: '',
+                            description: '',
+                            publishedDate: '',
+                            tags: []
+                        });
+                    }
+                });
+            }
+            else {
+                resolve({
+                    url: '',
+                    title: '',
+                    authors: '',
+                    description: '',
+                    publishedDate: '',
+                    tags: []
+                });
+            }
+        });
+    });
+}
+// Function to log current page as a paper
+async function logCurrentPage(pageInfo) {
+    console.log("Requesting background script to create paper entry");
+    // Pass pageInfo to background script for processing by the source system
+    chrome.runtime.sendMessage({
+        type: 'createManualPaperEntry',
+        pageInfo
+    }, (response) => {
+        const statusElement = document.getElementById('status');
+        if (!statusElement)
+            return;
+        if (response && response.success && response.metadata) {
+            const metadata = response.metadata;
+            statusElement.textContent = 'Page tracked successfully!';
+            // Update UI to show the logged paper
+            updateUI(metadata);
+            // Start a session for this paper
+            chrome.runtime.sendMessage({
+                type: 'startSession',
+                sourceId: metadata.sourceId,
+                paperId: metadata.paperId
+            });
+            // Enable rating buttons
+            const thumbsUpButton = document.getElementById('thumbsUp');
+            const thumbsDownButton = document.getElementById('thumbsDown');
+            if (thumbsUpButton && thumbsDownButton) {
+                thumbsUpButton.disabled = false;
+                thumbsDownButton.disabled = false;
+            }
+            // Hide manual log section
+            const manualLogSection = document.getElementById('manualLogSection');
+            if (manualLogSection) {
+                manualLogSection.style.display = 'none';
+            }
+        }
+        else {
+            statusElement.textContent = 'Error: ' + (response?.error || 'Failed to log paper');
+        }
+    });
 }
 // Function to update UI with paper data
 function updateUI(paperData) {
@@ -200,64 +387,6 @@ function updateUI(paperData) {
         // Show manual log section
         manualLogSection.style.display = 'block';
     }
-}
-// Function to log current page as a paper (one-click experience)
-async function logCurrentPage(pageInfo) {
-    console.log("attempting to log paper");
-    // Generate a paper ID from the URL
-    const paperId = generatePaperIdFromUrl(pageInfo.url);
-    console.log("generated paperId:", paperId);
-    // Use 'pdf' or 'url' as the source identifier
-    const sourceId = pageInfo.url.toLowerCase().endsWith('.pdf') ? 'pdf' : 'url';
-    // Create paper metadata with extracted info
-    const metadata = {
-        sourceId: sourceId,
-        paperId: paperId,
-        url: pageInfo.url,
-        title: pageInfo.title || paperId,
-        authors: pageInfo.authors || '',
-        abstract: pageInfo.description || '',
-        timestamp: new Date().toISOString(),
-        publishedDate: pageInfo.publishedDate || '',
-        tags: [],
-        rating: 'novote'
-    };
-    console.log("PaperMetadata:", metadata);
-    // Send to background script
-    chrome.runtime.sendMessage({
-        type: 'manualPaperLog',
-        metadata: metadata
-    }, (response) => {
-        const statusElement = document.getElementById('status');
-        if (!statusElement)
-            return;
-        if (response && response.success) {
-            statusElement.textContent = 'Page tracked successfully!';
-            // Update UI to show the logged paper
-            updateUI(metadata);
-            // Start a session for this paper
-            chrome.runtime.sendMessage({
-                type: 'startSession',
-                sourceId: sourceId,
-                paperId: paperId
-            });
-            // Enable rating buttons
-            const thumbsUpButton = document.getElementById('thumbsUp');
-            const thumbsDownButton = document.getElementById('thumbsDown');
-            if (thumbsUpButton && thumbsDownButton) {
-                thumbsUpButton.disabled = false;
-                thumbsDownButton.disabled = false;
-            }
-            // Hide manual log section
-            const manualLogSection = document.getElementById('manualLogSection');
-            if (manualLogSection) {
-                manualLogSection.style.display = 'none';
-            }
-        }
-        else {
-            statusElement.textContent = 'Error: ' + (response?.error || 'Failed to log paper');
-        }
-    });
 }
 // Initialize popup
 document.addEventListener('DOMContentLoaded', async () => {
