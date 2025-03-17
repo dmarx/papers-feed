@@ -352,11 +352,13 @@ async function processCurrentPage(force: boolean = false): Promise<PaperMetadata
     // Use source-specific extraction or createManualPaperEntry for generic source
     let metadata: PaperMetadata | null;
     
-    if ((source === genericSource || source === pdfSource) && force) {
-      metadata = await source.createManualPaperEntry(url, document);
-    } else {
-      metadata = await source.extractMetadata(document, paperId);
-    }
+    // if ((source === genericSource || source === pdfSource) && force) {
+    //   metadata = await source.createManualPaperEntry(url, document);
+    // } else {
+    //   metadata = await source.extractMetadata(document, paperId);
+    // }
+    metadata = await source.extractMetadata(document, paperId);
+    
     
     if (metadata) {
       // Send metadata to background script
