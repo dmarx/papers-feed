@@ -5,6 +5,8 @@ import { LinkProcessor } from './source-integration/link-processor';
 import { SourceIntegration, Message } from './source-integration/types';
 import { PaperMetadata } from './papers/types';
 import { loguru } from './utils/logger';
+import { BaseSourceIntegration } from './source-integration/base-source';
+import { generatePaperIdFromUrl } from './utils/metadata-extractor';
 
 // Import source plugins directly
 import { arxivIntegration } from './source-integration/arxiv';
@@ -13,9 +15,48 @@ const logger = loguru.getLogger('content-script');
 
 logger.info('Paper Tracker content script loaded');
 
+// Create a generic source for fallback extraction
+class GenericSourceIntegration extends BaseSourceIntegration {
+  readonly id = 'url';
+  readonly name = 'Generic Source';
+  readonly urlPatterns: RegExp[] = [];
+  readonly contentScriptMatches: string[] = [];
+  
+  canHandleUrl(url: string): boolean {
+    return false; // This source doesn't directly handle any URLs
+  }
+  
+  extractPaperId(url: string): string | null {
+    return generatePaperIdFromUrl(url); // Generate a paperId from URL hash
+  }
+}
+
+// Create a singleton instance of the generic source
+const genericSource = new GenericSourceIntegration();
+
+// Create PDF source for PDF files
+class PdfSourceIntegration extends BaseSourceIntegration {
+  readonly id = 'pdf';
+  readonly name = 'PDF Document';
+  readonly urlPatterns: RegExp[] = [/\.pdf$/i];
+  readonly contentScriptMatches: string[] = [];
+  
+  canHandleUrl(url: string): boolean {
+    return url.toLowerCase().endsWith('.pdf');
+  }
+  
+  extractPaperId(url: string): string | null {
+    return generatePaperIdFromUrl(url); // Generate a paperId from URL hash
+  }
+}
+
+// Create a singleton instance of the PDF source
+const pdfSource = new PdfSourceIntegration();
+
 // Available source integrations
 const sourceIntegrations: SourceIntegration[] = [
   arxivIntegration,
+  pdfSource,
   // Add more sources as they become available
 ];
 
@@ -225,19 +266,6 @@ function getSourceForUrl(url: string): SourceIntegration | null {
   return null;
 }
 
-// Extract paper ID from URL
-function extractPaperId(url: string): { sourceId: string, paperId: string } | null {
-  for (const source of sourceIntegrations) {
-    if (source.canHandleUrl(url)) {
-      const paperId = source.extractPaperId(url);
-      if (paperId) {
-        return { sourceId: source.id, paperId };
-      }
-    }
-  }
-  return null;
-}
-
 // Set up click-outside handler for popups
 document.addEventListener('click', (e) => {
   if (activePopup && 
@@ -255,7 +283,7 @@ function startSessionTracking(sourceId: string, paperId: string) {
   
   // Only start tracking if tab is visible
   if (!isTabVisible) {
-    logger.debug(`Not starting session for ${sourceId}:${paperId} because tab is not visible`);
+    logger.debug(`Not starting session for ${sourceId}.${paperId} because tab is not visible`);
     return;
   }
   
@@ -266,9 +294,9 @@ function startSessionTracking(sourceId: string, paperId: string) {
     paperId
   }, response => {
     if (response?.success) {
-      logger.debug(`Started session for ${sourceId}:${paperId}`);
+      logger.debug(`Started session for ${sourceId}.${paperId}`);
     } else {
-      logger.error(`Failed to start session for ${sourceId}:${paperId}`, response?.error);
+      logger.error(`Failed to start session for ${sourceId}.${paperId}`, response?.error);
     }
   });
   
@@ -294,84 +322,62 @@ function stopHeartbeat() {
   }
 }
 
+// Update the processCurrentPage function to handle the force parameter
 async function processCurrentPage(force: boolean = false): Promise<PaperMetadata | null> {
   const url = window.location.href;
-  const paperInfo = extractPaperId(url);
   
-  if (paperInfo) {
-    logger.info(`Detected paper: ${paperInfo.sourceId}:${paperInfo.paperId}`);
-    
-    const { sourceId, paperId } = paperInfo;
-    const source = sourceIntegrations.find(s => s.id === sourceId);
-    
-    if (source) {
-      try {
-        const metadata = await source.extractMetadata(document, paperId);
-        
-        if (metadata) {
-          // Send metadata to background script
-          chrome.runtime.sendMessage({
-            type: 'paperMetadata',
-            metadata
-          });
-          
-          logger.debug(`Sent metadata to background script for ${sourceId}:${paperId}`);
-          
-          // Start session tracking if tab is visible
-          if (isTabVisible) {
-            startSessionTracking(sourceId, paperId);
-          }
-          
-          return metadata;
-        }
-      } catch (error) {
-        logger.error(`Error extracting metadata for ${sourceId}:${paperId}`, error);
-      }
-    }
+  // Find a source that can handle this URL
+  let source = getSourceForUrl(url);
+  
+  // If no source was found and force parameter is set, use generic source
+  if (!source && force) {
+    logger.info(`No matching source found, but force parameter set. Using generic source for: ${url}`);
+    source = url.toLowerCase().endsWith('.pdf') ? pdfSource : genericSource;
+  }
+
+  // If we still don't have a source, return null
+  if (!source) {
+    logger.debug(`No source found for URL: ${url}`);
+    return null;
+  }
+
+  // Now that we have a source, extract the paperId
+  const paperId = source.extractPaperId(url);
+  if (!paperId) {
+    logger.info(`Unable to determine a paperId for url: ${url}`);
+    return null;
   }
   
-  // If we reach here, either:
-  // 1. No source was detected for the URL, or
-  // 2. Extraction failed for a detected source
-  
-  // Only proceed with fallback if force=true (manual tracking requested)
-  if (force) {
-    logger.info(`Force parameter set, using fallback extraction for: ${url}`);
+  try {
+    // Use source-specific extraction or createManualPaperEntry for generic source
+    let metadata: PaperMetadata | null;
     
-    // Determine if PDF or generic URL
-    const isPdf = url.toLowerCase().endsWith('.pdf');
-    const sourceId = isPdf ? 'pdf' : 'url';
+    if ((source === genericSource || source === pdfSource) && force) {
+      metadata = await source.createManualPaperEntry(url, document);
+    } else {
+      metadata = await source.extractMetadata(document, paperId);
+    }
     
-    // Generate paper ID from URL
-    const paperId = generatePaperIdFromUrl(url);
-    
-    // Use arxiv integration just to access the BaseSourceIntegration methods
-    // This is fine since we're only using createManualPaperEntry which is defined in the base class
-    try {
-      const metadata = await arxivIntegration.createManualPaperEntry(url, document);
+    if (metadata) {
+      // Send metadata to background script
+      chrome.runtime.sendMessage({
+        type: 'paperMetadata',
+        metadata
+      });
       
-      if (metadata) {
-        // Send metadata to background script
-        chrome.runtime.sendMessage({
-          type: 'paperMetadata',
-          metadata
-        });
-        
-        logger.debug(`Sent manually extracted metadata to background script for ${metadata.sourceId}:${metadata.paperId}`);
-        
-        // Start session tracking if tab is visible
-        if (isTabVisible) {
-          startSessionTracking(metadata.sourceId, metadata.paperId);
-        }
-        
-        return metadata;
+      logger.debug(`Sent extracted metadata to background script for ${metadata.sourceId}.${metadata.paperId}`);
+      
+      // Start session tracking if tab is visible
+      if (isTabVisible) {
+        startSessionTracking(metadata.sourceId, metadata.paperId);
       }
-    } catch (error) {
-      logger.error('Error in fallback metadata extraction', error);
+      
+      return metadata;
     }
+  } catch (error) {
+    logger.error(`Error extracting metadata for ${source.id}.${paperId}`, error);
   }
   
-  // Failed to extract any metadata
   return null;
 }
 
@@ -380,22 +386,25 @@ document.addEventListener('visibilitychange', () => {
   const wasVisible = isTabVisible;
   isTabVisible = document.visibilityState === 'visible';
   
-  const paperInfo = extractPaperId(window.location.href);
-  if (!paperInfo) return;
+  const source = getSourceForUrl(window.location.href);
+  if (!source) return;
+  
+  const paperId = source.extractPaperId(window.location.href);
+  if (!paperId) return;
   
   if (isTabVisible && !wasVisible) {
     // Tab has become visible again - restart session
-    logger.info(`Tab became visible again for ${paperInfo.sourceId}:${paperInfo.paperId}`);
-    startSessionTracking(paperInfo.sourceId, paperInfo.paperId);
+    logger.info(`Tab became visible again for ${source.id}:${paperId}`);
+    startSessionTracking(source.id, paperId);
   } else if (!isTabVisible && wasVisible) {
     // Tab has become hidden - end current session
-    logger.info(`Tab hidden for ${paperInfo.sourceId}:${paperInfo.paperId}`);
+    logger.info(`Tab hidden for ${source.id}:${paperId}`);
     
     // Send end session message
     chrome.runtime.sendMessage({
       type: 'endSession',
-      sourceId: paperInfo.sourceId,
-      paperId: paperInfo.paperId,
+      sourceId: source.id,
+      paperId: paperId,
       reason: 'tab_hidden'
     });
     
@@ -406,28 +415,34 @@ document.addEventListener('visibilitychange', () => {
 
 // Focus/blur listeners
 window.addEventListener('focus', () => {
-  const paperInfo = extractPaperId(window.location.href);
-  if (!paperInfo) return;
+  const source = getSourceForUrl(window.location.href);
+  if (!source) return;
+  
+  const paperId = source.extractPaperId(window.location.href);
+  if (!paperId) return;
   
   // Tab gained focus - restart session if it wasn't already running
   if (!heartbeatInterval) {
-    logger.info(`Tab gained focus for ${paperInfo.sourceId}:${paperInfo.paperId}`);
-    startSessionTracking(paperInfo.sourceId, paperInfo.paperId);
+    logger.info(`Tab gained focus for ${source.id}:${paperId}`);
+    startSessionTracking(source.id, paperId);
   }
 });
 
 window.addEventListener('blur', () => {
-  const paperInfo = extractPaperId(window.location.href);
-  if (!paperInfo) return;
+  const source = getSourceForUrl(window.location.href);
+  if (!source) return;
+  
+  const paperId = source.extractPaperId(window.location.href);
+  if (!paperId) return;
   
   // Tab lost focus - end current session
-  logger.info(`Tab lost focus for ${paperInfo.sourceId}:${paperInfo.paperId}`);
+  logger.info(`Tab lost focus for ${source.id}:${paperId}`);
   
   // Send end session message
   chrome.runtime.sendMessage({
     type: 'endSession',
-    sourceId: paperInfo.sourceId,
-    paperId: paperInfo.paperId,
+    sourceId: source.id,
+    paperId: paperId,
     reason: 'tab_blur'
   });
   
@@ -438,17 +453,19 @@ window.addEventListener('blur', () => {
 // Inform background when page is unloaded
 window.addEventListener('beforeunload', () => {
   const url = window.location.href;
-  const paperInfo = extractPaperId(url);
+  const source = getSourceForUrl(url);
+  if (!source) return;
   
-  if (paperInfo) {
-    // Try to send one last message before page unloads
-    chrome.runtime.sendMessage({
-      type: 'endSession',
-      sourceId: paperInfo.sourceId,
-      paperId: paperInfo.paperId,
-      reason: 'page_unload'
-    });
-  }
+  const paperId = source.extractPaperId(url);
+  if (!paperId) return;
+  
+  // Try to send one last message before page unloads
+  chrome.runtime.sendMessage({
+    type: 'endSession',
+    sourceId: source.id,
+    paperId: paperId,
+    reason: 'page_unload'
+  });
   
   stopHeartbeat();
 });
