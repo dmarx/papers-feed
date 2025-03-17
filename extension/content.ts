@@ -294,8 +294,7 @@ function stopHeartbeat() {
   }
 }
 
-// Process current page if it's a paper
-async function processCurrentPage() {
+async function processCurrentPage(force: boolean = false): Promise<PaperMetadata | null> {
   const url = window.location.href;
   const paperInfo = extractPaperId(url);
   
@@ -322,12 +321,58 @@ async function processCurrentPage() {
           if (isTabVisible) {
             startSessionTracking(sourceId, paperId);
           }
+          
+          return metadata;
         }
       } catch (error) {
         logger.error(`Error extracting metadata for ${sourceId}:${paperId}`, error);
       }
     }
   }
+  
+  // If we reach here, either:
+  // 1. No source was detected for the URL, or
+  // 2. Extraction failed for a detected source
+  
+  // Only proceed with fallback if force=true (manual tracking requested)
+  if (force) {
+    logger.info(`Force parameter set, using fallback extraction for: ${url}`);
+    
+    // Determine if PDF or generic URL
+    const isPdf = url.toLowerCase().endsWith('.pdf');
+    const sourceId = isPdf ? 'pdf' : 'url';
+    
+    // Generate paper ID from URL
+    const paperId = generatePaperIdFromUrl(url);
+    
+    // Use arxiv integration just to access the BaseSourceIntegration methods
+    // This is fine since we're only using createManualPaperEntry which is defined in the base class
+    try {
+      const metadata = await arxivIntegration.createManualPaperEntry(url, document);
+      
+      if (metadata) {
+        // Send metadata to background script
+        chrome.runtime.sendMessage({
+          type: 'paperMetadata',
+          metadata
+        });
+        
+        logger.debug(`Sent manually extracted metadata to background script for ${metadata.sourceId}:${metadata.paperId}`);
+        
+        // Start session tracking if tab is visible
+        if (isTabVisible) {
+          startSessionTracking(metadata.sourceId, metadata.paperId);
+        }
+        
+        return metadata;
+      }
+    } catch (error) {
+      logger.error('Error in fallback metadata extraction', error);
+    }
+  }
+  
+  // Failed to extract any metadata
+  return null;
 }
 
 // Visibility change listener
@@ -411,6 +456,28 @@ window.addEventListener('beforeunload', () => {
 // Message handler for background script
 chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
   logger.debug('Received message', message);
+
+  if (message.type === 'extractPaperMetadata') {
+    logger.debug('Received request to extract paper metadata manually');
+    
+    // Use processCurrentPage with force=true to enable fallback extraction
+    processCurrentPage(true)
+      .then(metadata => {
+        if (metadata) {
+          sendResponse({ success: true, metadata });
+        } else {
+          sendResponse({ success: false, error: 'Failed to extract metadata' });
+        }
+      })
+      .catch(error => {
+        logger.error('Error extracting metadata', error);
+        sendResponse({ 
+          success: false, 
+          error: error instanceof Error ? error.message : 'Unknown error' 
+        });
+      });
+    return true; // Will respond asynchronously
+  }
   
   if (message.type === 'showPopup') {
     // Remove existing popup
