@@ -74,8 +74,6 @@ async function initialize() {
     // Set up message listeners
     setupMessageListeners();
     
-    // Initialize debug objects
-    initializeDebugObjects();
   } catch (error) {
     logger.error('Initialization error', error);
   }
@@ -253,6 +251,21 @@ function handleEndSession(sourceId: string, paperId: string, reason: string) {
     sessionService.endSession();
   } else {
     logger.warning(`Received end request for non-current session: ${sourceId}:${paperId}`);
+  }
+}
+
+async function handleManualPaperLog(metadata: PaperMetadata): Promise<void> {
+  logger.info(`Received manual paper log: ${metadata.sourceId}:${metadata.paperId}`);
+
+  try {
+    // Store in GitHub if we have a paper manager
+    if (paperManager) {
+      await paperManager.getOrCreatePaper(metadata);
+      logger.debug('Manually logged paper stored in GitHub');
+    }
+  } catch (error) {
+    logger.error('Error handling manual paper log', error);
+    throw error;
   }
 }
 
