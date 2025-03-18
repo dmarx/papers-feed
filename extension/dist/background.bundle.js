@@ -925,7 +925,7 @@ class BaseSourceIntegration {
             // Create PaperMetadata object
             return {
                 sourceId: this.id,
-                paperId,
+                paperId: this.formatPaperId(paperId),
                 url: url,
                 title: extracted.title || document.title || paperId,
                 authors: extracted.authors || '',
