@@ -279,67 +279,6 @@ chrome.storage.onChanged.addListener(async (changes) => {
   }
 });
 
-// End current session and save data
-async function endCurrentSession() {
-  if (!sessionService) {
-    return;
-  }
-  
-  // Get current session
-  const session = sessionService.getCurrentSession();
-  if (!session) {
-    return;
-  }
-  
-  // Get paper metadata
-  const metadata = sessionService.getPaperMetadata();
-  
-  // End the session
-  const sessionData = sessionService.endSession();
-  
-  // Store session data if we have it and a paper manager
-  if (sessionData && (sessionData.heartbeat_count > 0) && paperManager) {
-    logger.debug('Creating reading event', sessionData);
-    
-    try {
-      // Store reading session
-      await paperManager.logReadingSession(
-        session.sourceId,
-        session.paperId,
-        sessionData,
-        metadata
-      );
-      
-      logger.info(`Session saved to GitHub for ${session.sourceId}:${session.paperId}`);
-    } catch (error) {
-      logger.error('Error saving session', error);
-    }
-  }
-  
-  // Clear heartbeat timeout
-  if (heartbeatTimeoutId !== null) {
-    clearTimeout(heartbeatTimeoutId);
-    heartbeatTimeoutId = null;
-  }
-}
-
-// Initialize debug objects in service worker scope
-function initializeDebugObjects() {
-  // @ts-ignore
-  globalThis.__DEBUG__ = {
-    get paperManager() { return paperManager; },
-    get sessionService() { return sessionService; },
-    get popupManager() { return popupManager; },
-    get sourceManager() { return sourceManager; },
-    getGithubClient: () => paperManager ? paperManager.getClient() : null,
-    getCurrentPaper: () => sessionService?.getPaperMetadata(),
-    getSessionInfo: () => sessionService?.getCurrentSessionMetadata(),
-    getSources: () => sourceManager?.getAllSources(),
-    forceEndSession: () => endCurrentSession()
-  };
-
-  logger.info('Debug objects registered');
-}
 
 // Initialize extension
 initialize();
