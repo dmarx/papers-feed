@@ -256,43 +256,6 @@ function handleEndSession(sourceId: string, paperId: string, reason: string) {
   }
 }
 
-// Schedule heartbeat timeout check
-function scheduleHeartbeatCheck() {
-  // Clear any existing timeout
-  if (heartbeatTimeoutId !== null) {
-    clearTimeout(heartbeatTimeoutId);
-    heartbeatTimeoutId = null;
-  }
-  
-  // Only schedule if we have an active session
-  if (!sessionTracker || !sessionTracker.hasActiveSession()) {
-    return;
-  }
-  
-  // Set timeout to check for missed heartbeats
-  heartbeatTimeoutId = self.setTimeout(() => {
-    checkHeartbeat();
-  }, HEARTBEAT_TIMEOUT);
-}
-
-// Check if we've missed too many heartbeats
-function checkHeartbeat() {
-  if (!sessionTracker || !sessionTracker.hasActiveSession()) {
-    return;
-  }
-  
-  const timeSinceLastHeartbeat = sessionTracker.getTimeSinceLastHeartbeat();
-  
-  if (timeSinceLastHeartbeat && timeSinceLastHeartbeat > HEARTBEAT_TIMEOUT) {
-    // Too much time since last heartbeat, end the session
-    logger.info('Heartbeat timeout, ending session');
-    endCurrentSession();
-  } else {
-    // Still active, reschedule check
-    scheduleHeartbeatCheck();
-  }
-}
-
 // Listen for credential changes
 chrome.storage.onChanged.addListener(async (changes) => {
   logger.debug('Storage changes detected', Object.keys(changes));
