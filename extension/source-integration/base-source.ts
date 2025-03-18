@@ -72,7 +72,8 @@ export class BaseSourceIntegration implements SourceIntegration {
       // Create PaperMetadata object
       return {
         sourceId: this.id,
-        paperId: this.formatPaperId(paperId),
+        //paperId: this.formatPaperId(paperId),
+        paperId: paperId,
         url: url,
         title: extracted.title || document.title || paperId,
         authors: extracted.authors || '',
