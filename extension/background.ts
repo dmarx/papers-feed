@@ -1,5 +1,5 @@
-// extension/background.ts
-// Background script with heartbeat-based session tracking
+// background.ts
+// Background script with simplified session tracking
 
 import { GitHubStoreClient } from 'gh-store-client';
 import { PaperManager } from './papers/manager';
@@ -11,7 +11,6 @@ import { PaperMetadata } from './papers/types';
 
 // Import source plugins directly
 import { arxivIntegration } from './source-integration/arxiv';
-//import { pdfIntegration } from './source-integration/pdf';
 import { Message } from './source-integration/types';
 
 const logger = loguru.getLogger('background');
@@ -24,14 +23,12 @@ let sessionService: SessionService | null = null;
 let popupManager: PopupManager | null = null;
 let sourceManager: SourceIntegrationManager | null = null;
 
-
 // Initialize sources
 function initializeSources() {
   sourceManager = new SourceIntegrationManager();
   
   // Register built-in sources directly
   sourceManager.registerSource(arxivIntegration);
-  //sourceManager.registerSource(pdfIntegration);
   
   logger.info('Source manager initialized');
   return sourceManager;
@@ -56,13 +53,15 @@ async function initialize() {
       // Pass the source manager to the paper manager
       paperManager = new PaperManager(githubClient, sourceManager!);
       logger.info('Paper manager initialized');
-    // Initialize session service with paper manager
-      sessionService = SessionService.getInstance();
-      sessionService.initialize(paperManager);
+      
+      // Initialize session service with paper manager
+      sessionService = new SessionService(paperManager);
     } else {
       // Initialize session service without paper manager
-      sessionService = SessionService.getInstance();
+      sessionService = new SessionService(null);
     }
+    
+    logger.info('Session service initialized');
     
     // Initialize popup manager
     popupManager = new PopupManager(
@@ -74,6 +73,8 @@ async function initialize() {
     // Set up message listeners
     setupMessageListeners();
     
+    // Initialize debug objects
+    initializeDebugObjects();
   } catch (error) {
     logger.error('Initialization error', error);
   }
@@ -96,8 +97,9 @@ function setupMessageListeners() {
     }
     
     if (message.type === 'getCurrentPaper') {
-      const paperMetadata = sessionService?.getCurrentSession()
-        ? sessionService?.getPaperMetadata()
+      const session = sessionService?.getCurrentSession();
+      const paperMetadata = session 
+        ? sessionService?.getPaperMetadata(session.sourceId, session.paperId)
         : null;
       
       logger.debug('Popup requested current paper', paperMetadata);
@@ -118,13 +120,13 @@ function setupMessageListeners() {
     }
     
     if (message.type === 'sessionHeartbeat') {
-      handleSessionHeartbeat(message.sourceId, message.paperId, message.timestamp);
+      handleSessionHeartbeat();
       sendResponse({ success: true });
       return true;
     }
     
     if (message.type === 'endSession') {
-      handleEndSession(message.sourceId, message.paperId, message.reason || 'user_action');
+      handleEndSession(message.reason || 'user_action');
       sendResponse({ success: true });
       return true;
     }
@@ -145,7 +147,7 @@ function setupMessageListeners() {
     
     // Other message handlers are managed by PopupManager
     
-    return false;
+    return false; // Not handled
   });
 }
 
@@ -154,6 +156,11 @@ async function handlePaperMetadata(metadata: PaperMetadata) {
   logger.info(`Received metadata for ${metadata.sourceId}:${metadata.paperId}`);
   
   try {
+    // Store metadata in session service
+    if (sessionService) {
+      sessionService.storePaperMetadata(metadata);
+    }
+    
     // Store in GitHub if we have a paper manager
     if (paperManager) {
       await paperManager.getOrCreatePaper(metadata);
@@ -208,56 +215,47 @@ function handleStartSession(sourceId: string, paperId: string) {
     return;
   }
   
+  // Get metadata if available
+  const existingMetadata = sessionService.getPaperMetadata(sourceId, paperId);
+  
   // Start the session
-  sessionService.startSession(sourceId, paperId);
+  sessionService.startSession(sourceId, paperId, existingMetadata);
+  logger.info(`Started session for ${sourceId}:${paperId}`);
 }
 
 // Handle session heartbeat
-function handleSessionHeartbeat(sourceId: string, paperId: string, timestamp: number) {
+function handleSessionHeartbeat() {
   if (!sessionService) {
     logger.error('Session service not initialized');
     return;
   }
   
-  const session = sessionService.getCurrentSession();
-  
-  // Verify session matches
-  if (session && session.sourceId === sourceId && session.paperId === paperId) {
-    sessionService.recordHeartbeat();
-    logger.debug(`Heartbeat received for ${sourceId}:${paperId}`);
-  } else {
-    // Heartbeat for non-current session - probably a race condition
-    logger.warning(`Received heartbeat for non-current session: ${sourceId}:${paperId}`);
-    
-    // Start new session if needed
-    if (!session) {
-      handleStartSession(sourceId, paperId);
-    }
-  }
+  sessionService.recordHeartbeat();
 }
 
 // Handle session end request
-function handleEndSession(sourceId: string, paperId: string, reason: string) {
+function handleEndSession(reason: string) {
   if (!sessionService) {
     logger.error('Session service not initialized');
     return;
   }
   
   const session = sessionService.getCurrentSession();
-  
-  // Only end if it matches current session
-  if (session && session.sourceId === sourceId && session.paperId === paperId) {
-    logger.info(`Ending session for ${sourceId}:${paperId}`, { reason });
+  if (session) {
+    logger.info(`Ending session: ${reason}`);
     sessionService.endSession();
-  } else {
-    logger.warning(`Received end request for non-current session: ${sourceId}:${paperId}`);
   }
 }
 
 async function handleManualPaperLog(metadata: PaperMetadata): Promise<void> {
   logger.info(`Received manual paper log: ${metadata.sourceId}:${metadata.paperId}`);
-
+  
   try {
+    // Store metadata in session service
+    if (sessionService) {
+      sessionService.storePaperMetadata(metadata);
+    }
+    
     // Store in GitHub if we have a paper manager
     if (paperManager) {
       await paperManager.getOrCreatePaper(metadata);
@@ -288,10 +286,34 @@ chrome.storage.onChanged.addListener(async (changes) => {
       // Pass the source manager to the paper manager
       paperManager = new PaperManager(githubClient, sourceManager!);
       logger.info('Paper manager reinitialized');
+      
+      // Reinitialize session service with new paper manager
+      sessionService = new SessionService(paperManager);
+      logger.info('Session service reinitialized');
     }
   }
 });
 
+// Initialize debug objects in service worker scope
+function initializeDebugObjects() {
+  // @ts-ignore
+  self.__DEBUG__ = {
+    get paperManager() { return paperManager; },
+    get sessionService() { return sessionService; },
+    get popupManager() { return popupManager; },
+    get sourceManager() { return sourceManager; },
+    getGithubClient: () => paperManager ? paperManager.getClient() : null,
+    getCurrentPaper: () => {
+      const session = sessionService?.getCurrentSession();
+      return session ? sessionService?.getPaperMetadata(session.sourceId, session.paperId) : null;
+    },
+    getSessionStats: () => sessionService?.getSessionStats(),
+    getSources: () => sourceManager?.getAllSources(),
+    forceEndSession: () => sessionService?.endSession()
+  };
+
+  logger.info('Debug objects registered');
+}
 
 // Initialize extension
 initialize();
