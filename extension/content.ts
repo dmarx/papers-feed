@@ -23,18 +23,15 @@ const sourceIntegrations: SourceIntegration[] = [
   // Add more sources as they become available
 ];
 
-// Base source for fallback processing
+// I think we create a singleton in the file we could just import?
 const baseSource = new BaseSourceIntegration();
 
-// Track active popup
 let activePopup: HTMLElement | null = null;
+let isTabVisible = true;
 
 // Heartbeat interval
 let heartbeatInterval: number | null = null;
 const HEARTBEAT_INTERVAL = 5000; // 5 seconds
-
-// Track tab visibility
-let isTabVisible = true;
 
 // Create link processor
 const linkProcessor = new LinkProcessor((sourceId, paperId, link) => {
@@ -242,11 +239,8 @@ document.addEventListener('click', (e) => {
   }
 });
 
-// Start heartbeat for session tracking
+// Start session tracking with events
 function startSessionTracking(sourceId: string, paperId: string) {
-  // Stop any existing heartbeat
-  stopHeartbeat();
-  
   // Only start tracking if tab is visible
   if (!isTabVisible) {
     logger.debug(`Not starting session for ${sourceId}.${paperId} because tab is not visible`);
@@ -258,15 +252,20 @@ function startSessionTracking(sourceId: string, paperId: string) {
     type: 'startSession',
     sourceId,
     paperId
-  }, response => {
-    if (response?.success) {
-      logger.debug(`Started session for ${sourceId}.${paperId}`);
-    } else {
-      logger.error(`Failed to start session for ${sourceId}.${paperId}`, response?.error);
-    }
   });
   
-  // Start sending heartbeats
+  // Start sending heartbeats - don't manage interval here, just send message
+  startHeartbeat(sourceId, paperId);
+  
+  logger.info(`Requested session start for ${sourceId}:${paperId}`);
+}
+
+// Start heartbeat messaging
+function startHeartbeat(sourceId: string, paperId: string) {
+  // Clear any existing interval
+  stopHeartbeat();
+  
+  // Set new interval for sending heartbeat messages
   heartbeatInterval = window.setInterval(() => {
     chrome.runtime.sendMessage({
       type: 'sessionHeartbeat',
@@ -274,17 +273,17 @@ function startSessionTracking(sourceId: string, paperId: string) {
       paperId,
       timestamp: Date.now()
     });
-  }, HEARTBEAT_INTERVAL);
+  }, 5000); // 5-second interval
   
-  logger.info(`Started heartbeat for ${sourceId}:${paperId}`);
+  logger.debug(`Started heartbeat messages for ${sourceId}:${paperId}`);
 }
 
-// Stop heartbeat
+// Stop heartbeat messaging
 function stopHeartbeat() {
   if (heartbeatInterval !== null) {
     clearInterval(heartbeatInterval);
     heartbeatInterval = null;
-    logger.debug('Stopped heartbeat');
+    logger.debug('Stopped heartbeat messages');
   }
 }
 
