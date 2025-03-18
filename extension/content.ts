@@ -5,9 +5,12 @@ import { LinkProcessor } from './source-integration/link-processor';
 import { SourceIntegration, Message } from './source-integration/types';
 import { PaperMetadata } from './papers/types';
 import { loguru } from './utils/logger';
+import { BaseSourceIntegration } from './source-integration/base-source';
+import { generatePaperIdFromUrl } from './utils/metadata-extractor';
 
 // Import source plugins directly
 import { arxivIntegration } from './source-integration/arxiv';
+//import { pdfIntegration } from './source-integration/pdf';
 
 const logger = loguru.getLogger('content-script');
 
@@ -16,8 +19,12 @@ logger.info('Paper Tracker content script loaded');
 // Available source integrations
 const sourceIntegrations: SourceIntegration[] = [
   arxivIntegration,
+  //pdfIntegration,
   // Add more sources as they become available
 ];
+
+// Base source for fallback processing
+const baseSource = new BaseSourceIntegration();
 
 // Track active popup
 let activePopup: HTMLElement | null = null;
@@ -225,19 +232,6 @@ function getSourceForUrl(url: string): SourceIntegration | null {
   return null;
 }
 
-// Extract paper ID from URL
-function extractPaperId(url: string): { sourceId: string, paperId: string } | null {
-  for (const source of sourceIntegrations) {
-    if (source.canHandleUrl(url)) {
-      const paperId = source.extractPaperId(url);
-      if (paperId) {
-        return { sourceId: source.id, paperId };
-      }
-    }
-  }
-  return null;
-}
-
 // Set up click-outside handler for popups
 document.addEventListener('click', (e) => {
   if (activePopup && 
@@ -255,7 +249,7 @@ function startSessionTracking(sourceId: string, paperId: string) {
   
   // Only start tracking if tab is visible
   if (!isTabVisible) {
-    logger.debug(`Not starting session for ${sourceId}:${paperId} because tab is not visible`);
+    logger.debug(`Not starting session for ${sourceId}.${paperId} because tab is not visible`);
     return;
   }
   
@@ -266,9 +260,9 @@ function startSessionTracking(sourceId: string, paperId: string) {
     paperId
   }, response => {
     if (response?.success) {
-      logger.debug(`Started session for ${sourceId}:${paperId}`);
+      logger.debug(`Started session for ${sourceId}.${paperId}`);
     } else {
-      logger.error(`Failed to start session for ${sourceId}:${paperId}`, response?.error);
+      logger.error(`Failed to start session for ${sourceId}.${paperId}`, response?.error);
     }
   });
   
@@ -294,40 +288,58 @@ function stopHeartbeat() {
   }
 }
 
-// Process current page if it's a paper
-async function processCurrentPage() {
+// Update the processCurrentPage function to handle the force parameter
+async function processCurrentPage(force: boolean = false): Promise<PaperMetadata | null> {
   const url = window.location.href;
-  const paperInfo = extractPaperId(url);
   
-  if (paperInfo) {
-    logger.info(`Detected paper: ${paperInfo.sourceId}:${paperInfo.paperId}`);
-    
-    const { sourceId, paperId } = paperInfo;
-    const source = sourceIntegrations.find(s => s.id === sourceId);
-    
-    if (source) {
-      try {
-        const metadata = await source.extractMetadata(document, paperId);
-        
-        if (metadata) {
-          // Send metadata to background script
-          chrome.runtime.sendMessage({
-            type: 'paperMetadata',
-            metadata
-          });
-          
-          logger.debug(`Sent metadata to background script for ${sourceId}:${paperId}`);
-          
-          // Start session tracking if tab is visible
-          if (isTabVisible) {
-            startSessionTracking(sourceId, paperId);
-          }
-        }
-      } catch (error) {
-        logger.error(`Error extracting metadata for ${sourceId}:${paperId}`, error);
-      }
-    }
+  // Find a source that can handle this URL
+  let source = getSourceForUrl(url);
+  
+  // If no source was found and force parameter is set, use base source
+  if (!source && force) {
+    logger.info(`No matching source found, but force parameter set. Using base source for: ${url}`);
+    source = baseSource;
   }
+
+  // If we still don't have a source, return null
+  if (!source) {
+    logger.debug(`No source found for URL: ${url}`);
+    return null;
+  }
+
+  // Now that we have a source, extract the paperId
+  const paperId = source.extractPaperId(url);
+  if (!paperId) {
+    logger.info(`Unable to determine a paperId for url: ${url}`);
+    return null;
+  }
+  
+  try {
+    // Use source-specific extraction
+    const metadata = await source.extractMetadata(document, paperId);
+    
+    if (metadata) {
+      // Send metadata to background script
+      chrome.runtime.sendMessage({
+        type: 'paperMetadata',
+        metadata
+      });
+      
+      logger.debug(`Sent extracted metadata to background script for ${metadata.sourceId}.${metadata.paperId}`);
+      
+      // Start session tracking if tab is visible
+      // ... could we even get here if the tab isn't already visible?
+      if (isTabVisible) {
+        startSessionTracking(metadata.sourceId, metadata.paperId);
+      }
+      
+      return metadata;
+    }
+  } catch (error) {
+    logger.error(`Error extracting metadata for ${source.id}.${paperId}`, error);
+  }
+  
+  return null;
 }
 
 // Visibility change listener
@@ -335,22 +347,25 @@ document.addEventListener('visibilitychange', () => {
   const wasVisible = isTabVisible;
   isTabVisible = document.visibilityState === 'visible';
   
-  const paperInfo = extractPaperId(window.location.href);
-  if (!paperInfo) return;
+  const source = getSourceForUrl(window.location.href);
+  if (!source) return;
+  
+  const paperId = source.extractPaperId(window.location.href);
+  if (!paperId) return;
   
   if (isTabVisible && !wasVisible) {
     // Tab has become visible again - restart session
-    logger.info(`Tab became visible again for ${paperInfo.sourceId}:${paperInfo.paperId}`);
-    startSessionTracking(paperInfo.sourceId, paperInfo.paperId);
+    logger.info(`Tab became visible again for ${source.id}:${paperId}`);
+    startSessionTracking(source.id, paperId);
   } else if (!isTabVisible && wasVisible) {
     // Tab has become hidden - end current session
-    logger.info(`Tab hidden for ${paperInfo.sourceId}:${paperInfo.paperId}`);
+    logger.info(`Tab hidden for ${source.id}:${paperId}`);
     
     // Send end session message
     chrome.runtime.sendMessage({
       type: 'endSession',
-      sourceId: paperInfo.sourceId,
-      paperId: paperInfo.paperId,
+      sourceId: source.id,
+      paperId: paperId,
       reason: 'tab_hidden'
     });
     
@@ -361,28 +376,34 @@ document.addEventListener('visibilitychange', () => {
 
 // Focus/blur listeners
 window.addEventListener('focus', () => {
-  const paperInfo = extractPaperId(window.location.href);
-  if (!paperInfo) return;
+  const source = getSourceForUrl(window.location.href);
+  if (!source) return;
+  
+  const paperId = source.extractPaperId(window.location.href);
+  if (!paperId) return;
   
   // Tab gained focus - restart session if it wasn't already running
   if (!heartbeatInterval) {
-    logger.info(`Tab gained focus for ${paperInfo.sourceId}:${paperInfo.paperId}`);
-    startSessionTracking(paperInfo.sourceId, paperInfo.paperId);
+    logger.info(`Tab gained focus for ${source.id}:${paperId}`);
+    startSessionTracking(source.id, paperId);
   }
 });
 
 window.addEventListener('blur', () => {
-  const paperInfo = extractPaperId(window.location.href);
-  if (!paperInfo) return;
+  const source = getSourceForUrl(window.location.href);
+  if (!source) return;
+  
+  const paperId = source.extractPaperId(window.location.href);
+  if (!paperId) return;
   
   // Tab lost focus - end current session
-  logger.info(`Tab lost focus for ${paperInfo.sourceId}:${paperInfo.paperId}`);
+  logger.info(`Tab lost focus for ${source.id}:${paperId}`);
   
   // Send end session message
   chrome.runtime.sendMessage({
     type: 'endSession',
-    sourceId: paperInfo.sourceId,
-    paperId: paperInfo.paperId,
+    sourceId: source.id,
+    paperId: paperId,
     reason: 'tab_blur'
   });
   
@@ -393,17 +414,19 @@ window.addEventListener('blur', () => {
 // Inform background when page is unloaded
 window.addEventListener('beforeunload', () => {
   const url = window.location.href;
-  const paperInfo = extractPaperId(url);
+  const source = getSourceForUrl(url);
+  if (!source) return;
   
-  if (paperInfo) {
-    // Try to send one last message before page unloads
-    chrome.runtime.sendMessage({
-      type: 'endSession',
-      sourceId: paperInfo.sourceId,
-      paperId: paperInfo.paperId,
-      reason: 'page_unload'
-    });
-  }
+  const paperId = source.extractPaperId(url);
+  if (!paperId) return;
+  
+  // Try to send one last message before page unloads
+  chrome.runtime.sendMessage({
+    type: 'endSession',
+    sourceId: source.id,
+    paperId: paperId,
+    reason: 'page_unload'
+  });
   
   stopHeartbeat();
 });
@@ -411,6 +434,28 @@ window.addEventListener('beforeunload', () => {
 // Message handler for background script
 chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
   logger.debug('Received message', message);
+
+  if (message.type === 'extractPaperMetadata') {
+    logger.debug('Received request to force paper metadata extraction');
+    
+    // Use processCurrentPage with force=true to enable fallback extraction
+    processCurrentPage(true)
+      .then(metadata => {
+        if (metadata) {
+          sendResponse({ success: true, metadata });
+        } else {
+          sendResponse({ success: false, error: 'Failed to extract metadata' });
+        }
+      })
+      .catch(error => {
+        logger.error('Error extracting metadata', error);
+        sendResponse({ 
+          success: false, 
+          error: error instanceof Error ? error.message : 'Unknown error' 
+        });
+      });
+    return true; // Will respond asynchronously
+  }
   
   if (message.type === 'showPopup') {
     // Remove existing popup

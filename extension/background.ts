@@ -12,7 +12,7 @@ import { PaperMetadata } from './papers/types';
 
 // Import source plugins directly
 import { arxivIntegration } from './source-integration/arxiv';
-import { genericIntegration } from './source-integration/generic';
+//import { pdfIntegration } from './source-integration/pdf';
 import { Message } from './source-integration/types';
 
 const logger = loguru.getLogger('background');
@@ -35,7 +35,7 @@ function initializeSources() {
   
   // Register built-in sources directly
   sourceManager.registerSource(arxivIntegration);
-  sourceManager.registerSource(genericIntegration);
+  //sourceManager.registerSource(pdfIntegration);
   
   logger.info('Source manager initialized');
   return sourceManager;
@@ -358,7 +358,7 @@ async function endCurrentSession() {
   const sessionData = sessionTracker.endSession();
   
   // Store session data if we have it and a paper manager
-  if (sessionData && paperManager) {
+  if (sessionData && (sessionData.heartbeat_count > 0) && paperManager) {
     logger.debug('Creating reading event', sessionData);
     
     try {
