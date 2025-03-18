@@ -1484,7 +1484,7 @@ async function endCurrentSession() {
     // End the session
     const sessionData = sessionTracker.endSession();
     // Store session data if we have it and a paper manager
-    if (sessionData && sessionData.heartbeat_count && paperManager) {
+    if (sessionData && (sessionData.heartbeat_count > 0) && paperManager) {
         logger.debug('Creating reading event', sessionData);
         try {
             // Store reading session
