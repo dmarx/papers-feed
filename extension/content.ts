@@ -10,55 +10,21 @@ import { generatePaperIdFromUrl } from './utils/metadata-extractor';
 
 // Import source plugins directly
 import { arxivIntegration } from './source-integration/arxiv';
+//import { pdfIntegration } from './source-integration/pdf';
 
 const logger = loguru.getLogger('content-script');
 
 logger.info('Paper Tracker content script loaded');
 
-// Create a generic source for fallback extraction
-class GenericSourceIntegration extends BaseSourceIntegration {
-  readonly id = 'url';
-  readonly name = 'Generic Source';
-  readonly urlPatterns: RegExp[] = [];
-  readonly contentScriptMatches: string[] = [];
-  
-  canHandleUrl(url: string): boolean {
-    return false; // This source doesn't directly handle any URLs
-  }
-  
-  extractPaperId(url: string): string | null {
-    return generatePaperIdFromUrl(url); // Generate a paperId from URL hash
-  }
-}
-
-// Create a singleton instance of the generic source
-const genericSource = new GenericSourceIntegration();
-
-// Create PDF source for PDF files
-class PdfSourceIntegration extends BaseSourceIntegration {
-  readonly id = 'pdf';
-  readonly name = 'PDF Document';
-  readonly urlPatterns: RegExp[] = [/\.pdf$/i];
-  readonly contentScriptMatches: string[] = [];
-  
-  canHandleUrl(url: string): boolean {
-    return url.toLowerCase().endsWith('.pdf');
-  }
-  
-  extractPaperId(url: string): string | null {
-    return generatePaperIdFromUrl(url); // Generate a paperId from URL hash
-  }
-}
-
-// Create a singleton instance of the PDF source
-const pdfSource = new PdfSourceIntegration();
-
 // Available source integrations
 const sourceIntegrations: SourceIntegration[] = [
   arxivIntegration,
-  pdfSource,
+  //pdfIntegration,
   // Add more sources as they become available
 ];
+
+// Base source for fallback processing
+const baseSource = new BaseSourceIntegration();
 
 // Track active popup
 let activePopup: HTMLElement | null = null;
@@ -329,10 +295,10 @@ async function processCurrentPage(force: boolean = false): Promise<PaperMetadata
   // Find a source that can handle this URL
   let source = getSourceForUrl(url);
   
-  // If no source was found and force parameter is set, use generic source
+  // If no source was found and force parameter is set, use base source
   if (!source && force) {
-    logger.info(`No matching source found, but force parameter set. Using generic source for: ${url}`);
-    source = url.toLowerCase().endsWith('.pdf') ? pdfSource : genericSource;
+    logger.info(`No matching source found, but force parameter set. Using base source for: ${url}`);
+    source = baseSource;
   }
 
   // If we still don't have a source, return null
@@ -349,16 +315,8 @@ async function processCurrentPage(force: boolean = false): Promise<PaperMetadata
   }
   
   try {
-    // Use source-specific extraction or createManualPaperEntry for generic source
-    let metadata: PaperMetadata | null;
-    
-    // if ((source === genericSource || source === pdfSource) && force) {
-    //   metadata = await source.createManualPaperEntry(url, document);
-    // } else {
-    //   metadata = await source.extractMetadata(document, paperId);
-    // }
-    metadata = await source.extractMetadata(document, paperId);
-    
+    // Use source-specific extraction
+    const metadata = await source.extractMetadata(document, paperId);
     
     if (metadata) {
       // Send metadata to background script
@@ -370,6 +328,7 @@ async function processCurrentPage(force: boolean = false): Promise<PaperMetadata
       logger.debug(`Sent extracted metadata to background script for ${metadata.sourceId}.${metadata.paperId}`);
       
       // Start session tracking if tab is visible
+      // ... could we even get here if the tab isn't already visible?
       if (isTabVisible) {
         startSessionTracking(metadata.sourceId, metadata.paperId);
       }
@@ -477,7 +436,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
   logger.debug('Received message', message);
 
   if (message.type === 'extractPaperMetadata') {
-    logger.debug('Received request to extract paper metadata manually');
+    logger.debug('Received request to force paper metadata extraction');
     
     // Use processCurrentPage with force=true to enable fallback extraction
     processCurrentPage(true)
