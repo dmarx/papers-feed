@@ -873,11 +873,34 @@ function isPdfUrl(url) {
 // extension/source-integration/base-source.ts
 const logger$4 = loguru.getLogger('base-source');
 /**
- * Abstract base class for source integrations
- * Provides default implementations for identifier formatting methods
- * and metadata extraction
+ * Base class for source integrations
+ * Provides default implementations for all methods
+ * Specific sources can override as needed
  */
 class BaseSourceIntegration {
+    constructor() {
+        // Default properties - set for generic web pages
+        this.id = 'url';
+        this.name = 'Web Page';
+        this.urlPatterns = [
+            /^https?:\/\/(?!.*\.pdf($|\?|#)).*$/i // Match HTTP/HTTPS URLs that aren't PDFs
+        ];
+        this.contentScriptMatches = [];
+    }
+    /**
+     * Check if this integration can handle the given URL
+     * Default implementation checks against urlPatterns
+     */
+    canHandleUrl(url) {
+        return this.urlPatterns.some(pattern => pattern.test(url));
+    }
+    /**
+     * Extract paper ID from URL
+     * Default implementation creates a hash from the URL
+     */
+    extractPaperId(url) {
+        return generatePaperIdFromUrl(url);
+    }
     /**
      * Create a metadata extractor for the given document
      * Override this method to provide a custom extractor for your source
@@ -888,7 +911,6 @@ class BaseSourceIntegration {
     /**
      * Extract metadata from a page
      * Default implementation uses common metadata extraction
-     * Override in specific source integrations if needed
      */
     async extractMetadata(document, paperId) {
         try {
@@ -925,7 +947,6 @@ class BaseSourceIntegration {
     /**
      * Format a paper identifier for this source
      * Default implementation uses the format: sourceId.paperId
-     * Override this method if a source needs a different format
      */
     formatPaperId(paperId) {
         return `${this.id}.${paperId}`;
@@ -933,7 +954,6 @@ class BaseSourceIntegration {
     /**
      * Parse a paper identifier specific to this source
      * Default implementation handles source.paperId format and extracts paperId
-     * Override this method if a source uses a different format
      */
     parsePaperId(identifier) {
         const prefix = `${this.id}.`;
@@ -951,50 +971,9 @@ class BaseSourceIntegration {
     /**
      * Format a storage object ID for this source
      * Default implementation uses the format: type:sourceId.paperId
-     * Override this method if a source needs a different format
      */
     formatObjectId(type, paperId) {
         return `${type}:${this.formatPaperId(paperId)}`;
-    }
-    /**
-     * Create a manual paper entry for any URL
-     * Useful for tracking generic web pages that aren't specific to this source
-     */
-    async createManualPaperEntry(url, document) {
-        try {
-            logger$4.debug(`Creating manual paper entry for URL: ${url}`);
-            // Create a metadata extractor
-            const extractor = this.createMetadataExtractor(document);
-            // Extract metadata
-            const extracted = extractor.extract();
-            // Generate a paper ID from the URL
-            const paperId = generatePaperIdFromUrl(url);
-            // Determine if it's a PDF
-            const sourceType = extractor.getSourceType();
-            const sourceId = sourceType; // Use the source type as the source ID
-            // Create a new paper metadata object
-            const metadata = {
-                sourceId: sourceId,
-                paperId: paperId,
-                url: url,
-                title: extracted.title || document.title || paperId,
-                authors: extracted.authors || '',
-                abstract: extracted.description || '',
-                timestamp: new Date().toISOString(),
-                rating: 'novote',
-                publishedDate: extracted.publishedDate || '',
-                tags: extracted.tags || [],
-                doi: extracted.doi,
-                journalName: extracted.journalName,
-                sourceType: sourceType
-            };
-            logger$4.debug('Created manual paper entry', metadata);
-            return metadata;
-        }
-        catch (error) {
-            logger$4.error('Error creating manual paper entry', error);
-            return null;
-        }
     }
 }
 
