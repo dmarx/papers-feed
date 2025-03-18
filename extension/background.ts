@@ -25,11 +25,6 @@ let popupManager: PopupManager | null = null;
 let sourceManager: SourceIntegrationManager | null = null;
 
 
-
-// Heartbeat timeout check
-const HEARTBEAT_TIMEOUT = 15000; // 15 seconds (3 times the 5-second heartbeat interval)
-let heartbeatTimeoutId: number | null = null;
-
 // Initialize sources
 function initializeSources() {
   sourceManager = new SourceIntegrationManager();
