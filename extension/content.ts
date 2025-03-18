@@ -1,5 +1,5 @@
-// extension/content.ts
-// Content script with heartbeat session tracking
+// content.ts
+// Content script with simplified session tracking
 
 import { LinkProcessor } from './source-integration/link-processor';
 import { SourceIntegration, Message } from './source-integration/types';
@@ -23,15 +23,21 @@ const sourceIntegrations: SourceIntegration[] = [
   // Add more sources as they become available
 ];
 
-// I think we create a singleton in the file we could just import?
+// Base source for fallback processing
 const baseSource = new BaseSourceIntegration();
 
+// Track active popup
 let activePopup: HTMLElement | null = null;
-let isTabVisible = true;
 
 // Heartbeat interval
 let heartbeatInterval: number | null = null;
 const HEARTBEAT_INTERVAL = 5000; // 5 seconds
+
+// Track tab visibility
+let isTabVisible = true;
+
+// Track current session
+let currentSession: { sourceId: string; paperId: string } | null = null;
 
 // Create link processor
 const linkProcessor = new LinkProcessor((sourceId, paperId, link) => {
@@ -239,55 +245,92 @@ document.addEventListener('click', (e) => {
   }
 });
 
-// Start session tracking with events
+// Start session tracking
 function startSessionTracking(sourceId: string, paperId: string) {
+  // Stop any existing heartbeat
+  stopHeartbeat();
+  
   // Only start tracking if tab is visible
   if (!isTabVisible) {
-    logger.debug(`Not starting session for ${sourceId}.${paperId} because tab is not visible`);
+    logger.debug(`Not starting session for ${sourceId}:${paperId} because tab is not visible`);
     return;
   }
+  
+  // Update current session
+  currentSession = { sourceId, paperId };
   
   // Tell background script to start a new session
   chrome.runtime.sendMessage({
     type: 'startSession',
     sourceId,
     paperId
+  }, response => {
+    if (response?.success) {
+      logger.debug(`Started session for ${sourceId}:${paperId}`);
+      
+      // Start sending heartbeats
+      startHeartbeat();
+    } else {
+      logger.error(`Failed to start session for ${sourceId}:${paperId}`, response?.error);
+    }
   });
-  
-  // Start sending heartbeats - don't manage interval here, just send message
-  startHeartbeat(sourceId, paperId);
-  
-  logger.info(`Requested session start for ${sourceId}:${paperId}`);
 }
 
-// Start heartbeat messaging
-function startHeartbeat(sourceId: string, paperId: string) {
+// Start sending heartbeats to background script
+function startHeartbeat() {
+  if (!currentSession) return;
+  
   // Clear any existing interval
   stopHeartbeat();
   
-  // Set new interval for sending heartbeat messages
+  // Set new interval
   heartbeatInterval = window.setInterval(() => {
+    if (!currentSession) return;
+    
     chrome.runtime.sendMessage({
       type: 'sessionHeartbeat',
-      sourceId,
-      paperId,
+      sourceId: currentSession.sourceId,
+      paperId: currentSession.paperId,
       timestamp: Date.now()
     });
-  }, 5000); // 5-second interval
+  }, HEARTBEAT_INTERVAL);
   
-  logger.debug(`Started heartbeat messages for ${sourceId}:${paperId}`);
+  logger.debug(`Started heartbeat for ${currentSession.sourceId}:${currentSession.paperId}`);
 }
 
-// Stop heartbeat messaging
+// Stop sending heartbeats
 function stopHeartbeat() {
   if (heartbeatInterval !== null) {
     clearInterval(heartbeatInterval);
     heartbeatInterval = null;
-    logger.debug('Stopped heartbeat messages');
+    logger.debug('Stopped heartbeat');
   }
 }
 
-// Update the processCurrentPage function to handle the force parameter
+// End the current session
+function endCurrentSession(reason: string) {
+  if (!currentSession) return;
+  
+  const { sourceId, paperId } = currentSession;
+  
+  // Stop heartbeat
+  stopHeartbeat();
+  
+  // Send end session message
+  chrome.runtime.sendMessage({
+    type: 'endSession',
+    sourceId,
+    paperId,
+    reason
+  }, response => {
+    logger.debug(`Ended session for ${sourceId}:${paperId}`, { reason });
+  });
+  
+  // Clear current session
+  currentSession = null;
+}
+
+// Process the current page
 async function processCurrentPage(force: boolean = false): Promise<PaperMetadata | null> {
   const url = window.location.href;
   
@@ -324,10 +367,9 @@ async function processCurrentPage(force: boolean = false): Promise<PaperMetadata
         metadata
       });
       
-      logger.debug(`Sent extracted metadata to background script for ${metadata.sourceId}.${metadata.paperId}`);
+      logger.debug(`Sent extracted metadata to background script for ${metadata.sourceId}:${metadata.paperId}`);
       
       // Start session tracking if tab is visible
-      // ... could we even get here if the tab isn't already visible?
       if (isTabVisible) {
         startSessionTracking(metadata.sourceId, metadata.paperId);
       }
@@ -335,7 +377,7 @@ async function processCurrentPage(force: boolean = false): Promise<PaperMetadata
       return metadata;
     }
   } catch (error) {
-    logger.error(`Error extracting metadata for ${source.id}.${paperId}`, error);
+    logger.error(`Error extracting metadata for ${source.id}:${paperId}`, error);
   }
   
   return null;
@@ -346,88 +388,56 @@ document.addEventListener('visibilitychange', () => {
   const wasVisible = isTabVisible;
   isTabVisible = document.visibilityState === 'visible';
   
-  const source = getSourceForUrl(window.location.href);
-  if (!source) return;
-  
-  const paperId = source.extractPaperId(window.location.href);
-  if (!paperId) return;
-  
   if (isTabVisible && !wasVisible) {
     // Tab has become visible again - restart session
-    logger.info(`Tab became visible again for ${source.id}:${paperId}`);
-    startSessionTracking(source.id, paperId);
+    logger.info('Tab became visible again');
+    
+    // If we have a current session, restart it
+    if (currentSession) {
+      startSessionTracking(currentSession.sourceId, currentSession.paperId);
+    } else {
+      // Otherwise, try to process the page
+      processCurrentPage();
+    }
   } else if (!isTabVisible && wasVisible) {
     // Tab has become hidden - end current session
-    logger.info(`Tab hidden for ${source.id}:${paperId}`);
-    
-    // Send end session message
-    chrome.runtime.sendMessage({
-      type: 'endSession',
-      sourceId: source.id,
-      paperId: paperId,
-      reason: 'tab_hidden'
-    });
-    
-    // Stop heartbeat
-    stopHeartbeat();
+    logger.info('Tab hidden');
+    if (currentSession) {
+      endCurrentSession('tab_hidden');
+    }
   }
 });
 
 // Focus/blur listeners
 window.addEventListener('focus', () => {
-  const source = getSourceForUrl(window.location.href);
-  if (!source) return;
+  if (!isTabVisible) return; // Don't restart if tab is hidden
   
-  const paperId = source.extractPaperId(window.location.href);
-  if (!paperId) return;
+  logger.info('Window gained focus');
   
-  // Tab gained focus - restart session if it wasn't already running
-  if (!heartbeatInterval) {
-    logger.info(`Tab gained focus for ${source.id}:${paperId}`);
-    startSessionTracking(source.id, paperId);
+  // If we have a current session, restart it
+  if (currentSession) {
+    startSessionTracking(currentSession.sourceId, currentSession.paperId);
+  } else {
+    // Otherwise, try to process the page
+    processCurrentPage();
   }
 });
 
 window.addEventListener('blur', () => {
-  const source = getSourceForUrl(window.location.href);
-  if (!source) return;
+  logger.info('Window lost focus');
   
-  const paperId = source.extractPaperId(window.location.href);
-  if (!paperId) return;
-  
-  // Tab lost focus - end current session
-  logger.info(`Tab lost focus for ${source.id}:${paperId}`);
-  
-  // Send end session message
-  chrome.runtime.sendMessage({
-    type: 'endSession',
-    sourceId: source.id,
-    paperId: paperId,
-    reason: 'tab_blur'
-  });
-  
-  // Stop heartbeat
-  stopHeartbeat();
+  // End the current session
+  if (currentSession) {
+    endCurrentSession('window_blur');
+  }
 });
 
 // Inform background when page is unloaded
 window.addEventListener('beforeunload', () => {
-  const url = window.location.href;
-  const source = getSourceForUrl(url);
-  if (!source) return;
-  
-  const paperId = source.extractPaperId(url);
-  if (!paperId) return;
-  
-  // Try to send one last message before page unloads
-  chrome.runtime.sendMessage({
-    type: 'endSession',
-    sourceId: source.id,
-    paperId: paperId,
-    reason: 'page_unload'
-  });
-  
-  stopHeartbeat();
+  if (currentSession) {
+    logger.info('Page unloading');
+    endCurrentSession('page_unload');
+  }
 });
 
 // Message handler for background script
@@ -562,6 +572,12 @@ let lastUrl = location.href;
 new MutationObserver(() => {
   const url = location.href;
   if (url !== lastUrl) {
+    // End any current session
+    if (currentSession) {
+      endCurrentSession('url_change');
+    }
+    
+    // Update URL and process new page
     lastUrl = url;
     processCurrentPage();
   }
