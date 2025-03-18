@@ -11,6 +11,20 @@ export interface SessionInfo {
   startTime: Date;
 }
 
+/**
+ * SessionService - Unified session tracking service
+ * 
+ * This service centrally manages reading session tracking across the extension.
+ * It handles:
+ * - Starting/stopping reading sessions
+ * - Heartbeat tracking for active reading
+ * - Automatic timeouts for inactive sessions
+ * - Persistence of session data
+ * - Tab visibility and focus/blur events
+ * 
+ * The service is designed as a singleton to ensure consistent state
+ * across background and content scripts.
+ */
 export class SessionService {
   private static instance: SessionService | null = null;
   private activeSession: SessionInfo | null = null;
