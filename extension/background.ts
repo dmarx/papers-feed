@@ -98,8 +98,8 @@ function setupMessageListeners() {
     }
     
     if (message.type === 'getCurrentPaper') {
-      const paperMetadata = sessionTracker?.getCurrentSession()
-        ? sessionTracker?.getPaperMetadata()
+      const paperMetadata = sessionService?.getCurrentSession()
+        ? sessionService?.getPaperMetadata()
         : null;
       
       logger.debug('Popup requested current paper', paperMetadata);
@@ -168,18 +168,18 @@ async function handlePaperMetadata(metadata: PaperMetadata) {
 
 // Handle rating update
 async function handleUpdateRating(rating: string, sendResponse: (response: any) => void) {
-  if (!paperManager || !sessionTracker) {
+  if (!paperManager || !sessionService) {
     sendResponse({ success: false, error: 'Services not initialized' });
     return;
   }
 
-  const session = sessionTracker.getCurrentSession();
+  const session = sessionService.getCurrentSession();
   if (!session) {
     sendResponse({ success: false, error: 'No current session' });
     return;
   }
 
-  const metadata = sessionTracker.getPaperMetadata();
+  const metadata = sessionService.getPaperMetadata();
   if (!metadata) {
     sendResponse({ success: false, error: 'No paper metadata available' });
     return;
@@ -281,21 +281,21 @@ chrome.storage.onChanged.addListener(async (changes) => {
 
 // End current session and save data
 async function endCurrentSession() {
-  if (!sessionTracker) {
+  if (!sessionService) {
     return;
   }
   
   // Get current session
-  const session = sessionTracker.getCurrentSession();
+  const session = sessionService.getCurrentSession();
   if (!session) {
     return;
   }
   
   // Get paper metadata
-  const metadata = sessionTracker.getPaperMetadata();
+  const metadata = sessionService.getPaperMetadata();
   
   // End the session
-  const sessionData = sessionTracker.endSession();
+  const sessionData = sessionService.endSession();
   
   // Store session data if we have it and a paper manager
   if (sessionData && (sessionData.heartbeat_count > 0) && paperManager) {
@@ -328,12 +328,12 @@ function initializeDebugObjects() {
   // @ts-ignore
   globalThis.__DEBUG__ = {
     get paperManager() { return paperManager; },
-    get sessionTracker() { return sessionTracker; },
+    get sessionService() { return sessionService; },
     get popupManager() { return popupManager; },
     get sourceManager() { return sourceManager; },
     getGithubClient: () => paperManager ? paperManager.getClient() : null,
-    getCurrentPaper: () => sessionTracker?.getPaperMetadata(),
-    getSessionInfo: () => sessionTracker?.getCurrentSessionMetadata(),
+    getCurrentPaper: () => sessionService?.getPaperMetadata(),
+    getSessionInfo: () => sessionService?.getCurrentSessionMetadata(),
     getSources: () => sourceManager?.getAllSources(),
     forceEndSession: () => endCurrentSession()
   };
