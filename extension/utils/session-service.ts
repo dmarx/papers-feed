@@ -1,165 +1,139 @@
-// utils/session-service.ts
+// session-service.ts
+// Simplified session tracking service for background script
+
 import { loguru } from './logger';
 import { PaperManager } from '../papers/manager';
 import { ReadingSessionData, PaperMetadata } from '../papers/types';
 
 const logger = loguru.getLogger('session-service');
 
-export interface SessionInfo {
-  sourceId: string;
-  paperId: string;
-  startTime: Date;
-}
-
 /**
- * SessionService - Unified session tracking service
+ * Session tracking service for paper reading sessions
  * 
- * This service centrally manages reading session tracking across the extension.
- * It handles:
- * - Starting/stopping reading sessions
- * - Heartbeat tracking for active reading
- * - Automatic timeouts for inactive sessions
- * - Persistence of session data
- * - Tab visibility and focus/blur events
- * 
- * The service is designed as a singleton to ensure consistent state
- * across background and content scripts.
+ * Manages session state, heartbeats, and persistence
+ * Designed for use in the background script (Service Worker)
  */
 export class SessionService {
-  private static instance: SessionService | null = null;
-  private activeSession: SessionInfo | null = null;
-  private heartbeatCount: number = 0;
-  private lastHeartbeatTime: Date | null = null;
-  private heartbeatInterval: number | null = null;
-  private heartbeatTimeoutId: number | null = null;
-  private paperMetadata: Map<string, PaperMetadata> = new Map();
-  private paperManager: PaperManager | null = null;
+  private activeSession: {
+    sourceId: string;
+    paperId: string;
+    startTime: Date;
+    heartbeatCount: number;
+    lastHeartbeatTime: Date;
+  } | null = null;
   
-  // Constants
-  private readonly HEARTBEAT_INTERVAL = 5000; // 5 seconds
+  private timeoutId: number | null = null;
+  private paperMetadata: Map<string, PaperMetadata> = new Map();
+  
+  // Configuration
   private readonly HEARTBEAT_TIMEOUT = 15000; // 15 seconds
   
-  private constructor() {
+  /**
+   * Create a new session service
+   */
+  constructor(private paperManager: PaperManager | null) {
     logger.debug('Session service initialized');
   }
   
-  // Singleton instance getter
-  public static getInstance(): SessionService {
-    if (!SessionService.instance) {
-      SessionService.instance = new SessionService();
-    }
-    return SessionService.instance;
-  }
-  
-  // Initialize with PaperManager
-  public initialize(paperManager: PaperManager): void {
-    this.paperManager = paperManager;
-    logger.info('Session service initialized with paper manager');
-  }
-  
-  // Start a new session
-  public startSession(sourceId: string, paperId: string, metadata?: PaperMetadata): void {
+  /**
+   * Start a new session for a paper
+   */
+  startSession(sourceId: string, paperId: string, metadata?: PaperMetadata): void {
     // End any existing session
     this.endSession();
     
+    // Create new session
     this.activeSession = {
       sourceId,
       paperId,
-      startTime: new Date()
+      startTime: new Date(),
+      heartbeatCount: 0,
+      lastHeartbeatTime: new Date()
     };
-    
-    this.heartbeatCount = 0;
-    this.lastHeartbeatTime = new Date();
     
     // Store metadata if provided
     if (metadata) {
       const key = `${sourceId}:${paperId}`;
       this.paperMetadata.set(key, metadata);
+      logger.debug(`Stored metadata for ${key}`);
     }
     
-    // Start heartbeat
-    this.startHeartbeat();
+    // Start timeout check
+    this.scheduleTimeoutCheck();
     
     logger.info(`Started session for ${sourceId}:${paperId}`);
   }
   
-  // Start heartbeat interval
-  private startHeartbeat(): void {
-    if (this.heartbeatInterval !== null) {
-      clearInterval(this.heartbeatInterval);
+  /**
+   * Record a heartbeat for the current session
+   */
+  recordHeartbeat(): boolean {
+    if (!this.activeSession) {
+      return false;
     }
     
-    this.heartbeatInterval = window.setInterval(() => {
-      this.recordHeartbeat();
-    }, this.HEARTBEAT_INTERVAL);
+    this.activeSession.heartbeatCount++;
+    this.activeSession.lastHeartbeatTime = new Date();
     
-    // Schedule timeout check
+    // Reschedule timeout
     this.scheduleTimeoutCheck();
     
-    logger.debug('Started heartbeat');
-  }
-  
-  // Record a heartbeat
-  public recordHeartbeat(): void {
-    if (!this.activeSession) return;
-    
-    this.heartbeatCount++;
-    this.lastHeartbeatTime = new Date();
-    
-    // Reschedule timeout check
-    this.scheduleTimeoutCheck();
-    
-    if (this.heartbeatCount % 12 === 0) { // Log every minute
-      logger.debug(`Session has received ${this.heartbeatCount} heartbeats`);
+    if (this.activeSession.heartbeatCount % 12 === 0) { // Log every minute (12 x 5sec heartbeats)
+      logger.debug(`Session received ${this.activeSession.heartbeatCount} heartbeats`);
     }
+    
+    return true;
   }
   
-  // Schedule heartbeat timeout check
+  /**
+   * Schedule a check for heartbeat timeout
+   */
   private scheduleTimeoutCheck(): void {
-    if (this.heartbeatTimeoutId !== null) {
-      clearTimeout(this.heartbeatTimeoutId);
+    // Clear existing timeout
+    if (this.timeoutId !== null) {
+      clearTimeout(this.timeoutId);
     }
     
-    this.heartbeatTimeoutId = window.setTimeout(() => {
-      this.checkHeartbeatTimeout();
+    // Set new timeout
+    this.timeoutId = self.setTimeout(() => {
+      this.checkTimeout();
     }, this.HEARTBEAT_TIMEOUT);
   }
   
-  // Check if heartbeat has timed out
-  private checkHeartbeatTimeout(): void {
-    if (!this.activeSession || !this.lastHeartbeatTime) return;
+  /**
+   * Check if the session has timed out due to missing heartbeats
+   */
+  private checkTimeout(): void {
+    if (!this.activeSession) return;
     
-    const timeSinceLastHeartbeat = Date.now() - this.lastHeartbeatTime.getTime();
+    const now = Date.now();
+    const lastTime = this.activeSession.lastHeartbeatTime.getTime();
     
-    if (timeSinceLastHeartbeat > this.HEARTBEAT_TIMEOUT) {
-      logger.info('Heartbeat timeout, ending session');
+    if ((now - lastTime) > this.HEARTBEAT_TIMEOUT) {
+      logger.info('Session timeout detected');
       this.endSession();
     } else {
       this.scheduleTimeoutCheck();
     }
   }
   
-  // End the current session
-  public async endSession(): Promise<ReadingSessionData | null> {
+  /**
+   * End the current session and get the data
+   */
+  endSession(): ReadingSessionData | null {
     if (!this.activeSession) return null;
     
-    // Stop heartbeat
-    if (this.heartbeatInterval !== null) {
-      clearInterval(this.heartbeatInterval);
-      this.heartbeatInterval = null;
-    }
-    
     // Clear timeout
-    if (this.heartbeatTimeoutId !== null) {
-      clearTimeout(this.heartbeatTimeoutId);
-      this.heartbeatTimeoutId = null;
+    if (this.timeoutId !== null) {
+      clearTimeout(this.timeoutId);
+      this.timeoutId = null;
     }
     
+    const { sourceId, paperId, startTime, heartbeatCount } = this.activeSession;
     const endTime = new Date();
-    const { sourceId, paperId, startTime } = this.activeSession;
     
-    // Calculate duration based on heartbeat count
-    const duration = this.heartbeatCount * 5; // 5 seconds per heartbeat
+    // Calculate duration (5 seconds per heartbeat)
+    const duration = heartbeatCount * 5;
     
     // Calculate total elapsed time
     const totalElapsed = endTime.getTime() - startTime.getTime();
@@ -168,54 +142,62 @@ export class SessionService {
     // Set idle seconds to the difference (for backward compatibility)
     const idleSeconds = Math.max(0, totalElapsedSeconds - duration);
     
-    const sessionId = `session_${startTime.getTime()}_${Math.random().toString(36).substring(2, 9)}`;
-    
+    // Create session data
     const sessionData: ReadingSessionData = {
-      session_id: sessionId,
-      paper_id: paperId,
+      session_id: `session_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
       source_id: sourceId,
+      paper_id: paperId,
       start_time: startTime.toISOString(),
       end_time: endTime.toISOString(),
-      heartbeat_count: this.heartbeatCount,
+      heartbeat_count: heartbeatCount,
       duration_seconds: duration,
+      // Legacy fields
       idle_seconds: idleSeconds,
       total_elapsed_seconds: totalElapsedSeconds
     };
     
-    // Store session if we have paper manager and session was active
-    if (this.paperManager && this.heartbeatCount > 0) {
-      try {
-        const metadata = this.getPaperMetadata(sourceId, paperId);
-        await this.paperManager.logReadingSession(sourceId, paperId, sessionData, metadata);
-        logger.info(`Session saved to storage for ${sourceId}:${paperId}`);
-      } catch (error) {
-        logger.error('Error saving session', error);
-      }
+    // Store session if it was meaningful and we have a paper manager
+    if (this.paperManager && heartbeatCount > 0) {
+      const metadata = this.getPaperMetadata(sourceId, paperId);
+      
+      this.paperManager.logReadingSession(sourceId, paperId, sessionData, metadata)
+        .catch(err => logger.error('Failed to store session', err));
     }
     
-    // Clear session
-    this.activeSession = null;
-    
     logger.info(`Ended session for ${sourceId}:${paperId}`, {
-      duration: sessionData.duration_seconds,
-      heartbeats: sessionData.heartbeat_count
+      duration,
+      heartbeats: heartbeatCount
     });
+    
+    // Clear active session
+    this.activeSession = null;
     
     return sessionData;
   }
   
-  // Check if session is active
-  public hasActiveSession(): boolean {
+  /**
+   * Check if a session is currently active
+   */
+  hasActiveSession(): boolean {
     return this.activeSession !== null;
   }
   
-  // Get current session
-  public getCurrentSession(): { sourceId: string; paperId: string } | null {
-    return this.activeSession;
+  /**
+   * Get information about the current session
+   */
+  getCurrentSession(): { sourceId: string, paperId: string } | null {
+    if (!this.activeSession) return null;
+    
+    return {
+      sourceId: this.activeSession.sourceId,
+      paperId: this.activeSession.paperId
+    };
   }
   
-  // Get paper metadata
-  public getPaperMetadata(sourceId?: string, paperId?: string): PaperMetadata | undefined {
+  /**
+   * Get paper metadata for the current or specified session
+   */
+  getPaperMetadata(sourceId?: string, paperId?: string): PaperMetadata | undefined {
     if (!sourceId || !paperId) {
       if (!this.activeSession) return undefined;
       sourceId = this.activeSession.sourceId;
@@ -225,15 +207,30 @@ export class SessionService {
     return this.paperMetadata.get(`${sourceId}:${paperId}`);
   }
   
-  // Get time since last heartbeat
-  public getTimeSinceLastHeartbeat(): number | null {
-    if (!this.lastHeartbeatTime) return null;
-    return Date.now() - this.lastHeartbeatTime.getTime();
+  /**
+   * Store paper metadata
+   */
+  storePaperMetadata(metadata: PaperMetadata): void {
+    const key = `${metadata.sourceId}:${metadata.paperId}`;
+    this.paperMetadata.set(key, metadata);
   }
   
-  // Get session statistics
-  public getSessionStats(): any {
-    if (!this.activeSession || !this.lastHeartbeatTime) {
+  /**
+   * Get time since last heartbeat in milliseconds
+   */
+  getTimeSinceLastHeartbeat(): number | null {
+    if (!this.activeSession) {
+      return null;
+    }
+    
+    return Date.now() - this.activeSession.lastHeartbeatTime.getTime();
+  }
+  
+  /**
+   * Get session statistics for debugging
+   */
+  getSessionStats(): any {
+    if (!this.activeSession) {
       return { active: false };
     }
     
@@ -242,8 +239,8 @@ export class SessionService {
       sourceId: this.activeSession.sourceId,
       paperId: this.activeSession.paperId,
       startTime: this.activeSession.startTime.toISOString(),
-      heartbeatCount: this.heartbeatCount,
-      lastHeartbeatTime: this.lastHeartbeatTime.toISOString(),
+      heartbeatCount: this.activeSession.heartbeatCount,
+      lastHeartbeatTime: this.activeSession.lastHeartbeatTime.toISOString(),
       elapsedTime: Math.round((Date.now() - this.activeSession.startTime.getTime()) / 1000)
     };
   }
