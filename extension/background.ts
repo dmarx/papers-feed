@@ -3,8 +3,7 @@
 
 import { GitHubStoreClient } from 'gh-store-client';
 import { PaperManager } from './papers/manager';
-import { loadSessionConfig } from './config/session';
-import { SessionTracker } from './utils/session-tracker';
+import { SessionService } from './utils/session-service';
 import { PopupManager } from './utils/popup-manager';
 import { SourceIntegrationManager } from './source-integration/source-manager';
 import { loguru } from './utils/logger';
@@ -21,9 +20,11 @@ const logger = loguru.getLogger('background');
 let githubToken = '';
 let githubRepo = '';
 let paperManager: PaperManager | null = null;
-let sessionTracker: SessionTracker | null = null;
+let sessionService: SessionService | null = null;
 let popupManager: PopupManager | null = null;
 let sourceManager: SourceIntegrationManager | null = null;
+
+
 
 // Heartbeat timeout check
 const HEARTBEAT_TIMEOUT = 15000; // 15 seconds (3 times the 5-second heartbeat interval)
@@ -60,11 +61,13 @@ async function initialize() {
       // Pass the source manager to the paper manager
       paperManager = new PaperManager(githubClient, sourceManager!);
       logger.info('Paper manager initialized');
+    // Initialize session service with paper manager
+      sessionService = SessionService.getInstance();
+      sessionService.initialize(paperManager);
+    } else {
+      // Initialize session service without paper manager
+      sessionService = SessionService.getInstance();
     }
-    
-    // Initialize session tracker
-    sessionTracker = new SessionTracker();
-    logger.info('Session tracker initialized');
     
     // Initialize popup manager
     popupManager = new PopupManager(
@@ -207,38 +210,27 @@ async function handleUpdateRating(rating: string, sendResponse: (response: any) 
 
 // Handle session start request
 function handleStartSession(sourceId: string, paperId: string) {
-  if (!sessionTracker) {
-    logger.error('Session tracker not initialized');
+  if (!sessionService) {
+    logger.error('Session service not initialized');
     return;
   }
   
-  // Get metadata if available
-  const existingMetadata = sessionTracker.getPaperMetadata(sourceId, paperId);
-  
   // Start the session
-  sessionTracker.startSession(sourceId, paperId, existingMetadata);
-  logger.info(`Started session for ${sourceId}:${paperId}`);
-  
-  // Schedule heartbeat check
-  scheduleHeartbeatCheck();
+  sessionService.startSession(sourceId, paperId);
 }
 
 // Handle session heartbeat
 function handleSessionHeartbeat(sourceId: string, paperId: string, timestamp: number) {
-  if (!sessionTracker) {
-    logger.error('Session tracker not initialized');
+  if (!sessionService) {
+    logger.error('Session service not initialized');
     return;
   }
   
-  const session = sessionTracker.getCurrentSession();
+  const session = sessionService.getCurrentSession();
   
   // Verify session matches
   if (session && session.sourceId === sourceId && session.paperId === paperId) {
-    sessionTracker.recordHeartbeat();
-    
-    // Reschedule heartbeat check
-    scheduleHeartbeatCheck();
-    
+    sessionService.recordHeartbeat();
     logger.debug(`Heartbeat received for ${sourceId}:${paperId}`);
   } else {
     // Heartbeat for non-current session - probably a race condition
@@ -253,29 +245,19 @@ function handleSessionHeartbeat(sourceId: string, paperId: string, timestamp: nu
 
 // Handle session end request
 function handleEndSession(sourceId: string, paperId: string, reason: string) {
-  const session = sessionTracker?.getCurrentSession();
+  if (!sessionService) {
+    logger.error('Session service not initialized');
+    return;
+  }
+  
+  const session = sessionService.getCurrentSession();
   
   // Only end if it matches current session
   if (session && session.sourceId === sourceId && session.paperId === paperId) {
     logger.info(`Ending session for ${sourceId}:${paperId}`, { reason });
-    endCurrentSession();
+    sessionService.endSession();
   } else {
     logger.warning(`Received end request for non-current session: ${sourceId}:${paperId}`);
-  }
-}
-
-async function handleManualPaperLog(metadata: PaperMetadata): Promise<void> {
-  logger.info(`Received manual paper log: ${metadata.sourceId}:${metadata.paperId}`);
-  
-  try {
-    // Store in GitHub if we have a paper manager
-    if (paperManager) {
-      await paperManager.getOrCreatePaper(metadata);
-      logger.debug('Manually logged paper stored in GitHub');
-    }
-  } catch (error) {
-    logger.error('Error handling manual paper log', error);
-    throw error;
   }
 }
 
