@@ -280,6 +280,10 @@ function searchPapers() {
     });
     
     if (!query || !indexReady || activeFields.size === 0) {
+        // reset empty day status when query is empty
+        document.querySelectorAll('.day-group').forEach(dayGroup => {
+            dayGroup.classList.remove('empty-day');
+        });
         updateSearchStats();
         return;
     }
@@ -318,6 +322,7 @@ function searchPapers() {
         }
     });
     
+    hideEmptyDayGroups();
     // Update search stats
     updateSearchStats(visibleCount);
 }
@@ -368,14 +373,29 @@ window.searchModule = {
     }
 };
 
+// Hide day groups that have no visible papers
+function hideEmptyDayGroups() {
+    // Process each day group
+    document.querySelectorAll('.day-group').forEach(dayGroup => {
+        // Check if the day group has any visible paper rows
+        const visiblePapers = dayGroup.querySelectorAll('tr[data-paper-id]:not(.search-filtered):not(.filtered)');
+        
+        // Add or remove the 'empty-day' class based on whether there are visible papers
+        if (visiblePapers.length === 0) {
+            dayGroup.classList.add('empty-day');
+        } else {
+            dayGroup.classList.remove('empty-day');
+        }
+    });
+}
+
 // Override the existing filter function to also apply search
 const originalApplyFilters = window.applyFilters;
 if (originalApplyFilters) {
     window.applyFilters = function() {
-        // Call the original filter function
         originalApplyFilters();
-        // Then apply search filters
         searchPapers();
+        hideEmptyDayGroups();
     };
 }
 
