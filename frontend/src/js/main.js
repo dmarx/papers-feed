@@ -57,6 +57,7 @@ async function loadPaperData() {
     return data;
 }
 
+// Update the initializeApp function to call this new function
 async function initializeApp() {
     try {
         // Load paper data and git info in parallel
@@ -72,6 +73,15 @@ async function initializeApp() {
         initializeControls();
         initializeFilters();
         initializeFeatures(); // New initialization for features
+        
+        // Add this line to initialize search (if available)
+        if (typeof window.searchModule?.initializeSearch === 'function') {
+            window.searchModule.initializeSearch();
+        }
+        
+        // Add this line to initialize share button
+        initializeShareButton();
+        
         renderPapers();
         applyFilters();
         
@@ -117,6 +127,42 @@ function waitForFeatures(timeout = 30000, interval = 1000) {
             }
         };
         check();
+    });
+}
+
+function initializeShareButton() {
+    const shareButton = document.getElementById('share-button');
+    const shareTooltip = document.getElementById('share-tooltip');
+    
+    if (!shareButton || !shareTooltip) return;
+    
+    shareButton.addEventListener('click', async () => {
+        if (!window.urlStateManager) {
+            console.error('URL State Manager not available');
+            return;
+        }
+        
+        // Copy URL to clipboard
+        const success = await window.urlStateManager.copyShareableUrl();
+        
+        if (success) {
+            // Show tooltip
+            shareTooltip.classList.add('visible');
+            
+            // Hide tooltip after 2 seconds
+            setTimeout(() => {
+                shareTooltip.classList.remove('visible');
+            }, 2000);
+        } else {
+            // Show error in tooltip
+            shareTooltip.textContent = 'Failed to copy URL';
+            shareTooltip.classList.add('visible');
+            
+            setTimeout(() => {
+                shareTooltip.classList.remove('visible');
+                shareTooltip.textContent = 'URL copied to clipboard!';
+            }, 2000);
+        }
     });
 }
 
