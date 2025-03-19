@@ -246,139 +246,155 @@ class PaperManager {
     }
 }
 
-// utils/session-tracker.ts
-const logger$6 = loguru.getLogger('session-tracker');
+// session-service.ts
+const logger$6 = loguru.getLogger('session-service');
 /**
- * Class representing a single reading session
+ * Session tracking service for paper reading sessions
+ *
+ * Manages session state, heartbeats, and persistence
+ * Designed for use in the background script (Service Worker)
  */
-class ReadingSession {
-    constructor(sourceId, paperId) {
-        this.heartbeatCount = 0;
-        this.endTime = null;
-        this.sessionId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-        this.sourceId = sourceId;
-        this.paperId = paperId;
-        this.startTime = new Date();
-        this.lastHeartbeatTime = this.startTime;
-        logger$6.debug(`Created new reading session: ${this.sessionId} for ${sourceId}:${paperId}`);
-    }
+class SessionService {
     /**
-     * Record a heartbeat
+     * Create a new session service
      */
-    recordHeartbeat() {
-        this.heartbeatCount++;
-        this.lastHeartbeatTime = new Date();
-        if (this.heartbeatCount % 12 === 0) { // Log every minute (12 x 5sec heartbeats)
-            logger$6.debug(`Session ${this.sessionId} received ${this.heartbeatCount} heartbeats`);
-        }
-    }
-    /**
-     * End the session and get data
-     */
-    endSession() {
-        this.endTime = new Date();
-        // Calculate duration based on heartbeat count
-        // This gives us the actual "proven" reading time
-        const duration = this.heartbeatCount * 5; // 5 seconds per heartbeat
-        // Calculate total elapsed time
-        const totalElapsed = this.endTime.getTime() - this.startTime.getTime();
-        const totalElapsedSeconds = Math.round(totalElapsed / 1000);
-        // Set idle seconds to the difference (for backward compatibility)
-        const idleSeconds = Math.max(0, totalElapsedSeconds - duration);
-        const sessionData = {
-            session_id: this.sessionId,
-            paper_id: this.paperId,
-            source_id: this.sourceId,
-            start_time: this.startTime.toISOString(),
-            end_time: this.endTime.toISOString(),
-            heartbeat_count: this.heartbeatCount,
-            duration_seconds: duration,
-            // Legacy properties for backward compatibility
-            idle_seconds: idleSeconds,
-            total_elapsed_seconds: totalElapsedSeconds
-        };
-        logger$6.debug(`Ended session ${this.sessionId} with ${this.heartbeatCount} heartbeats (${duration}s)`);
-        return sessionData;
-    }
-    /**
-     * Get time since last heartbeat in milliseconds
-     */
-    getTimeSinceLastHeartbeat() {
-        return Date.now() - this.lastHeartbeatTime.getTime();
-    }
-    /**
-     * Get session metadata for debugging
-     */
-    getMetadata() {
-        return {
-            sessionId: this.sessionId,
-            sourceId: this.sourceId,
-            paperId: this.paperId,
-            startTime: this.startTime.toISOString(),
-            heartbeatCount: this.heartbeatCount,
-            lastHeartbeatTime: this.lastHeartbeatTime.toISOString(),
-            elapsedTime: Math.round((Date.now() - this.startTime.getTime()) / 1000)
-        };
-    }
-}
-/**
- * Manages reading session tracking
- */
-class SessionTracker {
-    constructor() {
+    constructor(paperManager) {
+        this.paperManager = paperManager;
         this.activeSession = null;
+        this.timeoutId = null;
         this.paperMetadata = new Map();
-        logger$6.debug('Session tracker initialized');
+        // Configuration
+        this.HEARTBEAT_TIMEOUT = 15000; // 15 seconds
+        logger$6.debug('Session service initialized');
     }
     /**
-     * Start a new session
+     * Start a new session for a paper
      */
     startSession(sourceId, paperId, metadata) {
         // End any existing session
         this.endSession();
         // Create new session
-        this.activeSession = new ReadingSession(sourceId, paperId);
-        logger$6.info(`Started session for ${sourceId}:${paperId}`);
+        this.activeSession = {
+            sourceId,
+            paperId,
+            startTime: new Date(),
+            heartbeatCount: 0,
+            lastHeartbeatTime: new Date()
+        };
         // Store metadata if provided
         if (metadata) {
             const key = `${sourceId}:${paperId}`;
             this.paperMetadata.set(key, metadata);
             logger$6.debug(`Stored metadata for ${key}`);
         }
+        // Start timeout check
+        this.scheduleTimeoutCheck();
+        logger$6.info(`Started session for ${sourceId}:${paperId}`);
     }
     /**
      * Record a heartbeat for the current session
      */
     recordHeartbeat() {
-        if (this.activeSession) {
-            this.activeSession.recordHeartbeat();
-            return true;
+        if (!this.activeSession) {
+            return false;
         }
-        return false;
+        this.activeSession.heartbeatCount++;
+        this.activeSession.lastHeartbeatTime = new Date();
+        // Reschedule timeout
+        this.scheduleTimeoutCheck();
+        if (this.activeSession.heartbeatCount % 12 === 0) { // Log every minute (12 x 5sec heartbeats)
+            logger$6.debug(`Session received ${this.activeSession.heartbeatCount} heartbeats`);
+        }
+        return true;
+    }
+    /**
+     * Schedule a check for heartbeat timeout
+     */
+    scheduleTimeoutCheck() {
+        // Clear existing timeout
+        if (this.timeoutId !== null) {
+            clearTimeout(this.timeoutId);
+        }
+        // Set new timeout
+        this.timeoutId = self.setTimeout(() => {
+            this.checkTimeout();
+        }, this.HEARTBEAT_TIMEOUT);
+    }
+    /**
+     * Check if the session has timed out due to missing heartbeats
+     */
+    checkTimeout() {
+        if (!this.activeSession)
+            return;
+        const now = Date.now();
+        const lastTime = this.activeSession.lastHeartbeatTime.getTime();
+        if ((now - lastTime) > this.HEARTBEAT_TIMEOUT) {
+            logger$6.info('Session timeout detected');
+            this.endSession();
+        }
+        else {
+            this.scheduleTimeoutCheck();
+        }
     }
     /**
      * End the current session and get the data
      */
     endSession() {
-        if (!this.activeSession) {
+        if (!this.activeSession)
             return null;
+        // Clear timeout
+        if (this.timeoutId !== null) {
+            clearTimeout(this.timeoutId);
+            this.timeoutId = null;
         }
-        const sessionData = this.activeSession.endSession();
-        logger$6.info(`Ended session for ${sessionData.source_id}:${sessionData.paper_id}`, {
-            duration: sessionData.duration_seconds,
-            heartbeats: sessionData.heartbeat_count
+        const { sourceId, paperId, startTime, heartbeatCount } = this.activeSession;
+        const endTime = new Date();
+        // Calculate duration (5 seconds per heartbeat)
+        const duration = heartbeatCount * 5;
+        // Calculate total elapsed time
+        const totalElapsed = endTime.getTime() - startTime.getTime();
+        const totalElapsedSeconds = Math.round(totalElapsed / 1000);
+        // Set idle seconds to the difference (for backward compatibility)
+        const idleSeconds = Math.max(0, totalElapsedSeconds - duration);
+        // Create session data
+        const sessionData = {
+            session_id: `session_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+            source_id: sourceId,
+            paper_id: paperId,
+            start_time: startTime.toISOString(),
+            end_time: endTime.toISOString(),
+            heartbeat_count: heartbeatCount,
+            duration_seconds: duration,
+            // Legacy fields
+            idle_seconds: idleSeconds,
+            total_elapsed_seconds: totalElapsedSeconds
+        };
+        // Store session if it was meaningful and we have a paper manager
+        if (this.paperManager && heartbeatCount > 0) {
+            const metadata = this.getPaperMetadata(sourceId, paperId);
+            this.paperManager.logReadingSession(sourceId, paperId, sessionData, metadata)
+                .catch(err => logger$6.error('Failed to store session', err));
+        }
+        logger$6.info(`Ended session for ${sourceId}:${paperId}`, {
+            duration,
+            heartbeats: heartbeatCount
         });
-        const result = sessionData;
+        // Clear active session
         this.activeSession = null;
-        return result;
+        return sessionData;
     }
     /**
-     * Get current session info
+     * Check if a session is currently active
+     */
+    hasActiveSession() {
+        return this.activeSession !== null;
+    }
+    /**
+     * Get information about the current session
      */
     getCurrentSession() {
-        if (!this.activeSession) {
+        if (!this.activeSession)
             return null;
-        }
         return {
             sourceId: this.activeSession.sourceId,
             paperId: this.activeSession.paperId
@@ -397,10 +413,11 @@ class SessionTracker {
         return this.paperMetadata.get(`${sourceId}:${paperId}`);
     }
     /**
-     * Check if a session is active
+     * Store paper metadata
      */
-    hasActiveSession() {
-        return this.activeSession !== null;
+    storePaperMetadata(metadata) {
+        const key = `${metadata.sourceId}:${metadata.paperId}`;
+        this.paperMetadata.set(key, metadata);
     }
     /**
      * Get time since last heartbeat in milliseconds
@@ -409,13 +426,24 @@ class SessionTracker {
         if (!this.activeSession) {
             return null;
         }
-        return this.activeSession.getTimeSinceLastHeartbeat();
+        return Date.now() - this.activeSession.lastHeartbeatTime.getTime();
     }
     /**
-     * Get session metadata for debugging
+     * Get session statistics for debugging
      */
-    getCurrentSessionMetadata() {
-        return this.activeSession?.getMetadata() || null;
+    getSessionStats() {
+        if (!this.activeSession) {
+            return { active: false };
+        }
+        return {
+            active: true,
+            sourceId: this.activeSession.sourceId,
+            paperId: this.activeSession.paperId,
+            startTime: this.activeSession.startTime.toISOString(),
+            heartbeatCount: this.activeSession.heartbeatCount,
+            lastHeartbeatTime: this.activeSession.lastHeartbeatTime.toISOString(),
+            elapsedTime: Math.round((Date.now() - this.activeSession.startTime.getTime()) / 1000)
+        };
     }
 }
 
@@ -1027,24 +1055,20 @@ class ArXivIntegration extends BaseSourceIntegration {
 // Export a singleton instance that can be used by both background and content scripts
 const arxivIntegration = new ArXivIntegration();
 
-// extension/background.ts
+// background.ts
 const logger = loguru.getLogger('background');
 // Global state
 let githubToken = '';
 let githubRepo = '';
 let paperManager = null;
-let sessionTracker = null;
+let sessionService = null;
 let popupManager = null;
 let sourceManager = null;
-// Heartbeat timeout check
-const HEARTBEAT_TIMEOUT = 15000; // 15 seconds (3 times the 5-second heartbeat interval)
-let heartbeatTimeoutId = null;
 // Initialize sources
 function initializeSources() {
     sourceManager = new SourceIntegrationManager();
     // Register built-in sources directly
     sourceManager.registerSource(arxivIntegration);
-    //sourceManager.registerSource(pdfIntegration);
     logger.info('Source manager initialized');
     return sourceManager;
 }
@@ -1064,10 +1088,14 @@ async function initialize() {
             // Pass the source manager to the paper manager
             paperManager = new PaperManager(githubClient, sourceManager);
             logger.info('Paper manager initialized');
+            // Initialize session service with paper manager
+            sessionService = new SessionService(paperManager);
         }
-        // Initialize session tracker
-        sessionTracker = new SessionTracker();
-        logger.info('Session tracker initialized');
+        else {
+            // Initialize session service without paper manager
+            sessionService = new SessionService(null);
+        }
+        logger.info('Session service initialized');
         // Initialize popup manager
         popupManager = new PopupManager(() => sourceManager, () => paperManager);
         logger.info('Popup manager initialized');
@@ -1095,8 +1123,9 @@ function setupMessageListeners() {
             return true;
         }
         if (message.type === 'getCurrentPaper') {
-            const paperMetadata = sessionTracker?.getCurrentSession()
-                ? sessionTracker?.getPaperMetadata()
+            const session = sessionService?.getCurrentSession();
+            const paperMetadata = session
+                ? sessionService?.getPaperMetadata(session.sourceId, session.paperId)
                 : null;
             logger.debug('Popup requested current paper', paperMetadata);
             sendResponse(paperMetadata);
@@ -1113,12 +1142,12 @@ function setupMessageListeners() {
             return true;
         }
         if (message.type === 'sessionHeartbeat') {
-            handleSessionHeartbeat(message.sourceId, message.paperId, message.timestamp);
+            handleSessionHeartbeat();
             sendResponse({ success: true });
             return true;
         }
         if (message.type === 'endSession') {
-            handleEndSession(message.sourceId, message.paperId, message.reason || 'user_action');
+            handleEndSession(message.reason || 'user_action');
             sendResponse({ success: true });
             return true;
         }
@@ -1136,13 +1165,17 @@ function setupMessageListeners() {
             return true; // Will respond asynchronously
         }
         // Other message handlers are managed by PopupManager
-        return false;
+        return false; // Not handled
     });
 }
 // Handle paper metadata from content script
 async function handlePaperMetadata(metadata) {
     logger.info(`Received metadata for ${metadata.sourceId}:${metadata.paperId}`);
     try {
+        // Store metadata in session service
+        if (sessionService) {
+            sessionService.storePaperMetadata(metadata);
+        }
         // Store in GitHub if we have a paper manager
         if (paperManager) {
             await paperManager.getOrCreatePaper(metadata);
@@ -1155,16 +1188,16 @@ async function handlePaperMetadata(metadata) {
 }
 // Handle rating update
 async function handleUpdateRating(rating, sendResponse) {
-    if (!paperManager || !sessionTracker) {
+    if (!paperManager || !sessionService) {
         sendResponse({ success: false, error: 'Services not initialized' });
         return;
     }
-    const session = sessionTracker.getCurrentSession();
+    const session = sessionService.getCurrentSession();
     if (!session) {
         sendResponse({ success: false, error: 'No current session' });
         return;
     }
-    const metadata = sessionTracker.getPaperMetadata();
+    const metadata = sessionService.getPaperMetadata();
     if (!metadata) {
         sendResponse({ success: false, error: 'No paper metadata available' });
         return;
@@ -1182,56 +1215,43 @@ async function handleUpdateRating(rating, sendResponse) {
 }
 // Handle session start request
 function handleStartSession(sourceId, paperId) {
-    if (!sessionTracker) {
-        logger.error('Session tracker not initialized');
+    if (!sessionService) {
+        logger.error('Session service not initialized');
         return;
     }
     // Get metadata if available
-    const existingMetadata = sessionTracker.getPaperMetadata(sourceId, paperId);
+    const existingMetadata = sessionService.getPaperMetadata(sourceId, paperId);
     // Start the session
-    sessionTracker.startSession(sourceId, paperId, existingMetadata);
+    sessionService.startSession(sourceId, paperId, existingMetadata);
     logger.info(`Started session for ${sourceId}:${paperId}`);
-    // Schedule heartbeat check
-    scheduleHeartbeatCheck();
 }
 // Handle session heartbeat
-function handleSessionHeartbeat(sourceId, paperId, timestamp) {
-    if (!sessionTracker) {
-        logger.error('Session tracker not initialized');
+function handleSessionHeartbeat() {
+    if (!sessionService) {
+        logger.error('Session service not initialized');
         return;
     }
-    const session = sessionTracker.getCurrentSession();
-    // Verify session matches
-    if (session && session.sourceId === sourceId && session.paperId === paperId) {
-        sessionTracker.recordHeartbeat();
-        // Reschedule heartbeat check
-        scheduleHeartbeatCheck();
-        logger.debug(`Heartbeat received for ${sourceId}:${paperId}`);
-    }
-    else {
-        // Heartbeat for non-current session - probably a race condition
-        logger.warning(`Received heartbeat for non-current session: ${sourceId}:${paperId}`);
-        // Start new session if needed
-        if (!session) {
-            handleStartSession(sourceId, paperId);
-        }
-    }
+    sessionService.recordHeartbeat();
 }
 // Handle session end request
-function handleEndSession(sourceId, paperId, reason) {
-    const session = sessionTracker?.getCurrentSession();
-    // Only end if it matches current session
-    if (session && session.sourceId === sourceId && session.paperId === paperId) {
-        logger.info(`Ending session for ${sourceId}:${paperId}`, { reason });
-        endCurrentSession();
+function handleEndSession(reason) {
+    if (!sessionService) {
+        logger.error('Session service not initialized');
+        return;
     }
-    else {
-        logger.warning(`Received end request for non-current session: ${sourceId}:${paperId}`);
+    const session = sessionService.getCurrentSession();
+    if (session) {
+        logger.info(`Ending session: ${reason}`);
+        sessionService.endSession();
     }
 }
 async function handleManualPaperLog(metadata) {
     logger.info(`Received manual paper log: ${metadata.sourceId}:${metadata.paperId}`);
     try {
+        // Store metadata in session service
+        if (sessionService) {
+            sessionService.storePaperMetadata(metadata);
+        }
         // Store in GitHub if we have a paper manager
         if (paperManager) {
             await paperManager.getOrCreatePaper(metadata);
@@ -1241,38 +1261,6 @@ async function handleManualPaperLog(metadata) {
     catch (error) {
         logger.error('Error handling manual paper log', error);
         throw error;
-    }
-}
-// Schedule heartbeat timeout check
-function scheduleHeartbeatCheck() {
-    // Clear any existing timeout
-    if (heartbeatTimeoutId !== null) {
-        clearTimeout(heartbeatTimeoutId);
-        heartbeatTimeoutId = null;
-    }
-    // Only schedule if we have an active session
-    if (!sessionTracker || !sessionTracker.hasActiveSession()) {
-        return;
-    }
-    // Set timeout to check for missed heartbeats
-    heartbeatTimeoutId = self.setTimeout(() => {
-        checkHeartbeat();
-    }, HEARTBEAT_TIMEOUT);
-}
-// Check if we've missed too many heartbeats
-function checkHeartbeat() {
-    if (!sessionTracker || !sessionTracker.hasActiveSession()) {
-        return;
-    }
-    const timeSinceLastHeartbeat = sessionTracker.getTimeSinceLastHeartbeat();
-    if (timeSinceLastHeartbeat && timeSinceLastHeartbeat > HEARTBEAT_TIMEOUT) {
-        // Too much time since last heartbeat, end the session
-        logger.info('Heartbeat timeout, ending session');
-        endCurrentSession();
-    }
-    else {
-        // Still active, reschedule check
-        scheduleHeartbeatCheck();
     }
 }
 // Listen for credential changes
@@ -1291,54 +1279,28 @@ chrome.storage.onChanged.addListener(async (changes) => {
             // Pass the source manager to the paper manager
             paperManager = new PaperManager(githubClient, sourceManager);
             logger.info('Paper manager reinitialized');
+            // Reinitialize session service with new paper manager
+            sessionService = new SessionService(paperManager);
+            logger.info('Session service reinitialized');
         }
     }
 });
-// End current session and save data
-async function endCurrentSession() {
-    if (!sessionTracker) {
-        return;
-    }
-    // Get current session
-    const session = sessionTracker.getCurrentSession();
-    if (!session) {
-        return;
-    }
-    // Get paper metadata
-    const metadata = sessionTracker.getPaperMetadata();
-    // End the session
-    const sessionData = sessionTracker.endSession();
-    // Store session data if we have it and a paper manager
-    if (sessionData && (sessionData.heartbeat_count > 0) && paperManager) {
-        logger.debug('Creating reading event', sessionData);
-        try {
-            // Store reading session
-            await paperManager.logReadingSession(session.sourceId, session.paperId, sessionData, metadata);
-            logger.info(`Session saved to GitHub for ${session.sourceId}:${session.paperId}`);
-        }
-        catch (error) {
-            logger.error('Error saving session', error);
-        }
-    }
-    // Clear heartbeat timeout
-    if (heartbeatTimeoutId !== null) {
-        clearTimeout(heartbeatTimeoutId);
-        heartbeatTimeoutId = null;
-    }
-}
 // Initialize debug objects in service worker scope
 function initializeDebugObjects() {
     // @ts-ignore
-    globalThis.__DEBUG__ = {
+    self.__DEBUG__ = {
         get paperManager() { return paperManager; },
-        get sessionTracker() { return sessionTracker; },
+        get sessionService() { return sessionService; },
         get popupManager() { return popupManager; },
         get sourceManager() { return sourceManager; },
         getGithubClient: () => paperManager ? paperManager.getClient() : null,
-        getCurrentPaper: () => sessionTracker?.getPaperMetadata(),
-        getSessionInfo: () => sessionTracker?.getCurrentSessionMetadata(),
+        getCurrentPaper: () => {
+            const session = sessionService?.getCurrentSession();
+            return session ? sessionService?.getPaperMetadata(session.sourceId, session.paperId) : null;
+        },
+        getSessionStats: () => sessionService?.getSessionStats(),
         getSources: () => sourceManager?.getAllSources(),
-        forceEndSession: () => endCurrentSession()
+        forceEndSession: () => sessionService?.endSession()
     };
     logger.info('Debug objects registered');
 }
