@@ -280,6 +280,7 @@ function searchPapers() {
     });
     
     if (!query || !indexReady || activeFields.size === 0) {
+        hideEmptyDayGroups(); // do I need this here? probably doesn't hurt, anyway.
         updateSearchStats();
         return;
     }
@@ -318,6 +319,7 @@ function searchPapers() {
         }
     });
     
+    hideEmptyDayGroups();
     // Update search stats
     updateSearchStats(visibleCount);
 }
