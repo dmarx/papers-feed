@@ -280,7 +280,10 @@ function searchPapers() {
     });
     
     if (!query || !indexReady || activeFields.size === 0) {
-        hideEmptyDayGroups(); // do I need this here? probably doesn't hurt, anyway.
+        // reset empty day status when query is empty
+        document.querySelectorAll('.day-group').forEach(dayGroup => {
+            dayGroup.classList.remove('empty-day');
+        });
         updateSearchStats();
         return;
     }
