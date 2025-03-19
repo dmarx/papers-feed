@@ -1,0 +1,1648 @@
+---
+File: frontend/src/js/controls.js
+---
+/* frontend/src/js/controls.js */
+
+const initializeControls = () => {
+    // Initialize filter mode buttons
+    const filterButtons = document.querySelectorAll('.mode-button');
+    if (filterButtons) {
+        filterButtons.forEach(button => {
+            button.addEventListener('click', () => {
+                document.querySelectorAll('.mode-button').forEach(b => 
+                    b.classList.remove('active'));
+                button.classList.add('active');
+                window.filterState.mode = button.dataset.mode;
+                applyFilters();
+            });
+        });
+    }
+
+    // Initialize clear filters button
+    const clearFilters = document.getElementById('clear-filters');
+    if (clearFilters) {
+        clearFilters.addEventListener('click', () => {
+            window.filterState.activeTags.clear();
+            document.querySelectorAll('.tag-pill').forEach(pill => 
+                pill.classList.remove('active'));
+            applyFilters();
+        });
+    }
+
+    // Initialize select all button
+    const selectAll = document.getElementById('select-all');
+    if (selectAll) {
+        selectAll.addEventListener('click', () => {
+            document.querySelectorAll('.tag-pill').forEach(pill => {
+                const tag = pill.dataset.tag;
+                window.filterState.activeTags.add(tag);
+                pill.classList.add('active');
+            });
+            applyFilters();
+        });
+    }
+
+    // Initialize color controls
+    const coloringToggle = document.getElementById('coloringToggle');
+    if (coloringToggle) {
+        // Load saved preferences
+        const savedColoring = localStorage.getItem('coloringEnabled');
+        if (savedColoring !== null) {
+            coloringToggle.checked = savedColoring === 'true';
+        }
+        
+        const savedColorBy = localStorage.getItem('colorBy');
+        if (savedColorBy) {
+            const radio = document.querySelector(`input[name="colorBy"][value="${savedColorBy}"]`);
+            if (radio) radio.checked = true;
+        }
+        
+        // Add listeners
+        coloringToggle.addEventListener('change', () => {
+            localStorage.setItem('coloringEnabled', coloringToggle.checked);
+            if (typeof renderPapers === 'function') {
+                renderPapers();
+            }
+        });
+        
+        document.querySelectorAll('input[name="colorBy"]').forEach(radio => {
+            radio.addEventListener('change', () => {
+                localStorage.setItem('colorBy', radio.value);
+                if (typeof renderPapers === 'function') {
+                    renderPapers();
+                }
+            });
+        });
+    }
+};
+
+
+
+---
+File: frontend/src/js/features.js
+---
+/* frontend/src/js/features.js */
+
+// Global state for feature preferences
+window.featureState = {
+    // Map of feature IDs to their enabled state
+    enabledFeatures: JSON.parse(localStorage.getItem('enabledFeatures') || '{}')
+};
+
+// Initialize features based on what's available in the data
+function initializeFeatures() {
+    if (!window.yamlData) {
+        console.warn('yamlData not available yet');
+        return;
+    }
+
+    // Discover all unique feature types across all papers
+    const features = new Set();
+    
+    // Scan papers for available features
+    Object.values(window.yamlData).forEach(paper => {
+        if (paper.features_path) {
+            Object.keys(paper.features_path).forEach(feature => {
+                features.add(feature);
+            });
+        }
+    });
+    
+    // Initialize enabled state for discovered features
+    features.forEach(feature => {
+        if (!(feature in window.featureState.enabledFeatures)) {
+            window.featureState.enabledFeatures[feature] = true; // Enable by default
+        }
+    });
+    
+    // Save to localStorage
+    localStorage.setItem('enabledFeatures', 
+        JSON.stringify(window.featureState.enabledFeatures));
+}
+
+// Format feature name for display (also used in papers.js)
+function formatFeatureName(featureType) {
+    return featureType
+        .split('-')
+        .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(' ');
+}
+
+// Initialize features when page loads
+document.addEventListener('DOMContentLoaded', () => {
+    // Wait for yamlData to be available
+    if (window.yamlData) {
+        initializeFeatures();
+    }
+});
+
+
+
+---
+File: frontend/src/js/filters.js
+---
+/* frontend/src/js/filters.js */
+
+// Global filter state
+window.filterState = {
+    mode: 'any',
+    activeTags: new Set()
+};
+
+const renderTagCloud = () => {
+    const tags = new Map();
+    
+    // Collect tags and counts
+    Object.values(window.yamlData).forEach(paper => {
+        if (paper.arxiv_tags) {
+            paper.arxiv_tags.forEach(tag => {
+                const count = tags.get(tag) || 0;
+                tags.set(tag, count + 1);
+            });
+        }
+    });
+
+    // Sort tags by count
+    const sortedTags = Array.from(tags.entries())
+        .sort(([, a], [, b]) => b - a);
+
+    // Render tag cloud
+    const tagCloud = document.getElementById('tag-cloud');
+    if (!tagCloud) return;
+    
+    tagCloud.innerHTML = sortedTags.map(([tag, count]) => {
+        const { name, color } = getCategoryInfo(tag);
+        return `
+            <button class="tag-pill" data-tag="${tag}" style="background-color: ${color}">
+                <span class="tag-name">${tag}</span>
+                <span class="tag-count">${count}</span>
+                <span class="tooltip">${name}</span>
+            </button>
+        `;
+    }).join('');
+
+    // Re-add click handlers
+    document.querySelectorAll('.tag-pill').forEach(pill => {
+        pill.addEventListener('click', () => {
+            const tag = pill.dataset.tag;
+            if (window.filterState.activeTags.has(tag)) {
+                window.filterState.activeTags.delete(tag);
+                pill.classList.remove('active');
+            } else {
+                window.filterState.activeTags.add(tag);
+                pill.classList.add('active');
+            }
+            applyFilters();
+        });
+    });
+};
+
+const applyFilters = () => {
+    const { mode, activeTags } = window.filterState;
+    let visibleCount = 0;
+
+    document.querySelectorAll('tr[data-paper-id]').forEach(row => {
+        const paperId = row.dataset.paperId;
+        const paper = window.yamlData[paperId];
+        const paperTags = new Set(paper.arxiv_tags || []);
+
+        let visible = true;
+        if (activeTags.size > 0) {
+            if (mode === 'any') {
+                visible = Array.from(activeTags).some(tag => 
+                    paperTags.has(tag));
+            } else if (mode === 'all') {
+                visible = Array.from(activeTags).every(tag => 
+                    paperTags.has(tag));
+            } else if (mode === 'none') {
+                visible = Array.from(activeTags).every(tag => 
+                    !paperTags.has(tag));
+            }
+        }
+
+        row.classList.toggle('filtered', !visible);
+        if (visible) visibleCount++;
+    });
+
+    // Update counters
+    const filteredCount = document.getElementById('filtered-count');
+    const totalCount = document.getElementById('total-count');
+    if (filteredCount) filteredCount.textContent = visibleCount;
+    if (totalCount) totalCount.textContent = Object.keys(window.yamlData).length;
+};
+
+const initializeFilters = () => {
+    // Initialize filter state
+    window.filterState = {
+        mode: 'any',
+        activeTags: new Set()
+    };
+
+    // Initial render of tag cloud and counters
+    renderTagCloud();
+    const totalCount = document.getElementById('total-count');
+    if (totalCount) {
+        totalCount.textContent = Object.keys(window.yamlData).length;
+    }
+};
+
+
+
+---
+File: frontend/src/js/main.js
+---
+/* frontend/src/js/main.js */
+
+async function loadGitInfo() {
+    try {
+        const response = await fetch('data/git-info.json');
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        const gitInfo = await response.json();
+        
+        // Update the footer elements
+        document.querySelector('.git-info-repo').textContent = gitInfo.repo;
+        document.querySelector('.git-info-branch').textContent = gitInfo.branch;
+        document.querySelector('.git-info-commit').textContent = gitInfo.commit;
+    } catch (error) {
+        console.error('Failed to load git info:', error);
+        document.querySelector('.git-info').style.display = 'none';
+    }
+}
+
+async function loadPaperData() {
+    const response = await fetch('data/papers.json');
+    if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    
+    // Process feature data
+    Object.values(data).forEach(paper => {
+        // Look for features directory in paper data
+        if (paper.features_path) {
+            try {
+                // Attempt to load features for this paper
+                paper.features = {};
+                Object.entries(paper.features_path).forEach(([featureType, path]) => {
+                    fetch(path)
+                        .then(response => response.text())
+                        .then(content => {
+                            paper.features[featureType] = content;
+                            // Re-render if this paper is currently expanded
+                            const paperCard = document.querySelector(`.paper-card[data-paper-id="${paper.id}"]`);
+                            if (paperCard?.classList.contains('expanded')) {
+                                renderPapers();
+                            }
+                        })
+                        .catch(error => {
+                            console.error(`Failed to load feature ${featureType} for paper ${paper.id}:`, error);
+                        });
+                });
+            } catch (error) {
+                console.error(`Failed to process features for paper ${paper.id}:`, error);
+            }
+        }
+    });
+    
+    return data;
+}
+
+// Update the initializeApp function to call this new function
+async function initializeApp() {
+    try {
+        // Load paper data and git info in parallel
+        const [data] = await Promise.all([
+            loadPaperData(),
+            loadGitInfo()
+        ]);
+        
+        // Store data globally
+        window.yamlData = data;
+        
+        // Initialize all components
+        initializeControls();
+        initializeFilters();
+        initializeFeatures(); // New initialization for features
+        
+        // Add this line to initialize search (if available)
+        if (typeof window.searchModule?.initializeSearch === 'function') {
+            window.searchModule.initializeSearch();
+        }
+        
+        // Add this line to initialize share button
+        initializeShareButton();
+        
+        renderPapers();
+        applyFilters();
+        
+    } catch (error) {
+        console.error('Failed to initialize app:', error);
+        document.getElementById('papers-container').innerHTML = `
+            <div class="error-message">
+                Failed to load papers data. Please try refreshing the page.
+                <br>
+                Error: ${error.message}
+            </div>
+        `;
+    }
+}
+
+// Function to check if features are loaded for a paper
+function areFeaturesLoaded(paper) {
+    if (!paper.features_path) return true;
+    return Object.keys(paper.features_path).every(
+        featureType => paper.features?.[featureType]
+    );
+}
+
+// Function to retry loading papers periodically until features are loaded
+function waitForFeatures(timeout = 30000, interval = 1000) {
+    const startTime = Date.now();
+    
+    function checkFeatures() {
+        if (!window.yamlData) return false;
+        
+        // Check if all papers have their features loaded
+        return Object.values(window.yamlData).every(areFeaturesLoaded);
+    }
+    
+    return new Promise((resolve, reject) => {
+        const check = () => {
+            if (checkFeatures()) {
+                resolve();
+            } else if (Date.now() - startTime > timeout) {
+                reject(new Error('Timeout waiting for features to load'));
+            } else {
+                setTimeout(check, interval);
+            }
+        };
+        check();
+    });
+}
+
+function initializeShareButton() {
+    const shareButton = document.getElementById('share-button');
+    const shareTooltip = document.getElementById('share-tooltip');
+    
+    if (!shareButton || !shareTooltip) return;
+    
+    shareButton.addEventListener('click', async () => {
+        if (!window.urlStateManager) {
+            console.error('URL State Manager not available');
+            return;
+        }
+        
+        // Copy URL to clipboard
+        const success = await window.urlStateManager.copyShareableUrl();
+        
+        if (success) {
+            // Show tooltip
+            shareTooltip.classList.add('visible');
+            
+            // Hide tooltip after 2 seconds
+            setTimeout(() => {
+                shareTooltip.classList.remove('visible');
+            }, 2000);
+        } else {
+            // Show error in tooltip
+            shareTooltip.textContent = 'Failed to copy URL';
+            shareTooltip.classList.add('visible');
+            
+            setTimeout(() => {
+                shareTooltip.classList.remove('visible');
+                shareTooltip.textContent = 'URL copied to clipboard!';
+            }, 2000);
+        }
+    });
+}
+
+// Start the app when the document is ready
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initializeApp);
+} else {
+    initializeApp();
+}
+
+// Export for use in other modules
+window.papersApp = {
+    renderPapers,
+    applyFilters,
+    waitForFeatures
+};
+
+
+
+---
+File: frontend/src/js/papers.js
+---
+/* frontend/src/js/papers.js */
+
+// Track active paper
+let activePaperId = null;
+
+const calculateColor = (paper, coloringEnabled = true) => {
+    if (!coloringEnabled) return 'rgb(255, 255, 255)';
+    
+    const colorBy = document.querySelector('input[name="colorBy"]:checked').value;
+    
+    if (colorBy === 'freshness') {
+        if (!paper.last_visited || !paper.published_date) return 'rgb(255, 255, 255)';
+        
+        const visitDate = new Date(paper.last_visited);
+        const pubDate = new Date(paper.published_date);
+        const diffDays = Math.floor((visitDate - pubDate) / (1000 * 60 * 60 * 24));
+        
+        const maxAge = 365;
+        const freshness = Math.max(0, Math.min(1, 1 - (diffDays / maxAge)));
+        const value = Math.round(255 - (freshness * 55));
+        return `rgb(${value}, 255, ${value})`; // Green gradient
+    } else {
+        // Reading time coloring
+        const readingTime = paper.total_reading_time_seconds || 0;
+        const maxReadingTime = 300; // 5 minutes
+        const intensity = Math.max(0, Math.min(1, readingTime / maxReadingTime));
+        const value = Math.round(255 - (intensity * 55));
+        return `rgb(255, ${value}, ${value})`; // Red gradient
+    }
+};
+
+const setActivePaper = (paperId) => {
+    // Remove active class from previous paper
+    const previousActive = document.querySelector('tr.active');
+    if (previousActive) {
+        previousActive.classList.remove('active');
+    }
+
+    // Set new active paper
+    activePaperId = paperId;
+    const paperRow = document.querySelector(`tr[data-paper-id="${paperId}"]`);
+    if (paperRow) {
+        paperRow.classList.add('active');
+    }
+
+    // Show paper details
+    updatePaperDetails(paperId);
+};
+
+// Load collapsed items state
+const loadCollapsedState = () => {
+    try {
+        return JSON.parse(localStorage.getItem('collapsedItems')) || {};
+    } catch (e) {
+        return {};
+    }
+};
+
+// Save collapsed items state
+const saveCollapsedState = (state) => {
+    localStorage.setItem('collapsedItems', JSON.stringify(state));
+};
+
+// Create a collapsible item
+const createCollapsibleItem = (id, title, content, isHtml = false) => {
+    const collapsedState = loadCollapsedState();
+    const isCollapsed = collapsedState[id] || false;
+    
+    return `
+        <div class="collapsible-item ${isCollapsed ? 'collapsed' : ''}" data-item-id="${id}">
+            <div class="collapsible-header">
+                <h4 class="collapsible-title">${title}</h4>
+                <span class="collapsible-toggle">▼</span>
+            </div>
+            <div class="collapsible-content">
+                <div class="collapsible-inner">
+                    ${isHtml ? content : `<p class="metadata-value">${content}</p>`}
+                </div>
+            </div>
+        </div>
+    `;
+};
+
+const updatePaperDetails = async (paperId) => {
+    const detailsPanel = document.getElementById('paperDetails');
+    const paper = window.yamlData[paperId];
+
+    if (!paper) {
+        detailsPanel.classList.remove('visible');
+        return;
+    }
+
+    // Update title
+    const titleEl = detailsPanel.querySelector('.paper-details-title');
+    titleEl.textContent = paper.title;
+
+    // Update metadata section
+    const metadataEl = detailsPanel.querySelector('.metadata-content');
+    const metadataItems = [
+        {
+            id: `${paperId}-authors`,
+            title: 'Authors',
+            content: paper.authors
+        },
+        {
+            id: `${paperId}-published`,
+            title: 'Published',
+            content: new Date(paper.published_date).toLocaleDateString()
+        },
+        {
+            id: `${paperId}-arxiv`,
+            title: 'arXiv ID',
+            content: `<a href="${paper.url}" target="_blank">${paper.arxivId}</a>`,
+            isHtml: true
+        },
+        {
+            id: `${paperId}-categories`,
+            title: 'Categories',
+            content: paper.arxiv_tags.join(', ')
+        },
+        {
+            id: `${paperId}-abstract`,
+            title: 'Abstract',
+            content: paper.abstract
+        }
+    ];
+
+    metadataEl.innerHTML = `
+        <div class="details-section">
+            <div class="details-section-header">Paper Information</div>
+            ${metadataItems.map(item => 
+                createCollapsibleItem(item.id, item.title, item.content, item.isHtml)
+            ).join('')}
+        </div>
+    `;
+
+    // Update features section
+    const featuresEl = detailsPanel.querySelector('.features-content');
+    if (paper.features_path) {
+        const features = await Promise.all(
+            Object.entries(paper.features_path).map(async ([type, path]) => {
+                try {
+                    const response = await fetch(path);
+                    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                    const content = await response.text();
+                    return {
+                        id: `${paperId}-feature-${type}`,
+                        title: formatFeatureName(type),
+                        content: `<div class="feature-content markdown-body">${marked.parse(content)}</div>`,
+                        isHtml: true
+                    };
+                } catch (error) {
+                    console.error(`Error loading feature ${type}:`, error);
+                    return {
+                        id: `${paperId}-feature-${type}`,
+                        title: formatFeatureName(type),
+                        content: `<div class="feature-content error">Error loading feature content</div>`,
+                        isHtml: true
+                    };
+                }
+            })
+        );
+
+        featuresEl.innerHTML = `
+            <div class="details-section">
+                <div class="details-section-header">Features</div>
+                ${features.map(feature => 
+                    createCollapsibleItem(feature.id, feature.title, feature.content, feature.isHtml)
+                ).join('')}
+            </div>
+        `;
+    } else {
+        featuresEl.innerHTML = '<p class="no-features">No features available for this paper</p>';
+    }
+
+    // Add event listeners for collapsible items
+    detailsPanel.querySelectorAll('.collapsible-header').forEach(header => {
+        header.addEventListener('click', () => {
+            const item = header.closest('.collapsible-item');
+            const itemId = item.dataset.itemId;
+            const collapsedState = loadCollapsedState();
+            
+            item.classList.toggle('collapsed');
+            collapsedState[itemId] = item.classList.contains('collapsed');
+            saveCollapsedState(collapsedState);
+        });
+    });
+
+    // Show panel
+    detailsPanel.classList.add('visible');
+};
+
+const renderPaperRow = (paper) => {
+    const readingTime = paper.total_reading_time_seconds 
+        ? `${Math.round(paper.total_reading_time_seconds / 60)} min`
+        : '—';
+
+    const coloringEnabled = document.getElementById('coloringToggle')?.checked ?? true;
+    const bgColor = calculateColor(paper, coloringEnabled);
+    
+    const categories = paper.arxiv_tags?.slice(0, 2).join(', ') || '';
+    const hasMoreCategories = paper.arxiv_tags?.length > 2 ? '...' : '';
+
+    // Truncate authors to a reasonable length
+    const authorsList = paper.authors.split(', ');
+    const displayAuthors = authorsList.length > 2 
+        ? `${authorsList[0]}, ${authorsList[1]}...`
+        : paper.authors;
+
+    // Check if this is the active paper
+    const isActive = paper.id === activePaperId;
+    
+    return `
+        <tr class="${isActive ? 'active' : ''}" data-paper-id="${paper.id}">
+            <td class="col-arxiv-id">
+                <a href="${paper.url}" class="arxiv-id" onclick="event.stopPropagation()" 
+                   style="background-color: ${bgColor}">
+                    ${paper.arxivId || paper.id}
+                </a>
+            </td>
+            <td class="col-title" title="${paper.title}">${paper.title}</td>
+            <td class="col-authors" title="${paper.authors}">${displayAuthors}</td>
+            <td class="col-categories" title="${paper.arxiv_tags?.join(', ')}">
+                <span class="paper-categories">${categories}${hasMoreCategories}</span>
+            </td>
+            <td class="col-read-time">
+                <span class="read-time">${readingTime}</span>
+            </td>
+        </tr>
+    `;
+};
+
+const renderPapers = () => {
+    const container = document.getElementById('papers-container');
+    container.innerHTML = '';
+    const collapsedDays = JSON.parse(localStorage.getItem('collapsedDays') || '{}');
+    
+    if (!window.yamlData || Object.keys(window.yamlData).length === 0) {
+        container.innerHTML = '<div class="no-papers">No papers available</div>';
+        return;
+    }
+    
+    const papersByDay = {};
+    Object.entries(window.yamlData)
+        .sort(([_, a], [__, b]) => new Date(b.last_visited) - new Date(a.last_visited))
+        .forEach(([id, paper]) => {
+            const date = paper.last_visited.split('T')[0];
+            if (!papersByDay[date]) papersByDay[date] = [];
+            papersByDay[date].push({ ...paper, id });
+        });
+
+    Object.entries(papersByDay).forEach(([date, papers]) => {
+        const dayGroup = document.createElement('section');
+        dayGroup.className = `day-group ${collapsedDays[date] ? 'collapsed' : ''}`;
+        dayGroup.dataset.date = date;
+
+        const dayHeader = document.createElement('div');
+        dayHeader.className = 'day-header';
+        dayHeader.onclick = () => toggleDayGroup(dayHeader);
+        dayHeader.innerHTML = `
+            <span class="day-title">${formatDate(date, 'group')}</span>
+            <span class="paper-count">${papers.length} paper${papers.length !== 1 ? 's' : ''}</span>
+        `;
+
+        const papersContainer = document.createElement('div');
+        papersContainer.className = 'papers-container';
+
+        const papersContainerInner = document.createElement('div');
+        papersContainerInner.className = 'papers-container-inner';
+        papersContainerInner.innerHTML = `
+            <table class="papers-table">
+                <tbody>
+                    ${papers.map(paper => renderPaperRow(paper)).join('')}
+                </tbody>
+            </table>
+        `;
+
+        papersContainer.appendChild(papersContainerInner);
+        dayGroup.appendChild(dayHeader);
+        dayGroup.appendChild(papersContainer);
+        container.appendChild(dayGroup);
+
+        // Add handlers to this day's papers
+        addPaperHandlers(papersContainerInner);
+    });
+};
+
+// Format feature names
+function formatFeatureName(featureType) {
+    return featureType
+        .split('-')
+        .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(' ');
+}
+
+function addPaperHandlers(container) {
+    // Add click handlers for paper rows
+    container.querySelectorAll('tr[data-paper-id]').forEach(row => {
+        row.addEventListener('click', (e) => {
+            // Don't trigger on links
+            if (e.target.closest('a')) return;
+            
+            const paperId = row.dataset.paperId;
+            setActivePaper(paperId);
+        });
+    });
+}
+
+const toggleDayGroup = (element) => {
+    const group = element.closest('.day-group');
+    group.classList.toggle('collapsed');
+    const date = group.dataset.date;
+    const collapsedDays = JSON.parse(localStorage.getItem('collapsedDays') || '{}');
+    collapsedDays[date] = group.classList.contains('collapsed');
+    localStorage.setItem('collapsedDays', JSON.stringify(collapsedDays));
+};
+
+// Initialize close button handler
+document.addEventListener('DOMContentLoaded', () => {
+    const closeButton = document.getElementById('closeDetails');
+    if (closeButton) {
+        closeButton.addEventListener('click', () => {
+            const detailsPanel = document.getElementById('paperDetails');
+            detailsPanel.classList.remove('visible');
+            // Clear active paper
+            const activeRow = document.querySelector('tr.active');
+            if (activeRow) {
+                activeRow.classList.remove('active');
+            }
+            activePaperId = null;
+        });
+    }
+});
+
+
+
+---
+File: frontend/src/js/search-worker.js
+---
+/* frontend/src/js/search-worker.js */
+
+// This file handles pre-computing search indices in a web worker
+// to prevent blocking the main UI thread
+
+importScripts('https://cdnjs.cloudflare.com/ajax/libs/fuse.js/6.6.2/fuse.min.js');
+
+// Listen for messages from the main thread
+self.addEventListener('message', function(e) {
+    const { action, data } = e.data;
+    
+    if (action === 'createIndices') {
+        try {
+            const papers = data.papers;
+            const indices = createIndices(papers);
+            
+            // Send the indices back to the main thread
+            self.postMessage({
+                status: 'success',
+                indices: indices
+            });
+        } catch (error) {
+            self.postMessage({
+                status: 'error',
+                message: error.message
+            });
+        }
+    }
+});
+
+// Create search indices for all fields
+function createIndices(papers) {
+    // Define configurations for each field
+    const fieldConfigs = {
+        title: { threshold: 0.3 },
+        authors: { threshold: 0.4 },
+        abstract: { threshold: 0.3 },
+        arxivId: { threshold: 0.2 },
+        arxiv_tags: { 
+            threshold: 0.2,
+            // For tags, we need to process the array structure
+            getFn: (obj, path) => {
+                return obj.arxiv_tags ? obj.arxiv_tags.join(' ') : '';
+            }
+        }
+    };
+    
+    // Store serialized indices
+    const indices = {};
+    
+    // Create an index for each field
+    Object.entries(fieldConfigs).forEach(([field, config]) => {
+        const options = {
+            includeScore: true,
+            keys: [field],
+            threshold: config.threshold
+        };
+        
+        // Add getFn if specified
+        if (config.getFn) {
+            options.getFn = config.getFn;
+        }
+        
+        // Create and serialize index
+        const fuse = new Fuse(papers, options);
+        indices[field] = fuse.getIndex();
+    });
+    
+    // Create a combined index for all fields
+    const allOptions = {
+        includeScore: true,
+        threshold: 0.3,
+        keys: [
+            { name: 'title', weight: 2.0 },
+            { name: 'authors', weight: 1.0 },
+            { name: 'abstract', weight: 1.0 },
+            { name: 'arxivId', weight: 1.5 },
+            { name: 'arxiv_tags', weight: 1.2 }
+        ]
+    };
+    
+    const allFuse = new Fuse(papers, allOptions);
+    indices.all = allFuse.getIndex();
+    
+    return indices;
+}
+
+
+
+---
+File: frontend/src/js/search.js
+---
+/* frontend/src/js/search.js */
+
+// Global search state
+window.searchState = {
+    query: '',
+    activeFields: new Set(['title', 'authors', 'abstract', 'arxivId']), // Default fields to search
+    fuseInstances: {}, // Separate Fuse instance for each field
+    indexReady: false,
+    worker: null
+};
+
+// Initialize Fuse.js search with field-specific indices
+function initializeSearch() {
+    if (!window.yamlData) {
+        console.warn('yamlData not available yet');
+        return;
+    }
+    
+    const searchContainer = document.getElementById('search-container');
+    if (!searchContainer) return;
+
+    // Load saved field preferences
+    loadFieldPreferences();
+    
+    // Start precomputing indices in worker
+    startIndexWorker();
+    
+    // Set up event listener for the search input
+    const searchInput = document.getElementById('search-input');
+    if (searchInput) {
+        searchInput.addEventListener('input', debounce((e) => {
+            window.searchState.query = e.target.value.trim();
+            searchPapers();
+        }, 150));
+        
+        // Clear button
+        const clearSearchBtn = document.getElementById('clear-search');
+        if (clearSearchBtn) {
+            clearSearchBtn.addEventListener('click', () => {
+                searchInput.value = '';
+                window.searchState.query = '';
+                searchPapers();
+            });
+        }
+    }
+    
+    // Set up field filter checkboxes
+    setupFieldFilters();
+    
+    // Set up select/clear all buttons
+    setupFieldActions();
+}
+
+// Start the worker for precomputing indices
+function startIndexWorker() {
+    if (typeof Worker === 'undefined') {
+        console.warn('Web Workers not supported, using fallback');
+        createSearchIndicesSync();
+        return;
+    }
+    
+    try {
+        // Create a new worker
+        window.searchState.worker = new Worker('js/search-worker.js');
+        
+        // Listen for messages from the worker
+        window.searchState.worker.onmessage = function(e) {
+            if (e.data.status === 'success') {
+                // Create Fuse instances from the serialized indices
+                createFuseFromIndices(e.data.indices);
+                console.log('Search indices created by worker');
+            } else {
+                console.error('Worker error:', e.data.message);
+                // Fallback to synchronous creation
+                createSearchIndicesSync();
+            }
+        };
+        
+        // Start the worker with paper data
+        window.searchState.worker.postMessage({
+            action: 'createIndices',
+            data: {
+                papers: Object.values(window.yamlData)
+            }
+        });
+    } catch (error) {
+        console.error('Error starting worker:', error);
+        // Fallback to synchronous creation
+        createSearchIndicesSync();
+    }
+}
+
+// Create Fuse instances from serialized indices
+function createFuseFromIndices(indices) {
+    const papers = Object.values(window.yamlData);
+    
+    // Create instances for each field
+    Object.entries(indices).forEach(([field, index]) => {
+        window.searchState.fuseInstances[field] = new Fuse(papers, {
+            includeScore: true
+        });
+        
+        // Import the pre-computed index
+        window.searchState.fuseInstances[field].setIndex(index);
+    });
+    
+    window.searchState.indexReady = true;
+}
+
+// Fallback synchronous index creation
+function createSearchIndicesSync() {
+    const papers = Object.values(window.yamlData);
+    
+    // Define configurations for each field
+    const fieldConfigs = {
+        title: { threshold: 0.3 },
+        authors: { threshold: 0.4 },
+        abstract: { threshold: 0.3 },
+        arxivId: { threshold: 0.2 },
+        arxiv_tags: { 
+            threshold: 0.2,
+            // For tags, we need to process the array structure
+            getFn: (obj, path) => {
+                return obj.arxiv_tags ? obj.arxiv_tags.join(' ') : '';
+            }
+        }
+    };
+    
+    // Create a Fuse instance for each field
+    Object.entries(fieldConfigs).forEach(([field, config]) => {
+        const options = {
+            includeScore: true,
+            keys: [field],
+            threshold: config.threshold
+        };
+        
+        // Add getFn if specified
+        if (config.getFn) {
+            options.getFn = config.getFn;
+        }
+        
+        window.searchState.fuseInstances[field] = new Fuse(papers, options);
+    });
+    
+    // Create a combined instance for searching all fields at once
+    window.searchState.fuseInstances.all = new Fuse(papers, {
+        includeScore: true,
+        threshold: 0.3,
+        keys: [
+            { name: 'title', weight: 2.0 },
+            { name: 'authors', weight: 1.0 },
+            { name: 'abstract', weight: 1.0 },
+            { name: 'arxivId', weight: 1.5 },
+            { name: 'arxiv_tags', weight: 1.2 }
+        ]
+    });
+    
+    window.searchState.indexReady = true;
+    console.log('Search indices created synchronously');
+}
+
+// Set up the field filter checkboxes
+function setupFieldFilters() {
+    const fieldFilters = document.getElementById('field-filters');
+    if (!fieldFilters) return;
+    
+    // Define fields and their display names
+    const fields = [
+        { id: 'title', label: 'Title' },
+        { id: 'authors', label: 'Authors' },
+        { id: 'abstract', label: 'Abstract' },
+        { id: 'arxivId', label: 'ArXiv ID' },
+        { id: 'arxiv_tags', label: 'Categories' }
+    ];
+    
+    // Create checkboxes for each field
+    fieldFilters.innerHTML = fields.map(field => `
+        <label class="field-filter">
+            <input type="checkbox" class="field-checkbox" 
+                   data-field="${field.id}" 
+                   ${window.searchState.activeFields.has(field.id) ? 'checked' : ''}>
+            ${field.label}
+        </label>
+    `).join('');
+    
+    // Add event listeners to checkboxes
+    document.querySelectorAll('.field-checkbox').forEach(checkbox => {
+        checkbox.addEventListener('change', () => {
+            const field = checkbox.dataset.field;
+            if (checkbox.checked) {
+                window.searchState.activeFields.add(field);
+            } else {
+                window.searchState.activeFields.delete(field);
+            }
+            
+            // Save field preferences
+            localStorage.setItem('searchFields', JSON.stringify([...window.searchState.activeFields]));
+            
+            // Re-run search if query exists
+            if (window.searchState.query) {
+                searchPapers();
+            }
+        });
+    });
+}
+
+// Set up select all / clear all buttons
+function setupFieldActions() {
+    const selectAllBtn = document.getElementById('select-all-fields');
+    const clearAllBtn = document.getElementById('clear-all-fields');
+    
+    if (selectAllBtn) {
+        selectAllBtn.addEventListener('click', () => {
+            document.querySelectorAll('.field-checkbox').forEach(checkbox => {
+                checkbox.checked = true;
+                window.searchState.activeFields.add(checkbox.dataset.field);
+            });
+            
+            // Save field preferences
+            localStorage.setItem('searchFields', JSON.stringify([...window.searchState.activeFields]));
+            
+            // Re-run search if query exists
+            if (window.searchState.query) {
+                searchPapers();
+            }
+        });
+    }
+    
+    if (clearAllBtn) {
+        clearAllBtn.addEventListener('click', () => {
+            document.querySelectorAll('.field-checkbox').forEach(checkbox => {
+                checkbox.checked = false;
+            });
+            
+            window.searchState.activeFields.clear();
+            
+            // Save field preferences
+            localStorage.setItem('searchFields', JSON.stringify([]));
+            
+            // Re-run search if query exists
+            if (window.searchState.query) {
+                searchPapers();
+            }
+        });
+    }
+}
+
+// Load saved field preferences
+function loadFieldPreferences() {
+    try {
+        const savedFields = JSON.parse(localStorage.getItem('searchFields'));
+        if (savedFields && Array.isArray(savedFields)) {
+            window.searchState.activeFields = new Set(savedFields);
+        }
+    } catch (e) {
+        console.error('Error loading saved search fields', e);
+    }
+}
+
+// Simple debounce function to limit search frequency
+function debounce(func, wait) {
+    let timeout;
+    return function() {
+        const context = this;
+        const args = arguments;
+        clearTimeout(timeout);
+        timeout = setTimeout(() => {
+            func.apply(context, args);
+        }, wait);
+    };
+}
+
+// Search papers with the current query across selected fields
+function searchPapers() {
+    const { query, activeFields, fuseInstances, indexReady } = window.searchState;
+    
+    // Clear all search filtering
+    document.querySelectorAll('tr[data-paper-id]').forEach(row => {
+        row.classList.remove('search-filtered');
+    });
+    
+    if (!query || !indexReady || activeFields.size === 0) {
+        // reset empty day status when query is empty
+        document.querySelectorAll('.day-group').forEach(dayGroup => {
+            dayGroup.classList.remove('empty-day');
+        });
+        updateSearchStats();
+        return;
+    }
+    
+    let matchingIds = new Set();
+    
+    // Get results from each active field and combine them
+    activeFields.forEach(field => {
+        const instance = fuseInstances[field];
+        if (!instance) return;
+        
+        const results = instance.search(query);
+        results.forEach(result => {
+            matchingIds.add(result.item.id);
+        });
+    });
+    
+    // If we have no results and query is substantial, try a fallback search
+    if (matchingIds.size === 0 && query.length > 2) {
+        const fallbackResults = fuseInstances.all.search(query, { limit: 20 });
+        fallbackResults.forEach(result => {
+            matchingIds.add(result.item.id);
+        });
+    }
+    
+    // Hide papers that don't match
+    let visibleCount = 0;
+    document.querySelectorAll('tr[data-paper-id]').forEach(row => {
+        const paperId = row.dataset.paperId;
+        const isMatch = matchingIds.has(paperId);
+        
+        row.classList.toggle('search-filtered', !isMatch);
+        
+        if (isMatch && !row.classList.contains('filtered')) {
+            visibleCount++;
+        }
+    });
+    
+    hideEmptyDayGroups();
+    // Update search stats
+    updateSearchStats(visibleCount);
+}
+
+// Update search result statistics
+function updateSearchStats(matchCount, totalVisible) {
+    const searchStats = document.getElementById('search-stats');
+    if (!searchStats) return;
+    
+    if (!window.searchState.query) {
+        searchStats.innerHTML = '';
+        return;
+    }
+    
+    if (!totalVisible) {
+        totalVisible = document.querySelectorAll('tr[data-paper-id]:not(.filtered)').length;
+    }
+    
+    if (matchCount === undefined) {
+        matchCount = totalVisible;
+    }
+    
+    // Show how many papers remain visible instead of how many are filtered
+    searchStats.innerHTML = `
+        <span class="search-visible-count">Showing ${matchCount} of ${totalVisible} papers</span>
+    `;
+}
+
+// Apply both search and tag filters
+function applyAllFilters() {
+    // First apply the tag filters
+    if (typeof window.applyFilters === 'function') {
+        window.applyFilters();
+    }
+    
+    // Then apply search filters on top
+    searchPapers();
+}
+
+// Export functions for use in other modules
+window.searchModule = {
+    initializeSearch,
+    searchPapers,
+    applyAllFilters,
+    precomputeIndices: function() {
+        if (window.searchState.indexReady) return;
+        createSearchIndicesSync();
+    }
+};
+
+// Hide day groups that have no visible papers
+function hideEmptyDayGroups() {
+    // Process each day group
+    document.querySelectorAll('.day-group').forEach(dayGroup => {
+        // Check if the day group has any visible paper rows
+        const visiblePapers = dayGroup.querySelectorAll('tr[data-paper-id]:not(.search-filtered):not(.filtered)');
+        
+        // Add or remove the 'empty-day' class based on whether there are visible papers
+        if (visiblePapers.length === 0) {
+            dayGroup.classList.add('empty-day');
+        } else {
+            dayGroup.classList.remove('empty-day');
+        }
+    });
+}
+
+// Override the existing filter function to also apply search
+const originalApplyFilters = window.applyFilters;
+if (originalApplyFilters) {
+    window.applyFilters = function() {
+        originalApplyFilters();
+        searchPapers();
+        hideEmptyDayGroups();
+    };
+}
+
+// Initialize the search module when DOM is ready
+document.addEventListener('DOMContentLoaded', () => {
+    // Wait for yamlData to be available before initializing
+    if (window.yamlData) {
+        initializeSearch();
+    }
+});
+
+
+
+---
+File: frontend/src/js/url-state.js
+---
+/* frontend/src/js/url-state.js */
+
+// URL State Manager
+// Handles saving and restoring application state via URL parameters
+// for shareable search and filter configurations
+
+// Global URL state manager
+window.urlStateManager = {
+    // Last saved state, used to avoid unnecessary URL updates
+    lastState: {},
+    
+    // Initialize the URL state manager
+    init() {
+        // Set up event listener for state changes
+        window.addEventListener('popstate', this.handlePopState.bind(this));
+        
+        // Process URL parameters on initial load
+        this.loadStateFromUrl();
+        
+        // Set up periodic state capture
+        this.startStateTracking();
+    },
+    
+    // Start tracking state changes to update URL
+    startStateTracking() {
+        // Check and update state every 1 second
+        setInterval(() => {
+            this.captureAndUpdateState();
+        }, 1000);
+    },
+    
+    // Capture current app state and update URL if needed
+    captureAndUpdateState() {
+        const currentState = this.captureState();
+        
+        // Only update URL if state has changed
+        if (!this.isEqualState(currentState, this.lastState)) {
+            this.updateUrl(currentState);
+            this.lastState = currentState;
+        }
+    },
+    
+    // Capture the current application state
+    captureState() {
+        const state = {};
+        
+        // Capture search state
+        if (window.searchState) {
+            if (window.searchState.query) {
+                state.q = window.searchState.query;
+            }
+            
+            if (window.searchState.activeFields && window.searchState.activeFields.size > 0) {
+                state.fields = [...window.searchState.activeFields].join(',');
+            }
+        }
+        
+        // Capture filter state
+        if (window.filterState) {
+            if (window.filterState.mode) {
+                state.mode = window.filterState.mode;
+            }
+            
+            if (window.filterState.activeTags && window.filterState.activeTags.size > 0) {
+                state.tags = [...window.filterState.activeTags].join(',');
+            }
+        }
+        
+        return state;
+    },
+    
+    // Update URL with current state without causing navigation
+    updateUrl(state) {
+        // Skip if no state to represent
+        if (Object.keys(state).length === 0) {
+            return;
+        }
+        
+        // Build query string
+        const queryParams = new URLSearchParams();
+        Object.entries(state).forEach(([key, value]) => {
+            queryParams.set(key, value);
+        });
+        
+        // Update URL using History API without causing navigation
+        const newUrl = `${window.location.pathname}?${queryParams.toString()}`;
+        window.history.replaceState(state, '', newUrl);
+    },
+    
+    // Handle browser back/forward navigation
+    handlePopState(event) {
+        if (event.state) {
+            this.applyState(event.state);
+        } else {
+            // If no state, treat as a reset
+            this.resetState();
+        }
+    },
+    
+    // Load state from URL parameters on page load
+    loadStateFromUrl() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const state = {};
+        
+        // Convert URL parameters to state object
+        for (const [key, value] of urlParams.entries()) {
+            state[key] = value;
+        }
+        
+        // Apply the state if there are parameters
+        if (Object.keys(state).length > 0) {
+            this.applyState(state);
+        }
+    },
+    
+    // Apply a state object to the application
+    applyState(state) {
+        // Apply search query
+        if (state.q) {
+            const searchInput = document.getElementById('search-input');
+            if (searchInput) {
+                searchInput.value = state.q;
+                if (window.searchState) {
+                    window.searchState.query = state.q;
+                }
+            }
+        }
+        
+        // Apply search fields
+        if (state.fields && window.searchState) {
+            const fields = state.fields.split(',');
+            window.searchState.activeFields = new Set(fields);
+            
+            // Update checkboxes
+            document.querySelectorAll('.field-checkbox').forEach(checkbox => {
+                const field = checkbox.dataset.field;
+                checkbox.checked = fields.includes(field);
+            });
+        }
+        
+        // Apply filter mode
+        if (state.mode && window.filterState) {
+            window.filterState.mode = state.mode;
+            
+            // Update mode buttons
+            document.querySelectorAll('.mode-button').forEach(button => {
+                button.classList.toggle('active', button.dataset.mode === state.mode);
+            });
+        }
+        
+        // Apply active tags
+        if (state.tags && window.filterState) {
+            const tags = state.tags.split(',');
+            window.filterState.activeTags = new Set(tags);
+            
+            // Update tag pills
+            document.querySelectorAll('.tag-pill').forEach(pill => {
+                const tag = pill.dataset.tag;
+                pill.classList.toggle('active', tags.includes(tag));
+            });
+        }
+        
+        // Apply all filters
+        if (typeof window.applyFilters === 'function') {
+            window.applyFilters();
+        }
+        
+        // Apply search
+        if (typeof window.searchModule?.searchPapers === 'function') {
+            window.searchModule.searchPapers();
+        }
+    },
+    
+    // Reset all state to defaults
+    resetState() {
+        // Clear search
+        const searchInput = document.getElementById('search-input');
+        if (searchInput) {
+            searchInput.value = '';
+        }
+        
+        if (window.searchState) {
+            window.searchState.query = '';
+        }
+        
+        // Reset filter mode
+        if (window.filterState) {
+            window.filterState.mode = 'any';
+            window.filterState.activeTags.clear();
+        }
+        
+        // Update UI
+        document.querySelectorAll('.mode-button').forEach(button => {
+            button.classList.toggle('active', button.dataset.mode === 'any');
+        });
+        
+        document.querySelectorAll('.tag-pill').forEach(pill => {
+            pill.classList.remove('active');
+        });
+        
+        // Apply filters
+        if (typeof window.applyFilters === 'function') {
+            window.applyFilters();
+        }
+    },
+    
+    // Generate a shareable URL with the current state
+    generateShareableUrl() {
+        const currentState = this.captureState();
+        
+        // Build query string
+        const queryParams = new URLSearchParams();
+        Object.entries(currentState).forEach(([key, value]) => {
+            queryParams.set(key, value);
+        });
+        
+        // Get full URL (absolute)
+        const url = new URL(window.location.pathname, window.location.origin);
+        url.search = queryParams.toString();
+        
+        return url.toString();
+    },
+    
+    // Copy current state URL to clipboard
+    copyShareableUrl() {
+        const url = this.generateShareableUrl();
+        
+        // Use clipboard API if available
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            return navigator.clipboard.writeText(url)
+                .then(() => true)
+                .catch(() => false);
+        } else {
+            // Fallback method
+            const textarea = document.createElement('textarea');
+            textarea.value = url;
+            textarea.style.position = 'fixed';  // Avoid scrolling to bottom
+            document.body.appendChild(textarea);
+            textarea.select();
+            
+            try {
+                const success = document.execCommand('copy');
+                document.body.removeChild(textarea);
+                return Promise.resolve(success);
+            } catch (err) {
+                document.body.removeChild(textarea);
+                return Promise.resolve(false);
+            }
+        }
+    },
+    
+    // Check if two state objects are equal
+    isEqualState(state1, state2) {
+        // Check if both are objects
+        if (typeof state1 !== 'object' || typeof state2 !== 'object' || 
+            state1 === null || state2 === null) {
+            return false;
+        }
+        
+        const keys1 = Object.keys(state1);
+        const keys2 = Object.keys(state2);
+        
+        if (keys1.length !== keys2.length) {
+            return false;
+        }
+        
+        return keys1.every(key => 
+            state2.hasOwnProperty(key) && state1[key] === state2[key]
+        );
+    }
+};
+
+// Initialize the URL state manager when the DOM is ready
+document.addEventListener('DOMContentLoaded', () => {
+    window.urlStateManager.init();
+});
+
+
+
+---
+File: frontend/src/js/utils.js
+---
+/* frontend/src/js/utils.js */
+
+const formatDate = (dateString, format = 'full') => {
+    const date = new Date(dateString);
+    if (format === 'full') {
+        return date.toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric'
+        });
+    } else if (format === 'group') {
+        return date.toLocaleDateString('en-US', {
+            weekday: 'long',
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+        });
+    }
+};
+
+const getCategoryInfo = (tag) => {
+    // Get the parent category (everything before the dot)
+    const parentCategory = tag.split('.')[0];
+    
+    // Using ColorBrewer Set3 qualitative palette, optimized for colorblind accessibility
+    const parentCategoryMap = {
+        'cs': { color: '#8dd3c7', category: 'Computer Science' },
+        'stat': { color: '#ffffb3', category: 'Statistics' },
+        'math': { color: '#bebada', category: 'Mathematics' },
+        'physics': { color: '#fb8072', category: 'Physics' },
+        'q-bio': { color: '#80b1d3', category: 'Quantitative Biology' },
+        'q-fin': { color: '#fdb462', category: 'Quantitative Finance' }
+    };
+    
+    // Map of specific subcategory names
+    const subcategoryMap = {
+        // Computer Science
+        'cs.AI': 'Artificial Intelligence',
+        'cs.LG': 'Machine Learning',
+        'cs.CL': 'Computation and Language',
+        'cs.CV': 'Computer Vision and Pattern Recognition',
+        'cs.RO': 'Robotics',
+        'cs.NE': 'Neural and Evolutionary Computing',
+        'cs.IR': 'Information Retrieval',
+        'cs.HC': 'Human-Computer Interaction',
+        'cs.SI': 'Social and Information Networks',
+        'cs.DB': 'Databases',
+        
+        // Statistics
+        'stat.ML': 'Machine Learning (Statistics)',
+        'stat.ME': 'Methodology',
+        'stat.TH': 'Statistics Theory',
+        
+        // Mathematics
+        'math.ST': 'Statistics Theory',
+        'math.PR': 'Probability',
+        'math.OC': 'Optimization',
+        
+        // Physics
+        'physics.data-an': 'Data Analysis',
+        'physics.soc-ph': 'Social Physics',
+        
+        // Quantitative Biology
+        'q-bio.NC': 'Neurons and Cognition',
+        'q-bio.QM': 'Quantitative Methods',
+        
+        // Quantitative Finance
+        'q-fin.ST': 'Statistical Finance',
+        'q-fin.PM': 'Portfolio Management'
+    };
+    
+    const parentInfo = parentCategoryMap[parentCategory] || { color: '#f5f5f5', category: 'Other' };
+    const name = subcategoryMap[tag] || tag;
+    
+    return {
+        name: name,
+        color: parentInfo.color
+    };
+};
+
+
