@@ -323,7 +323,7 @@ function searchPapers() {
 }
 
 // Update search result statistics
-function updateSearchStats(matchCount) {
+function updateSearchStats(matchCount, totalVisible) {
     const searchStats = document.getElementById('search-stats');
     if (!searchStats) return;
     
@@ -332,13 +332,17 @@ function updateSearchStats(matchCount) {
         return;
     }
     
-    const totalVisible = document.querySelectorAll('tr[data-paper-id]:not(.filtered)').length;
-    const filteredBySearch = totalVisible - (matchCount || 0);
+    if (!totalVisible) {
+        totalVisible = document.querySelectorAll('tr[data-paper-id]:not(.filtered)').length;
+    }
     
+    if (matchCount === undefined) {
+        matchCount = totalVisible;
+    }
+    
+    // Show how many papers remain visible instead of how many are filtered
     searchStats.innerHTML = `
-        ${filteredBySearch > 0 ? 
-            `<span class="search-filtered-count">${filteredBySearch} papers hidden by search</span>` : 
-            '<span class="search-match-all">All visible papers match search</span>'}
+        <span class="search-visible-count">Showing ${matchCount} of ${totalVisible} papers</span>
     `;
 }
 
