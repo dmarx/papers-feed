@@ -1,0 +1,20 @@
+- Decision to use Factorio as the basis for the learning environment
+- Choice of Python as the primary programming language for agent interaction
+- Design of the REPL (Read-Eval-Print Loop) interface for agent interaction
+- Implementation of a high-level Python API for Factorio
+- Decision to include a persistent coding environment for agents
+- Choice of deterministic procedural generation for the game environment
+- Structure of the reward system (Production Score and Milestones)
+- Design of observation and action methods for agent capabilities
+- Decision to allow agents to define utility functions and classes
+- Choice of evaluation metrics for agent performance
+- Design of the environment dynamics and scaling challenges
+- Decision to release FLE as an open-source platform
+- Choice of lab-play and open-play settings for evaluation
+- Implementation of error handling and debugging mechanisms for agents
+- Decision to focus on long-term planning and resource optimization challenges
+- Design of the technology tree and resource progression mechanics
+- Choice of evaluation framework to differentiate agent capabilities
+- Decision to include qualitative analysis of agent performance
+- Implementation of a communication protocol between Python client and Lua server
+- Design of the object model representing game entities and interactions
