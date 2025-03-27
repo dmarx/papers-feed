@@ -41,9 +41,7 @@ async function loadPaperData() {
                             // Re-render if this paper is currently expanded
                             const paperCard = document.querySelector(`.paper-card[data-paper-id="${paper.id}"]`);
                             if (paperCard?.classList.contains('expanded')) {
-                                if (window.papersModule) {
-                                    window.papersModule.renderPapers();
-                                }
+                                renderPapers();
                             }
                         })
                         .catch(error => {
@@ -84,18 +82,8 @@ async function initializeApp() {
         // Add this line to initialize share button
         initializeShareButton();
         
-        // Render papers using the module
-        if (window.papersModule && window.papersModule.renderPapers) {
-            window.papersModule.renderPapers();
-        }
-        
-        // Apply filters if available
-        if (typeof applyFilters === 'function') {
-            applyFilters();
-        }
-        
-        // Set the newest paper as active after rendering
-        loadNewestPaperAsActive();
+        renderPapers();
+        applyFilters();
         
     } catch (error) {
         console.error('Failed to initialize app:', error);
@@ -106,20 +94,6 @@ async function initializeApp() {
                 Error: ${error.message}
             </div>
         `;
-    }
-}
-
-// Function to load the newest paper as active
-function loadNewestPaperAsActive() {
-    // Check if papers module is available and papers have been loaded
-    if (window.papersModule && window.yamlData) {
-        // Small delay to ensure DOM is fully rendered
-        setTimeout(() => {
-            const newestPaperId = window.papersModule.getNewestPaperId();
-            if (newestPaperId) {
-                window.papersModule.setActivePaper(newestPaperId);
-            }
-        }, 100);
     }
 }
 
@@ -201,6 +175,7 @@ if (document.readyState === 'loading') {
 
 // Export for use in other modules
 window.papersApp = {
-    waitForFeatures,
-    loadNewestPaperAsActive
+    renderPapers,
+    applyFilters,
+    waitForFeatures
 };
