@@ -84,6 +84,7 @@ async function initializeApp() {
         
         renderPapers();
         applyFilters();
+        loadNewestPaperAsActive();
         
     } catch (error) {
         console.error('Failed to initialize app:', error);
@@ -189,7 +190,7 @@ if (document.readyState === 'loading') {
 
 // Export for use in other modules
 window.papersApp = {
-    //renderPapers,
+    renderPapers,
     applyFilters,
     waitForFeatures
 };
