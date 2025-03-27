@@ -41,10 +41,34 @@ const setActivePaper = (paperId) => {
     const paperRow = document.querySelector(`tr[data-paper-id="${paperId}"]`);
     if (paperRow) {
         paperRow.classList.add('active');
+        
+        // // Ensure the paper row is visible (expand day group if collapsed)
+        // const dayGroup = paperRow.closest('.day-group');
+        // if (dayGroup && dayGroup.classList.contains('collapsed')) {
+        //     dayGroup.classList.remove('collapsed');
+            
+        //     // Update localStorage for this day
+        //     const date = dayGroup.dataset.date;
+        //     const collapsedDays = JSON.parse(localStorage.getItem('collapsedDays') || '{}');
+        //     collapsedDays[date] = false;
+        //     localStorage.setItem('collapsedDays', JSON.stringify(collapsedDays));
+        // }
+        
+        // // Scroll to the active paper
+        // paperRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
 
     // Show paper details
     updatePaperDetails(paperId);
+};
+
+// Gets the newest paper (by last_visited date)
+const getNewestPaperId = () => {
+    if (!window.yamlData || Object.keys(window.yamlData).length === 0) return null;
+    
+    return Object.entries(window.yamlData)
+        .sort(([_, a], [__, b]) => new Date(b.last_visited) - new Date(a.last_visited))
+        [0][0]; // Get the ID of the first (newest) paper
 };
 
 // Load collapsed items state
@@ -293,6 +317,30 @@ function formatFeatureName(featureType) {
         .join(' ');
 }
 
+// Format date for display
+function formatDate(dateStr, format = 'default') {
+    const date = new Date(dateStr);
+    
+    if (format === 'group') {
+        // Check if it's today
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        
+        const yesterday = new Date(today);
+        yesterday.setDate(yesterday.getDate() - 1);
+        
+        if (date.getTime() === today.getTime()) {
+            return 'Today';
+        } else if (date.getTime() === yesterday.getTime()) {
+            return 'Yesterday';
+        } else {
+            return date.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+        }
+    }
+    
+    return date.toLocaleDateString();
+}
+
 function addPaperHandlers(container) {
     // Add click handlers for paper rows
     container.querySelectorAll('tr[data-paper-id]').forEach(row => {
@@ -331,3 +379,11 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 });
+
+// Export functions for use in other modules
+window.papersModule = {
+    setActivePaper,
+    getNewestPaperId,
+    updatePaperDetails,
+    renderPapers
+};
