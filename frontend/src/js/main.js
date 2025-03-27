@@ -97,6 +97,20 @@ async function initializeApp() {
     }
 }
 
+// Function to load the newest paper as active
+function loadNewestPaperAsActive() {
+    // Check if papers module is available and papers have been loaded
+    if (window.papersModule && window.yamlData) {
+        // Small delay to ensure DOM is fully rendered
+        setTimeout(() => {
+            const newestPaperId = window.papersModule.getNewestPaperId();
+            if (newestPaperId) {
+                window.papersModule.setActivePaper(newestPaperId);
+            }
+        }, 100);
+    }
+}
+
 // Function to check if features are loaded for a paper
 function areFeaturesLoaded(paper) {
     if (!paper.features_path) return true;
@@ -175,7 +189,7 @@ if (document.readyState === 'loading') {
 
 // Export for use in other modules
 window.papersApp = {
-    renderPapers,
+    //renderPapers,
     applyFilters,
     waitForFeatures
 };
