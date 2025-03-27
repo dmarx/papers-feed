@@ -82,8 +82,12 @@ async function initializeApp() {
         // Add this line to initialize share button
         initializeShareButton();
         
+        // Render papers
         renderPapers();
         applyFilters();
+        
+        // Set the newest paper as active after rendering
+        loadNewestPaperAsActive();
         
     } catch (error) {
         console.error('Failed to initialize app:', error);
@@ -94,6 +98,20 @@ async function initializeApp() {
                 Error: ${error.message}
             </div>
         `;
+    }
+}
+
+// Function to load the newest paper as active
+function loadNewestPaperAsActive() {
+    // Check if papers module is available and papers have been loaded
+    if (window.papersModule && window.yamlData) {
+        // Small delay to ensure DOM is fully rendered
+        setTimeout(() => {
+            const newestPaperId = window.papersModule.getNewestPaperId();
+            if (newestPaperId) {
+                window.papersModule.setActivePaper(newestPaperId);
+            }
+        }, 100);
     }
 }
 
@@ -177,5 +195,6 @@ if (document.readyState === 'loading') {
 window.papersApp = {
     renderPapers,
     applyFilters,
-    waitForFeatures
+    waitForFeatures,
+    loadNewestPaperAsActive
 };
