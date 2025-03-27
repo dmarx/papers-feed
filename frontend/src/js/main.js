@@ -41,7 +41,9 @@ async function loadPaperData() {
                             // Re-render if this paper is currently expanded
                             const paperCard = document.querySelector(`.paper-card[data-paper-id="${paper.id}"]`);
                             if (paperCard?.classList.contains('expanded')) {
-                                renderPapers();
+                                if (window.papersModule) {
+                                    window.papersModule.renderPapers();
+                                }
                             }
                         })
                         .catch(error => {
@@ -82,9 +84,15 @@ async function initializeApp() {
         // Add this line to initialize share button
         initializeShareButton();
         
-        // Render papers
-        renderPapers();
-        applyFilters();
+        // Render papers using the module
+        if (window.papersModule && window.papersModule.renderPapers) {
+            window.papersModule.renderPapers();
+        }
+        
+        // Apply filters if available
+        if (typeof applyFilters === 'function') {
+            applyFilters();
+        }
         
         // Set the newest paper as active after rendering
         loadNewestPaperAsActive();
@@ -193,8 +201,6 @@ if (document.readyState === 'loading') {
 
 // Export for use in other modules
 window.papersApp = {
-    renderPapers,
-    applyFilters,
     waitForFeatures,
     loadNewestPaperAsActive
 };
