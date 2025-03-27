@@ -317,30 +317,6 @@ function formatFeatureName(featureType) {
         .join(' ');
 }
 
-// Format date for display
-function formatDate(dateStr, format = 'default') {
-    const date = new Date(dateStr);
-    
-    if (format === 'group') {
-        // Check if it's today
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        
-        const yesterday = new Date(today);
-        yesterday.setDate(yesterday.getDate() - 1);
-        
-        if (date.getTime() === today.getTime()) {
-            return 'Today';
-        } else if (date.getTime() === yesterday.getTime()) {
-            return 'Yesterday';
-        } else {
-            return date.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-        }
-    }
-    
-    return date.toLocaleDateString();
-}
-
 function addPaperHandlers(container) {
     // Add click handlers for paper rows
     container.querySelectorAll('tr[data-paper-id]').forEach(row => {
