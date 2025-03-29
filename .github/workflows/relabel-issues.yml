@@ -1,0 +1,79 @@
+# .github/workflows/relabel-issues.yml
+# GitHub Action to relabel issues based on criteria
+
+name: Relabel Issues
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_label:
+        description: 'Source label (Y)'
+        required: true
+        type: string
+      target_label:
+        description: 'Target label to apply (X)'
+        required: true
+        type: string
+      min_issue_number:
+        description: 'Minimum issue number (k)'
+        required: true
+        type: number
+  
+jobs:
+  relabel-issues:
+    name: Relabel Issues
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Apply labels to matching issues
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const sourceLabel = '${{ inputs.source_label }}';
+            const targetLabel = '${{ inputs.target_label }}';
+            const minIssueNumber = ${{ inputs.min_issue_number }};
+            
+            console.log(`Finding issues with label "${sourceLabel}" and number > ${minIssueNumber}`);
+            
+            // Get all issues (open and closed) with the source label
+            const query = `label:"${sourceLabel}" repo:${context.repo.owner}/${context.repo.repo}`;
+            
+            // Process issues in batches due to pagination
+            let processedCount = 0;
+            let labeledCount = 0;
+            
+            for await (const response of github.paginate.iterator(
+              github.rest.search.issuesAndPullRequests,
+              { q: query }
+            )) {
+              for (const issue of response.data) {
+                processedCount++;
+                
+                // Check if issue number meets the criteria
+                if (issue.number > minIssueNumber) {
+                  // Check if target label already exists
+                  const hasLabel = issue.labels.some(label => label.name === targetLabel);
+                  
+                  if (!hasLabel) {
+                    // Add the target label
+                    await github.rest.issues.addLabels({
+                      owner: context.repo.owner,
+                      repo: context.repo.repo,
+                      issue_number: issue.number,
+                      labels: [targetLabel]
+                    });
+                    
+                    console.log(`Applied label "${targetLabel}" to issue #${issue.number}: ${issue.title}`);
+                    labeledCount++;
+                  } else {
+                    console.log(`Issue #${issue.number} already has label "${targetLabel}"`);
+                  }
+                }
+              }
+            }
+            
+            // Report summary
+            console.log(`\nRelabeling complete!`);
+            console.log(`- Total processed: ${processedCount} issues`);
+            console.log(`- Newly labeled: ${labeledCount} issues`);
