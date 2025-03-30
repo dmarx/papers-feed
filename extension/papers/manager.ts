@@ -1,5 +1,6 @@
 // extension/papers/manager.ts
-import { GitHubStoreClient } from 'gh-store-client';
+//import { GitHubStoreClient } from 'gh-store-client';
+import { CanonicalStoreClient as GitHubStoreClient } from 'gh-store-client';
 import type { Json } from 'gh-store-client';
 import { 
   type PaperMetadata, 
