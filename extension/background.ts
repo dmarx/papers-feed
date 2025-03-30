@@ -1,7 +1,7 @@
 // background.ts
 // Background script with simplified session tracking
 
-import { GitHubStoreClient } from 'gh-store-client';
+import { CanonicalStoreClient } from 'gh-store-client';
 import { PaperManager } from './papers/manager';
 import { SessionService } from './utils/session-service';
 import { PopupManager } from './utils/popup-manager';
@@ -48,7 +48,7 @@ async function initialize() {
     
     // Initialize paper manager if we have credentials
     if (githubToken && githubRepo) {
-      const githubClient = new GitHubStoreClient(githubToken, githubRepo);
+      const githubClient = new CanonicalStoreClient(githubToken, githubRepo);
       
       // Pass the source manager to the paper manager
       paperManager = new PaperManager(githubClient, sourceManager!);
@@ -281,7 +281,7 @@ chrome.storage.onChanged.addListener(async (changes) => {
   // Reinitialize paper manager if credentials changed
   if (changes.githubToken || changes.githubRepo) {
     if (githubToken && githubRepo) {
-      const githubClient = new GitHubStoreClient(githubToken, githubRepo);
+      const githubClient = new CanonicalStoreClient(githubToken, githubRepo);
       
       // Pass the source manager to the paper manager
       paperManager = new PaperManager(githubClient, sourceManager!);
