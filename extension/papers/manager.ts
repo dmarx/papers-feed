@@ -1,6 +1,5 @@
 // extension/papers/manager.ts
-//import { GitHubStoreClient } from 'gh-store-client';
-import { CanonicalStoreClient as GitHubStoreClient } from 'gh-store-client';
+import { CanonicalStoreClient } from 'gh-store-client';
 import type { Json } from 'gh-store-client';
 import { 
   type PaperMetadata, 
@@ -16,7 +15,7 @@ const logger = loguru.getLogger('paper-manager');
 
 export class PaperManager {
   constructor(
-    private client: GitHubStoreClient,
+    private client: CanonicalStoreClient,
     private sourceManager: SourceManager
   ) {
     logger.debug('Paper manager initialized');
@@ -101,7 +100,7 @@ export class PaperManager {
   /**
    * Get GitHub client instance
    */
-  getClient(): GitHubStoreClient {
+  getClient(): CanonicalStoreClient {
     return this.client;
   }
   
