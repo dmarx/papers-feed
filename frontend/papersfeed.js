@@ -195,8 +195,9 @@ function processComplexData(data) {
           totalReadingTime += interaction.data.duration_seconds || 0;
           
           // Find the most recent reading session using Luxon
-          if (interaction.timestamp) {
-            const sessionDate = DateTime.fromISO(interaction.timestamp);
+          if (interaction.timestamp || interaction.data.end_time) {
+            const sessionTimestamp = interaction.timestamp || interaction.data.end_time;
+            const sessionDate = DateTime.fromISO(sessionTimestamp);
             
             if (sessionDate.isValid) {
               // Only use valid dates
