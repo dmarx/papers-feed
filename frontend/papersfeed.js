@@ -10,22 +10,19 @@ let allData = [];
 const { DateTime } = luxon;
 
 // Format date to YYYY-MM-DD format using Luxon
-function formatDate(dateString) {
-  if (!dateString) return '';
+function formatDate(cell) {
+  const dateTime = cell.getValue();
   
-  // This is added as a safety check during debugging - can be removed later
-  if (typeof dateString !== 'string') {
-    console.warn(`Expected string but got ${typeof dateString}:`, dateString);
-    return '';
+  if (!dateTime) return '';
+  
+  // If it's already a DateTime object, use it directly
+  if (dateTime instanceof DateTime) {
+    return dateTime.isValid ? dateTime.toFormat('yyyy-MM-dd') : '';
   }
   
-  const dt = DateTime.fromISO(dateString);
-  if (!dt.isValid) {
-    console.warn(`Invalid date string: "${dateString}"`);
-    return '';
-  }
-  
-  return dt.toFormat('yyyy-MM-dd');
+  // For debugging - this should not happen if our design is solid
+  console.warn('formatDate received non-DateTime value:', dateTime);
+  return '';
 }
 
 // Format reading time from seconds to a human-readable format using Luxon
@@ -202,19 +199,23 @@ function processComplexData(data) {
       uniqueInteractionDays = uniqueDays.size;
     }
     
-    // Convert lastReadDate to ISO string if it exists
-    const lastReadString = lastReadDate ? lastReadDate.toISO() : null;
+    // Parse other date fields with Luxon
+    const publishedDate = paperData.published_date ? 
+      DateTime.fromISO(paperData.published_date) : null;
+      
+    const firstReadDate = paperMeta.created_at ? 
+      DateTime.fromISO(paperMeta.created_at) : null;
     
     // Create the row data
     result.push({
-      id: paperId, //paperData.paper_id || paperData.arxivId,
+      id: paperId,
       source: paperData.sourceId || paperData.sourceType,
       title: paperData.title,
       authors: paperData.authors,
       abstract: paperData.abstract,
-      published: paperData.published_date,
-      firstRead: paperMeta.created_at, 
-      lastRead: lastReadString,
+      published: publishedDate,
+      firstRead: firstReadDate,
+      lastRead: lastReadDate,
       readingTime: totalReadingTime,
       readingTimeSeconds: totalReadingTime,
       interactionDays: uniqueInteractionDays,
@@ -322,7 +323,7 @@ function initTable(data) {
   document.querySelector(".loading").style.display = "none";
 }
 
-// Setup event listeners for filters and search
+  // Setup event listeners for filters and search
 function setupEventListeners() {
   // Global search
   document.getElementById("search-input").addEventListener("input", function(e) {
@@ -352,28 +353,28 @@ function setupEventListeners() {
   
   // Date filter
   document.getElementById("apply-date-filter").addEventListener("click", function() {
-    const fromDate = document.getElementById("date-filter-from").value;
-    const toDate = document.getElementById("date-filter-to").value;
+    const fromDateStr = document.getElementById("date-filter-from").value;
+    const toDateStr = document.getElementById("date-filter-to").value;
+    
+    const fromDate = fromDateStr ? DateTime.fromISO(fromDateStr) : null;
+    const toDate = toDateStr ? DateTime.fromISO(toDateStr) : null;
     
     table.setFilter(function(data) {
       if (!fromDate && !toDate) return true;
-      if (!data.published) return false;
+      if (!data.published || !data.published.isValid) return false;
       
-      // Use Luxon for date comparison
-      const publishedDate = DateTime.fromISO(data.published);
-      if (!publishedDate.isValid) return false;
+      const publishedDate = data.published;
       
       if (fromDate && toDate) {
-        return publishedDate >= DateTime.fromISO(fromDate) && 
-               publishedDate <= DateTime.fromISO(toDate);
+        return publishedDate >= fromDate && publishedDate <= toDate;
       }
       
       if (fromDate) {
-        return publishedDate >= DateTime.fromISO(fromDate);
+        return publishedDate >= fromDate;
       }
       
       if (toDate) {
-        return publishedDate <= DateTime.fromISO(toDate);
+        return publishedDate <= toDate;
       }
       
       return true;
