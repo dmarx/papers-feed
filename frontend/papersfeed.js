@@ -177,40 +177,38 @@ function processComplexData(data) {
     const paperData = paperRaw.data;
     const paperMeta = paperRaw.meta;
     const interactionKey = `interactions:${paperId}`;
-    const interactionData = objects[interactionKey] ? objects[interactionKey].data : null;
+    const paperInteractions = objects[interactionKey];
     
     // Calculate reading time
     let totalReadingTime = 0;
-    let lastReadDate = null;
     let lastReadTimestamp = null;
     
     // Calculate unique days with interactions
     let uniqueInteractionDays = 0;
     
-    if (interactionData && interactionData.interactions) {
+    if (paperInteractions) {
       const uniqueDays = new Set();
       
-      for (const interaction of interactionData.interactions) {
-        if (interaction.type === "reading_session") {
+      for (const interaction of paperInteractions.data.interactions) {
+        //if (interaction.type === "reading_session") {
           totalReadingTime += interaction.data.duration_seconds || 0;
           
           // Find the most recent reading session using Luxon
           if (interaction.timestamp || interaction.data.end_time) {
             const sessionTimestamp = interaction.timestamp || interaction.data.end_time;
-            const sessionDate = DateTime.fromISO(sessionTimestamp);
+            //const sessionDate = DateTime.fromISO(sessionTimestamp);
             
-            if (sessionDate.isValid) {
+            if (sessionTimestamp) {
               // Only use valid dates
-              if (!lastReadDate || sessionDate > lastReadDate) {
-                lastReadDate = sessionDate;
+              if (!lastReadTimestamp || (sessionTimestamp > lastReadTimestamp)) {
                 lastReadTimestamp = interaction.timestamp;
               }
               
               // Track unique days - convert to ISO date format for the Set
-              uniqueDays.add(sessionDate.toISODate());
+              uniqueDays.add(safeDateString(sessionTimestamp).toISODate());
             }
           }
-        }
+        //}
       }
       
       uniqueInteractionDays = uniqueDays.size;
