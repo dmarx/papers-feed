@@ -6,12 +6,18 @@ let allData = [];
 // Import Luxon (Add this to your HTML file)
 // <script src="https://cdn.jsdelivr.net/npm/luxon@3.4.3/build/global/luxon.min.js"></script>
 // Or if using modules:
-//import { DateTime } from "luxon";
+// import { DateTime } from "luxon";
 const { DateTime } = luxon;
 
 // Format date to YYYY-MM-DD format using Luxon
 function formatDate(dateString) {
   if (!dateString) return '';
+  
+  // This is added as a safety check during debugging - can be removed later
+  if (typeof dateString !== 'string') {
+    console.warn(`Expected string but got ${typeof dateString}:`, dateString);
+    return '';
+  }
   
   const dt = DateTime.fromISO(dateString);
   if (!dt.isValid) {
@@ -22,36 +28,19 @@ function formatDate(dateString) {
   return dt.toFormat('yyyy-MM-dd');
 }
 
-// Format reading time from seconds to a human-readable format
+// Format reading time from seconds to a human-readable format using Luxon
 function formatReadingTime(seconds) {
   if (!seconds || seconds === 0) return 'Not read';
   
-  // For very short times (less than 1 minute)
-  if (seconds < 60) {
-    return `${seconds} second${seconds !== 1 ? 's' : ''}`;
-  }
+  // Create a duration object from the seconds
+  const duration = Duration.fromObject({ seconds });
   
-  // For times between 1 minute and 1 hour
-  if (seconds < 3600) {
-    const minutes = Math.floor(seconds / 60);
-    const remainingSeconds = Math.round(seconds - (minutes * 60));
-    
-    if (remainingSeconds === 0) {
-      return `${minutes} minute${minutes !== 1 ? 's' : ''}`;
-    } else {
-      return `${minutes} min ${remainingSeconds} sec`;
-    }
-  }
-  
-  // For times 1 hour or longer
-  const hours = Math.floor(seconds / 3600);
-  const remainingMinutes = Math.floor((seconds % 3600) / 60);
-  
-  if (remainingMinutes === 0) {
-    return `${hours} hour${hours !== 1 ? 's' : ''}`;
-  } else {
-    return `${hours} hr ${remainingMinutes} min`;
-  }
+  // Use Luxon's built-in human-readable formatting
+  return duration.toHuman({ 
+    maximumFractionDigits: 0,
+    listStyle: "narrow",
+    unitDisplay: "short"
+  });
 }
 
 // Custom cell formatter for tags
@@ -213,6 +202,9 @@ function processComplexData(data) {
       uniqueInteractionDays = uniqueDays.size;
     }
     
+    // Convert lastReadDate to ISO string if it exists
+    const lastReadString = lastReadDate ? lastReadDate.toISO() : null;
+    
     // Create the row data
     result.push({
       id: paperId, //paperData.paper_id || paperData.arxivId,
@@ -221,10 +213,10 @@ function processComplexData(data) {
       authors: paperData.authors,
       abstract: paperData.abstract,
       published: paperData.published_date,
-      firstRead: paperMeta.created_at, // Luxon will format this
-      lastRead: lastReadDate ? lastReadDate.toISO() : null, // Store ISO string for Luxon
-      readingTime: totalReadingTime, // formatReadingTime
-      readingTimeSeconds: totalReadingTime, // Add this for filters
+      firstRead: paperMeta.created_at, 
+      lastRead: lastReadString,
+      readingTime: totalReadingTime,
+      readingTimeSeconds: totalReadingTime,
       interactionDays: uniqueInteractionDays,
       tags: paperData.arxiv_tags || [],
       url: paperData.url,
