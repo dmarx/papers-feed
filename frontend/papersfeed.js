@@ -1,3 +1,6 @@
+// frontend/papersfeed.js
+// Root of GitHub Pages site - Papers Feed JS implementation
+
 // Global variables
 let table;
 let allData = [];
@@ -28,46 +31,47 @@ function formatTags(cell) {
   ).join(' ');
 }
 
-// Custom row formatter for row details
-function rowDetailFormatter(e, row, onRendered) {
-  const data = row.getData();
-  
-  // Format interactions for display
-  function formatInteractions(interactions) {
-    if (!interactions || interactions.length === 0) {
-      return '<p>No reading sessions recorded</p>';
-    }
-    
-    return `
-      <table class="sessions-table">
-        <thead>
-          <tr>
-            <th>Date</th>
-            <th>Duration</th>
-            <th>Session ID</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${interactions.map(interaction => {
-            const date = new Date(interaction.timestamp);
-            return `
-              <tr>
-                <td>${date.toLocaleString()}</td>
-                <td>${interaction.data.duration_seconds} seconds</td>
-                <td>${interaction.data.session_id}</td>
-              </tr>
-            `;
-          }).join('')}
-        </tbody>
-      </table>
-    `;
+// Format interactions for display
+function formatInteractions(interactions) {
+  if (!interactions || interactions.length === 0) {
+    return '<p>No reading sessions recorded</p>';
   }
   
-  // Build the detail view
-  const element = document.createElement("div");
-  element.classList.add("detail-panel");
+  return `
+    <table class="sessions-table">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Duration</th>
+          <th>Session ID</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${interactions.map(interaction => {
+          const date = new Date(interaction.timestamp);
+          return `
+            <tr>
+              <td>${date.toLocaleString()}</td>
+              <td>${interaction.data.duration_seconds} seconds</td>
+              <td>${interaction.data.session_id}</td>
+            </tr>
+          `;
+        }).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+// Function to display paper details in the modal
+function showPaperDetailsModal(data) {
+  const modalBody = document.getElementById('modal-paper-body');
+  const modalTitle = document.getElementById('modal-paper-title');
   
-  element.innerHTML = `
+  // Update modal title with paper title
+  modalTitle.textContent = data.title;
+  
+  // Build the detail content
+  modalBody.innerHTML = `
     <div class="detail-grid">
       <div class="detail-section">
         <h3>Paper Details</h3>
@@ -121,7 +125,8 @@ function rowDetailFormatter(e, row, onRendered) {
     </div>
   `;
   
-  return element;
+  // Show the modal
+  document.getElementById('paper-detail-modal').classList.add('active');
 }
 
 // Process complex data structure
@@ -151,19 +156,18 @@ function processComplexData(data) {
       for (const interaction of interactionData.interactions) {
         if (interaction.type === "reading_session") {
           totalReadingTime += interaction.data.duration_seconds || 0;
-          
-          // Find the most recent reading session
-          const sessionDate = new Date(interaction.timestamp);
-          if (!lastReadDate || sessionDate > lastReadDate) {
-            lastReadDate = sessionDate;
-          }
-          
-          // Track unique days
-          if (interaction.timestamp) {
-            const date = new Date(interaction.timestamp);
-            const dateString = date.toISOString().split('T')[0]; // YYYY-MM-DD
-            uniqueDays.add(dateString);
-          }
+        
+        // Find the most recent reading session
+        const sessionDate = new Date(interaction.data.timestamp) || Date(interaction.meta.created_at) || Date(interaction.timestamp)  ;
+        if (!lastReadDate || sessionDate > lastReadDate) {
+          lastReadDate = sessionDate;
+        }
+        
+        // Track unique days
+        if (sessionDate) {
+          const dateString = sessionDate.toISOString().split('T')[0]; // YYYY-MM-DD
+          uniqueDays.add(dateString);
+        }
         }
       }
       
@@ -172,14 +176,14 @@ function processComplexData(data) {
     
     // Create the row data
     result.push({
-      id: paperId, //paperData.paper_id || paperData.arxivId,
+      id: paperData.paper_id || paperData.arxivId || paperData.paperId  || paperId,
       source: paperData.sourceId || paperData.sourceType,
       title: paperData.title,
       authors: paperData.authors,
       abstract: paperData.abstract,
       published: paperData.published_date ? formatDate(paperData.published_date) : '',
       firstRead: formatDate(paperMeta.created_at),
-      lastRead: lastReadDate ? formatDate(lastReadDate) : formatDate(paperMeta.updated_at),
+      lastRead: formatDate(lastReadDate),
       readingTime: formatReadingTime(totalReadingTime),
       readingTimeSeconds: totalReadingTime,
       interactionDays: uniqueInteractionDays,
@@ -193,6 +197,47 @@ function processComplexData(data) {
   return result;
 }
 
+// Create and append modal elements to the DOM
+function createModalElements() {
+  const modalHTML = `
+    <div id="paper-detail-modal" class="paper-modal">
+      <div class="paper-modal-content">
+        <div class="paper-modal-header">
+          <h2 id="modal-paper-title">Paper Details</h2>
+          <span class="paper-modal-close">&times;</span>
+        </div>
+        <div class="paper-modal-body" id="modal-paper-body">
+          <!-- Content will be dynamically inserted here -->
+        </div>
+      </div>
+    </div>
+  `;
+  
+  // Create div and add the modal HTML
+  const modalContainer = document.createElement('div');
+  modalContainer.innerHTML = modalHTML;
+  document.body.appendChild(modalContainer.firstElementChild);
+  
+  // Add event listener for the close button
+  document.querySelector('.paper-modal-close').addEventListener('click', function() {
+    document.getElementById('paper-detail-modal').classList.remove('active');
+  });
+  
+  // Close modal when clicking outside of the content
+  document.getElementById('paper-detail-modal').addEventListener('click', function(event) {
+    if (event.target === this) {
+      this.classList.remove('active');
+    }
+  });
+  
+  // Close modal when pressing Escape key
+  document.addEventListener('keydown', function(event) {
+    if (event.key === 'Escape') {
+      document.getElementById('paper-detail-modal').classList.remove('active');
+    }
+  });
+}
+
 // Initialize the Tabulator table
 function initTable(data) {
   table = new Tabulator("#papers-table", {
@@ -204,11 +249,12 @@ function initTable(data) {
     paginationSizeSelector: [10, 25, 50, 100, 500, 1000],
     movableColumns: true,
     groupBy:"lastRead",
-    //rowDetails: rowDetailFormatter,
-    rowClickPopup: rowDetailFormatter,
     initialSort: [
       {column: "lastRead", dir: "desc"}
     ],
+    rowClick: function(e, row) {
+      showPaperDetailsModal(row.getData());
+    },
     columns: [
       {
         title: "ID", 
@@ -226,16 +272,13 @@ function initTable(data) {
         widthGrow: 3,
         formatter: function(cell) {
           const value = cell.getValue();
-          const url = cell.getRow().getData().url;
-          return `<a href="${url}" target="_blank">${value}</a>`;
+          return value;
         }
-        //,headerFilter: "input"
       },
       {
         title: "Authors", 
         field: "authors", 
         widthGrow: 2
-        //,headerFilter: "input"
       },
       {
         title: "Published", 
@@ -285,13 +328,6 @@ function initTable(data) {
         row.getElement().classList.add("paper-unread");
       }
     }
-    // rowExpanded: function(row) {
-    //   // Adjust the detail row when expanded
-    //   const detailEl = row.getElement().nextElementSibling;
-    //   if (detailEl && detailEl.classList.contains("tabulator-row-detail")) {
-    //     detailEl.style.backgroundColor = "#f9f9f9";
-    //   }
-    // }
   });
   
   // Remove loading message
@@ -439,6 +475,9 @@ function setupEventListeners() {
 
 // Load and initialize
 document.addEventListener("DOMContentLoaded", function() {
+  // Create modal elements
+  createModalElements();
+  
   // Fetch data file
   fetch("gh-store-snapshot.json")
     .then(response => {
