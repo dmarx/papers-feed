@@ -177,11 +177,11 @@ function processComplexData(data) {
       title: paperData.title,
       authors: paperData.authors,
       abstract: paperData.abstract,
-      published: paperData.published_date ? formatDate(paperData.published_date) : '',
-      firstRead: formatDate(paperMeta.created_at),
-      lastRead: lastReadDate ? formatDate(lastReadDate) : formatDate(paperMeta.updated_at),
-      readingTime: formatReadingTime(totalReadingTime),
-      readingTimeSeconds: totalReadingTime,
+      published: paperData.published_date,
+      firstRead: paperMeta.created_at, // formatDate(paperMeta.created_at),
+      lastRead: lastReadDate,
+      readingTime: totalReadingTime, // formatReadingTime
+      //readingTimeSeconds: totalReadingTime,
       interactionDays: uniqueInteractionDays,
       tags: paperData.arxiv_tags || [],
       url: paperData.url,
@@ -240,35 +240,31 @@ function initTable(data) {
       {
         title: "Published", 
         field: "published", 
-        widthGrow: 1
+        widthGrow: 1,
+        formatter: formatDate
       },
       {
         title: "First Read", 
         field: "firstRead", 
-        widthGrow: 1
+        widthGrow: 1,
+        formatter: formatDate
       },
       {
         title: "Last Read", 
         field: "lastRead", 
-        widthGrow: 1
+        widthGrow: 1,
+        formatter: formatDate
       },
       {
         title: "Reading Time", 
-        field: "readingTimeSeconds", 
+        field: "readingTime", 
         widthGrow: 1,
-        formatter: function(cell) {
-          return cell.getRow().getData().readingTime;
-        }
+        formatter: formatReadingTime
       },
       {
         title: "Days", 
         field: "interactionDays", 
         widthGrow: 1,
-        formatter: function(cell) {
-          const value = cell.getValue();
-          if (value === 0) return "None";
-          return value === 1 ? "1 day" : `${value} days`;
-        }
       },
       {
         title: "Tags", 
@@ -285,13 +281,6 @@ function initTable(data) {
         row.getElement().classList.add("paper-unread");
       }
     }
-    // rowExpanded: function(row) {
-    //   // Adjust the detail row when expanded
-    //   const detailEl = row.getElement().nextElementSibling;
-    //   if (detailEl && detailEl.classList.contains("tabulator-row-detail")) {
-    //     detailEl.style.backgroundColor = "#f9f9f9";
-    //   }
-    // }
   });
   
   // Remove loading message
