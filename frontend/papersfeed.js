@@ -247,8 +247,8 @@ function processComplexData(data) {
       interactionDays: uniqueInteractionDays,
       tags: paperData.arxiv_tags || [],
       url: paperData.url,
-      rawInteractionData: interactionData ? interactionData.interactions : [],
-      hasBeenRead: lastReadDate !== null
+      rawInteractionData: paperInteractions.data.interactions || [],
+      hasBeenRead: lastReadTimestamp !== null
     });
   }
   
