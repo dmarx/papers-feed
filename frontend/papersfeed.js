@@ -230,8 +230,8 @@ function processComplexData(data) {
     
     // Create the row data
     result.push({
-      id: paperId,
-      source: paperData.sourceId || paperData.arxivId || "arxiv",
+      id: paperId || paperData.arxivId ,
+      source: paperData.sourceId || "arxiv",
       title: paperData.title,
       authors: paperData.authors,
       abstract: paperData.abstract,
