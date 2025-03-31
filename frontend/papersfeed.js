@@ -1,19 +1,57 @@
+// papersfeed.js
 // Global variables
 let table;
 let allData = [];
 
-// Format date to YYYY-MM-DD format
+// Import Luxon (Add this to your HTML file)
+// <script src="https://cdn.jsdelivr.net/npm/luxon@3.4.3/build/global/luxon.min.js"></script>
+// Or if using modules:
+//import { DateTime } from "luxon";
+const { DateTime } = luxon;
+
+// Format date to YYYY-MM-DD format using Luxon
 function formatDate(dateString) {
   if (!dateString) return '';
-  const date = new Date(dateString);
-  return date.toISOString().split('T')[0]; // YYYY-MM-DD format
+  
+  const dt = DateTime.fromISO(dateString);
+  if (!dt.isValid) {
+    console.warn(`Invalid date string: "${dateString}"`);
+    return '';
+  }
+  
+  return dt.toFormat('yyyy-MM-dd');
 }
 
-// Format reading time from seconds to minutes
+// Format reading time from seconds to a human-readable format
 function formatReadingTime(seconds) {
   if (!seconds || seconds === 0) return 'Not read';
-  const minutes = Math.round(seconds / 60);
-  return minutes + (minutes === 1 ? ' minute' : ' minutes');
+  
+  // For very short times (less than 1 minute)
+  if (seconds < 60) {
+    return `${seconds} second${seconds !== 1 ? 's' : ''}`;
+  }
+  
+  // For times between 1 minute and 1 hour
+  if (seconds < 3600) {
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = Math.round(seconds - (minutes * 60));
+    
+    if (remainingSeconds === 0) {
+      return `${minutes} minute${minutes !== 1 ? 's' : ''}`;
+    } else {
+      return `${minutes} min ${remainingSeconds} sec`;
+    }
+  }
+  
+  // For times 1 hour or longer
+  const hours = Math.floor(seconds / 3600);
+  const remainingMinutes = Math.floor((seconds % 3600) / 60);
+  
+  if (remainingMinutes === 0) {
+    return `${hours} hour${hours !== 1 ? 's' : ''}`;
+  } else {
+    return `${hours} hr ${remainingMinutes} min`;
+  }
 }
 
 // Custom cell formatter for tags
@@ -49,10 +87,13 @@ function rowDetailFormatter(e, row, onRendered) {
         </thead>
         <tbody>
           ${interactions.map(interaction => {
-            const date = new Date(interaction.timestamp);
+            // Use Luxon for date formatting
+            const dt = DateTime.fromISO(interaction.timestamp);
+            const formattedDate = dt.isValid ? dt.toLocaleString(DateTime.DATETIME_SHORT) : 'Invalid date';
+            
             return `
               <tr>
-                <td>${date.toLocaleString()}</td>
+                <td>${formattedDate}</td>
                 <td>${interaction.data.duration_seconds} seconds</td>
                 <td>${interaction.data.session_id}</td>
               </tr>
@@ -152,17 +193,19 @@ function processComplexData(data) {
         if (interaction.type === "reading_session") {
           totalReadingTime += interaction.data.duration_seconds || 0;
           
-          // Find the most recent reading session
-          const sessionDate = new Date(interaction.timestamp);
-          if (!lastReadDate || sessionDate > lastReadDate) {
-            lastReadDate = sessionDate;
-          }
-          
-          // Track unique days
+          // Find the most recent reading session using Luxon
           if (interaction.timestamp) {
-            const date = new Date(interaction.timestamp);
-            const dateString = date.toISOString().split('T')[0]; // YYYY-MM-DD
-            uniqueDays.add(dateString);
+            const sessionDate = DateTime.fromISO(interaction.timestamp);
+            
+            if (sessionDate.isValid) {
+              // Only use valid dates
+              if (!lastReadDate || sessionDate > lastReadDate) {
+                lastReadDate = sessionDate;
+              }
+              
+              // Track unique days - convert to ISO date format for the Set
+              uniqueDays.add(sessionDate.toISODate());
+            }
           }
         }
       }
@@ -178,10 +221,10 @@ function processComplexData(data) {
       authors: paperData.authors,
       abstract: paperData.abstract,
       published: paperData.published_date,
-      firstRead: paperMeta.created_at, // formatDate(paperMeta.created_at),
-      lastRead: lastReadDate,
+      firstRead: paperMeta.created_at, // Luxon will format this
+      lastRead: lastReadDate ? lastReadDate.toISO() : null, // Store ISO string for Luxon
       readingTime: totalReadingTime, // formatReadingTime
-      //readingTimeSeconds: totalReadingTime,
+      readingTimeSeconds: totalReadingTime, // Add this for filters
       interactionDays: uniqueInteractionDays,
       tags: paperData.arxiv_tags || [],
       url: paperData.url,
@@ -324,16 +367,21 @@ function setupEventListeners() {
       if (!fromDate && !toDate) return true;
       if (!data.published) return false;
       
+      // Use Luxon for date comparison
+      const publishedDate = DateTime.fromISO(data.published);
+      if (!publishedDate.isValid) return false;
+      
       if (fromDate && toDate) {
-        return data.published >= fromDate && data.published <= toDate;
+        return publishedDate >= DateTime.fromISO(fromDate) && 
+               publishedDate <= DateTime.fromISO(toDate);
       }
       
       if (fromDate) {
-        return data.published >= fromDate;
+        return publishedDate >= DateTime.fromISO(fromDate);
       }
       
       if (toDate) {
-        return data.published <= toDate;
+        return publishedDate <= DateTime.fromISO(toDate);
       }
       
       return true;
