@@ -10,19 +10,34 @@ let allData = [];
 const { DateTime } = luxon;
 
 // Format date to YYYY-MM-DD format using Luxon
-function formatDate(cell) {
-  const dateTime = cell.getValue();
+function formatDate(dateString) {
+  if (!dateString) return '';
   
-  if (!dateTime) return '';
-  
-  // If it's already a DateTime object, use it directly
-  if (dateTime instanceof DateTime) {
-    return dateTime.isValid ? dateTime.toFormat('yyyy-MM-dd') : '';
+  try {
+    const dt = DateTime.fromISO(dateString);
+    if (!dt.isValid) {
+      console.warn(`Invalid date string: "${dateString}"`);
+      return '';
+    }
+    
+    return dt.toFormat('yyyy-MM-dd');
+  } catch (e) {
+    console.warn(`Error formatting date: "${dateString}"`, e);
+    return '';
   }
+}
+
+// Make sure the date string is in a safe format for sorting
+function safeDateString(dateString) {
+  if (!dateString) return '';
   
-  // For debugging - this should not happen if our design is solid
-  console.warn('formatDate received non-DateTime value:', dateTime);
-  return '';
+  // Extract just the date part for consistent sorting
+  try {
+    const dt = DateTime.fromISO(dateString);
+    return dt.isValid ? dt.toISO() : '';
+  } catch (e) {
+    return '';
+  }
 }
 
 // Format reading time from seconds to a human-readable format using Luxon
@@ -73,14 +88,13 @@ function rowDetailFormatter(e, row, onRendered) {
         </thead>
         <tbody>
           ${interactions.map(interaction => {
-            // Use Luxon for date formatting
-            const dt = DateTime.fromISO(interaction.timestamp);
-            const formattedDate = dt.isValid ? dt.toLocaleString(DateTime.DATETIME_SHORT) : 'Invalid date';
+            const date = DateTime.fromISO(interaction.timestamp);
+            const formattedDate = date.isValid ? date.toLocaleString(DateTime.DATETIME_SHORT) : 'Invalid date';
             
             return `
               <tr>
                 <td>${formattedDate}</td>
-                <td>${interaction.data.duration_seconds} seconds</td>
+                <td>${formatReadingTime(interaction.data.duration_seconds)}</td>
                 <td>${interaction.data.session_id}</td>
               </tr>
             `;
@@ -109,15 +123,15 @@ function rowDetailFormatter(e, row, onRendered) {
           </tr>
           <tr>
             <th>Publication Date:</th>
-            <td>${data.published}</td>
+            <td>${data.publishedFormatted}</td>
           </tr>
           <tr>
             <th>Last Read:</th>
-            <td>${data.lastRead}</td>
+            <td>${data.lastReadFormatted}</td>
           </tr>
           <tr>
             <th>Reading Time:</th>
-            <td>${data.readingTime}</td>
+            <td>${data.readingTimeFormatted}</td>
           </tr>
           <tr>
             <th>Interaction Days:</th>
@@ -168,6 +182,7 @@ function processComplexData(data) {
     // Calculate reading time
     let totalReadingTime = 0;
     let lastReadDate = null;
+    let lastReadTimestamp = null;
     
     // Calculate unique days with interactions
     let uniqueInteractionDays = 0;
@@ -187,6 +202,7 @@ function processComplexData(data) {
               // Only use valid dates
               if (!lastReadDate || sessionDate > lastReadDate) {
                 lastReadDate = sessionDate;
+                lastReadTimestamp = interaction.timestamp;
               }
               
               // Track unique days - convert to ISO date format for the Set
@@ -199,25 +215,36 @@ function processComplexData(data) {
       uniqueInteractionDays = uniqueDays.size;
     }
     
-    // Parse other date fields with Luxon
-    const publishedDate = paperData.published_date ? 
-      DateTime.fromISO(paperData.published_date) : null;
-      
-    const firstReadDate = paperMeta.created_at ? 
-      DateTime.fromISO(paperMeta.created_at) : null;
+    // We're storing actual ISO strings for proper sorting
+    // Get published date
+    const publishedTimestamp = paperData.published_date || '';
+    
+    // Get first read date
+    const firstReadTimestamp = paperMeta.created_at || '';
+    
+    // Prepare preformatted display values
+    const publishedFormatted = formatDate(publishedTimestamp);
+    const firstReadFormatted = formatDate(firstReadTimestamp);
+    const lastReadFormatted = formatDate(lastReadTimestamp);
+    const readingTimeFormatted = formatReadingTime(totalReadingTime);
     
     // Create the row data
     result.push({
       id: paperId,
-      source: paperData.sourceId || paperData.sourceType,
+      source: paperData.sourceId || paperData.arxivId || "arxiv",
       title: paperData.title,
       authors: paperData.authors,
       abstract: paperData.abstract,
-      published: publishedDate,
-      firstRead: firstReadDate,
-      lastRead: lastReadDate,
+      // Store sortable timestamp strings
+      published: safeDateString(publishedTimestamp),
+      firstRead: safeDateString(firstReadTimestamp),
+      lastRead: safeDateString(lastReadTimestamp),
+      // Store formatted display strings
+      publishedFormatted: publishedFormatted,
+      firstReadFormatted: firstReadFormatted,
+      lastReadFormatted: lastReadFormatted,
       readingTime: totalReadingTime,
-      readingTimeSeconds: totalReadingTime,
+      readingTimeFormatted: readingTimeFormatted,
       interactionDays: uniqueInteractionDays,
       tags: paperData.arxiv_tags || [],
       url: paperData.url,
@@ -275,32 +302,45 @@ function initTable(data) {
       },
       {
         title: "Published", 
-        field: "published", 
+        field: "published", // Use the ISO string for sorting
         widthGrow: 1,
-        formatter: formatDate
+        formatter: function(cell) {
+          return cell.getRow().getData().publishedFormatted;
+        }
       },
       {
         title: "First Read", 
-        field: "firstRead", 
+        field: "firstRead", // Use the ISO string for sorting
         widthGrow: 1,
-        formatter: formatDate
+        formatter: function(cell) {
+          return cell.getRow().getData().firstReadFormatted;
+        }
       },
       {
         title: "Last Read", 
-        field: "lastRead", 
+        field: "lastRead", // Use the ISO string for sorting
         widthGrow: 1,
-        formatter: formatDate
+        formatter: function(cell) {
+          return cell.getRow().getData().lastReadFormatted;
+        }
       },
       {
         title: "Reading Time", 
-        field: "readingTime", 
+        field: "readingTime", // Use seconds for sorting
         widthGrow: 1,
-        formatter: formatReadingTime
+        formatter: function(cell) {
+          return cell.getRow().getData().readingTimeFormatted;
+        }
       },
       {
         title: "Days", 
         field: "interactionDays", 
         widthGrow: 1,
+        formatter: function(cell) {
+          const value = cell.getValue();
+          if (value === 0) return "None";
+          return value === 1 ? "1 day" : `${value} days`;
+        }
       },
       {
         title: "Tags", 
@@ -353,28 +393,23 @@ function setupEventListeners() {
   
   // Date filter
   document.getElementById("apply-date-filter").addEventListener("click", function() {
-    const fromDateStr = document.getElementById("date-filter-from").value;
-    const toDateStr = document.getElementById("date-filter-to").value;
-    
-    const fromDate = fromDateStr ? DateTime.fromISO(fromDateStr) : null;
-    const toDate = toDateStr ? DateTime.fromISO(toDateStr) : null;
+    const fromDate = document.getElementById("date-filter-from").value;
+    const toDate = document.getElementById("date-filter-to").value;
     
     table.setFilter(function(data) {
       if (!fromDate && !toDate) return true;
-      if (!data.published || !data.published.isValid) return false;
-      
-      const publishedDate = data.published;
+      if (!data.published) return false;
       
       if (fromDate && toDate) {
-        return publishedDate >= fromDate && publishedDate <= toDate;
+        return data.published >= fromDate && data.published <= toDate;
       }
       
       if (fromDate) {
-        return publishedDate >= fromDate;
+        return data.published >= fromDate;
       }
       
       if (toDate) {
-        return publishedDate <= toDate;
+        return data.published <= toDate;
       }
       
       return true;
