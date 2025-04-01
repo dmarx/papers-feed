@@ -172,68 +172,86 @@ function processComplexData(data) {
   const paperKeys = Object.keys(objects).filter(key => key.startsWith("paper:"));
   
   for (const paperKey of paperKeys) {
-    const paperId = paperKey.split(":", 1)[1];
+    const paperId = paperKey.split(":", 2)[1]; // Use safe split with limit
     const paperRaw = objects[paperKey];
+    
+    // Skip if paperRaw is missing or invalid
+    if (!paperRaw || !paperRaw.data) {
+      console.warn(`Skipping invalid paper: ${paperKey}`);
+      continue;
+    }
+    
     const paperData = paperRaw.data;
-    const paperMeta = paperRaw.meta;
+    const paperMeta = paperRaw.meta || {}; // Default to empty object if missing
     const interactionKey = `interactions:${paperId}`;
     const paperInteractions = objects[interactionKey];
     
     // Calculate reading time
     let totalReadingTime = 0;
     let lastReadTimestamp = null;
+    let rawInteractionData = [];
     
     // Calculate unique days with interactions
-    let uniqueInteractionDays = 0;
+    const uniqueDays = new Set();
     
-    if (paperInteractions.data) {
-      const uniqueDays = new Set();
+    // Safely process interactions if they exist
+    if (paperInteractions && paperInteractions.data && 
+        paperInteractions.data.interactions && 
+        Array.isArray(paperInteractions.data.interactions)) {
+      
+      rawInteractionData = paperInteractions.data.interactions;
       
       for (const interaction of paperInteractions.data.interactions) {
-        //if (interaction.type === "reading_session") {
-          totalReadingTime += interaction.data.duration_seconds || 0;
-          
-          // Find the most recent reading session using Luxon
-          if (interaction.timestamp || interaction.data.end_time) {
-            const sessionTimestamp = interaction.timestamp || interaction.data.end_time;
-            //const sessionDate = DateTime.fromISO(sessionTimestamp);
-            
-            if (sessionTimestamp) {
-              // Only use valid dates
-              if (!lastReadTimestamp || (sessionTimestamp > lastReadTimestamp)) {
-                lastReadTimestamp = interaction.timestamp;
-              }
-              
-              // Track unique days - convert to ISO date format for the Set
-              uniqueDays.add(safeDateString(sessionTimestamp).toISODate());
-            }
+        // Skip invalid interactions
+        if (!interaction || !interaction.data) continue;
+        
+        totalReadingTime += interaction.data.duration_seconds || 0;
+        
+        // Find the most recent reading session timestamp
+        const sessionTimestamp = interaction.timestamp || 
+                              (interaction.data ? interaction.data.end_time : null);
+        
+        if (sessionTimestamp) {
+          // Only use valid dates
+          if (!lastReadTimestamp || (sessionTimestamp > lastReadTimestamp)) {
+            lastReadTimestamp = sessionTimestamp;
           }
-        //}
+          
+          try {
+            // Track unique days - safely get date string
+            const dateString = DateTime.fromISO(sessionTimestamp).toISODate();
+            if (dateString) {
+              uniqueDays.add(dateString);
+            }
+          } catch (e) {
+            console.warn(`Invalid timestamp: ${sessionTimestamp}`);
+          }
+        }
       }
-      
-      uniqueInteractionDays = uniqueDays.size;
     }
     
-    // We're storing actual ISO strings for proper sorting
+    const uniqueInteractionDays = uniqueDays.size;
+    
+    // We're storing actual ISO strings for proper sorting (with null checks)
     // Get published date
     const publishedTimestamp = paperData.published_date || '';
     
     // Get first read date
     const firstReadTimestamp = paperMeta.created_at || '';
     
-    // Prepare preformatted display values
-    const publishedFormatted = formatDate(publishedTimestamp);
-    const firstReadFormatted = formatDate(firstReadTimestamp);
-    const lastReadFormatted = formatDate(lastReadTimestamp);
+    // Prepare preformatted display values with fallbacks
+    const publishedFormatted = formatDate(publishedTimestamp) || '';
+    const firstReadFormatted = formatDate(firstReadTimestamp) || '';
+    const lastReadFormatted = formatDate(lastReadTimestamp) || '';
     const readingTimeFormatted = formatReadingTime(totalReadingTime);
     
     // Create the row data
     result.push({
-      id: paperId || paperData.arxivId ,
-      source: paperData.sourceId || "arxiv",
-      title: paperData.title,
-      authors: paperData.authors,
-      abstract: paperData.abstract,
+      id: paperId || (paperData.arxivId || ''),
+      source: paperData.sourceId || paperData.source || "arxiv",
+      title: paperData.title || 'Untitled',
+      authors: paperData.authors || '',
+      abstract: paperData.abstract || '',
       // Store sortable timestamp strings
       published: safeDateString(publishedTimestamp),
       firstRead: safeDateString(firstReadTimestamp),
@@ -246,8 +264,8 @@ function processComplexData(data) {
       readingTimeFormatted: readingTimeFormatted,
       interactionDays: uniqueInteractionDays,
       tags: paperData.arxiv_tags || [],
-      url: paperData.url,
-      rawInteractionData: paperInteractions.data ? paperInteractions.data.interactions : [],
+      url: paperData.url || '',
+      rawInteractionData: rawInteractionData,
       hasBeenRead: lastReadTimestamp !== null
     });
   }
