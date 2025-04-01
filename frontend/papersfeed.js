@@ -1,58 +1,19 @@
-// papersfeed.js
 // Global variables
 let table;
 let allData = [];
 
-// Import Luxon (Add this to your HTML file)
-// <script src="https://cdn.jsdelivr.net/npm/luxon@3.4.3/build/global/luxon.min.js"></script>
-// Or if using modules:
-// import { DateTime } from "luxon";
-const { DateTime } = luxon;
-
-// Format date to YYYY-MM-DD format using Luxon
+// Format date to YYYY-MM-DD format
 function formatDate(dateString) {
   if (!dateString) return '';
-  
-  try {
-    const dt = DateTime.fromISO(dateString);
-    if (!dt.isValid) {
-      console.warn(`Invalid date string: "${dateString}"`);
-      return '';
-    }
-    
-    return dt.toFormat('yyyy-MM-dd');
-  } catch (e) {
-    console.warn(`Error formatting date: "${dateString}"`, e);
-    return '';
-  }
+  const date = new Date(dateString);
+  return date.toISOString().split('T')[0]; // YYYY-MM-DD format
 }
 
-// Make sure the date string is in a safe format for sorting
-function safeDateString(dateString) {
-  if (!dateString) return '';
-  
-  // Extract just the date part for consistent sorting
-  try {
-    const dt = DateTime.fromISO(dateString);
-    return dt.isValid ? dt.toISO() : '';
-  } catch (e) {
-    return '';
-  }
-}
-
-// Format reading time from seconds to a human-readable format using Luxon
+// Format reading time from seconds to minutes
 function formatReadingTime(seconds) {
   if (!seconds || seconds === 0) return 'Not read';
-  
-  // Create a duration object from the seconds
-  const duration = Duration.fromObject({ seconds });
-  
-  // Use Luxon's built-in human-readable formatting
-  return duration.toHuman({ 
-    maximumFractionDigits: 0,
-    listStyle: "narrow",
-    unitDisplay: "short"
-  });
+  const minutes = Math.round(seconds / 60);
+  return minutes + (minutes === 1 ? ' minute' : ' minutes');
 }
 
 // Custom cell formatter for tags
@@ -88,13 +49,11 @@ function rowDetailFormatter(e, row, onRendered) {
         </thead>
         <tbody>
           ${interactions.map(interaction => {
-            const date = DateTime.fromISO(interaction.timestamp);
-            const formattedDate = date.isValid ? date.toLocaleString(DateTime.DATETIME_SHORT) : 'Invalid date';
-            
+            const date = new Date(interaction.timestamp);
             return `
               <tr>
-                <td>${formattedDate}</td>
-                <td>${formatReadingTime(interaction.data.duration_seconds)}</td>
+                <td>${date.toLocaleString()}</td>
+                <td>${interaction.data.duration_seconds} seconds</td>
                 <td>${interaction.data.session_id}</td>
               </tr>
             `;
@@ -123,15 +82,15 @@ function rowDetailFormatter(e, row, onRendered) {
           </tr>
           <tr>
             <th>Publication Date:</th>
-            <td>${data.publishedFormatted}</td>
+            <td>${data.published}</td>
           </tr>
           <tr>
             <th>Last Read:</th>
-            <td>${data.lastReadFormatted}</td>
+            <td>${data.lastRead}</td>
           </tr>
           <tr>
             <th>Reading Time:</th>
-            <td>${data.readingTimeFormatted}</td>
+            <td>${data.readingTime}</td>
           </tr>
           <tr>
             <th>Interaction Days:</th>
@@ -165,166 +124,72 @@ function rowDetailFormatter(e, row, onRendered) {
   return element;
 }
 
-// Process complex data structure with debug logging
+// Process complex data structure
 function processComplexData(data) {
-  console.log("Starting data processing");
   const result = [];
   const objects = data.objects;
   const paperKeys = Object.keys(objects).filter(key => key.startsWith("paper:"));
-  console.log(`Found ${paperKeys.length} papers to process`);
   
-  for (let i = 0; i < paperKeys.length; i++) {
-    const paperKey = paperKeys[i];
-    console.log(`Processing paper ${i+1}/${paperKeys.length}: ${paperKey}`);
+  for (const paperKey of paperKeys) {
+    const paperId = paperKey.split(":", 1)[1];
+    const paperRaw = objects[paperKey];
+    const paperData = paperRaw.data;
+    const paperMeta = paperRaw.meta;
+    const interactionKey = `interactions:${paperId}`;
+    const interactionData = objects[interactionKey] ? objects[interactionKey].data : null;
     
-    try {
-      const paperId = paperKey.split(":", 2)[1];
-      const paperRaw = objects[paperKey];
-      const paperData = paperRaw.data;
-      const paperMeta = paperRaw.meta || {};
-      
-      // Debug info for this paper
-      console.log(`- Paper ID: ${paperId}, Title: ${paperData.title ? paperData.title.substring(0, 30) + '...' : 'NO TITLE'}`);
-      
-      const interactionKey = `interactions:${paperId}`;
-      console.log(`- Looking for interactions with key: ${interactionKey}`);
-      
-      // The problem is likely here - check if interactions exist first
-      if (!objects[interactionKey]) {
-        console.log(`- No interactions found for ${paperId}`);
-        
-        // Create result without interactions
-        result.push({
-          id: paperId,
-          source: paperData.sourceId || "arxiv",
-          title: paperData.title || 'Unknown',
-          authors: paperData.authors || '',
-          abstract: paperData.abstract || '',
-          published: paperData.published_date || '',
-          publishedFormatted: formatDate(paperData.published_date || ''),
-          firstRead: paperMeta.created_at || '',
-          firstReadFormatted: formatDate(paperMeta.created_at || ''),
-          lastRead: '',
-          lastReadFormatted: '',
-          readingTime: 0,
-          readingTimeFormatted: 'Not read',
-          interactionDays: 0,
-          tags: paperData.arxiv_tags || [],
-          url: paperData.url || '',
-          rawInteractionData: [],
-          hasBeenRead: false
-        });
-        
-        console.log(`- Added paper ${paperId} without interactions`);
-        continue; // Skip to next paper
-      }
-      
-      const paperInteractions = objects[interactionKey];
-      console.log(`- Interaction object found: ${paperInteractions ? 'YES' : 'NO'}`);
-      console.log(`- Interaction data exists: ${paperInteractions.data ? 'YES' : 'NO'}`);
-      
-      if (!paperInteractions.data || !paperInteractions.data.interactions) {
-        console.log(`- No valid interactions data for ${paperId}`);
-        
-        // Create result without interactions
-        result.push({
-          id: paperId,
-          source: paperData.sourceId || "arxiv",
-          title: paperData.title || 'Unknown',
-          authors: paperData.authors || '',
-          abstract: paperData.abstract || '',
-          published: paperData.published_date || '',
-          publishedFormatted: formatDate(paperData.published_date || ''),
-          firstRead: paperMeta.created_at || '',
-          firstReadFormatted: formatDate(paperMeta.created_at || ''),
-          lastRead: '',
-          lastReadFormatted: '',
-          readingTime: 0,
-          readingTimeFormatted: 'Not read',
-          interactionDays: 0,
-          tags: paperData.arxiv_tags || [],
-          url: paperData.url || '',
-          rawInteractionData: [],
-          hasBeenRead: false
-        });
-        
-        console.log(`- Added paper ${paperId} without interactions`);
-        continue; // Skip to next paper
-      }
-      
-      // Calculate reading time
-      let totalReadingTime = 0;
-      let lastReadTimestamp = null;
-      
-      // Calculate unique days with interactions
+    // Calculate reading time
+    let totalReadingTime = 0;
+    let lastReadDate = null;
+    
+    // Calculate unique days with interactions
+    let uniqueInteractionDays = 0;
+    
+    if (interactionData && interactionData.interactions) {
       const uniqueDays = new Set();
       
-      console.log(`- Processing ${paperInteractions.data.interactions.length} interactions`);
-      
-      for (const interaction of paperInteractions.data.interactions) {
-        if (!interaction.data) {
-          console.log(`  - Interaction missing data property`);
-          continue;
-        }
-        
-        totalReadingTime += interaction.data.duration_seconds || 0;
-        
-        const sessionTimestamp = interaction.timestamp || interaction.data.end_time;
-        if (sessionTimestamp) {
-          if (!lastReadTimestamp || sessionTimestamp > lastReadTimestamp) {
-            lastReadTimestamp = sessionTimestamp;
+      for (const interaction of interactionData.interactions) {
+        if (interaction.type === "reading_session") {
+          totalReadingTime += interaction.data.duration_seconds || 0;
+          
+          // Find the most recent reading session
+          const sessionDate = new Date(interaction.timestamp);
+          if (!lastReadDate || sessionDate > lastReadDate) {
+            lastReadDate = sessionDate;
           }
           
-          try {
-            const dtObj = DateTime.fromISO(sessionTimestamp);
-            if (dtObj.isValid) {
-              uniqueDays.add(dtObj.toISODate());
-            }
-          } catch (e) {
-            console.log(`  - Invalid timestamp: ${sessionTimestamp}`);
+          // Track unique days
+          if (interaction.timestamp) {
+            const date = new Date(interaction.timestamp);
+            const dateString = date.toISOString().split('T')[0]; // YYYY-MM-DD
+            uniqueDays.add(dateString);
           }
         }
       }
       
-      const uniqueInteractionDays = uniqueDays.size;
-      
-      // Prepare preformatted display values
-      const publishedFormatted = formatDate(paperData.published_date || '');
-      const firstReadFormatted = formatDate(paperMeta.created_at || '');
-      const lastReadFormatted = formatDate(lastReadTimestamp || '');
-      const readingTimeFormatted = formatReadingTime(totalReadingTime);
-      
-      // Create the row data
-      result.push({
-        id: paperId,
-        source: paperData.sourceId || "arxiv",
-        title: paperData.title || 'Unknown',
-        authors: paperData.authors || '',
-        abstract: paperData.abstract || '',
-        published: paperData.published_date || '',
-        publishedFormatted: publishedFormatted,
-        firstRead: paperMeta.created_at || '',
-        firstReadFormatted: firstReadFormatted,
-        lastRead: lastReadTimestamp || '',
-        lastReadFormatted: lastReadFormatted,
-        readingTime: totalReadingTime,
-        readingTimeFormatted: readingTimeFormatted,
-        interactionDays: uniqueInteractionDays,
-        tags: paperData.arxiv_tags || [],
-        url: paperData.url || '',
-        rawInteractionData: paperInteractions.data.interactions || [],
-        hasBeenRead: lastReadTimestamp !== null
-      });
-      
-      console.log(`- Successfully processed paper ${paperId}`);
-      
-    } catch (error) {
-      console.error(`ERROR processing paper ${paperKey}:`, error);
-      // Continue processing other papers
+      uniqueInteractionDays = uniqueDays.size;
     }
+    
+    // Create the row data
+    result.push({
+      id: paperId, //paperData.paper_id || paperData.arxivId,
+      source: paperData.sourceId || paperData.sourceType,
+      title: paperData.title,
+      authors: paperData.authors,
+      abstract: paperData.abstract,
+      published: paperData.published_date ? formatDate(paperData.published_date) : '',
+      firstRead: formatDate(paperMeta.created_at),
+      lastRead: lastReadDate ? formatDate(lastReadDate) : formatDate(paperMeta.updated_at),
+      readingTime: formatReadingTime(totalReadingTime),
+      readingTimeSeconds: totalReadingTime,
+      interactionDays: uniqueInteractionDays,
+      tags: paperData.arxiv_tags || [],
+      url: paperData.url,
+      rawInteractionData: interactionData ? interactionData.interactions : [],
+      hasBeenRead: lastReadDate !== null
+    });
   }
   
-  console.log(`Completed processing. ${result.length} papers in final dataset.`);
   return result;
 }
 
@@ -374,34 +239,25 @@ function initTable(data) {
       },
       {
         title: "Published", 
-        field: "published", // Use the ISO string for sorting
-        widthGrow: 1,
-        formatter: function(cell) {
-          return cell.getRow().getData().publishedFormatted;
-        }
+        field: "published", 
+        widthGrow: 1
       },
       {
         title: "First Read", 
-        field: "firstRead", // Use the ISO string for sorting
-        widthGrow: 1,
-        formatter: function(cell) {
-          return cell.getRow().getData().firstReadFormatted;
-        }
+        field: "firstRead", 
+        widthGrow: 1
       },
       {
         title: "Last Read", 
-        field: "lastRead", // Use the ISO string for sorting
-        widthGrow: 1,
-        formatter: function(cell) {
-          return cell.getRow().getData().lastReadFormatted;
-        }
+        field: "lastRead", 
+        widthGrow: 1
       },
       {
         title: "Reading Time", 
-        field: "readingTime", // Use seconds for sorting
+        field: "readingTimeSeconds", 
         widthGrow: 1,
         formatter: function(cell) {
-          return cell.getRow().getData().readingTimeFormatted;
+          return cell.getRow().getData().readingTime;
         }
       },
       {
@@ -429,13 +285,20 @@ function initTable(data) {
         row.getElement().classList.add("paper-unread");
       }
     }
+    // rowExpanded: function(row) {
+    //   // Adjust the detail row when expanded
+    //   const detailEl = row.getElement().nextElementSibling;
+    //   if (detailEl && detailEl.classList.contains("tabulator-row-detail")) {
+    //     detailEl.style.backgroundColor = "#f9f9f9";
+    //   }
+    // }
   });
   
   // Remove loading message
   document.querySelector(".loading").style.display = "none";
 }
 
-  // Setup event listeners for filters and search
+// Setup event listeners for filters and search
 function setupEventListeners() {
   // Global search
   document.getElementById("search-input").addEventListener("input", function(e) {
@@ -574,10 +437,8 @@ function setupEventListeners() {
   });
 }
 
-// Load and initialize with better error visibility
+// Load and initialize
 document.addEventListener("DOMContentLoaded", function() {
-  const loadingElement = document.querySelector(".loading");
-  
   // Fetch data file
   fetch("gh-store-snapshot.json")
     .then(response => {
@@ -587,46 +448,12 @@ document.addEventListener("DOMContentLoaded", function() {
       return response.json();
     })
     .then(data => {
-      try {
-        console.log("Data loaded successfully, processing...");
-        allData = processComplexData(data);
-        console.log("Data processing complete, initializing table...");
-        initTable(allData);
-        console.log("Table initialized, setting up event listeners...");
-        setupEventListeners();
-        console.log("Setup complete!");
-      } catch (processingError) {
-        console.error("ERROR DURING PROCESSING:", processingError);
-        
-        // Display error on page
-        if (loadingElement) {
-          loadingElement.innerHTML = `
-            <div style="color: red; font-weight: bold;">
-              Error processing data: ${processingError.message}
-              <br><br>
-              Check the console for more details (press F12).
-              <pre style="background: #f8f8f8; padding: 10px; border: 1px solid #ddd; margin-top: 10px; max-height: 200px; overflow: auto;">
-                ${processingError.stack}
-              </pre>
-            </div>
-          `;
-        }
-      }
+      allData = processComplexData(data);
+      initTable(allData);
+      setupEventListeners();
     })
     .catch(error => {
-      console.error("FETCH ERROR:", error);
-      
-      if (loadingElement) {
-        loadingElement.innerHTML = `
-          <div style="color: red; font-weight: bold;">
-            Error loading data: ${error.message}
-            <br><br>
-            Make sure data.json exists in the same directory as this HTML file.
-            <pre style="background: #f8f8f8; padding: 10px; border: 1px solid #ddd; margin-top: 10px; max-height: 200px; overflow: auto;">
-              ${error.stack || ''}
-            </pre>
-          </div>
-        `;
-      }
+      document.querySelector(".loading").innerHTML = 
+        `Error loading data: ${error.message}. Make sure data.json exists in the same directory as this HTML file.`;
     });
 });
