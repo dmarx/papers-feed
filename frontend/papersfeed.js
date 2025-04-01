@@ -205,7 +205,11 @@ function initTable(data) {
     movableColumns: true,
     groupBy:"lastRead",
     //rowDetails: rowDetailFormatter,
-    rowClickPopup: rowDetailFormatter,
+    //rowClickPopup: rowDetailFormatter,
+    rowClick: function(e, row) {
+      // POC: reveal the sidebar when a row is clicked
+      document.getElementById("sidebar").classList.add("active");
+    },
     initialSort: [
       {column: "lastRead", dir: "desc"}
     ],
