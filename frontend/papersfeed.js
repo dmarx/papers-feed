@@ -170,25 +170,23 @@ function processComplexData(data) {
       uniqueInteractionDays = uniqueDays.size;
     }
     
-    let publishedDate = paperData.publishedDate || paperData.published_date;
-    
     // Create the row data
     result.push({
-      id: paperData.paperId || paperData.paper_id || paperData.arxivId || paperKey,
-      source: paperData.sourceType || paperData.sourceId,
+      id: paperId, //paperData.paper_id || paperData.arxivId,
+      source: paperData.sourceId || paperData.sourceType,
       title: paperData.title,
       authors: paperData.authors,
       abstract: paperData.abstract,
-      published: publishedDate ? formatDate(publishedDate) : '',
-      firstRead: paperData.timestamp, // formatDate(paperData.timestamp),
-      lastRead: lastReadDate, //lastReadDate ? formatDate(lastReadDate) : formatDate(paperMeta.updated_at),
-      readingTime: totalReadingTime, //formatReadingTime(totalReadingTime),
+      published: paperData.published_date ? formatDate(paperData.published_date) : '',
+      firstRead: formatDate(paperMeta.created_at),
+      lastRead: lastReadDate ? formatDate(lastReadDate) : formatDate(paperMeta.updated_at),
+      readingTime: formatReadingTime(totalReadingTime),
       readingTimeSeconds: totalReadingTime,
       interactionDays: uniqueInteractionDays,
       tags: paperData.arxiv_tags || [],
       url: paperData.url,
       rawInteractionData: interactionData ? interactionData.interactions : [],
-      hasBeenRead: true // todo: deprecate this useless attribute. this is not how it works. 
+      hasBeenRead: lastReadDate !== null
     });
   }
   
