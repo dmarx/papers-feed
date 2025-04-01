@@ -135,6 +135,9 @@ function processComplexData(data) {
     const paperRaw = objects[paperKey];
     const paperData = paperRaw.data;
     const paperMeta = paperRaw.meta;
+    ////////////////////////////////
+    const issueNumber = paperMeta.issue_number;
+    ////////////////////////////////
     const interactionKey = `interactions:${paperId}`;
     const interactionData = objects[interactionKey] ? objects[interactionKey].data : null;
     
@@ -186,7 +189,8 @@ function processComplexData(data) {
       tags: paperData.arxiv_tags || [],
       url: paperData.url,
       rawInteractionData: interactionData ? interactionData.interactions : [],
-      hasBeenRead: lastReadDate !== null
+      hasBeenRead: lastReadDate !== null,
+      issueNumber: issueNumber
     });
   }
   
@@ -213,6 +217,11 @@ function initTable(data) {
       {
         title: "ID", 
         field: "id", 
+        widthGrow: 1
+      },
+      {
+        title: "issueNumber", 
+        field: "issueNumber", 
         widthGrow: 1
       },
       {
