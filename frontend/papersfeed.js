@@ -186,7 +186,7 @@ function processComplexData(data) {
     // Calculate unique days with interactions
     let uniqueInteractionDays = 0;
     
-    if (paperInteractions) {
+    if (paperInteractions.data) {
       const uniqueDays = new Set();
       
       for (const interaction of paperInteractions.data.interactions) {
@@ -247,7 +247,7 @@ function processComplexData(data) {
       interactionDays: uniqueInteractionDays,
       tags: paperData.arxiv_tags || [],
       url: paperData.url,
-      rawInteractionData: paperInteractions.data.interactions || [],
+      rawInteractionData: paperInteractions.data ? paperInteractions.data.interactions : [],
       hasBeenRead: lastReadTimestamp !== null
     });
   }
