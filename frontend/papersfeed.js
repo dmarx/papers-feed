@@ -165,111 +165,166 @@ function rowDetailFormatter(e, row, onRendered) {
   return element;
 }
 
-// Process complex data structure
+// Process complex data structure with debug logging
 function processComplexData(data) {
+  console.log("Starting data processing");
   const result = [];
   const objects = data.objects;
   const paperKeys = Object.keys(objects).filter(key => key.startsWith("paper:"));
+  console.log(`Found ${paperKeys.length} papers to process`);
   
-  for (const paperKey of paperKeys) {
-    const paperId = paperKey.split(":", 2)[1]; // Use safe split with limit
-    const paperRaw = objects[paperKey];
+  for (let i = 0; i < paperKeys.length; i++) {
+    const paperKey = paperKeys[i];
+    console.log(`Processing paper ${i+1}/${paperKeys.length}: ${paperKey}`);
     
-    // Skip if paperRaw is missing or invalid
-    if (!paperRaw || !paperRaw.data) {
-      console.warn(`Skipping invalid paper: ${paperKey}`);
-      continue;
-    }
-    
-    const paperData = paperRaw.data;
-    const paperMeta = paperRaw.meta || {}; // Default to empty object if missing
-    const interactionKey = `interactions:${paperId}`;
-    const paperInteractions = objects[interactionKey];
-    
-    // Calculate reading time
-    let totalReadingTime = 0;
-    let lastReadTimestamp = null;
-    let rawInteractionData = [];
-    
-    // Calculate unique days with interactions
-    const uniqueDays = new Set();
-    
-    // Safely process interactions if they exist
-    if (paperInteractions && paperInteractions.data && 
-        paperInteractions.data.interactions && 
-        Array.isArray(paperInteractions.data.interactions)) {
+    try {
+      const paperId = paperKey.split(":", 2)[1];
+      const paperRaw = objects[paperKey];
+      const paperData = paperRaw.data;
+      const paperMeta = paperRaw.meta || {};
       
-      rawInteractionData = paperInteractions.data.interactions;
+      // Debug info for this paper
+      console.log(`- Paper ID: ${paperId}, Title: ${paperData.title ? paperData.title.substring(0, 30) + '...' : 'NO TITLE'}`);
+      
+      const interactionKey = `interactions:${paperId}`;
+      console.log(`- Looking for interactions with key: ${interactionKey}`);
+      
+      // The problem is likely here - check if interactions exist first
+      if (!objects[interactionKey]) {
+        console.log(`- No interactions found for ${paperId}`);
+        
+        // Create result without interactions
+        result.push({
+          id: paperId,
+          source: paperData.sourceId || "arxiv",
+          title: paperData.title || 'Unknown',
+          authors: paperData.authors || '',
+          abstract: paperData.abstract || '',
+          published: paperData.published_date || '',
+          publishedFormatted: formatDate(paperData.published_date || ''),
+          firstRead: paperMeta.created_at || '',
+          firstReadFormatted: formatDate(paperMeta.created_at || ''),
+          lastRead: '',
+          lastReadFormatted: '',
+          readingTime: 0,
+          readingTimeFormatted: 'Not read',
+          interactionDays: 0,
+          tags: paperData.arxiv_tags || [],
+          url: paperData.url || '',
+          rawInteractionData: [],
+          hasBeenRead: false
+        });
+        
+        console.log(`- Added paper ${paperId} without interactions`);
+        continue; // Skip to next paper
+      }
+      
+      const paperInteractions = objects[interactionKey];
+      console.log(`- Interaction object found: ${paperInteractions ? 'YES' : 'NO'}`);
+      console.log(`- Interaction data exists: ${paperInteractions.data ? 'YES' : 'NO'}`);
+      
+      if (!paperInteractions.data || !paperInteractions.data.interactions) {
+        console.log(`- No valid interactions data for ${paperId}`);
+        
+        // Create result without interactions
+        result.push({
+          id: paperId,
+          source: paperData.sourceId || "arxiv",
+          title: paperData.title || 'Unknown',
+          authors: paperData.authors || '',
+          abstract: paperData.abstract || '',
+          published: paperData.published_date || '',
+          publishedFormatted: formatDate(paperData.published_date || ''),
+          firstRead: paperMeta.created_at || '',
+          firstReadFormatted: formatDate(paperMeta.created_at || ''),
+          lastRead: '',
+          lastReadFormatted: '',
+          readingTime: 0,
+          readingTimeFormatted: 'Not read',
+          interactionDays: 0,
+          tags: paperData.arxiv_tags || [],
+          url: paperData.url || '',
+          rawInteractionData: [],
+          hasBeenRead: false
+        });
+        
+        console.log(`- Added paper ${paperId} without interactions`);
+        continue; // Skip to next paper
+      }
+      
+      // Calculate reading time
+      let totalReadingTime = 0;
+      let lastReadTimestamp = null;
+      
+      // Calculate unique days with interactions
+      const uniqueDays = new Set();
+      
+      console.log(`- Processing ${paperInteractions.data.interactions.length} interactions`);
       
       for (const interaction of paperInteractions.data.interactions) {
-        // Skip invalid interactions
-        if (!interaction || !interaction.data) continue;
+        if (!interaction.data) {
+          console.log(`  - Interaction missing data property`);
+          continue;
+        }
         
         totalReadingTime += interaction.data.duration_seconds || 0;
         
-        // Find the most recent reading session timestamp
-        const sessionTimestamp = interaction.timestamp || 
-                              (interaction.data ? interaction.data.end_time : null);
-        
+        const sessionTimestamp = interaction.timestamp || interaction.data.end_time;
         if (sessionTimestamp) {
-          // Only use valid dates
-          if (!lastReadTimestamp || (sessionTimestamp > lastReadTimestamp)) {
+          if (!lastReadTimestamp || sessionTimestamp > lastReadTimestamp) {
             lastReadTimestamp = sessionTimestamp;
           }
           
           try {
-            // Track unique days - safely get date string
-            const dateString = DateTime.fromISO(sessionTimestamp).toISODate();
-            if (dateString) {
-              uniqueDays.add(dateString);
+            const dtObj = DateTime.fromISO(sessionTimestamp);
+            if (dtObj.isValid) {
+              uniqueDays.add(dtObj.toISODate());
             }
           } catch (e) {
-            console.warn(`Invalid timestamp: ${sessionTimestamp}`);
+            console.log(`  - Invalid timestamp: ${sessionTimestamp}`);
           }
         }
       }
+      
+      const uniqueInteractionDays = uniqueDays.size;
+      
+      // Prepare preformatted display values
+      const publishedFormatted = formatDate(paperData.published_date || '');
+      const firstReadFormatted = formatDate(paperMeta.created_at || '');
+      const lastReadFormatted = formatDate(lastReadTimestamp || '');
+      const readingTimeFormatted = formatReadingTime(totalReadingTime);
+      
+      // Create the row data
+      result.push({
+        id: paperId,
+        source: paperData.sourceId || "arxiv",
+        title: paperData.title || 'Unknown',
+        authors: paperData.authors || '',
+        abstract: paperData.abstract || '',
+        published: paperData.published_date || '',
+        publishedFormatted: publishedFormatted,
+        firstRead: paperMeta.created_at || '',
+        firstReadFormatted: firstReadFormatted,
+        lastRead: lastReadTimestamp || '',
+        lastReadFormatted: lastReadFormatted,
+        readingTime: totalReadingTime,
+        readingTimeFormatted: readingTimeFormatted,
+        interactionDays: uniqueInteractionDays,
+        tags: paperData.arxiv_tags || [],
+        url: paperData.url || '',
+        rawInteractionData: paperInteractions.data.interactions || [],
+        hasBeenRead: lastReadTimestamp !== null
+      });
+      
+      console.log(`- Successfully processed paper ${paperId}`);
+      
+    } catch (error) {
+      console.error(`ERROR processing paper ${paperKey}:`, error);
+      // Continue processing other papers
     }
-    
-    const uniqueInteractionDays = uniqueDays.size;
-    
-    // We're storing actual ISO strings for proper sorting (with null checks)
-    // Get published date
-    const publishedTimestamp = paperData.published_date || '';
-    
-    // Get first read date
-    const firstReadTimestamp = paperMeta.created_at || '';
-    
-    // Prepare preformatted display values with fallbacks
-    const publishedFormatted = formatDate(publishedTimestamp) || '';
-    const firstReadFormatted = formatDate(firstReadTimestamp) || '';
-    const lastReadFormatted = formatDate(lastReadTimestamp) || '';
-    const readingTimeFormatted = formatReadingTime(totalReadingTime);
-    
-    // Create the row data
-    result.push({
-      id: paperId || (paperData.arxivId || ''),
-      source: paperData.sourceId || paperData.source || "arxiv",
-      title: paperData.title || 'Untitled',
-      authors: paperData.authors || '',
-      abstract: paperData.abstract || '',
-      // Store sortable timestamp strings
-      published: safeDateString(publishedTimestamp),
-      firstRead: safeDateString(firstReadTimestamp),
-      lastRead: safeDateString(lastReadTimestamp),
-      // Store formatted display strings
-      publishedFormatted: publishedFormatted,
-      firstReadFormatted: firstReadFormatted,
-      lastReadFormatted: lastReadFormatted,
-      readingTime: totalReadingTime,
-      readingTimeFormatted: readingTimeFormatted,
-      interactionDays: uniqueInteractionDays,
-      tags: paperData.arxiv_tags || [],
-      url: paperData.url || '',
-      rawInteractionData: rawInteractionData,
-      hasBeenRead: lastReadTimestamp !== null
-    });
   }
   
+  console.log(`Completed processing. ${result.length} papers in final dataset.`);
   return result;
 }
 
@@ -519,8 +574,10 @@ function setupEventListeners() {
   });
 }
 
-// Load and initialize
+// Load and initialize with better error visibility
 document.addEventListener("DOMContentLoaded", function() {
+  const loadingElement = document.querySelector(".loading");
+  
   // Fetch data file
   fetch("gh-store-snapshot.json")
     .then(response => {
@@ -530,12 +587,46 @@ document.addEventListener("DOMContentLoaded", function() {
       return response.json();
     })
     .then(data => {
-      allData = processComplexData(data);
-      initTable(allData);
-      setupEventListeners();
+      try {
+        console.log("Data loaded successfully, processing...");
+        allData = processComplexData(data);
+        console.log("Data processing complete, initializing table...");
+        initTable(allData);
+        console.log("Table initialized, setting up event listeners...");
+        setupEventListeners();
+        console.log("Setup complete!");
+      } catch (processingError) {
+        console.error("ERROR DURING PROCESSING:", processingError);
+        
+        // Display error on page
+        if (loadingElement) {
+          loadingElement.innerHTML = `
+            <div style="color: red; font-weight: bold;">
+              Error processing data: ${processingError.message}
+              <br><br>
+              Check the console for more details (press F12).
+              <pre style="background: #f8f8f8; padding: 10px; border: 1px solid #ddd; margin-top: 10px; max-height: 200px; overflow: auto;">
+                ${processingError.stack}
+              </pre>
+            </div>
+          `;
+        }
+      }
     })
     .catch(error => {
-      document.querySelector(".loading").innerHTML = 
-        `Error loading data: ${error.message}. Make sure data.json exists in the same directory as this HTML file.`;
+      console.error("FETCH ERROR:", error);
+      
+      if (loadingElement) {
+        loadingElement.innerHTML = `
+          <div style="color: red; font-weight: bold;">
+            Error loading data: ${error.message}
+            <br><br>
+            Make sure data.json exists in the same directory as this HTML file.
+            <pre style="background: #f8f8f8; padding: 10px; border: 1px solid #ddd; margin-top: 10px; max-height: 200px; overflow: auto;">
+              ${error.stack || ''}
+            </pre>
+          </div>
+        `;
+      }
     });
 });
