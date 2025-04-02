@@ -63,18 +63,42 @@ function formatInteractions(interactions) {
 
 // Display paper details in the details sidebar
 function displayPaperDetails(paperId) {
-  const detailsSidebar = document.getElementById('details-sidebar');
-  const paper = allData.find(p => p.id === paperId);
+  console.log("Starting displayPaperDetails for paper ID:", paperId);
   
+  // Ensure details sidebar exists
+  let detailsSidebar = document.getElementById('details-sidebar');
+  if (!detailsSidebar) {
+    console.log("Details sidebar not found, creating it");
+    const container = document.querySelector('.dashboard-container');
+    detailsSidebar = document.createElement('div');
+    detailsSidebar.id = 'details-sidebar';
+    detailsSidebar.className = 'sidebar';
+    detailsSidebar.innerHTML = '<div id="details-content"></div>';
+    container.appendChild(detailsSidebar);
+  }
+  
+  // Find the paper data
+  const paper = allData.find(p => p.id === paperId);
   if (!paper) {
     console.error('Paper not found:', paperId);
     return;
   }
   
+  // Store current paper for reference
   currentDetailsPaper = paper;
+  console.log("Found paper:", paper.title);
+  
+  // Find or create details content div
+  let detailsContent = document.getElementById('details-content');
+  if (!detailsContent) {
+    console.log("Details content not found, creating it");
+    detailsContent = document.createElement('div');
+    detailsContent.id = 'details-content';
+    detailsSidebar.appendChild(detailsContent);
+  }
   
   // Update the details content
-  const detailsContent = document.getElementById('details-content');
+  console.log("Updating details content for paper:", paper.title);
   detailsContent.innerHTML = `
     <div class="details-header">
       <h2>${paper.title}</h2>
@@ -137,11 +161,22 @@ function displayPaperDetails(paperId) {
   // Show the details sidebar
   detailsSidebar.classList.add('active');
   
+  // Make the sidebar visible
+  console.log("Making details sidebar visible");
+  detailsSidebar.classList.add('active');
+  
   // Set up close button
-  document.getElementById('close-details').addEventListener('click', function() {
-    detailsSidebar.classList.remove('active');
-    currentDetailsPaper = null;
-  });
+  setTimeout(() => {
+    const closeButton = document.getElementById('close-details');
+    if (closeButton) {
+      closeButton.addEventListener('click', function() {
+        detailsSidebar.classList.remove('active');
+        currentDetailsPaper = null;
+      });
+    } else {
+      console.error("Close button not found");
+    }
+  }, 100); // Give a short delay to ensure the DOM is updated
 }
 
 // Process complex data structure
@@ -306,7 +341,16 @@ function initTable(data) {
   table.on("rowClick", function(e, row) {
     e.preventDefault();
     const paperId = row.getData().id;
-    displayPaperDetails(paperId);
+    console.log("Row clicked for paper ID:", paperId);
+    
+    // Make sure we have the paper data
+    const paperData = allData.find(p => p.id === paperId);
+    if (paperData) {
+      console.log("Found paper data:", paperData.title);
+      displayPaperDetails(paperId);
+    } else {
+      console.error("Could not find paper with ID:", paperId);
+    }
   });
   
   // Remove loading message
@@ -468,6 +512,17 @@ function setupEventListeners() {
 
 // Load and initialize
 document.addEventListener("DOMContentLoaded", function() {
+  // Ensure details sidebar exists
+  if (!document.getElementById('details-sidebar')) {
+    console.log("Creating missing details sidebar");
+    const container = document.querySelector('.dashboard-container');
+    const detailsSidebar = document.createElement('div');
+    detailsSidebar.id = 'details-sidebar';
+    detailsSidebar.className = 'sidebar';
+    detailsSidebar.innerHTML = '<div id="details-content"></div>';
+    container.appendChild(detailsSidebar);
+  }
+
   // Fetch data file
   fetch("gh-store-snapshot.json")
     .then(response => {
