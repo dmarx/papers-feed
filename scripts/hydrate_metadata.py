@@ -50,37 +50,36 @@ def extract_arxiv_id_from_object_id(object_id: str) -> str:
     # Case 5: If none of the above, return the original ID
     return object_id
 
-    def fetch_arxiv_metadata(self, arxiv_id: str) -> Dict[str, Any]:
-        """Fetch metadata from arXiv API for a given ID using the arxiv client."""
-        logger.info(f"Fetching metadata for arXiv ID: {arxiv_id}")
-        
-        client = arxiv.Client()
-        search = arxiv.Search(id_list=[arxiv_id])
-        results = list(client.results(search, max_results=1))
-        if not results:
-            raise ValueError(f"No paper found with arXiv ID: {arxiv_id}")
-        paper = results[0]
-        
-        # Convert arxiv.Result object to dictionary
-        metadata = {
-            'id': paper.entry_id,
-            'title': paper.title,
-            'summary': paper.summary,
-            'authors': [author.name for author in paper.authors],
-            'published': paper.published.isoformat() if paper.published else None,
-            'updated': paper.updated.isoformat() if paper.updated else None,
-            'doi': paper.doi,
-            'categories': paper.categories,
-            'links': [{'href': link.href, 'type': link.type} for link in paper.links],
-            'comment': paper.comment,
-            'journal_ref': paper.journal_ref,
-            'primary_category': paper.primary_category,
-            'pdf_url': paper.pdf_url
-        }
-        
-        logger.info(f"Successfully fetched metadata for arXiv ID: {arxiv_id}")
-        logger.info(metadata)
-        return metadata
+def fetch_arxiv_metadata(arxiv_id: str) -> Dict[str, Any]:
+    """Fetch metadata from arXiv API for a given ID using the arxiv client."""
+    logger.info(f"Fetching metadata for arXiv ID: {arxiv_id}")
+    
+    client = arxiv.Client()
+    search = arxiv.Search(id_list=[arxiv_id])
+    paper = next(client.results(search, max_results=1))
+    if not paper:
+        raise ValueError(f"No paper found with arXiv ID: {arxiv_id}")
+    
+    # Convert arxiv.Result object to dictionary
+    metadata = {
+        'id': paper.entry_id,
+        'title': paper.title,
+        'summary': paper.summary,
+        'authors': [author.name for author in paper.authors],
+        'published': paper.published.isoformat() if paper.published else None,
+        'updated': paper.updated.isoformat() if paper.updated else None,
+        'doi': paper.doi,
+        'categories': paper.categories,
+        'links': [{'href': link.href, 'type': link.type} for link in paper.links],
+        'comment': paper.comment,
+        'journal_ref': paper.journal_ref,
+        'primary_category': paper.primary_category,
+        'pdf_url': paper.pdf_url
+    }
+    
+    logger.info(f"Successfully fetched metadata for arXiv ID: {arxiv_id}")
+    logger.info(metadata)
+    return metadata
 
 def main(issue_id: int):
     store = GitHubStore(token=os.environ["GITHUB_TOKEN"], repo=os.environ["REPO"])
