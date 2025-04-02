@@ -1,0 +1,126 @@
+name: Fetch arXiv Metadata
+
+on:
+  issues:
+    types: [opened, reopened]
+
+jobs:
+  fetch-arxiv-metadata:
+    runs-on: ubuntu-latest
+    if: contains(github.event.issue.labels.*.name, 'test')
+    steps:
+      - name: Fetch and post arXiv metadata
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // .github/workflows/fetch-arxiv-metadata.yml
+            
+            // Get issue details
+            const issue = context.payload.issue;
+            const issueNumber = issue.number;
+            const issueBody = issue.body.trim();
+            
+            console.log(`Processing issue #${issueNumber} with body: ${issueBody}`);
+            
+            // Validate arXiv ID format (basic validation)
+            const arxivIdRegex = /\d{4}\.\d{4,5}(v\d+)?|\w+\/\d{7}(v\d+)?/;
+            if (!arxivIdRegex.test(issueBody)) {
+              console.error(`Invalid arXiv ID format: ${issueBody}`);
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                body: `Error: The issue body does not contain a valid arXiv ID. Please provide an arXiv ID in the format "XXXX.XXXXX" or "category/XXXXXXX".`
+              });
+              return;
+            }
+            
+            const arxivId = issueBody;
+            console.log(`Fetching metadata for arXiv ID: ${arxivId}`);
+            
+            try {
+              // Fetch metadata from arXiv API using native fetch
+              const response = await fetch(`http://export.arxiv.org/api/query?id_list=${arxivId}`);
+              
+              if (!response.ok) {
+                throw new Error(`arXiv API responded with status: ${response.status}`);
+              }
+              
+              const xmlData = await response.text();
+              
+              // Parse XML response using DOMParser
+              const parseXML = (xmlString) => {
+                // Simple XML parser for arXiv API response
+                // This extracts specific elements we need
+                const getTagContent = (tag, xml) => {
+                  const regex = new RegExp(`<${tag}[^>]*>(.*?)</${tag}>`, 'gs');
+                  const matches = [...xml.matchAll(regex)];
+                  return matches.map(m => m[1].trim());
+                };
+                
+                const getAttributes = (tag, xml) => {
+                  const regex = new RegExp(`<${tag}([^>]*)>`, 'g');
+                  const matches = [...xml.matchAll(regex)];
+                  return matches.map(m => {
+                    const attrs = {};
+                    const attrMatches = [...m[1].matchAll(/(\w+)="([^"]*)"/g)];
+                    attrMatches.forEach(attr => {
+                      attrs[attr[1]] = attr[2];
+                    });
+                    return attrs;
+                  });
+                };
+                
+                const authors = getTagContent('author', xmlString).map(author => {
+                  const name = getTagContent('name', author)[0];
+                  return name;
+                });
+                
+                const categories = getAttributes('category', xmlString).map(attr => attr.term);
+                
+                const links = getAttributes('link', xmlString).map(attr => ({
+                  rel: attr.rel,
+                  href: attr.href,
+                  type: attr.type
+                }));
+                
+                return {
+                  id: getTagContent('id', xmlString)[0],
+                  title: getTagContent('title', xmlString)[0],
+                  authors: authors,
+                  published: getTagContent('published', xmlString)[0],
+                  updated: getTagContent('updated', xmlString)[0],
+                  summary: getTagContent('summary', xmlString)[0],
+                  categories: categories,
+                  links: links
+                };
+              };
+              
+              // Extract relevant metadata
+              const metadata = parseXML(xmlData);
+              
+              if (!metadata.id) {
+                throw new Error(`No metadata found for arXiv ID: ${arxivId}`);
+              }
+              
+              console.log(`Successfully fetched metadata for arXiv ID: ${arxivId}`);
+              
+              // Post metadata as comment
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                body: `\`\`\`json\n${JSON.stringify(metadata, null, 2)}\n\`\`\``
+              });
+              
+              console.log('Posted metadata comment to issue');
+              
+            } catch (error) {
+              console.error(`Error: ${error.message}`);
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                body: `Error fetching arXiv metadata: ${error.message}`
+              });
+            }
