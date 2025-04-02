@@ -35,8 +35,60 @@ jobs:
               
               return null;
             }
+            
+            function removePrefix(string, prefix, sep = ':') {
+              if (string.startsWith(prefix + sep)) {
+                return string.slice(prefix.length + sep.length);
+              }
+              return null; // Return null to indicate no match
+            }
+            
+            function extractPaperId(string, prefix) {
+              // Case 1: Format is "prefix:id"
+              let result = removePrefix(string, prefix, ':');
+              if (result !== null) return result;
+              
+              // Case 2: Format is "prefix.id"
+              result = removePrefix(string, prefix, '.');
+              if (result !== null) return result;
+              
+              // Case 3: Format is "prefix:prefix:id"
+              result = removePrefix(string, prefix + ':' + prefix, ':');
+              if (result !== null) return result;
+              
+              // Case 3 alternate: Format is "prefix.prefix.id"
+              result = removePrefix(string, prefix + '.' + prefix, '.');
+              if (result !== null) return result;
+              
+              // Case 4: If none of the above, return the original string
+              return string;
+            }
 
             ///////////////////////////////////////////////////////////
+
+            const issue = context.payload.issue;
+            const issueNumber = issue.number;
+            const issueBody = issue.body.trim();            
+            console.log(`Processing issue #${issueNumber} with body: ${issueBody}`);
+
+            const uidLabel = findUidLabel(issue.labels);            
+            if (!uidLabel) {
+              throw new Error(`Unable to identify a gh-store UID among labels: ${issue.labels}`);
+            }
+            console.log(`Found UID label: ${uidLabel}`);
+            const typedObjectId = uidLabel.slice(4);
+
+            if (!typedObjectId.startswith('paper:')) {
+              throw new Error(`Exiting: ${typedObjectId} is not a paper.`);
+            }
+            const objectId = typedObjectId.slice(6);
+            const arxivId = extractPaperId(objectId, 'arxiv');
+
+            // Validate arXiv ID format (basic validation)
+            const arxivIdRegex = /\d{4}\.\d{4,5}(v\d+)?|\w+\/\d{7}(v\d+)?/;
+            if (!arxivIdRegex.test(arxivId)) {
+              throw new Error(`Invalid arXiv ID format: ${arxivId}`);
+            }
             
             //let store = GitHubStoreClient(token=${{ secrets.GITHUB_TOKEN }}, repo=${{ github.repository }});
             const { GitHubStoreClient } = require('gh-store-client');
@@ -44,38 +96,10 @@ jobs:
               process.env.GITHUB_TOKEN,
               `${context.repo.owner}/${context.repo.repo}`
             );
-            
-            // Find UID label if it exists
-            const uidLabel = findUidLabel(issue.labels);
-            
-            if (!uidLabel) {
-              throw new Error(`Unable to identify a gh-store UID among labels: ${issue.labels}`);
-            }
-            
-            console.log(`Found UID label: ${uidLabel}`);
-            const objectId = uidLabel.slice(4);
-
             let obj = store.getObject(objectId);
             console.log("Got stored object:", obj);
+            
 
-            const issue = context.payload.issue;
-            const issueNumber = issue.number;
-            const issueBody = issue.body.trim();
-            
-            console.log(`Processing issue #${issueNumber} with body: ${issueBody}`);
-            
-            // Validate arXiv ID format (basic validation)
-            const arxivIdRegex = /\d{4}\.\d{4,5}(v\d+)?|\w+\/\d{7}(v\d+)?/;
-            if (!arxivIdRegex.test(issueBody)) {
-              console.error(`Invalid arXiv ID format: ${issueBody}`);
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: issueNumber,
-                body: `Error: The issue body does not contain a valid arXiv ID. Please provide an arXiv ID in the format "XXXX.XXXXX" or "category/XXXXXXX".`
-              });
-              return;
-            }
             
             const arxivId = issueBody;
             console.log(`Fetching metadata for arXiv ID: ${arxivId}`);
