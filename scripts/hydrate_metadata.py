@@ -81,9 +81,9 @@ def fetch_arxiv_metadata(arxiv_id: str) -> Dict[str, Any]:
     logger.info(metadata)
     return metadata
 
-def main(issue_id: int):
-    store = GitHubStore(token=os.environ["GITHUB_TOKEN"], repo=os.environ["REPO"])
-    obj = store.issue_handler.get_object_by_number(issue_id)
+def main(issue: int, token:str, repo:str):
+    store = GitHubStore(token=token, repo=repo)
+    obj = store.issue_handler.get_object_by_number(issue)
     object_id = obj.meta.object_id
     if object_id.startswith('arxiv'):
         arxiv_id = extract_arxiv_id_from_object_id(object_id)
