@@ -151,6 +151,34 @@ function displayPaperDetails(paperId) {
   }
 }
 
+function removePrefix(string, prefix, sep = ':') {
+  if (string.startsWith(prefix + sep)) {
+    return string.slice(prefix.length + sep.length);
+  }
+  return null; // Return null to indicate no match
+}
+
+function extractObjectId(string, prefix) {
+  // Case 1: Format is "prefix:id"
+  let result = removePrefix(string, prefix, ':');
+  if (result !== null) return result;
+  
+  // Case 2: Format is "prefix.id"
+  result = removePrefix(string, prefix, '.');
+  if (result !== null) return result;
+  
+  // Case 3: Format is "prefix:prefix:id"
+  result = removePrefix(string, prefix + ':' + prefix, ':');
+  if (result !== null) return result;
+  
+  // Case 3 alternate: Format is "prefix.prefix.id"
+  result = removePrefix(string, prefix + '.' + prefix, '.');
+  if (result !== null) return result;
+  
+  // Case 4: If none of the above, return the original string
+  return string;
+}
+
 // Process complex data structure
 function processComplexData(data) {
   const result = [];
@@ -158,7 +186,8 @@ function processComplexData(data) {
   const paperKeys = Object.keys(objects).filter(key => key.startsWith("paper:"));
   
   for (const paperKey of paperKeys) {
-    const paperId = paperKey.split(":", 1)[1];
+    //const paperId = paperKey.split(":", 1)[1];
+    const paperId = extractObjectId(paperKey, "paper");
     const paperRaw = objects[paperKey];
     const paperData = paperRaw.data;
     const paperMeta = paperRaw.meta;
