@@ -25,41 +25,30 @@ def is_valid_arxiv_id(arxiv_id: str) -> bool:
     return bool(re.match(r'\d{4}\.\d{4,5}(v\d+)?|\w+\/\d{7}(v\d+)?', arxiv_id))
 
 # this doesn't need to be wrapped in a class.
-class ArxivMetadataFetcher:
-    """Fetches metadata for arXiv papers and stores it using gh-store."""
 
-    def __init__(self):
-        """Initialize with GitHub token and repository."""
-        token = github_token or os.environ["GITHUB_TOKEN"]
-        repo = repo or os.environ["REPO"]
-        self.store = GitHubStore(token=token, repo=repo)
-        logger.info(f"Initialized ArxivMetadataFetcher for repo: {repo}")
 
-    def get_object(self, issue_id: int) -> StoredObject:
-        return self.store.issue_handler.get_object_by_number(issue_id)
-
-    def extract_arxiv_id_from_object_id(self, object_id: str) -> str:
-        """Extract the arXiv ID from a paper ID with various prefixing schemes."""
-        prefix = 'arxiv'
-        
-        # Case 1: Format is "prefix:id"
-        if object_id.startswith(f"{prefix}:"):
-            return object_id[len(prefix)+1:]
-        
-        # Case 2: Format is "prefix.id"
-        if object_id.startswith(f"{prefix}."):
-            return object_id[len(prefix)+1:]
-        
-        # Case 3: Format is "prefix:prefix:id"
-        if object_id.startswith(f"{prefix}:{prefix}:"):
-            return object_id[len(prefix)*2+2:]
-        
-        # Case 4: Format is "prefix.prefix.id"
-        if object_id.startswith(f"{prefix}.{prefix}."):
-            return object_id[len(prefix)*2+2:]
-        
-        # Case 5: If none of the above, return the original ID
-        return object_id
+def extract_arxiv_id_from_object_id(object_id: str) -> str:
+    """Extract the arXiv ID from a paper ID with various prefixing schemes."""
+    prefix = 'arxiv'
+    
+    # Case 1: Format is "prefix:id"
+    if object_id.startswith(f"{prefix}:"):
+        return object_id[len(prefix)+1:]
+    
+    # Case 2: Format is "prefix.id"
+    if object_id.startswith(f"{prefix}."):
+        return object_id[len(prefix)+1:]
+    
+    # Case 3: Format is "prefix:prefix:id"
+    if object_id.startswith(f"{prefix}:{prefix}:"):
+        return object_id[len(prefix)*2+2:]
+    
+    # Case 4: Format is "prefix.prefix.id"
+    if object_id.startswith(f"{prefix}.{prefix}."):
+        return object_id[len(prefix)*2+2:]
+    
+    # Case 5: If none of the above, return the original ID
+    return object_id
 
     def fetch_arxiv_metadata(self, arxiv_id: str) -> Dict[str, Any]:
         """Fetch metadata from arXiv API for a given ID using the arxiv client."""
@@ -94,8 +83,8 @@ class ArxivMetadataFetcher:
         return metadata
 
 def main(issue_id: int):
-    amf = ArxivMetadataFetcher()
-    obj = amf.get_object(issue_id)
+    store = GitHubStore(token=os.environ["GITHUB_TOKEN"], repo=os.environ["REPO"])
+    obj = store.issue_handler.get_object_by_number(issue_id)
     object_id = obj.meta.object_id
     if object_id.startswith('arxiv'):
         arxiv_id = extract_arxiv_id_from_object_id(object_id)
