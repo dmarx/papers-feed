@@ -1,6 +1,8 @@
+// frontend/papersfeed.js
 // Global variables
 let table;
 let allData = [];
+let currentDetailsPaper = null;
 
 // Format date to YYYY-MM-DD format
 function formatDate(dateString) {
@@ -28,100 +30,118 @@ function formatTags(cell) {
   ).join(' ');
 }
 
-// Custom row formatter for row details
-function rowDetailFormatter(e, row, onRendered) {
-  const data = row.getData();
-  
-  // Format interactions for display
-  function formatInteractions(interactions) {
-    if (!interactions || interactions.length === 0) {
-      return '<p>No reading sessions recorded</p>';
-    }
-    
-    return `
-      <table class="sessions-table">
-        <thead>
-          <tr>
-            <th>Date</th>
-            <th>Duration</th>
-            <th>Session ID</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${interactions.map(interaction => {
-            const date = new Date(interaction.timestamp);
-            return `
-              <tr>
-                <td>${date.toLocaleString()}</td>
-                <td>${interaction.data.duration_seconds} seconds</td>
-                <td>${interaction.data.session_id}</td>
-              </tr>
-            `;
-          }).join('')}
-        </tbody>
-      </table>
-    `;
+// Format interactions for display
+function formatInteractions(interactions) {
+  if (!interactions || interactions.length === 0) {
+    return '<p>No reading sessions recorded</p>';
   }
   
-  // Build the detail view
-  const element = document.createElement("div");
-  element.classList.add("detail-panel");
+  return `
+    <table class="sessions-table">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Duration</th>
+          <th>Session ID</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${interactions.map(interaction => {
+          const date = new Date(interaction.timestamp);
+          return `
+            <tr>
+              <td>${date.toLocaleString()}</td>
+              <td>${interaction.data.duration_seconds} seconds</td>
+              <td>${interaction.data.session_id}</td>
+            </tr>
+          `;
+        }).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+// Display paper details in the details sidebar
+function displayPaperDetails(paperId) {
+  const detailsSidebar = document.getElementById('details-sidebar');
+  const paper = allData.find(p => p.id === paperId);
   
-  element.innerHTML = `
-    <div class="detail-grid">
-      <div class="detail-section">
-        <h3>Paper Details</h3>
-        <table class="detail-table">
-          <tr>
-            <th>ID:</th>
-            <td>${data.id}</td>
-          </tr>
-          <tr>
-            <th>Authors:</th>
-            <td>${data.authors}</td>
-          </tr>
-          <tr>
-            <th>Publication Date:</th>
-            <td>${data.published}</td>
-          </tr>
-          <tr>
-            <th>Last Read:</th>
-            <td>${data.lastRead}</td>
-          </tr>
-          <tr>
-            <th>Reading Time:</th>
-            <td>${data.readingTime}</td>
-          </tr>
-          <tr>
-            <th>Interaction Days:</th>
-            <td>${data.interactionDays === 1 ? '1 day' : data.interactionDays + ' days'}</td>
-          </tr>
-          <tr>
-            <th>arXiv Tags:</th>
-            <td>${formatTags({ getValue: () => data.tags })}</td>
-          </tr>
-          <tr>
-            <th>URL:</th>
-            <td><a href="${data.url}" target="_blank">${data.url}</a></td>
-          </tr>
-        </table>
-      </div>
-      
-      <div class="detail-section">
-        <h3>Abstract</h3>
-        <div class="abstract-box">
-          ${data.abstract}
-        </div>
+  if (!paper) {
+    console.error('Paper not found:', paperId);
+    return;
+  }
+  
+  currentDetailsPaper = paper;
+  
+  // Update the details content
+  const detailsContent = document.getElementById('details-content');
+  detailsContent.innerHTML = `
+    <div class="details-header">
+      <h2>${paper.title}</h2>
+      <button id="close-details" class="close-button">
+        <i class="fas fa-times"></i>
+      </button>
+    </div>
+    
+    <div class="detail-section">
+      <h3>Paper Details</h3>
+      <table class="detail-table">
+        <tr>
+          <th>ID:</th>
+          <td>${paper.id}</td>
+        </tr>
+        <tr>
+          <th>Authors:</th>
+          <td>${paper.authors}</td>
+        </tr>
+        <tr>
+          <th>Publication Date:</th>
+          <td>${paper.published}</td>
+        </tr>
+        <tr>
+          <th>Last Read:</th>
+          <td>${paper.lastRead}</td>
+        </tr>
+        <tr>
+          <th>Reading Time:</th>
+          <td>${paper.readingTime}</td>
+        </tr>
+        <tr>
+          <th>Interaction Days:</th>
+          <td>${paper.interactionDays === 1 ? '1 day' : paper.interactionDays + ' days'}</td>
+        </tr>
+        <tr>
+          <th>arXiv Tags:</th>
+          <td>${formatTags({ getValue: () => paper.tags })}</td>
+        </tr>
+        <tr>
+          <th>URL:</th>
+          <td><a href="${paper.url}" target="_blank">${paper.url}</a></td>
+        </tr>
+      </table>
+    </div>
+    
+    <div class="detail-section">
+      <h3>Abstract</h3>
+      <div class="abstract-box">
+        ${paper.abstract}
       </div>
     </div>
     
-    <div class="detail-section" style="margin-top: 20px;">
+    <div class="detail-section">
       <h3>Reading Sessions</h3>
-      ${formatInteractions(data.rawInteractionData)}
+      ${formatInteractions(paper.rawInteractionData)}
     </div>
   `;
   
-  return element;
+  // Show the details sidebar
+  detailsSidebar.classList.add('active');
+  
+  // Set up close button
+  document.getElementById('close-details').addEventListener('click', function() {
+    detailsSidebar.classList.remove('active');
+    currentDetailsPaper = null;
+  });
 }
 
 // Process complex data structure
@@ -203,31 +223,7 @@ function initTable(data) {
     paginationSize: 100,
     paginationSizeSelector: [10, 25, 50, 100, 500, 1000],
     movableColumns: true,
-    groupBy:"lastRead",
-    //rowDetails: rowDetailFormatter,
-    //rowClickPopup: rowDetailFormatter,
-    // rowClick: function(e, row) {
-    //   // POC: reveal the sidebar when a row is clicked
-    //   document.getElementById("sidebar").classList.add("active");
-    // },
-    rowClick: function(e, row) {
-      // Get a direct reference to the sidebar
-      const sidebar = document.getElementById("sidebar");
-      
-      // Try forcing the sidebar style directly
-      sidebar.style.width = "300px";
-      sidebar.style.padding = "20px";
-      
-      // Also add the active class
-      sidebar.classList.add("active");
-      
-      // Log the result
-      console.log("Row clicked, forced sidebar styles:", 
-        "width:", sidebar.style.width, 
-        "padding:", sidebar.style.padding,
-        "classes:", sidebar.className
-      );
-    },
+    groupBy: "lastRead",
     initialSort: [
       {column: "lastRead", dir: "desc"}
     ],
@@ -238,7 +234,7 @@ function initTable(data) {
         widthGrow: 1
       },
       {
-        title: "source", 
+        title: "Source", 
         field: "source", 
         widthGrow: 1
       },
@@ -248,16 +244,13 @@ function initTable(data) {
         widthGrow: 3,
         formatter: function(cell) {
           const value = cell.getValue();
-          const url = cell.getRow().getData().url;
-          return `<a href="${url}" target="_blank">${value}</a>`;
+          return value;
         }
-        //,headerFilter: "input"
       },
       {
         title: "Authors", 
         field: "authors", 
         widthGrow: 2
-        //,headerFilter: "input"
       },
       {
         title: "Published", 
@@ -307,13 +300,13 @@ function initTable(data) {
         row.getElement().classList.add("paper-unread");
       }
     }
-    // rowExpanded: function(row) {
-    //   // Adjust the detail row when expanded
-    //   const detailEl = row.getElement().nextElementSibling;
-    //   if (detailEl && detailEl.classList.contains("tabulator-row-detail")) {
-    //     detailEl.style.backgroundColor = "#f9f9f9";
-    //   }
-    // }
+  });
+  
+  // Set up row click handler to show details
+  table.on("rowClick", function(e, row) {
+    e.preventDefault();
+    const paperId = row.getData().id;
+    displayPaperDetails(paperId);
   });
   
   // Remove loading message
@@ -341,11 +334,25 @@ function setupEventListeners() {
   // Toggle sidebar
   document.getElementById("sidebar-toggle").addEventListener("click", function() {
     document.getElementById("sidebar").classList.toggle("active");
+    
+    // Close details sidebar if open (to avoid both being open at once)
+    document.getElementById("details-sidebar").classList.remove("active");
   });
   
   // Floating filter button
   document.getElementById("filter-toggle-btn").addEventListener("click", function() {
     document.getElementById("sidebar").classList.toggle("active");
+    
+    // Close details sidebar if open (to avoid both being open at once)
+    document.getElementById("details-sidebar").classList.remove("active");
+  });
+  
+  // Toggle details with keyboard escape key
+  document.addEventListener("keydown", function(e) {
+    if (e.key === "Escape") {
+      document.getElementById("details-sidebar").classList.remove("active");
+      document.getElementById("sidebar").classList.remove("active");
+    }
   });
   
   // Date filter
