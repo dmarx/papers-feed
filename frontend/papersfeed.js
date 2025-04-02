@@ -66,7 +66,7 @@ function displayPaperDetails(paperId) {
   console.log("Displaying details for paper ID:", paperId);
   
   // Find the paper data
-  const paper = allData.find(p => p.id === paperId);
+  const paper = allData.find(p => p.paperKey === paperId);
   if (!paper) {
     console.error('Paper not found:', paperId);
     return;
@@ -199,6 +199,7 @@ function processComplexData(data) {
     
     // Create the row data
     result.push({
+      paperKey: paperKey,
       id: paperId, //paperData.paper_id || paperData.arxivId,
       source: paperData.sourceId || paperData.sourceType,
       title: paperData.title,
@@ -309,8 +310,8 @@ function initTable(data) {
       
       // Add paper ID as data attribute
       const rowElement = row.getElement();
-      //const paper_Id = row.getData().id;
-      const paper_Id = row.getData("id");
+      const paper_Id = row.getData().paperKey;
+      //const paper_Id = row.getData("id");
       console.log("formatter detected paperId:", paper_Id);
       rowElement.setAttribute("data-paper-id", paper_Id);
     }
