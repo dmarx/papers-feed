@@ -301,16 +301,18 @@ function initTable(data) {
     ],
     rowFormatter: function(row) {
       // Add classes based on read status
-      if (row.getData().hasBeenRead) {
-        row.getElement().classList.add("paper-read");
-      } else {
-        row.getElement().classList.add("paper-unread");
-      }
+      // if (row.getData().hasBeenRead) {
+      //   row.getElement().classList.add("paper-read");
+      // } else {
+      //   row.getElement().classList.add("paper-unread");
+      // }
       
       // Add paper ID as data attribute
       const rowElement = row.getElement();
-      const paperId = row.getData().id;
-      rowElement.setAttribute("data-paper-id", paperId);
+      //const paper_Id = row.getData().id;
+      const paper_Id = row.getData("id");
+      console.log("formatter detected paperId:", paper_Id);
+      rowElement.setAttribute("data-paper-id", paper_Id);
     }
   });
   
@@ -323,6 +325,7 @@ function initTable(data) {
     const rowElement = e.target.closest(".tabulator-row");
     if (rowElement) {
       const paperId = rowElement.getAttribute("data-paper-id");
+      console.log("detected click on row for paperId:", paperId);
       if (paperId) {
         displayPaperDetails(paperId);
       }
