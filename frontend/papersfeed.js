@@ -179,6 +179,17 @@ function extractObjectId(string, prefix) {
   return string;
 }
 
+function extractDomain(url) {
+  try {
+    const urlObj = new URL(url);
+    return urlObj.hostname;
+  } catch (error) {
+    // Handle invalid URLs
+    console.error("Invalid URL:", error);
+    return null;
+  }
+}
+
 // Process complex data structure
 function processComplexData(data) {
   const result = [];
@@ -225,12 +236,16 @@ function processComplexData(data) {
       
       uniqueInteractionDays = uniqueDays.size;
     }
+
+    const source = paperData.sourceId === 'arxiv' || paperData.sourceType === 'arxiv' ? 
+               'arxiv' : (paperData.url ? extractDomain(paperData.url) : null) ||
+                 paperData.sourceId || paperData.sourceType;
     
     // Create the row data
     result.push({
       paperKey: paperKey,
       id: paperId, //paperData.paper_id || paperData.arxivId,
-      source: paperData.sourceId || paperData.sourceType,
+      source: source,
       title: paperData.title,
       authors: paperData.authors,
       abstract: paperData.abstract,
