@@ -206,9 +206,27 @@ function initTable(data) {
     groupBy:"lastRead",
     //rowDetails: rowDetailFormatter,
     //rowClickPopup: rowDetailFormatter,
+    // rowClick: function(e, row) {
+    //   // POC: reveal the sidebar when a row is clicked
+    //   document.getElementById("sidebar").classList.add("active");
+    // },
     rowClick: function(e, row) {
-      // POC: reveal the sidebar when a row is clicked
-      document.getElementById("sidebar").classList.add("active");
+      // Get a direct reference to the sidebar
+      const sidebar = document.getElementById("sidebar");
+      
+      // Try forcing the sidebar style directly
+      sidebar.style.width = "300px";
+      sidebar.style.padding = "20px";
+      
+      // Also add the active class
+      sidebar.classList.add("active");
+      
+      // Log the result
+      console.log("Row clicked, forced sidebar styles:", 
+        "width:", sidebar.style.width, 
+        "padding:", sidebar.style.padding,
+        "classes:", sidebar.className
+      );
     },
     initialSort: [
       {column: "lastRead", dir: "desc"}
