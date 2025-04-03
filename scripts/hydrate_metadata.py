@@ -70,7 +70,7 @@ def fetch_arxiv_metadata(arxiv_id: str) -> Dict[str, Any]:
         'updated': paper.updated.isoformat() if paper.updated else None,
         'doi': paper.doi,
         'categories': paper.categories,
-        'links': [{'href': link.href, 'type': link.type} for link in paper.links],
+        #'links': [{'href': link.href, 'type': link.type} for link in paper.links],
         'comment': paper.comment,
         'journal_ref': paper.journal_ref,
         'primary_category': paper.primary_category,
