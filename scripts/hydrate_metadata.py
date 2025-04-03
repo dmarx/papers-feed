@@ -85,6 +85,10 @@ def main(issue: int, token:str, repo:str):
     store = GitHubStore(token=token, repo=repo)
     obj = store.issue_handler.get_object_by_number(issue)
     object_id = obj.meta.object_id
+    if not object_id.startswith("paper:"):
+        logger.info("Not a paper object, exiting.")
+        sys.exit(0)
+    object_id = object_id[len('paper:'):]
     if object_id.startswith('arxiv'):
         arxiv_id = extract_arxiv_id_from_object_id(object_id)
     elif is_valid_arxiv_id(object_id):
