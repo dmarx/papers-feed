@@ -56,7 +56,7 @@ def fetch_arxiv_metadata(arxiv_id: str) -> Dict[str, Any]:
     
     client = arxiv.Client()
     search = arxiv.Search(id_list=[arxiv_id])
-    paper = next(client.results(search, max_results=1))
+    paper = next(client.results(search))
     if not paper:
         raise ValueError(f"No paper found with arXiv ID: {arxiv_id}")
     
