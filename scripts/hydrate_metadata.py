@@ -96,7 +96,7 @@ def main(issue: int, token:str, repo:str):
     else:
         raise TypeError(f"Unable to identify arxiv_id from object_id: {object_id}")
 
-    arxiv_meta = amf.fetch_arxiv_metadata(arxiv_id)
+    arxiv_meta = fetch_arxiv_metadata(arxiv_id)
     
 
 if __name__ == "__main__":
