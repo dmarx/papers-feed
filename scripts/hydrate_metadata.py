@@ -96,7 +96,8 @@ def main(issue: int, token:str, repo:str):
     updates = {}
     arxiv_meta = fetch_arxiv_metadata(arxiv_id)
     for k, v_new in arxiv_meta.items():
-        v_old = getattr(obj.data, k)
+        #v_old = getattr(obj.data, k)
+        v_old = obj.data[k]
         if not v_old:
             updates[k] = v_new
     if updates:
