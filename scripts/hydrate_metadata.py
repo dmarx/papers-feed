@@ -60,21 +60,20 @@ def fetch_arxiv_metadata(arxiv_id: str) -> Dict[str, Any]:
     if not paper:
         raise ValueError(f"No paper found with arXiv ID: {arxiv_id}")
     
-    # Convert arxiv.Result object to dictionary
     metadata = {
-        'id': paper.entry_id,
+        #'id': paper.entry_id,
         'title': paper.title,
-        'summary': paper.summary,
         'authors': [author.name for author in paper.authors],
         'published': paper.published.isoformat() if paper.published else None,
         'updated': paper.updated.isoformat() if paper.updated else None,
         'doi': paper.doi,
-        'categories': paper.categories,
+        'tags': paper.categories,
+        'abstract': paper.summary,
         #'links': [{'href': link.href, 'type': link.type} for link in paper.links],
-        'comment': paper.comment,
-        'journal_ref': paper.journal_ref,
-        'primary_category': paper.primary_category,
-        'pdf_url': paper.pdf_url
+        #'comment': paper.comment,
+        #'journal_ref': paper.journal_ref,
+        #'primary_category': paper.primary_category,
+        #'pdf_url': paper.pdf_url,
     }
     
     logger.info(f"Successfully fetched metadata for arXiv ID: {arxiv_id}")
