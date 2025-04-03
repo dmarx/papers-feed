@@ -101,6 +101,10 @@ def main(issue: int, token:str, repo:str):
         if not v_old:
             updates[k] = v_new
     if updates:
+        # Issue is open because we are processing it right now, which acts as an implicit lock on updates.
+        # so we close it before pushing the new update
+        store.repo.get_issue(issue).edit(state='closed') # ...this is awkward af.
+        # finally: what we came here for
         store.update(object_id=object_id, changes=updates)
 
 if __name__ == "__main__":
