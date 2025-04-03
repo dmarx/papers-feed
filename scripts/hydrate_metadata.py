@@ -15,7 +15,6 @@ from loguru import logger
 import arxiv
 import requests
 
-
 from gh_store.core.store import GitHubStore
 from gh_store.core.types import get_object_id_from_labels, StoredObject
 
@@ -23,9 +22,6 @@ from gh_store.core.types import get_object_id_from_labels, StoredObject
 def is_valid_arxiv_id(arxiv_id: str) -> bool:
     """Validate arXiv ID format."""
     return bool(re.match(r'\d{4}\.\d{4,5}(v\d+)?|\w+\/\d{7}(v\d+)?', arxiv_id))
-
-# this doesn't need to be wrapped in a class.
-
 
 def extract_arxiv_id_from_object_id(object_id: str) -> str:
     """Extract the arXiv ID from a paper ID with various prefixing schemes."""
@@ -64,8 +60,8 @@ def fetch_arxiv_metadata(arxiv_id: str) -> Dict[str, Any]:
         #'id': paper.entry_id,
         'title': paper.title,
         'authors': [author.name for author in paper.authors],
-        'published': paper.published.isoformat() if paper.published else None,
-        'updated': paper.updated.isoformat() if paper.updated else None,
+        'publishedDate': paper.published.isoformat() if paper.published else None,
+        #'updated': paper.updated.isoformat() if paper.updated else None,
         'doi': paper.doi,
         'tags': paper.categories,
         'abstract': paper.summary,
@@ -80,6 +76,7 @@ def fetch_arxiv_metadata(arxiv_id: str) -> Dict[str, Any]:
     logger.info(metadata)
     return metadata
 
+
 def main(issue: int, token:str, repo:str):
     store = GitHubStore(token=token, repo=repo)
     obj = store.issue_handler.get_object_by_number(issue)
@@ -87,16 +84,23 @@ def main(issue: int, token:str, repo:str):
     if not object_id.startswith("paper:"):
         logger.info("Not a paper object, exiting.")
         sys.exit(0)
-    object_id = object_id[len('paper:'):]
-    if object_id.startswith('arxiv'):
-        arxiv_id = extract_arxiv_id_from_object_id(object_id)
-    elif is_valid_arxiv_id(object_id):
-        arxiv_id = object_id
+    
+    paper_id = object_id[len('paper:'):]
+    if paper_id.startswith('arxiv'):
+        arxiv_id = extract_arxiv_id_from_object_id(paper_id)
+    elif is_valid_arxiv_id(paper_id):
+        arxiv_id = paper_id
     else:
         raise TypeError(f"Unable to identify arxiv_id from object_id: {object_id}")
 
+    updates = {}
     arxiv_meta = fetch_arxiv_metadata(arxiv_id)
-    
+    for k, v_new in arxiv_meta.items():
+        v_old = getattr(obj, k)
+        if not v_old:
+            updates[k] = v_new
+    if updates:
+        store.update(object_id=object_id, changes=updates)
 
 if __name__ == "__main__":
     fire.Fire(main)
