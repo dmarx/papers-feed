@@ -18,6 +18,8 @@ import requests
 from gh_store.core.store import GitHubStore
 from gh_store.core.types import get_object_id_from_labels, StoredObject
 
+def is_metadata_satisfied(data: dict) -> bool:
+    return data and data.get('title') and not (data.get('id') in data.get('title'))
 
 def is_valid_arxiv_id(arxiv_id: str) -> bool:
     """Validate arXiv ID format."""
@@ -100,12 +102,20 @@ def main(issue: int, token:str, repo:str):
         v_old = obj.data[k]
         if not v_old:
             updates[k] = v_new
+
+    metadata_satisfied = False
     if updates:
         # Issue is open because we are processing it right now, which acts as an implicit lock on updates.
         # so we close it before pushing the new update
         #store.repo.get_issue(issue).edit(state='closed') # ...this is awkward af. in fact, I think I should just eliminate that whole ConcurrentUpdateError
         # finally: what we came here for
         store.update(object_id=object_id, changes=updates)
+        metadata_satisfied = True
+    else:
+        metadata_satisfied = is_metadata_satisfied(obj.data)
+
+    if metadata_satisfied:
+        store.repo.get_issue(issue).remove_from_labels("TODO:hydrate-metadata")
 
 if __name__ == "__main__":
     fire.Fire(main)
