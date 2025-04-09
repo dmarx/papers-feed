@@ -60,7 +60,7 @@ export class PaperManager {
           rating: paperData.rating || 'novote'
         };
 
-        await this.client.createObject(objectId=objectId, data=defaultPaperData, extraLabels=["TODO:hydrate-metadata"]);
+        await this.client.createObject(objectId, defaultPaperData, ["TODO:hydrate-metadata"]);
         logger.debug(`Created new paper: ${paperIdentifier}`);
         return defaultPaperData;
       }
