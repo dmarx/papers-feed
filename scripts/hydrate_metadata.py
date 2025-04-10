@@ -110,6 +110,7 @@ def main(issue: int, token:str, repo:str):
         #store.repo.get_issue(issue).edit(state='closed') # ...this is awkward af. in fact, I think I should just eliminate that whole ConcurrentUpdateError
         # finally: what we came here for
         store.update(object_id=object_id, changes=updates)
+        store.process_updates(issue) # ...why is this a separate second step? sheesh, I reaaly did rube goldberg the shit out of this thing
         metadata_satisfied = True
     else:
         metadata_satisfied = is_metadata_satisfied(obj.data)
