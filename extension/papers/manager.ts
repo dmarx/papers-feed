@@ -60,8 +60,13 @@ export class PaperManager {
           rating: paperData.rating || 'novote'
         };
 
-        await this.client.createObject(objectId, defaultPaperData, ["TODO:hydrate-metadata"]);
+        const newobj = await this.client.createObject(objectId, defaultPaperData, ["TODO:hydrate-metadata"]);
         logger.debug(`Created new paper: ${paperIdentifier}`);
+        // reopen to trigger metadata hydration
+        await this.client.fetchFromGitHub(`/issues/${newobj.meta.issueNumber}`, {
+          method: "PATCH",
+          body: JSON.stringify({ state: "open" })
+        });
         return defaultPaperData;
       }
       throw error;
