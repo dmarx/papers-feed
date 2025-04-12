@@ -77,9 +77,9 @@ def fetch_arxiv_metadata(arxiv_id: str) -> Dict[str, Any]:
     logger.info(f"Successfully fetched metadata for arXiv ID: {arxiv_id}")
     logger.info(metadata)
     return metadata
+    
 
-
-def main(issue: int, token:str, repo:str):
+def hydrate_issue_metadata(issue: int, token:str, repo:str):
     store = GitHubStore(token=token, repo=repo)
     obj = store.issue_handler.get_object_by_number(issue)
     object_id = obj.meta.object_id
@@ -116,7 +116,31 @@ def main(issue: int, token:str, repo:str):
         metadata_satisfied = is_metadata_satisfied(obj.data)
 
     if metadata_satisfied:
-        store.repo.get_issue(issue).remove_from_labels("TODO:hydrate-metadata")
+        store.repo.get_issue(issue).remove_from_labels("TODO:hydrate-metadata")    
+
+# TODO: upstream this to gh-store utilities
+def get_open_issues(token:str, repo:str, extra_labels: list|None = None):
+    store = GitHubStore(token=token, repo=repo)
+    query_labels = [LabelNames.GH_STORE, LabelNames.STORED_OBJECT]
+    if extra_labels: # 
+        query_labels += extra_labels
+    return self.repo.get_issues(
+            labels=query_labels,
+            state="open"
+        )
+
+def hydrate_all_open_issues(token:str, repo:str):
+    for issue in get_open_issues(token=token, repo=repo, extra_labels=["TODO:hydrate-metadata"]):
+        hydrate_issue_metadata(issue=issue, token=token, repo=repo)
+
+
+class Main:
+    def hydrate_issue_metadata(self, issue: int, token:str, repo:str):
+        hydrate_issue_metadata(issue: int, token:str, repo:str)
+
+    def hydrate_all_open_issues(self, token:str, repo:str):
+        hydrate_all_open_issues(token=token, repo=repo)
+
 
 if __name__ == "__main__":
-    fire.Fire(main)
+    fire.Fire(Main)
