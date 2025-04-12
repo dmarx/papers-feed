@@ -16,6 +16,7 @@ import arxiv
 import requests
 
 from gh_store.core.store import GitHubStore
+from gh_store.core.constants import LabelNames
 from gh_store.core.types import get_object_id_from_labels, StoredObject
 
 def is_metadata_satisfied(data: dict) -> bool:
