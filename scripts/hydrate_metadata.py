@@ -125,7 +125,7 @@ def get_open_issues(token:str, repo:str, extra_labels: list|None = None):
     query_labels = [LabelNames.GH_STORE, LabelNames.STORED_OBJECT]
     if extra_labels: # 
         query_labels += extra_labels
-    return self.repo.get_issues(
+    return store.repo.get_issues(
             labels=query_labels,
             state="open"
         )
