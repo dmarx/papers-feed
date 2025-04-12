@@ -15,7 +15,8 @@ from loguru import logger
 import arxiv
 import requests
 
-from gh_store.core.store import GitHubStore
+#from gh_store.core.store import GitHubStore
+from gh_store.tools.canonicalize import CanonicalStore as GitHubStore
 from gh_store.core.constants import LabelNames
 from gh_store.core.types import get_object_id_from_labels, StoredObject
 
