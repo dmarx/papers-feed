@@ -138,7 +138,7 @@ def hydrate_all_open_issues(token:str, repo:str):
 
 class Main:
     def hydrate_issue_metadata(self, issue: int, token:str, repo:str):
-        hydrate_issue_metadata(issue: int, token:str, repo:str)
+        hydrate_issue_metadata(issue=issue, token=token, repo=repo)
 
     def hydrate_all_open_issues(self, token:str, repo:str):
         hydrate_all_open_issues(token=token, repo=repo)
