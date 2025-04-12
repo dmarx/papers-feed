@@ -138,13 +138,16 @@ def hydrate_all_open_issues(token:str, repo:str):
         except TypeError:
             logger.info("unsupported source for issue %s", issue.number)
 
-class Main:
-    def hydrate_issue_metadata(self, issue: int, token:str, repo:str):
-        hydrate_issue_metadata(issue=issue, token=token, repo=repo)
+# class Main:
+#     def hydrate_issue_metadata(self, issue: int, token:str, repo:str):
+#         hydrate_issue_metadata(issue=issue, token=token, repo=repo)
 
-    def hydrate_all_open_issues(self, token:str, repo:str):
-        hydrate_all_open_issues(token=token, repo=repo)
+#     def hydrate_all_open_issues(self, token:str, repo:str):
+#         hydrate_all_open_issues(token=token, repo=repo)
 
 
 if __name__ == "__main__":
-    fire.Fire(Main)
+    #fire.Fire(Main)
+    fire.Fire(
+        { "hydrate_issue_metadata":hydrate_issue_metadata, "hydrate_all_open_issues":hydrate_all_open_issues }
+    )
