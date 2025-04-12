@@ -131,8 +131,10 @@ def get_open_issues(token:str, repo:str, extra_labels: list|None = None):
 
 def hydrate_all_open_issues(token:str, repo:str):
     for issue in get_open_issues(token=token, repo=repo, extra_labels=["TODO:hydrate-metadata"]):
-        hydrate_issue_metadata(issue=issue, token=token, repo=repo)
-
+        try:
+            hydrate_issue_metadata(issue=issue.number, token=token, repo=repo)
+        except TypeError:
+            logger.info("unsupported source for issue %s", issue.number)
 
 class Main:
     def hydrate_issue_metadata(self, issue: int, token:str, repo:str):
