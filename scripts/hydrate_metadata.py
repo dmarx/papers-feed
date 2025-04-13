@@ -16,6 +16,7 @@ import arxiv
 import requests
 
 from gh_store.core.store import GitHubStore
+from gh_store.tools.canonicalize import CanonicalStore
 #from gh_store.tools.canonicalize import CanonicalStore as GitHubStore
 from gh_store.core.constants import LabelNames
 from gh_store.core.types import get_object_id_from_labels, StoredObject
@@ -83,9 +84,12 @@ def fetch_arxiv_metadata(arxiv_id: str) -> Dict[str, Any]:
     
 
 def hydrate_issue_metadata(issue: int, token:str, repo:str):
-    store = GitHubStore(token=token, repo=repo, config_path=None)
+    #store = GitHubStore(token=token, repo=repo, config_path=None)
+    store = CanonicalStore(token=token, repo=repo, config_path=None)
+    
     obj = store.issue_handler.get_object_by_number(issue)
     object_id = obj.meta.object_id
+    #object_id = get_object_id_from_labels(issue)
     if not object_id.startswith("paper:"):
         logger.info("Not a paper object, exiting.")
         sys.exit(0)
@@ -123,9 +127,9 @@ def hydrate_issue_metadata(issue: int, token:str, repo:str):
 
 # TODO: upstream this to gh-store utilities
 def get_open_issues(token:str, repo:str, extra_labels: list|None = None):
-    print(token[0:3])
-    print(repo)
     store = GitHubStore(token=token, repo=repo, config_path=None)
+    #store = CanonicalStore(token=token, repo=repo, config_path=None)
+    
     query_labels = [LabelNames.GH_STORE, LabelNames.STORED_OBJECT]
     if extra_labels: # 
         query_labels += extra_labels
@@ -135,13 +139,19 @@ def get_open_issues(token:str, repo:str, extra_labels: list|None = None):
         )
 
 def hydrate_all_open_issues(token:str, repo:str):
+    store = CanonicalStore(token=token, repo=repo, config_path=None)
     for issue in get_open_issues(token=token, repo=repo, extra_labels=["TODO:hydrate-metadata"]):
         try:
             hydrate_issue_metadata(issue=issue.number, token=token, repo=repo)
         except TypeError:
             logger.info("unsupported source for issue %s", issue.number)
         except DuplicateUIDError:
-            logger.info("Issue %s has dupes, skipping for now. Run deduplification.", issue.number)
+            #logger.info("Issue %s has dupes, skipping for now. Run deduplification." % issue.number)
+            logger.info("Issue %s has dupes. Running deduplification." % issue.number)
+            #object_id = StoredObject.from_issue(issue).object_id
+            object_id = get_object_id_from_labels(issue)
+            dedupe_status = store.deduplicate_object(object_id)
+            hydrate_issue_metadata(issue=canonical_issue, token=token, repo=repo)
         except ConcurrentUpdateError:
             logger.info("Issue %s has too many unprocessed concurrent updates. Either adjust this threshold, or reconcile the updates manually.", issue.number)
 
