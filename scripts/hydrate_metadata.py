@@ -19,7 +19,7 @@ from gh_store.core.store import GitHubStore
 #from gh_store.tools.canonicalize import CanonicalStore as GitHubStore
 from gh_store.core.constants import LabelNames
 from gh_store.core.types import get_object_id_from_labels, StoredObject
-from gh_store.core.exceptions import DuplicateUIDError
+from gh_store.core.exceptions import DuplicateUIDError, ConcurrentUpdateError
 
 def is_metadata_satisfied(data: dict) -> bool:
     return data and data.get('title') and not (data.get('id') in data.get('title'))
@@ -142,6 +142,8 @@ def hydrate_all_open_issues(token:str, repo:str):
             logger.info("unsupported source for issue %s", issue.number)
         except DuplicateUIDError:
             logger.info("Issue %s has dupes, skipping for now. Run deduplification.", issue.number)
+        except ConcurrentUpdateError:
+            logger.info("Issue %s has too many unprocessed concurrent updates. Either adjust this threshold, or reconcile the updates manually.", issue.number)
 
 # class Main:
 #     def hydrate_issue_metadata(self, issue: int, token:str, repo:str):
