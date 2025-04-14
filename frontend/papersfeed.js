@@ -249,7 +249,7 @@ function processComplexData(data) {
       title: paperData.title,
       authors: paperData.authors,
       abstract: paperData.abstract,
-      published: paperData.publishedDate ? formatDate(paperData.publishedDate) : '', //paperData.published_date || paperData.published || '',
+      published: paperData.publishedDate,  //formatDate(paperData.publishedDate) : '', //paperData.published_date || paperData.published || '',
       firstRead: formatDate(paperMeta.created_at),
       lastRead: lastReadDate ? formatDate(lastReadDate) : formatDate(paperMeta.updated_at),
       readingTime: formatReadingTime(totalReadingTime),
