@@ -93,6 +93,11 @@ def hydrate_issue_metadata(issue: int, token:str, repo:str):
     if not object_id.startswith("paper:"):
         logger.info("Not a paper object, exiting.")
         sys.exit(0)
+    if 'url' in object_id:
+        logger.info("Metadata hydration is currently only supported for the arxiv source type.")
+        store.process_updates(issue) # ...why is this a separate second step? sheesh, I reaaly did rube goldberg the shit out of this thing
+        return
+        
     
     paper_id = object_id[len('paper:'):]
     if paper_id.startswith('arxiv'):
@@ -151,7 +156,7 @@ def hydrate_all_open_issues(token:str, repo:str):
             #object_id = StoredObject.from_issue(issue).object_id
             object_id = get_object_id_from_labels(issue)
             dedupe_status = store.deduplicate_object(object_id)
-            hydrate_issue_metadata(issue=canonical_issue, token=token, repo=repo)
+            hydrate_issue_metadata(issue=dedupe_status.get('canonical_issue'), token=token, repo=repo)
         except ConcurrentUpdateError:
             logger.info("Issue %s has too many unprocessed concurrent updates. Either adjust this threshold, or reconcile the updates manually.", issue.number)
 
