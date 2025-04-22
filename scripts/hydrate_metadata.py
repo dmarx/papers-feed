@@ -93,7 +93,7 @@ def hydrate_issue_metadata(issue: int, token:str, repo:str):
     if not object_id.startswith("paper:"):
         logger.info("Not a paper object, exiting.")
         sys.exit(0)
-    if 'url' in object_id:
+    if 'arxiv' != obj.data.get('sourceId'): #'url' in object_id:
         logger.info("Metadata hydration is currently only supported for the arxiv source type.")
         store.process_updates(issue) # ...why is this a separate second step? sheesh, I reaaly did rube goldberg the shit out of this thing
         return
