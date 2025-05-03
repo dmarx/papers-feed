@@ -9,7 +9,7 @@ import {
   MetadataExtractor, 
   createMetadataExtractor,
   generatePaperIdFromUrl
-} from '../utils/metadata-extractor';
+} from './metadata-extractor';
 
 const logger = loguru.getLogger('base-source');
 
