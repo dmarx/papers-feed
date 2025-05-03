@@ -3,7 +3,7 @@
 
 import { BaseSourceIntegration } from '../base-source';
 import { PaperMetadata } from '../../papers/types';
-import { MetadataExtractor, createMetadataExtractor } from '../../utils/metadata-extractor';
+import { MetadataExtractor, createMetadataExtractor } from '../metadata-extractor';
 import { loguru } from '../../utils/logger';
 
 const logger = loguru.getLogger('arxiv-integration');
