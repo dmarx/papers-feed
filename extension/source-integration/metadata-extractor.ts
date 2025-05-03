@@ -1,7 +1,7 @@
-// extension/utils/metadata-extractor.ts
+// extension/source-integration/metadata-extractor.ts
 // Object-oriented metadata extraction system with customizable extraction methods
 
-import { loguru } from './logger';
+import { loguru } from '../utils/logger';
 
 const logger = loguru.getLogger('metadata-extractor');
 
