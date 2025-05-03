@@ -3,7 +3,7 @@
 
 import { BaseSourceIntegration } from '../base-source';
 import { PaperMetadata } from '../../papers/types';
-import { MetadataExtractor, createMetadataExtractor, ExtractedMetadata } from '../../utils/metadata-extractor';
+import { MetadataExtractor, createMetadataExtractor, ExtractedMetadata } from '..//metadata-extractor';
 import { loguru } from '../../utils/logger';
 
 const logger = loguru.getLogger('openreview-integration');
