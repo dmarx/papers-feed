@@ -706,7 +706,7 @@ class SourceIntegrationManager {
     }
 }
 
-// extension/utils/metadata-extractor.ts
+// extension/source-integration/metadata-extractor.ts
 const logger$4 = loguru.getLogger('metadata-extractor');
 // Constants for standard source types
 const SOURCE_TYPES = {
