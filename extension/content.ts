@@ -6,7 +6,7 @@ import { SourceIntegration, Message } from './source-integration/types';
 import { PaperMetadata } from './papers/types';
 import { loguru } from './utils/logger';
 import { BaseSourceIntegration } from './source-integration/base-source';
-import { generatePaperIdFromUrl } from './utils/metadata-extractor';
+import { generatePaperIdFromUrl } from './source-integration/metadata-extractor';
 
 // Import from registry instead of individual sources
 import { sourceIntegrations } from './source-integration/registry';
