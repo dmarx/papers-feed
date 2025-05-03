@@ -9,8 +9,8 @@ import { SourceIntegrationManager } from './source-integration/source-manager';
 import { loguru } from './utils/logger';
 import { PaperMetadata } from './papers/types';
 
-// Import source plugins directly
-import { arxivIntegration } from './source-integration/arxiv';
+// Import from central registry instead of individual integrations
+import { sourceIntegrations } from './source-integration/registry';
 import { Message } from './source-integration/types';
 
 const logger = loguru.getLogger('background');
@@ -27,10 +27,14 @@ let sourceManager: SourceIntegrationManager | null = null;
 function initializeSources() {
   sourceManager = new SourceIntegrationManager();
   
-  // Register built-in sources directly
-  sourceManager.registerSource(arxivIntegration);
+  // Register all sources from the central registry
+  for (const integration of sourceIntegrations) {
+    sourceManager.registerSource(integration);
+  }
   
-  logger.info('Source manager initialized');
+  logger.info('Source manager initialized with integrations:', 
+    sourceIntegrations.map(int => int.id).join(', '));
+  
   return sourceManager;
 }
 

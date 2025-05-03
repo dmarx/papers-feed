@@ -1,14 +1,7 @@
 // extension/source-integration/index.ts
-// Create a barrel file to export all source integrations
+// Export the central registry
+export * from './registry';
 
-import { arxivIntegration } from './arxiv';
-
-// Export all available integrations
-export const availableIntegrations = [
-  arxivIntegration,
-];
-
-// Export individual integrations
-export {
-  arxivIntegration,
-};
+// Export individual integrations for direct access
+export { arxivIntegration } from './arxiv';
+export { openReviewIntegration } from './openreview';
