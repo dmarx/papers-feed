@@ -112,7 +112,7 @@ class PaperManager {
                     timestamp: new Date().toISOString(),
                     rating: paperData.rating || 'novote'
                 };
-                const newobj = await this.client.createObject(objectId, defaultPaperData, ["TODO:hydrate-metadata"]);
+                const newobj = await this.client.createObject(objectId, defaultPaperData);
                 logger$8.debug(`Created new paper: ${paperIdentifier}`);
                 // reopen to trigger metadata hydration
                 await this.client.fetchFromGitHub(`/issues/${newobj.meta.issueNumber}`, {
