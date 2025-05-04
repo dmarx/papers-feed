@@ -197,7 +197,6 @@ function processComplexData(data) {
   const paperKeys = Object.keys(objects).filter(key => key.startsWith("paper:"));
   
   for (const paperKey of paperKeys) {
-    //const paperId = paperKey.split(":", 1)[1];
     const paperId = extractObjectId(paperKey, "paper");
     const paperRaw = objects[paperKey];
     const paperData = paperRaw.data;
@@ -241,22 +240,27 @@ function processComplexData(data) {
                'arxiv' : (paperData.url ? extractDomain(paperData.url) : null) ||
                  paperData.sourceId || paperData.sourceType;
     
+    // Ensure all fields are properly typed
+    const authors = Array.isArray(paperData.authors) ? paperData.authors.join(', ') : (paperData.authors || '');
+    const title = paperData.title || '';
+    const abstract = paperData.abstract || '';
+    const tags = paperData.arxiv_tags || [];
+    
     // Create the row data
     result.push({
       paperKey: paperKey,
-      id: paperId, //paperData.paper_id || paperData.arxivId,
+      id: paperId,
       source: source,
-      title: paperData.title,
-      authors: paperData.authors,
-      abstract: paperData.abstract,
-      //published: paperData.publishedDate,  //formatDate(paperData.publishedDate) : '', //paperData.published_date || paperData.published || '',
+      title: title,
+      authors: authors,
+      abstract: abstract,
       published: paperData.published_date ? formatDate(paperData.published_date) : '',
       firstRead: formatDate(paperMeta.created_at),
       lastRead: lastReadDate ? formatDate(lastReadDate) : formatDate(paperMeta.updated_at),
       readingTime: formatReadingTime(totalReadingTime),
       readingTimeSeconds: totalReadingTime,
       interactionDays: uniqueInteractionDays,
-      tags: paperData.arxiv_tags || [],
+      tags: tags,
       url: paperData.url,
       rawInteractionData: interactionData ? interactionData.interactions : [],
       hasBeenRead: lastReadDate !== null
@@ -381,10 +385,10 @@ function initTable(data) {
 
 // Setup event listeners for filters and search
 function setupEventListeners() {
-  // Global search
+// Global search
   document.getElementById("search-input").addEventListener("input", function(e) {
     table.setFilter(function(data) {
-      const searchTerm = e.target.value.toLowerCase();
+      const searchTerm = e.target.value.toLowerCase().trim();
       if (!searchTerm) return true;
       
       // Search in title, authors, abstract, and tags
@@ -392,7 +396,7 @@ function setupEventListeners() {
         data.title.toLowerCase().includes(searchTerm) ||
         data.authors.toLowerCase().includes(searchTerm) ||
         data.abstract.toLowerCase().includes(searchTerm) ||
-        (data.tags && data.tags.some(tag => tag.toLowerCase().includes(searchTerm)))
+        data.tags.some(tag => tag.toLowerCase().includes(searchTerm))
       );
     });
   });
