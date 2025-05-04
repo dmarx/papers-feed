@@ -384,16 +384,17 @@ function setupEventListeners() {
   // Global search
   document.getElementById("search-input").addEventListener("input", function(e) {
     table.setFilter(function(data) {
-      const searchTerm = e.target.value.toLowerCase();
+      const searchTerm = e.target.value.toLowerCase().trim();
       if (!searchTerm) return true;
       
       // Search in title, authors, abstract, and tags
-      return (
-        data.title.toLowerCase().includes(searchTerm) ||
-        data.authors.toLowerCase().includes(searchTerm) ||
-        data.abstract.toLowerCase().includes(searchTerm) ||
-        (data.tags && data.tags.some(tag => tag.toLowerCase().includes(searchTerm)))
-      );
+      const titleMatch = data.title && data.title.toLowerCase().includes(searchTerm);
+      const authorsMatch = data.authors && data.authors.toLowerCase().includes(searchTerm);
+      const abstractMatch = data.abstract && data.abstract.toLowerCase().includes(searchTerm);
+      const tagsMatch = data.tags && Array.isArray(data.tags) && 
+        data.tags.some(tag => tag && typeof tag === 'string' && tag.toLowerCase().includes(searchTerm));
+      
+      return titleMatch || authorsMatch || abstractMatch || tagsMatch;
     });
   });
   
