@@ -1035,8 +1035,9 @@ class ArxivMetadataExtractor extends MetadataExtractor {
             return this.apiMetadata.title;
         }
         // arXiv-specific selectors
-        const arxivTitle = this.document.querySelector('.title.mathjax')?.textContent?.trim();
-        return arxivTitle || super.extractTitle();
+        //const arxivTitle = this.document.querySelector('.title.mathjax')?.textContent?.trim();
+        //return arxivTitle || super.extractTitle();
+        return super.extractTitle();
     }
     /**
      * Override authors extraction to use API data if available
