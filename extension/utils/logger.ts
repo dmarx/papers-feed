@@ -27,6 +27,13 @@ export class Logger {
   warning(message: string, data?: any): void {
     console.warn(`[${this.module}] ${message}`, data !== undefined ? data : '');
   }
+
+  /**
+   * Alias for warning method (to match loguru API)
+   */
+  warn(message: string, data?: any): void {
+    this.warning(message, data);
+  }
   
   /**
    * Log error message
