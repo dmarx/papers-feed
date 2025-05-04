@@ -28,9 +28,10 @@ class ArxivMetadataExtractor extends MetadataExtractor {
     }
     
     // arXiv-specific selectors
-    const arxivTitle = this.document.querySelector('.title.mathjax')?.textContent?.trim();
+    //const arxivTitle = this.document.querySelector('.title.mathjax')?.textContent?.trim();
     
-    return arxivTitle || super.extractTitle();
+    //return arxivTitle || super.extractTitle();
+    return super.extractTitle();
   }
   
   /**
