@@ -1034,9 +1034,24 @@ class ArxivMetadataExtractor extends MetadataExtractor {
         if (this.apiMetadata?.title) {
             return this.apiMetadata.title;
         }
-        // arXiv-specific selectors
-        //const arxivTitle = this.document.querySelector('.title.mathjax')?.textContent?.trim();
-        //return arxivTitle || super.extractTitle();
+        // First check for arXiv-specific meta tags
+        const citationTitle = this.getMetaContent('meta[name="citation_title"]');
+        if (citationTitle) {
+            return citationTitle;
+        }
+        // Then try extracting from the page elements
+        const titleElement = this.document.querySelector('.title.mathjax');
+        if (titleElement) {
+            // Remove the descriptor span entirely
+            const descriptor = titleElement.querySelector('.descriptor');
+            let titleText = titleElement.textContent || '';
+            if (descriptor) {
+                titleText = titleText.replace(descriptor.textContent || '', '').trim();
+            }
+            if (titleText) {
+                return titleText;
+            }
+        }
         return super.extractTitle();
     }
     /**
