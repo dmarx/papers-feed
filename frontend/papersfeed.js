@@ -257,7 +257,7 @@ function processComplexData(data) {
       published: paperData.publishedDate, // paperData.published_date ? formatDate(paperData.published_date) : '',
       firstRead: formatDate(paperMeta.created_at),
       lastRead: lastReadDate ? formatDate(lastReadDate) : formatDate(paperMeta.updated_at),
-      readingTime: formatReadingTime(totalReadingTime),
+      //readingTime: formatReadingTime(totalReadingTime),
       readingTimeSeconds: totalReadingTime,
       interactionDays: uniqueInteractionDays,
       tags: tags,
@@ -325,22 +325,22 @@ function initTable(data) {
         widthGrow: 1
       },
       {
-        title: "Reading Time", 
-        field: "readingTimeSeconds", 
-        widthGrow: 1,
-        formatter: function(cell) {
-          return cell.getRow().getData().readingTime;
-        }
+        title: "Read Time (s)", 
+        field: "readingTimeSeconds",  
+        widthGrow: 1
+        // formatter: function(cell) {
+        //   return cell.getRow().getData().readingTime;
+        // }
       },
       {
-        title: "Days", 
+        title: "Read Dates", 
         field: "interactionDays", 
-        widthGrow: 1,
-        formatter: function(cell) {
-          const value = cell.getValue();
-          if (value === 0) return "None";
-          return value === 1 ? "1 day" : `${value} days`;
-        }
+        widthGrow: 1
+        // formatter: function(cell) {
+        //   const value = cell.getValue();
+        //   if (value === 0) return "None";
+        //   return value === 1 ? "1 day" : `${value} days`;
+        // }
       },
       {
         title: "Tags", 
