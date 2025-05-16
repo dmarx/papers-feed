@@ -285,20 +285,25 @@ function initTable(data) {
       {column: "lastRead", dir: "desc"}
     ],
     columns: [
-      {
-        title: "ID", 
-        field: "id", 
-        widthGrow: 1
-      },
+      // {
+      //   title: "ID", 
+      //   field: "id", 
+      //   widthGrow: 1
+      // },
       {
         title: "Source", 
         field: "source", 
         widthGrow: 1
       },
       {
+        title: "Published", 
+        field: "published", 
+        widthGrow: 1
+      },
+      {
         title: "Title", 
         field: "title", 
-        widthGrow: 3,
+        widthGrow: 6,
         formatter: function(cell) {
           const value = cell.getValue();
           return value;
@@ -308,11 +313,6 @@ function initTable(data) {
         title: "Authors", 
         field: "authors", 
         widthGrow: 2
-      },
-      {
-        title: "Published", 
-        field: "published", 
-        widthGrow: 1
       },
       {
         title: "First Read", 
@@ -345,7 +345,7 @@ function initTable(data) {
       {
         title: "Tags", 
         field: "tags", 
-        widthGrow: 2,
+        widthGrow: 1,
         formatter: formatTags
       }
     ],
