@@ -1521,18 +1521,28 @@ class PnasIntegration extends BaseSourceIntegration {
 }
 const pnasIntegration = new PnasIntegration();
 
+// extension/source-integration/misc/index.ts
+class MiscIntegration extends BaseSourceIntegration {
+    constructor() {
+        super(...arguments);
+        this.id = 'url-misc';
+        this.name = 'misc tracked url';
+        // add URLs here to track
+        this.contentScriptMatches = [
+            "*://*.sciencedirect.com/science/article/*",
+            "*://*.philpapers.org/rec/*",
+        ];
+    }
+}
+const miscIntegration = new MiscIntegration();
+
 // extension/source-integration/registry.ts
-// Import any other integrations here
-/**
- * Registry of all available source integrations
- * This is the SINGLE place where integrations need to be added
- */
 const sourceIntegrations = [
     arxivIntegration,
     openReviewIntegration,
     natureIntegration,
     pnasIntegration,
-    // Add new integrations here
+    miscIntegration,
 ];
 
 // background.ts
