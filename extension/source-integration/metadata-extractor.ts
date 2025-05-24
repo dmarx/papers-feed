@@ -148,7 +148,7 @@ export class MetadataExtractor {
    */
   protected extractPublishedDate(): string {
     return (
-      this.getMetaContent('meta[name="DC.Date.issued"]') || this.getMetaContent('meta[name="dc.date.issued"]') 
+      this.getMetaContent('meta[name="DC.Date.issued"]') || this.getMetaContent('meta[name="dc.date.issued"]') ||
       this.getMetaContent('meta[name="citation_date"]') ||
       this.getMetaContent('meta[property="article:published_time"]')
     );
