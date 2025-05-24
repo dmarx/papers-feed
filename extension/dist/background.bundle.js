@@ -1403,6 +1403,103 @@ class OpenReviewIntegration extends BaseSourceIntegration {
 // Export a singleton instance that can be used by both background and content scripts
 const openReviewIntegration = new OpenReviewIntegration();
 
+// extension/source-integration/nature/index.ts
+loguru.getLogger('nature-integration');
+/**
+ * Custom metadata extractor for Nature.com pages
+ */
+class NatureMetadataExtractor extends MetadataExtractor {
+    /**
+     * Override title extraction to use meta tag first
+     */
+    extractTitle() {
+        const metaTitle = this.getMetaContent('meta[name="citation_title"]') ||
+            this.getMetaContent('meta[property="og:title"]');
+        return metaTitle || super.extractTitle();
+    }
+    /**
+     * Override authors extraction to use meta tag first
+     */
+    extractAuthors() {
+        const metaAuthors = this.getMetaContent('meta[name="citation_author"]');
+        if (metaAuthors) {
+            return metaAuthors;
+        }
+        // Fallback to HTML extraction
+        const authorElements = this.document.querySelectorAll('.c-article-author-list__item');
+        if (authorElements.length > 0) {
+            return Array.from(authorElements)
+                .map(el => el.textContent?.trim())
+                .filter(Boolean)
+                .join(', ');
+        }
+        return super.extractAuthors();
+    }
+    /**
+     * Extract keywords/tags from document
+     */
+    extractTags() {
+        const keywords = this.getMetaContent('meta[name="dc.subject"]');
+        if (keywords) {
+            return keywords.split(',').map(tag => tag.trim());
+        }
+        return [];
+    }
+    /**
+     * Override description extraction to use meta tag first
+     */
+    extractDescription() {
+        const metaDescription = this.getMetaContent('meta[name="description"]') ||
+            this.getMetaContent('meta[property="og:description"]');
+        return metaDescription || super.extractDescription();
+    }
+    /**
+     * Override published date extraction to use meta tag
+     */
+    extractPublishedDate() {
+        return this.getMetaContent('meta[name="citation_publication_date"]') || super.extractPublishedDate();
+    }
+    /**
+     * Override DOI extraction to use meta tag
+     */
+    extractDoi() {
+        return this.getMetaContent('meta[name="citation_doi"]') || super.extractDoi();
+    }
+}
+/**
+ * Nature.com integration with custom metadata extraction
+ */
+class NatureIntegration extends BaseSourceIntegration {
+    constructor() {
+        super(...arguments);
+        this.id = 'nature';
+        this.name = 'Nature';
+        // URL pattern for Nature articles with capture group for ID
+        this.urlPatterns = [
+            /nature\.com\/articles\/([^?]+)/,
+        ];
+        // Content script matches  
+        this.contentScriptMatches = [
+            "*://*.nature.com/articles/*"
+        ];
+    }
+    /**
+     * Extract paper ID from URL
+     */
+    extractPaperId(url) {
+        const match = url.match(this.urlPatterns[0]);
+        return match ? match[1] : null;
+    }
+    /**
+     * Create a custom metadata extractor for Nature.com
+     */
+    createMetadataExtractor(document) {
+        return new NatureMetadataExtractor(document);
+    }
+}
+// Export a singleton instance 
+const natureIntegration = new NatureIntegration();
+
 // extension/source-integration/registry.ts
 // Import any other integrations here
 /**
@@ -1412,6 +1509,7 @@ const openReviewIntegration = new OpenReviewIntegration();
 const sourceIntegrations = [
     arxivIntegration,
     openReviewIntegration,
+    natureIntegration,
     // Add new integrations here
 ];
 
