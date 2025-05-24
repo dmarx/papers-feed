@@ -1500,6 +1500,30 @@ class NatureIntegration extends BaseSourceIntegration {
 // Export a singleton instance 
 const natureIntegration = new NatureIntegration();
 
+// extension/source-integration/pnas/index.ts
+//import { PaperMetadata } from '../../papers/types';
+//import { MetadataExtractor, ExtractedMetadata } from '../metadata-extractor';
+class PnasIntegration extends BaseSourceIntegration {
+    constructor() {
+        super(...arguments);
+        this.id = 'pnas';
+        this.name = 'PNAS';
+        this.urlPatterns = [
+            /pnas\.org\/doi\/10\.1073\/pnas\.([0-9]+)/
+        ];
+        // Content script matches  
+        this.contentScriptMatches = [
+            "*://*.pnas.org/doi/*"
+        ];
+    }
+    // upstream BaseSourceIntegration.extractPaperId should default to this behavior when able
+    extractPaperId(url) {
+        const match = url.match(this.urlPatterns[0]);
+        return match ? match[1] : null;
+    }
+}
+const pnasIntegration = new PnasIntegration();
+
 // extension/source-integration/registry.ts
 // Import any other integrations here
 /**
@@ -1510,6 +1534,7 @@ const sourceIntegrations = [
     arxivIntegration,
     openReviewIntegration,
     natureIntegration,
+    pnasIntegration,
     // Add new integrations here
 ];
 
