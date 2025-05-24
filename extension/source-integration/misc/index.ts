@@ -20,7 +20,7 @@ export class MiscIntegration extends BaseSourceIntegration {
   );
 
   canHandleUrl(url: string): boolean {
-    return this.urlRegexes.some(regex => regex.test(url));
+    return false; //this.urlRegexes.some(regex => regex.test(url));
   }
 
   private matchPatternToRegex(pattern: string): RegExp {
