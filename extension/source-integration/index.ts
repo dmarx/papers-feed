@@ -3,7 +3,7 @@
 export * from './registry';
 
 // Export individual integrations for direct access
-export { arxivIntegration } from './arxiv';
-export { openReviewIntegration } from './openreview';
-export { natureIntegration } from './nature';
+// export { arxivIntegration } from './arxiv';
+// export { openReviewIntegration } from './openreview';
+// export { natureIntegration } from './nature';
 //import { pnasIntegration } from './pnas';
