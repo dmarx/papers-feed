@@ -1501,8 +1501,6 @@ class NatureIntegration extends BaseSourceIntegration {
 const natureIntegration = new NatureIntegration();
 
 // extension/source-integration/pnas/index.ts
-//import { PaperMetadata } from '../../papers/types';
-//import { MetadataExtractor, ExtractedMetadata } from '../metadata-extractor';
 class PnasIntegration extends BaseSourceIntegration {
     constructor() {
         super(...arguments);
@@ -1511,7 +1509,6 @@ class PnasIntegration extends BaseSourceIntegration {
         this.urlPatterns = [
             /pnas\.org\/doi\/10\.1073\/pnas\.([0-9]+)/
         ];
-        // Content script matches  
         this.contentScriptMatches = [
             "*://*.pnas.org/doi/*"
         ];
