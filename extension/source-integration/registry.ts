@@ -5,6 +5,7 @@ import { SourceIntegration } from './types';
 import { arxivIntegration } from './arxiv';
 import { openReviewIntegration } from './openreview';
 import { natureIntegration } from './nature';
+import { pnasIntegration } from './pnas';
 // Import any other integrations here
 
 /**
@@ -15,6 +16,7 @@ export const sourceIntegrations: SourceIntegration[] = [
   arxivIntegration,
   openReviewIntegration,
   natureIntegration,
+  pnasIntegration,
   // Add new integrations here
 ];
 
