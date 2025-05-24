@@ -14,6 +14,10 @@ export class MiscIntegration extends BaseSourceIntegration {
     "*://*.philpapers.org/rec/*",
   ];
 
+  canHandleUrl(url: string): boolean {
+    return this.contentScriptMatches.some(pattern => pattern.test(url));
+  }
+  
 }
 
 export const miscIntegration = new MiscIntegration();
