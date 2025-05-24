@@ -1436,6 +1436,16 @@ class NatureMetadataExtractor extends MetadataExtractor {
         return super.extractAuthors();
     }
     /**
+     * Extract keywords/tags from document
+     */
+    extractTags() {
+        const keywords = this.getMetaContent('meta[name="dc.subject"]');
+        if (keywords) {
+            return keywords.split(',').map(tag => tag.trim());
+        }
+        return [];
+    }
+    /**
      * Override description extraction to use meta tag first
      */
     extractDescription() {
