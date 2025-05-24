@@ -1,10 +1,5 @@
 // extension/source-integration/pnas/index.ts
-// pnas.org integration with custom metadata extractor
-
 import { BaseSourceIntegration } from '../base-source';
-//import { PaperMetadata } from '../../papers/types';
-//import { MetadataExtractor, ExtractedMetadata } from '../metadata-extractor';
-
 
 export class PnasIntegration extends BaseSourceIntegration {
   readonly id = 'pnas';
@@ -14,7 +9,6 @@ export class PnasIntegration extends BaseSourceIntegration {
     /pnas\.org\/doi\/10\.1073\/pnas\.([0-9]+)/
   ];
 
-  // Content script matches  
   readonly contentScriptMatches = [
     "*://*.pnas.org/doi/*"
   ];
