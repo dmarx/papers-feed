@@ -765,7 +765,7 @@ class MetadataExtractor {
         // Title extraction - priority order
         return (
         // Dublin Core
-        this.getMetaContent('meta[name="DC.Title"]') ||
+        this.getMetaContent('meta[name="DC.Title"]') || this.getMetaContent('meta[name="dc.title"]') ||
             // Citation
             this.getMetaContent('meta[name="citation_title"]') ||
             // Open Graph
@@ -795,7 +795,7 @@ class MetadataExtractor {
                 dcCreators.push(content);
         });
         // Individual author elements
-        const dcCreator = this.getMetaContent('meta[name="DC.Creator.PersonalName"]');
+        const dcCreator = this.getMetaContent('meta[name="DC.Creator.PersonalName"]') || this.getMetaContent('meta[name="dc.creator.personalname"]');
         const citationAuthor = this.getMetaContent('meta[name="citation_author"]');
         const ogAuthor = this.getMetaContent('meta[property="og:article:author"]') ||
             this.getMetaContent('meta[name="author"]');
@@ -821,7 +821,7 @@ class MetadataExtractor {
      * Extract description/abstract from document
      */
     extractDescription() {
-        return (this.getMetaContent('meta[name="DC.Description"]') ||
+        return (this.getMetaContent('meta[name="DC.Description"]') || this.getMetaContent('meta[name="dc.description"]') ||
             this.getMetaContent('meta[name="citation_abstract"]') ||
             this.getMetaContent('meta[property="og:description"]') ||
             this.getMetaContent('meta[name="description"]'));
@@ -830,7 +830,7 @@ class MetadataExtractor {
      * Extract publication date from document
      */
     extractPublishedDate() {
-        return (this.getMetaContent('meta[name="DC.Date.issued"]') ||
+        return (this.getMetaContent('meta[name="DC.Date.issued"]') || this.getMetaContent('meta[name="dc.date.issued"]') ||
             this.getMetaContent('meta[name="citation_date"]') ||
             this.getMetaContent('meta[property="article:published_time"]'));
     }
@@ -838,14 +838,14 @@ class MetadataExtractor {
      * Extract DOI (Digital Object Identifier) from document
      */
     extractDoi() {
-        return (this.getMetaContent('meta[name="DC.Identifier.DOI"]') ||
+        return (this.getMetaContent('meta[name="DC.Identifier.DOI"]') || this.getMetaContent('meta[name="dc.identifier.doi"]') ||
             this.getMetaContent('meta[name="citation_doi"]'));
     }
     /**
      * Extract journal name from document
      */
     extractJournalName() {
-        return (this.getMetaContent('meta[name="DC.Source"]') ||
+        return (this.getMetaContent('meta[name="DC.Source"]') || this.getMetaContent('meta[name="dc.source"]') ||
             this.getMetaContent('meta[name="citation_journal_title"]'));
     }
     /**
@@ -853,7 +853,7 @@ class MetadataExtractor {
      */
     extractTags() {
         const keywords = this.getMetaContent('meta[name="keywords"]') ||
-            this.getMetaContent('meta[name="DC.Subject"]');
+            this.getMetaContent('meta[name="DC.Subject"]') || this.getMetaContent('meta[name="dc.subject"]');
         if (keywords) {
             return keywords.split(',').map(tag => tag.trim());
         }
