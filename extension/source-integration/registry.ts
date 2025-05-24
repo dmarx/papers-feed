@@ -6,37 +6,26 @@ import { arxivIntegration } from './arxiv';
 import { openReviewIntegration } from './openreview';
 import { natureIntegration } from './nature';
 import { pnasIntegration } from './pnas';
-// Import any other integrations here
+import { miscIntegration } from './misc';
 
-/**
- * Registry of all available source integrations
- * This is the SINGLE place where integrations need to be added
- */
 export const sourceIntegrations: SourceIntegration[] = [
   arxivIntegration,
   openReviewIntegration,
   natureIntegration,
   pnasIntegration,
-  // Add new integrations here
+  miscIntegration,
 ];
 
-/**
- * Get all available source integrations
- */
+/*     *     *     *     */
+
 export function getAllIntegrations(): SourceIntegration[] {
   return sourceIntegrations;
 }
 
-/**
- * Get a specific integration by ID
- */
 export function getIntegrationById(id: string): SourceIntegration | undefined {
   return sourceIntegrations.find(integration => integration.id === id);
 }
 
-/**
- * Get all content script match patterns from all integrations
- */
 export function getAllContentScriptMatches(): string[] {
   return sourceIntegrations.flatMap(integration => integration.contentScriptMatches);
 }
