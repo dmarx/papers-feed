@@ -8,7 +8,6 @@ import { loguru } from '../../utils/logger';
 
 const logger = loguru.getLogger('nature-integration');
 
-
 export class PnasIntegration extends BaseSourceIntegration {
   readonly id = 'pnas';
   readonly name = 'PNAS'; 
@@ -27,5 +26,6 @@ export class PnasIntegration extends BaseSourceIntegration {
     const match = url.match(this.urlPatterns[0]);
     return match ? match[1] : null;
   }
+}
 
 export const pnasIntegration = new PnasIntegration();
