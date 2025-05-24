@@ -6,4 +6,4 @@ export * from './registry';
 export { arxivIntegration } from './arxiv';
 export { openReviewIntegration } from './openreview';
 export { natureIntegration } from './nature';
-import { pnasIntegration } from './pnas';
+//import { pnasIntegration } from './pnas';
