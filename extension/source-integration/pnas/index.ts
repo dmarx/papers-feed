@@ -14,8 +14,7 @@ export class PnasIntegration extends BaseSourceIntegration {
   readonly name = 'PNAS'; 
 
   readonly urlPatterns = [
-   // /nature\.com\/articles\/([^?]+)/,
-    /pnas\.org\/doi\/10\.\d+\/pnas\.(\d+)/
+    /pnas\.org\/doi\/10\.1073\/pnas\.([0-9]+)/
   ];
 
   // Content script matches  
