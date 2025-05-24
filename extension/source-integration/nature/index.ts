@@ -38,6 +38,20 @@ class NatureMetadataExtractor extends MetadataExtractor {
         .join(', ');
     }
     return super.extractAuthors();
+
+  /**
+   * Extract keywords/tags from document
+   */
+  protected extractTags(): string[] {
+    const keywords = this.getMetaContent('meta[name="dc.subject"]');
+    
+    if (keywords) {
+      return keywords.split(',').map(tag => tag.trim());
+    }
+    
+    return [];
+  }
+    
   }
 
   /**
