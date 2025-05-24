@@ -830,7 +830,7 @@ class MetadataExtractor {
      * Extract publication date from document
      */
     extractPublishedDate() {
-        return (this.getMetaContent('meta[name="DC.Date.issued"]') || this.getMetaContent('meta[name="dc.date.issued"]') ||
+        return (this.getMetaContent('meta[name="DC.Date.issued"]') || this.getMetaContent('meta[name="dc.date.issued"]') || this.getMetaContent('meta[name="dc.date"]') || this.getMetaContent('meta[name="dc.Date"]') || this.getMetaContent('meta[name="DC.Date"]') ||
             this.getMetaContent('meta[name="citation_date"]') ||
             this.getMetaContent('meta[property="article:published_time"]'));
     }
