@@ -38,7 +38,8 @@ class NatureMetadataExtractor extends MetadataExtractor {
         .join(', ');
     }
     return super.extractAuthors();
-
+  }
+  
   /**
    * Extract keywords/tags from document
    */
@@ -51,8 +52,7 @@ class NatureMetadataExtractor extends MetadataExtractor {
     
     return [];
   }
-    
-  }
+  
 
   /**
    * Override description extraction to use meta tag first
