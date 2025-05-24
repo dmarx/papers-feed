@@ -71,15 +71,23 @@ export class NatureIntegration extends BaseSourceIntegration {
   readonly id = 'nature';
   readonly name = 'Nature'; 
 
-  // URL patterns for Nature articles
+  // URL pattern for Nature articles with capture group for ID
   readonly urlPatterns = [
-    /nature\.com\/articles\/.+/,
+    /nature\.com\/articles\/([^?]+)/,
   ];
 
   // Content script matches  
   readonly contentScriptMatches = [
     "*://*.nature.com/articles/*"
   ];
+
+  /**
+   * Extract paper ID from URL
+   */
+  extractPaperId(url: string): string | null {
+    const match = url.match(this.urlPatterns[0]);
+    return match ? match[1] : null;
+  }
 
   /**
    * Create a custom metadata extractor for Nature.com
