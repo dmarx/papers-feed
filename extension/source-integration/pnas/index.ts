@@ -4,9 +4,7 @@
 import { BaseSourceIntegration } from '../base-source';
 import { PaperMetadata } from '../../papers/types';
 import { MetadataExtractor, ExtractedMetadata } from '../metadata-extractor';
-import { loguru } from '../../utils/logger';
 
-const logger = loguru.getLogger('nature-integration');
 
 export class PnasIntegration extends BaseSourceIntegration {
   readonly id = 'pnas';
