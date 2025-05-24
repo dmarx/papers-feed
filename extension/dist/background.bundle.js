@@ -1536,7 +1536,7 @@ class MiscIntegration extends BaseSourceIntegration {
         this.urlRegexes = this.contentScriptMatches.map(pattern => this.matchPatternToRegex(pattern));
     }
     canHandleUrl(url) {
-        return this.urlRegexes.some(regex => regex.test(url));
+        return false; //this.urlRegexes.some(regex => regex.test(url));
     }
     matchPatternToRegex(pattern) {
         // Convert URL match pattern to regex
