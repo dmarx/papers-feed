@@ -1527,26 +1527,14 @@ class MiscIntegration extends BaseSourceIntegration {
         super(...arguments);
         this.id = 'url-misc';
         this.name = 'misc tracked url';
-        // URL match patterns for content script registration
+        // add URLs here to track
         this.contentScriptMatches = [
             "*://*.sciencedirect.com/science/article/*",
             "*://*.philpapers.org/rec/*",
         ];
-        // Convert match patterns to regexes for URL testing
-        this.urlRegexes = this.contentScriptMatches.map(pattern => this.matchPatternToRegex(pattern));
     }
     canHandleUrl(url) {
-        return false; //this.urlRegexes.some(regex => regex.test(url));
-    }
-    matchPatternToRegex(pattern) {
-        // Convert URL match pattern to regex
-        // * becomes [^/]* for path segments, ** becomes .* for any characters
-        const escaped = pattern
-            .replace(/[.+?^${}()|[\]\\]/g, '\\$&') // Escape regex special chars
-            .replace(/\\\*/g, '[^/]*') // * matches any chars except /
-            .replace(/\[\\^\/\]\*:\/\/\[\\^\/\]\*/g, 'https?://[^/]*') // Handle *://
-            .replace(/\\\*\\\*/g, '.*'); // ** matches any characters
-        return new RegExp(`^${escaped}$`);
+        return false; //this.contentScriptMatches.some(pattern => pattern.test(url));
     }
 }
 const miscIntegration = new MiscIntegration();
