@@ -2,8 +2,8 @@
 // pnas.org integration with custom metadata extractor
 
 import { BaseSourceIntegration } from '../base-source';
-import { PaperMetadata } from '../../papers/types';
-import { MetadataExtractor, ExtractedMetadata } from '../metadata-extractor';
+//import { PaperMetadata } from '../../papers/types';
+//import { MetadataExtractor, ExtractedMetadata } from '../metadata-extractor';
 
 
 export class PnasIntegration extends BaseSourceIntegration {
