@@ -4,20 +4,16 @@
  */
 import { BaseSourceIntegration } from '../base-source';
 
-export class PnasIntegration extends BaseSourceIntegration {
+export class MiscIntegration extends BaseSourceIntegration {
   readonly id = 'url-misc';
   readonly name = 'misc tracked url';
 
+  // add URLs here to track
   readonly contentScriptMatches = [
-    "*://*.sciencedirect.com/science/article/abs*",
-    "https://philpapers.org/rec/EKRDLL",
+    "*://*.sciencedirect.com/science/article/*",
+    "*://*.philpapers.org/rec/*",
   ];
 
-  // upstream BaseSourceIntegration.extractPaperId should default to this behavior when able
-  extractPaperId(url: string): string | null {
-    const match = url.match(this.urlPatterns[0]);
-    return match ? match[1] : null;
-  }
 }
 
-export const pnasIntegration = new PnasIntegration();
+export const miscIntegration = new MiscIntegration();
