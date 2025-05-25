@@ -371,15 +371,15 @@ function initTable(data) {
         field: "source", 
         widthGrow: 1
       },
+      // {
+      //   title: "Authors", 
+      //   field: "authors", 
+      //   widthGrow: 2
+      // },
       {
         title: "Published", 
         field: "published", 
         widthGrow: 1
-      },
-      {
-        title: "Authors", 
-        field: "authors", 
-        widthGrow: 2
       },
       {
         title: "Tags", 
@@ -403,12 +403,6 @@ function initTable(data) {
 
     ],
     rowFormatter: function(row) {
-      // Add classes based on read status
-      // if (row.getData().hasBeenRead) {
-      //   row.getElement().classList.add("paper-read");
-      // } else {
-      //   row.getElement().classList.add("paper-unread");
-      // }
       
       // Add paper ID as data attribute
       const rowElement = row.getElement();
