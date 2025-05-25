@@ -342,8 +342,8 @@ function initTable(data) {
     movableColumns: true,
     groupBy: "lastRead",
     initialSort: [
-      {column: "lastRead", dir: "desc"},
-      {column: "lastReadTimestamp", dir: "desc"} // field needs to be present in table to be sortable?
+      {column: "lastReadTimestamp", dir: "desc"}, // field needs to be present in table to be sortable?
+      {column: "lastRead", dir: "desc"}
     ],
     columns: [
       {
