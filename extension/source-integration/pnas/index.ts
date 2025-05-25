@@ -9,9 +9,9 @@ export class PnasIntegration extends BaseSourceIntegration {
     /pnas\.org\/doi\/10\.1073\/pnas\.([0-9]+)/
   ];
 
-  readonly contentScriptMatches = [
-    "*://*.pnas.org/doi/*"
-  ];
+  // readonly contentScriptMatches = [
+  //   "*://*.pnas.org/doi/*"
+  // ];
 
   // upstream BaseSourceIntegration.extractPaperId should default to this behavior when able
   extractPaperId(url: string): string | null {

@@ -1130,9 +1130,9 @@ class ArXivIntegration extends BaseSourceIntegration {
             /arxiv\.org\/\w+\/([0-9.]+)/
         ];
         // Content script matches
-        this.contentScriptMatches = [
-            "*://*.arxiv.org/*"
-        ];
+        // readonly contentScriptMatches = [
+        //   "*://*.arxiv.org/*"
+        // ];
         // ArXiv API endpoint
         this.API_BASE_URL = 'https://export.arxiv.org/api/query';
     }
@@ -1358,11 +1358,11 @@ class OpenReviewIntegration extends BaseSourceIntegration {
             /openreview\.net\/forum\?id=([a-zA-Z0-9]+)/,
             /openreview\.net\/pdf\?id=([a-zA-Z0-9]+)/
         ];
-        // Content script matches
-        this.contentScriptMatches = [
-            "*://*.openreview.net/*"
-        ];
     }
+    // Content script matches
+    // readonly contentScriptMatches = [
+    //   "*://*.openreview.net/*"
+    // ];
     /**
      * Extract paper ID from URL
      */
@@ -1478,11 +1478,11 @@ class NatureIntegration extends BaseSourceIntegration {
         this.urlPatterns = [
             /nature\.com\/articles\/([^?]+)/,
         ];
-        // Content script matches  
-        this.contentScriptMatches = [
-            "*://*.nature.com/articles/*"
-        ];
     }
+    // Content script matches  
+    // readonly contentScriptMatches = [
+    //   "*://*.nature.com/articles/*"
+    // ];
     /**
      * Extract paper ID from URL
      */
@@ -1509,10 +1509,10 @@ class PnasIntegration extends BaseSourceIntegration {
         this.urlPatterns = [
             /pnas\.org\/doi\/10\.1073\/pnas\.([0-9]+)/
         ];
-        this.contentScriptMatches = [
-            "*://*.pnas.org/doi/*"
-        ];
     }
+    // readonly contentScriptMatches = [
+    //   "*://*.pnas.org/doi/*"
+    // ];
     // upstream BaseSourceIntegration.extractPaperId should default to this behavior when able
     extractPaperId(url) {
         const match = url.match(this.urlPatterns[0]);
@@ -1521,13 +1521,32 @@ class PnasIntegration extends BaseSourceIntegration {
 }
 const pnasIntegration = new PnasIntegration();
 
+// extension/source-integration/misc/index.ts
+class MiscIntegration extends BaseSourceIntegration {
+    constructor() {
+        super(...arguments);
+        this.id = 'url-misc';
+        this.name = 'misc tracked url';
+        this.urlPatterns = []; // set this empty to disable attaching the content injection icon thing
+        // add URLs here to track
+        this.contentScriptMatches = [
+            "sciencedirect.com/science/article/",
+            "philpapers.org/rec/"
+        ];
+    }
+    canHandleUrl(url) {
+        return this.contentScriptMatches.some(pattern => url.includes(pattern));
+    }
+}
+const miscIntegration = new MiscIntegration();
+
 // extension/source-integration/registry.ts
 const sourceIntegrations = [
     arxivIntegration,
     openReviewIntegration,
     natureIntegration,
     pnasIntegration,
-    //miscIntegration,
+    miscIntegration,
 ];
 
 // background.ts

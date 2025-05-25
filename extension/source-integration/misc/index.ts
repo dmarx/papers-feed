@@ -8,14 +8,16 @@ export class MiscIntegration extends BaseSourceIntegration {
   readonly id = 'url-misc';
   readonly name = 'misc tracked url';
 
+  readonly urlPatterns = []; // set this empty to disable attaching the content injection icon thing
+    
   // add URLs here to track
   readonly contentScriptMatches = [
-    "*://*.sciencedirect.com/science/article/*",
-    "*://*.philpapers.org/rec/*",
+    "sciencedirect.com/science/article/",
+    "philpapers.org/rec/"
   ];
 
   canHandleUrl(url: string): boolean {
-    return false; //this.contentScriptMatches.some(pattern => pattern.test(url));
+    return this.contentScriptMatches.some(pattern => url.includes(pattern));
   }
   
 }
