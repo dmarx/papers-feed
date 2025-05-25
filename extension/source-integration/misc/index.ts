@@ -20,7 +20,7 @@ export class MiscIntegration extends BaseSourceIntegration {
     ".science.org/doi/",
     "journals.aps.org/prx/abstract/",
     "onlinelibrary.wiley.com/doi/",
-    //"https://www.cell.com/trends/cognitive-sciences/fulltext/",
+    "cell.com/trends/cognitive-sciences/fulltext/",
     "researchgate.net/publication/",
     "psycnet.apa.org/record/",
     "biorxiv.org/content/",
@@ -30,6 +30,13 @@ export class MiscIntegration extends BaseSourceIntegration {
     "proceedings.mlr.press/",
     "journals.plos.org/plosone/article",
     "ieeexplore.ieee.org/document/",
+    "royalsocietypublishing.org/doi/",
+    "papers.nips.cc/paper_files/paper/",
+    "philarchive.org/archive/",
+    "tandfonline.com/doi/",
+    "iopscience.iop.org/article/",
+    "academic.oup.com/brain/article/",
+    "elifesciences.org/articles/",
   ];
 
   canHandleUrl(url: string): boolean {
