@@ -13,7 +13,7 @@ export const sourceIntegrations: SourceIntegration[] = [
   openReviewIntegration,
   natureIntegration,
   pnasIntegration,
-  //miscIntegration,
+  miscIntegration,
 ];
 
 /*     *     *     *     */
