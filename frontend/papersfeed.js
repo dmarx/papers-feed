@@ -323,11 +323,14 @@ function processComplexData(data) {
 function initTable(data) {
   // Create D3 continuous color scale for reading times
   const readingTimes = data.map(d => d.readingTimeSeconds).filter(t => t > 0);
+
+  //const p75 = d3.quantile(readingTimes.sort(d3.ascending), 0.75);
   
   if (readingTimes.length > 0) {
+    const p75 = d3.quantile(readingTimes.sort(d3.ascending), 0.75);
     // Use D3's continuous scale with interpolated colors
     readingTimeColorScale = d3.scaleSequential(d3.interpolateBlues)
-      .domain(d3.extent(readingTimes));
+      .domain(1, p75);
   }
   
   console.log("Reading time color scale domain:", readingTimeColorScale ? readingTimeColorScale.domain() : "No scale");
