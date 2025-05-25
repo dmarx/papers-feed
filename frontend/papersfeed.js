@@ -394,9 +394,15 @@ function initTable(data) {
       //   widthGrow: 1
       // },
       
-      // field needs to be present in table to be sortable
+      // fields need to be present in table to be sortable
       {
-        title: "Last Read", 
+        title: "Last Read Date", 
+        field: "lastRead", 
+        widthGrow: 1
+        //,formatter: formatDate
+      },
+      {
+        title: "Last Read time", 
         field: "lastReadTimestamp", 
         widthGrow: 1
         //,formatter: formatDate
