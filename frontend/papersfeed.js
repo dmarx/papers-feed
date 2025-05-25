@@ -397,8 +397,8 @@ function initTable(data) {
       {
         title: "Last Read", 
         field: "lastRead", 
-        widthGrow: 1,
-        formatter: formatDate
+        widthGrow: 1
+        //,formatter: formatDate
       }
 
     ],
