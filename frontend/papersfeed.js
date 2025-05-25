@@ -315,7 +315,6 @@ function processComplexData(data) {
       published: paperData.publishedDate, // paperData.published_date ? formatDate(paperData.published_date) : '',
       firstRead: formatDate(paperMeta.created_at),
       lastRead: lastReadDate ? formatDate(lastReadDate) : formatDate(paperMeta.updated_at),
-      //readingTime: formatReadingTime(totalReadingTime),
       readingTimeSeconds: totalReadingTime,
       interactionDays: uniqueInteractionDays,
       tags: tags,
@@ -330,27 +329,19 @@ function processComplexData(data) {
 
 // Initialize the Tabulator table
 function initTable(data) {
-  // Create D3 continuous color scale for reading times
-  const interactionDays = data.map(d => d.interactionDays).filter(t => t > 0);
 
-  //const p75 = d3.quantile(readingTimes.sort(d3.ascending), 0.75);
-  
+  const interactionDays = data.map(d => d.interactionDays).filter(t => t > 0);
   if (interactionDays.length > 0) {
-    const p75id = d3.quantile(interactionDays.sort(d3.ascending), 0.75);
-    // Use D3's continuous scale with interpolated colors
+    const max_id = d3.max(interactionDays);
     interactionDaysColorScale = d3.scaleSequential(d3.interpolateBlues)
-      .domain([1, p75id])
+      .domain([1, max_id])
       //.range([0.1, 0.7])
       ;
   }
 
   const readingTimes = data.map(d => d.readingTimeSeconds).filter(t => t > 0);
-
-  //const p75 = d3.quantile(readingTimes.sort(d3.ascending), 0.75);
-  
   if (readingTimes.length > 0) {
     const p75 = d3.quantile(readingTimes.sort(d3.ascending), 0.75);
-    // Use D3's continuous scale with interpolated colors
     readingTimeColorScale = d3.scaleSequential(d3.interpolateBlues)
       .domain([1, p75])
       //.range([0.1, 0.7])
@@ -514,7 +505,6 @@ function setupEventListeners() {
     }
   });
   
-  // Date filter
   document.getElementById("apply-date-filter").addEventListener("click", function() {
     const fromDate = document.getElementById("date-filter-from").value;
     const toDate = document.getElementById("date-filter-to").value;
@@ -545,7 +535,6 @@ function setupEventListeners() {
     table.clearFilter();
   });
   
-  // Read/Unread filters
   function updateReadFilter() {
     const showRead = document.getElementById("filter-read").checked;
     const showUnread = document.getElementById("filter-unread").checked;
