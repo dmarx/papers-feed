@@ -1531,7 +1531,17 @@ class MiscIntegration extends BaseSourceIntegration {
         // add URLs here to track
         this.contentScriptMatches = [
             "sciencedirect.com/science/article/",
-            "philpapers.org/rec/"
+            "philpapers.org/rec/",
+            "proceedings.neurips.cc/paper_files/paper/",
+            "journals.sagepub.com/doi/",
+            "link.springer.com/article/",
+            ".science.org/doi/",
+            "journals.aps.org/prx/abstract/",
+            "onlinelibrary.wiley.com/doi/",
+            //"https://www.cell.com/trends/cognitive-sciences/fulltext/",
+            "researchgate.net/publication/",
+            "psycnet.apa.org/record/",
+            "biorxiv.org/content/",
         ];
     }
     canHandleUrl(url) {
