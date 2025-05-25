@@ -1527,6 +1527,7 @@ class MiscIntegration extends BaseSourceIntegration {
         super(...arguments);
         this.id = 'url-misc';
         this.name = 'misc tracked url';
+        this.urlPatterns = []; // set this empty to disable attaching the content injection icon thing
         // add URLs here to track
         this.contentScriptMatches = [
             "sciencedirect.com/science/article/",
