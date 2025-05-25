@@ -283,7 +283,7 @@ function processComplexData(data) {
     const authors = Array.isArray(paperData.authors) ? paperData.authors.join(', ') : (paperData.authors || '');
     const title = paperData.title || '';
     const abstract = paperData.abstract || '';
-    const tags = paperData.arxiv_tags || [];
+    const tags = paperData.tags || paperData.arxiv_tags || [];
     
     // Create the row data
     result.push({
