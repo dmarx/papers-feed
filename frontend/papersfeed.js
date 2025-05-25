@@ -423,7 +423,8 @@ function initTable(data) {
       {
         title: "Read Dates", 
         field: "interactionDays", 
-        widthGrow: 1
+        widthGrow: 1,
+        formatter: formatInteractionDaysWithColor
         // formatter: function(cell) {
         //   const value = cell.getValue();
         //   if (value === 0) return "None";
