@@ -331,7 +331,7 @@ function initTable(data) {
     // Use D3's continuous scale with interpolated colors
     readingTimeColorScale = d3.scaleSequential(d3.interpolateBlues)
       .domain([1, p75])
-      .range([0.1, 0.7])
+      //.range([0.1, 0.7])
       ;
   }
   
