@@ -319,6 +319,17 @@ function processComplexData(data) {
 
 // Initialize the Tabulator table
 function initTable(data) {
+  // Create D3 continuous color scale for reading times
+  const readingTimes = data.map(d => d.readingTimeSeconds).filter(t => t > 0);
+  
+  if (readingTimes.length > 0) {
+    // Use D3's continuous scale with interpolated colors
+    readingTimeColorScale = d3.scaleSequential(d3.interpolateBlues)
+      .domain(d3.extent(readingTimes));
+  }
+  
+  console.log("Reading time color scale domain:", readingTimeColorScale ? readingTimeColorScale.domain() : "No scale");
+  
   table = new Tabulator("#papers-table", {
     data: data,
     layout: "fitColumns",
