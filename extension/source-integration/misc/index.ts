@@ -10,12 +10,12 @@ export class MiscIntegration extends BaseSourceIntegration {
 
   // add URLs here to track
   readonly contentScriptMatches = [
-    "*://*.sciencedirect.com/science/article/*",
-    "*://*.philpapers.org/rec/*",
+    "sciencedirect.com/science/article/",
+    "philpapers.org/rec/",
   ];
 
   canHandleUrl(url: string): boolean {
-    return false; //this.contentScriptMatches.some(pattern => pattern.test(url));
+    return fthis.contentScriptMatches.some(pattern => url.includes(pattern));
   }
   
 }
