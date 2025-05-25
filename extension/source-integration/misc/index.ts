@@ -49,9 +49,13 @@ export class MiscIntegration extends BaseSourceIntegration {
     "ntsb.gov/investigations/pages",
     "ntsb.gov/investigations/AccidentReports",
     "aclanthology.org/",
+    "journals.ametsoc.org/view/journals/",
     
-    "/doi/",
+    "substack.com/p/",
     "citeseerx.",
+    "/doi/",
+    "/pdf/",
+
   ];
 
   canHandleUrl(url: string): boolean {
