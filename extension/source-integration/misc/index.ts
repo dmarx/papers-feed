@@ -8,6 +8,8 @@ export class MiscIntegration extends BaseSourceIntegration {
   readonly id = 'url-misc';
   readonly name = 'misc tracked url';
 
+  readonly urlPatterns = []; // set this empty to disable attaching the content injection icon thing
+    
   // add URLs here to track
   readonly contentScriptMatches = [
     "sciencedirect.com/science/article/",
