@@ -11,7 +11,7 @@ export class MiscIntegration extends BaseSourceIntegration {
   // add URLs here to track
   readonly contentScriptMatches = [
     "sciencedirect.com/science/article/",
-    "philpapers.org/rec/",
+    "philpapers.org/rec/"
   ];
 
   canHandleUrl(url: string): boolean {
