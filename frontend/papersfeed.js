@@ -4,6 +4,7 @@ let table;
 let allData = [];
 let currentDetailsPaper = null;
 let readingTimeColorScale = null;
+let interactionDaysColorScale = null;
 
 // Format date to YYYY-MM-DD format
 function formatDate(dateString) {
@@ -13,11 +14,11 @@ function formatDate(dateString) {
 }
 
 // Format reading time from seconds to minutes
-function formatReadingTime(seconds) {
-  if (!seconds || seconds === 0) return 'Not read';
-  const minutes = Math.round(seconds / 60);
-  return minutes; //+ (minutes === 1 ? ' minute' : ' minutes');
-}
+// function formatReadingTime(seconds) {
+//   if (!seconds || seconds === 0) return 'Not read';
+//   const minutes = Math.round(seconds / 60);
+//   return minutes;
+// }
 
 // Custom cell formatter for tags
 function formatTags(cell) {
@@ -35,6 +36,18 @@ function formatTags(cell) {
 function formatReadingTimeWithColor(cell) {
   const seconds = cell.getValue();
   const backgroundColor = readingTimeColorScale(seconds);
+  const textColor = getContrastColor(backgroundColor);
+  
+  const element = cell.getElement();
+  element.style.backgroundColor = backgroundColor;
+  element.style.color = textColor;
+  
+  return seconds;
+}
+
+function formatInteractionDaysWithColor(cell) {
+  const seconds = cell.getValue();
+  const backgroundColor = interactionDaysColorScale(seconds);
   const textColor = getContrastColor(backgroundColor);
   
   const element = cell.getElement();
@@ -318,6 +331,19 @@ function processComplexData(data) {
 // Initialize the Tabulator table
 function initTable(data) {
   // Create D3 continuous color scale for reading times
+  const interactionDays = data.map(d => d.interactionDays).filter(t => t > 0);
+
+  //const p75 = d3.quantile(readingTimes.sort(d3.ascending), 0.75);
+  
+  if (interactionDays.length > 0) {
+    const p75id = d3.quantile(interactionDays.sort(d3.ascending), 0.75);
+    // Use D3's continuous scale with interpolated colors
+    interactionDaysColorScale = d3.scaleSequential(d3.interpolateBlues)
+      .domain([1, p75id])
+      //.range([0.1, 0.7])
+      ;
+  }
+
   const readingTimes = data.map(d => d.readingTimeSeconds).filter(t => t > 0);
 
   //const p75 = d3.quantile(readingTimes.sort(d3.ascending), 0.75);
