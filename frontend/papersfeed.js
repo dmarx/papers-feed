@@ -31,19 +31,21 @@ function formatTags(cell) {
   ).join(' ');
 }
 
+// function testFormatter(cell, formatterParams) {
+//     var bvid = cell.getValue();
+//     cell.getElement().style.backgroundColor = "#A6A6DF";
+//     return bvid
+// }
+
 // Custom formatter for reading time with color background using D3
 function formatReadingTimeWithColor(cell) {
   const seconds = cell.getValue();
-  const readingTime = cell.getRow().getData().readingTime;
-  
-  if (!readingTimeColorScale || seconds === 0) {
-    return `<div style="background-color: #f8f9fa; color: #666; padding: 4px 8px; border-radius: 4px; text-align: center; font-weight: 500;">${readingTime}</div>`;
-  }
-  
+  //const readingTime = cell.getRow().getData().readingTime;
+    
   const backgroundColor = readingTimeColorScale(seconds);
-  const textColor = getContrastColor(backgroundColor);
-  
-  return `<div style="background-color: ${backgroundColor}; color: ${textColor}; padding: 4px 8px; border-radius: 4px; text-align: center; font-weight: 500;">${readingTime}</div>`;
+  //const textColor = getContrastColor(backgroundColor);
+  cell.getElement().style.backgroundColor = backgroundColor;
+  return seconds;
 }
 
 // Get contrasting text color for readability
