@@ -3,6 +3,7 @@
 let table;
 let allData = [];
 let currentDetailsPaper = null;
+let readingTimeColorScale = null;
 
 // Format date to YYYY-MM-DD format
 function formatDate(dateString) {
@@ -28,6 +29,38 @@ function formatTags(cell) {
   return tags.map(tag => 
     `<span class="tag">${tag}</span>`
   ).join(' ');
+}
+
+// Custom formatter for reading time with color background using D3
+function formatReadingTimeWithColor(cell) {
+  const seconds = cell.getValue();
+  const readingTime = cell.getRow().getData().readingTime;
+  
+  if (!readingTimeColorScale || seconds === 0) {
+    return `<div style="background-color: #f8f9fa; color: #666; padding: 4px 8px; border-radius: 4px; text-align: center; font-weight: 500;">${readingTime}</div>`;
+  }
+  
+  const backgroundColor = readingTimeColorScale(seconds);
+  const textColor = getContrastColor(backgroundColor);
+  
+  return `<div style="background-color: ${backgroundColor}; color: ${textColor}; padding: 4px 8px; border-radius: 4px; text-align: center; font-weight: 500;">${readingTime}</div>`;
+}
+
+// Get contrasting text color for readability
+function getContrastColor(rgbColor) {
+  // D3 returns rgb() format, parse it
+  const rgb = rgbColor.match(/\d+/g);
+  if (!rgb) return '#000000';
+  
+  const r = parseInt(rgb[0]);
+  const g = parseInt(rgb[1]); 
+  const b = parseInt(rgb[2]);
+  
+  // Calculate relative luminance
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  
+  // Return black for light backgrounds, white for dark backgrounds
+  return luminance > 0.5 ? '#000000' : '#ffffff';
 }
 
 // Format interactions for display
@@ -341,7 +374,8 @@ function initTable(data) {
       {
         title: "Read Time (s)", 
         field: "readingTimeSeconds",  
-        widthGrow: 1
+        widthGrow: 1,
+        formatter: formatReadingTimeWithColor
         // formatter: function(cell) {
         //   return cell.getRow().getData().readingTime;
         // }
