@@ -1542,6 +1542,12 @@ class MiscIntegration extends BaseSourceIntegration {
             "researchgate.net/publication/",
             "psycnet.apa.org/record/",
             "biorxiv.org/content/",
+            "osf.io/preprints/",
+            "frontiersin.org/journals/",
+            "jstor.org/",
+            "proceedings.mlr.press/",
+            "journals.plos.org/plosone/article",
+            "ieeexplore.ieee.org/document/",
         ];
     }
     canHandleUrl(url) {
