@@ -182,7 +182,21 @@ function extractObjectId(string, prefix) {
 function extractDomain(url) {
   try {
     const urlObj = new URL(url);
-    return urlObj.hostname;
+    let domain = urlObj.hostname;
+    
+    // Remove www. prefix
+    if (domain.startsWith('www.')) {
+      domain = domain.substring(4);
+    }
+    
+    // Remove .com or .org suffix
+    if (domain.endsWith('.com')) {
+      domain = domain.substring(0, domain.length - 4);
+    } else if (domain.endsWith('.org')) {
+      domain = domain.substring(0, domain.length - 4);
+    }
+    
+    return domain;
   } catch (error) {
     // Handle invalid URLs
     console.error("Invalid URL:", error);
