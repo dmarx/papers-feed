@@ -16,7 +16,7 @@ function formatDate(dateString) {
 function formatReadingTime(seconds) {
   if (!seconds || seconds === 0) return 'Not read';
   const minutes = Math.round(seconds / 60);
-  return minutes + (minutes === 1 ? ' minute' : ' minutes');
+  return minutes; //+ (minutes === 1 ? ' minute' : ' minutes');
 }
 
 // Custom cell formatter for tags
