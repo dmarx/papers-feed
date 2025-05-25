@@ -1521,13 +1521,31 @@ class PnasIntegration extends BaseSourceIntegration {
 }
 const pnasIntegration = new PnasIntegration();
 
+// extension/source-integration/misc/index.ts
+class MiscIntegration extends BaseSourceIntegration {
+    constructor() {
+        super(...arguments);
+        this.id = 'url-misc';
+        this.name = 'misc tracked url';
+        // add URLs here to track
+        this.contentScriptMatches = [
+            "sciencedirect.com/science/article/",
+            "philpapers.org/rec/",
+        ];
+    }
+    canHandleUrl(url) {
+        return this.contentScriptMatches.some(pattern => url.includes(pattern));
+    }
+}
+const miscIntegration = new MiscIntegration();
+
 // extension/source-integration/registry.ts
 const sourceIntegrations = [
     arxivIntegration,
     openReviewIntegration,
     natureIntegration,
     pnasIntegration,
-    //miscIntegration,
+    miscIntegration,
 ];
 
 // background.ts
