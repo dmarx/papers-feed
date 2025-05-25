@@ -330,7 +330,7 @@ function initTable(data) {
     const p75 = d3.quantile(readingTimes.sort(d3.ascending), 0.75);
     // Use D3's continuous scale with interpolated colors
     readingTimeColorScale = d3.scaleSequential(d3.interpolateBlues)
-      .domain(1, p75);
+      .domain([1, p75]);
   }
   
   console.log("Reading time color scale domain:", readingTimeColorScale ? readingTimeColorScale.domain() : "No scale");
