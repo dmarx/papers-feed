@@ -4,6 +4,7 @@ let table;
 let allData = [];
 let currentDetailsPaper = null;
 let readingTimeColorScale = null;
+let interactionDaysColorScale = null;
 
 // Format date to YYYY-MM-DD format
 function formatDate(dateString) {
@@ -13,11 +14,11 @@ function formatDate(dateString) {
 }
 
 // Format reading time from seconds to minutes
-function formatReadingTime(seconds) {
-  if (!seconds || seconds === 0) return 'Not read';
-  const minutes = Math.round(seconds / 60);
-  return minutes; //+ (minutes === 1 ? ' minute' : ' minutes');
-}
+// function formatReadingTime(seconds) {
+//   if (!seconds || seconds === 0) return 'Not read';
+//   const minutes = Math.round(seconds / 60);
+//   return minutes;
+// }
 
 // Custom cell formatter for tags
 function formatTags(cell) {
@@ -31,20 +32,28 @@ function formatTags(cell) {
   ).join(' ');
 }
 
-// function testFormatter(cell, formatterParams) {
-//     var bvid = cell.getValue();
-//     cell.getElement().style.backgroundColor = "#A6A6DF";
-//     return bvid
-// }
-
 // Custom formatter for reading time with color background using D3
 function formatReadingTimeWithColor(cell) {
   const seconds = cell.getValue();
-  //const readingTime = cell.getRow().getData().readingTime;
-    
   const backgroundColor = readingTimeColorScale(seconds);
-  //const textColor = getContrastColor(backgroundColor);
-  cell.getElement().style.backgroundColor = backgroundColor;
+  const textColor = getContrastColor(backgroundColor);
+  
+  const element = cell.getElement();
+  element.style.backgroundColor = backgroundColor;
+  element.style.color = textColor;
+  
+  return seconds;
+}
+
+function formatInteractionDaysWithColor(cell) {
+  const seconds = cell.getValue();
+  const backgroundColor = interactionDaysColorScale(seconds);
+  const textColor = getContrastColor(backgroundColor);
+  
+  const element = cell.getElement();
+  element.style.backgroundColor = backgroundColor;
+  element.style.color = textColor;
+  
   return seconds;
 }
 
@@ -306,7 +315,6 @@ function processComplexData(data) {
       published: paperData.publishedDate, // paperData.published_date ? formatDate(paperData.published_date) : '',
       firstRead: formatDate(paperMeta.created_at),
       lastRead: lastReadDate ? formatDate(lastReadDate) : formatDate(paperMeta.updated_at),
-      //readingTime: formatReadingTime(totalReadingTime),
       readingTimeSeconds: totalReadingTime,
       interactionDays: uniqueInteractionDays,
       tags: tags,
@@ -321,14 +329,19 @@ function processComplexData(data) {
 
 // Initialize the Tabulator table
 function initTable(data) {
-  // Create D3 continuous color scale for reading times
-  const readingTimes = data.map(d => d.readingTimeSeconds).filter(t => t > 0);
 
-  //const p75 = d3.quantile(readingTimes.sort(d3.ascending), 0.75);
-  
+  const interactionDays = data.map(d => d.interactionDays).filter(t => t > 0);
+  if (interactionDays.length > 0) {
+    const max_id = d3.max(interactionDays);
+    interactionDaysColorScale = d3.scaleSequential(d3.interpolateBlues)
+      .domain([1, max_id])
+      //.range([0.1, 0.7])
+      ;
+  }
+
+  const readingTimes = data.map(d => d.readingTimeSeconds).filter(t => t > 0);
   if (readingTimes.length > 0) {
     const p75 = d3.quantile(readingTimes.sort(d3.ascending), 0.75);
-    // Use D3's continuous scale with interpolated colors
     readingTimeColorScale = d3.scaleSequential(d3.interpolateBlues)
       .domain([1, p75])
       //.range([0.1, 0.7])
@@ -401,7 +414,8 @@ function initTable(data) {
       {
         title: "Read Dates", 
         field: "interactionDays", 
-        widthGrow: 1
+        widthGrow: 1,
+        formatter: formatInteractionDaysWithColor
         // formatter: function(cell) {
         //   const value = cell.getValue();
         //   if (value === 0) return "None";
@@ -491,7 +505,6 @@ function setupEventListeners() {
     }
   });
   
-  // Date filter
   document.getElementById("apply-date-filter").addEventListener("click", function() {
     const fromDate = document.getElementById("date-filter-from").value;
     const toDate = document.getElementById("date-filter-to").value;
@@ -522,7 +535,6 @@ function setupEventListeners() {
     table.clearFilter();
   });
   
-  // Read/Unread filters
   function updateReadFilter() {
     const showRead = document.getElementById("filter-read").checked;
     const showUnread = document.getElementById("filter-unread").checked;
