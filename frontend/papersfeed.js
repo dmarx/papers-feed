@@ -3,6 +3,7 @@
 let table;
 let allData = [];
 let currentDetailsPaper = null;
+let readingTimeColorScale = null;
 
 // Format date to YYYY-MM-DD format
 function formatDate(dateString) {
@@ -15,7 +16,7 @@ function formatDate(dateString) {
 function formatReadingTime(seconds) {
   if (!seconds || seconds === 0) return 'Not read';
   const minutes = Math.round(seconds / 60);
-  return minutes + (minutes === 1 ? ' minute' : ' minutes');
+  return minutes; //+ (minutes === 1 ? ' minute' : ' minutes');
 }
 
 // Custom cell formatter for tags
@@ -28,6 +29,40 @@ function formatTags(cell) {
   return tags.map(tag => 
     `<span class="tag">${tag}</span>`
   ).join(' ');
+}
+
+// function testFormatter(cell, formatterParams) {
+//     var bvid = cell.getValue();
+//     cell.getElement().style.backgroundColor = "#A6A6DF";
+//     return bvid
+// }
+
+// Custom formatter for reading time with color background using D3
+function formatReadingTimeWithColor(cell) {
+  const seconds = cell.getValue();
+  //const readingTime = cell.getRow().getData().readingTime;
+    
+  const backgroundColor = readingTimeColorScale(seconds);
+  //const textColor = getContrastColor(backgroundColor);
+  cell.getElement().style.backgroundColor = backgroundColor;
+  return seconds;
+}
+
+// Get contrasting text color for readability
+function getContrastColor(rgbColor) {
+  // D3 returns rgb() format, parse it
+  const rgb = rgbColor.match(/\d+/g);
+  if (!rgb) return '#000000';
+  
+  const r = parseInt(rgb[0]);
+  const g = parseInt(rgb[1]); 
+  const b = parseInt(rgb[2]);
+  
+  // Calculate relative luminance
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  
+  // Return black for light backgrounds, white for dark backgrounds
+  return luminance > 0.5 ? '#000000' : '#ffffff';
 }
 
 // Format interactions for display
@@ -286,6 +321,22 @@ function processComplexData(data) {
 
 // Initialize the Tabulator table
 function initTable(data) {
+  // Create D3 continuous color scale for reading times
+  const readingTimes = data.map(d => d.readingTimeSeconds).filter(t => t > 0);
+
+  //const p75 = d3.quantile(readingTimes.sort(d3.ascending), 0.75);
+  
+  if (readingTimes.length > 0) {
+    const p75 = d3.quantile(readingTimes.sort(d3.ascending), 0.75);
+    // Use D3's continuous scale with interpolated colors
+    readingTimeColorScale = d3.scaleSequential(d3.interpolateBlues)
+      .domain([1, p75])
+      //.range([0.1, 0.7])
+      ;
+  }
+  
+  console.log("Reading time color scale domain:", readingTimeColorScale ? readingTimeColorScale.domain() : "No scale");
+  
   table = new Tabulator("#papers-table", {
     data: data,
     layout: "fitColumns",
@@ -341,7 +392,8 @@ function initTable(data) {
       {
         title: "Read Time (s)", 
         field: "readingTimeSeconds",  
-        widthGrow: 1
+        widthGrow: 1,
+        formatter: formatReadingTimeWithColor
         // formatter: function(cell) {
         //   return cell.getRow().getData().readingTime;
         // }
