@@ -1567,8 +1567,11 @@ class MiscIntegration extends BaseSourceIntegration {
             "ntsb.gov/investigations/pages",
             "ntsb.gov/investigations/AccidentReports",
             "aclanthology.org/",
-            "/doi/",
+            "journals.ametsoc.org/view/journals/",
+            "substack.com/p/",
             "citeseerx.",
+            "/doi/",
+            "/pdf/",
         ];
     }
     canHandleUrl(url) {
