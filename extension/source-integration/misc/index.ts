@@ -37,6 +37,21 @@ export class MiscIntegration extends BaseSourceIntegration {
     "iopscience.iop.org/article/",
     "academic.oup.com/brain/article/",
     "elifesciences.org/articles/",
+    "escholarship.org/content/",
+    "pmc.ncbi.nlm.nih.gov/articles/",
+    "pubmed.ncbi.nlm.nih.gov/",
+    "openaccess.thecvf.com/content/",
+    "zenodo.org/records/",
+    "journals.asm.org/doi/full/",
+    "physoc.onlinelibrary.wiley.com/doi/full/",
+    "storage.courtlistener.com/recap/",
+    "bmj.com/content/",
+    "ntsb.gov/investigations/pages",
+    "ntsb.gov/investigations/AccidentReports",
+    "aclanthology.org/",
+    
+    "/doi/",
+    "citeseerx.",
   ];
 
   canHandleUrl(url: string): boolean {
