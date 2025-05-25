@@ -337,8 +337,8 @@ function initTable(data) {
     layout: "fitColumns",
     responsiveLayout: "collapse",
     pagination: "local",
-    paginationSize: 100,
-    paginationSizeSelector: [10, 25, 50, 100, 500, 1000],
+    paginationSize: 1000,
+    paginationSizeSelector: [10, 25, 50, 100, 500, 1000, 2000, 5000],
     movableColumns: true,
     groupBy: "lastRead",
     initialSort: [
