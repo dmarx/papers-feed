@@ -13,35 +13,24 @@ function formatDate(dateString) {
   return date.toISOString().split('T')[0]; // YYYY-MM-DD format
 }
 
-// Format reading time from seconds to minutes
-// function formatReadingTime(seconds) {
-//   if (!seconds || seconds === 0) return 'Not read';
-//   const minutes = Math.round(seconds / 60);
-//   return minutes;
-// }
-
 // Custom cell formatter for tags
 function formatTags(cell) {
   const tags = cell.getValue();
   if (!tags || !Array.isArray(tags) || tags.length === 0) {
     return '';
   }
-  
   return tags.map(tag => 
     `<span class="tag">${tag}</span>`
   ).join(' ');
 }
 
-// Custom formatter for reading time with color background using D3
 function formatReadingTimeWithColor(cell) {
   const seconds = cell.getValue();
   const backgroundColor = readingTimeColorScale(seconds);
   const textColor = getContrastColor(backgroundColor);
-  
   const element = cell.getElement();
   element.style.backgroundColor = backgroundColor;
   element.style.color = textColor;
-  
   return seconds;
 }
 
@@ -49,11 +38,9 @@ function formatInteractionDaysWithColor(cell) {
   const seconds = cell.getValue();
   const backgroundColor = interactionDaysColorScale(seconds);
   const textColor = getContrastColor(backgroundColor);
-  
   const element = cell.getElement();
   element.style.backgroundColor = backgroundColor;
   element.style.color = textColor;
-  
   return seconds;
 }
 
@@ -74,7 +61,6 @@ function getContrastColor(rgbColor) {
   return luminance > 0.5 ? '#000000' : '#ffffff';
 }
 
-// Format interactions for display
 function formatInteractions(interactions) {
   if (!interactions || interactions.length === 0) {
     return '<p>No reading sessions recorded</p>';
@@ -105,7 +91,6 @@ function formatInteractions(interactions) {
   `;
 }
 
-// Display paper details in the details sidebar
 function displayPaperDetails(paperId) {
   console.log("Displaying details for paper ID:", paperId);
   
@@ -116,14 +101,10 @@ function displayPaperDetails(paperId) {
     return;
   }
   
-  // Update the current paper
   currentDetailsPaper = paper;
   
-  // Get the details sidebar and content
   const detailsSidebar = document.getElementById('details-sidebar');
   const detailsContent = document.getElementById('details-content');
-  
-  // Update the content
   detailsContent.innerHTML = `
     <div class="details-header">
       <h2>${paper.title}</h2>
@@ -248,7 +229,7 @@ function extractDomain(url) {
   }
 }
 
-// Process complex data structure
+// read and reshape gh-store scnapshot
 function processComplexData(data) {
   const result = [];
   const objects = data.objects;
@@ -363,20 +344,17 @@ function initTable(data) {
       {column: "lastRead", dir: "desc"}
     ],
     columns: [
-      // {
-      //   title: "ID", 
-      //   field: "id", 
-      //   widthGrow: 1
-      // },
       {
-        title: "Source", 
-        field: "source", 
-        widthGrow: 1
+        title: "Read Dates", 
+        field: "interactionDays", 
+        widthGrow: 1,
+        formatter: formatInteractionDaysWithColor
       },
       {
-        title: "Published", 
-        field: "published", 
-        widthGrow: 1
+        title: "Read Time (s)", 
+        field: "readingTimeSeconds",  
+        widthGrow: 1,
+        formatter: formatReadingTimeWithColor
       },
       {
         title: "Title", 
@@ -388,40 +366,31 @@ function initTable(data) {
         }
       },
       {
+        title: "Source", 
+        field: "source", 
+        widthGrow: 1
+      },
+      {
+        title: "Published", 
+        field: "published", 
+        widthGrow: 1
+      },
+      {
         title: "Authors", 
         field: "authors", 
         widthGrow: 2
       },
-      {
-        title: "First Read", 
-        field: "firstRead", 
-        widthGrow: 1
-      },
-      {
-        title: "Last Read", 
-        field: "lastRead", 
-        widthGrow: 1
-      },
-      {
-        title: "Read Time (s)", 
-        field: "readingTimeSeconds",  
-        widthGrow: 1,
-        formatter: formatReadingTimeWithColor
-        // formatter: function(cell) {
-        //   return cell.getRow().getData().readingTime;
-        // }
-      },
-      {
-        title: "Read Dates", 
-        field: "interactionDays", 
-        widthGrow: 1,
-        formatter: formatInteractionDaysWithColor
-        // formatter: function(cell) {
-        //   const value = cell.getValue();
-        //   if (value === 0) return "None";
-        //   return value === 1 ? "1 day" : `${value} days`;
-        // }
-      },
+      // {
+      //   title: "First Read", 
+      //   field: "firstRead", 
+      //   widthGrow: 1
+      // },
+      // {
+      //   title: "Last Read", 
+      //   field: "lastRead", 
+      //   widthGrow: 1
+      // },
+
       {
         title: "Tags", 
         field: "tags", 
