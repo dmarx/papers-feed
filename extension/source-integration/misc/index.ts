@@ -15,7 +15,7 @@ export class MiscIntegration extends BaseSourceIntegration {
   ];
 
   canHandleUrl(url: string): boolean {
-    return fthis.contentScriptMatches.some(pattern => url.includes(pattern));
+    return this.contentScriptMatches.some(pattern => url.includes(pattern));
   }
   
 }
