@@ -381,13 +381,12 @@ function initTable(data) {
         field: "authors", 
         widthGrow: 2
       },
-
       {
         title: "Tags", 
         field: "tags", 
         widthGrow: 1,
         formatter: formatTags
-      }
+      },
       // {
       //   title: "First Read", 
       //   field: "firstRead", 
@@ -400,7 +399,7 @@ function initTable(data) {
         field: "lastRead", 
         widthGrow: 1,
         formatter: formatDate
-      },
+      }
 
     ],
     rowFormatter: function(row) {
