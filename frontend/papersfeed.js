@@ -295,8 +295,8 @@ function processComplexData(data) {
       abstract: abstract,
       published: paperData.publishedDate, // paperData.published_date ? formatDate(paperData.published_date) : '',
       firstRead: formatDate(paperMeta.created_at),
-      //lastRead: lastReadDate ? formatDate(lastReadDate) : formatDate(paperMeta.updated_at),
-      lastRead: lastReadDate ? lastReadDate : paperMeta.updated_at,
+      lastRead: lastReadDate ? formatDate(lastReadDate) : formatDate(paperMeta.updated_at),
+      lastReadTimestamp: lastReadDate ? lastReadDate : paperMeta.updated_at,
       readingTimeSeconds: totalReadingTime,
       interactionDays: uniqueInteractionDays,
       tags: tags,
@@ -342,7 +342,7 @@ function initTable(data) {
     movableColumns: true,
     groupBy: "lastRead",
     initialSort: [
-      {column: "lastRead", dir: "desc"} // field needs to be present in table to be sortable
+      {column: "lastReadTimestamp", dir: "desc"} // field needs to be present in table to be sortable?
     ],
     columns: [
       {
@@ -396,7 +396,7 @@ function initTable(data) {
       // field needs to be present in table to be sortable
       {
         title: "Last Read", 
-        field: "lastRead", 
+        field: "lastReadTimestamp", 
         widthGrow: 1
         //,formatter: formatDate
       }
