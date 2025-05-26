@@ -6,6 +6,122 @@ let currentDetailsPaper = null;
 let readingTimeColorScale = null;
 let interactionDaysColorScale = null;
 
+// Filter Manager for unified filter state
+class FilterManager {
+  constructor(table) {
+    this.table = table;
+    this.filters = new Map(); // name -> {fn, description}
+    this.listeners = new Set();
+  }
+  
+  setFilter(name, filterFunction, description) {
+    this.filters.set(name, { fn: filterFunction, desc: description });
+    this.applyFilters();
+    this.notifyListeners();
+  }
+  
+  removeFilter(name) {
+    this.filters.delete(name);
+    this.applyFilters();
+    this.notifyListeners();
+  }
+  
+  clearAll() {
+    this.filters.clear();
+    this.applyFilters();
+    this.notifyListeners();
+  }
+  
+  applyFilters() {
+    if (this.filters.size === 0) {
+      this.table.clearFilter();
+      return;
+    }
+    
+    this.table.setFilter((data) => {
+      return Array.from(this.filters.values())
+        .every(filter => filter.fn(data));
+    });
+  }
+  
+  getActiveFilters() {
+    return Array.from(this.filters.entries())
+      .map(([name, {desc}]) => ({name, description: desc}));
+  }
+  
+  addListener(callback) {
+    this.listeners.add(callback);
+  }
+  
+  removeListener(callback) {
+    this.listeners.delete(callback);
+  }
+  
+  notifyListeners() {
+    this.listeners.forEach(callback => callback());
+  }
+}
+
+// Filter Status Bar UI Component
+class FilterStatusBar {
+  constructor(filterManager) {
+    this.filterManager = filterManager;
+    this.container = document.getElementById('filter-status-bar');
+    this.badgeContainer = document.getElementById('filter-badges');
+    this.clearAllBtn = document.getElementById('clear-all-filters');
+    
+    // Listen for filter changes
+    this.filterManager.addListener(() => this.render());
+    
+    // Set up clear all button
+    this.clearAllBtn.addEventListener('click', () => {
+      this.filterManager.clearAll();
+    });
+  }
+  
+  render() {
+    const activeFilters = this.filterManager.getActiveFilters();
+    
+    if (activeFilters.length === 0) {
+      this.container.style.display = 'none';
+      return;
+    }
+    
+    this.container.style.display = 'block';
+    this.badgeContainer.innerHTML = '';
+    
+    activeFilters.forEach(({name, description}) => {
+      const badge = this.createFilterBadge(name, description);
+      this.badgeContainer.appendChild(badge);
+    });
+  }
+  
+  createFilterBadge(name, description) {
+    const badge = document.createElement('div');
+    badge.className = 'filter-badge';
+    
+    const text = document.createElement('span');
+    text.textContent = description;
+    
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'filter-badge-remove';
+    removeBtn.innerHTML = '×';
+    removeBtn.title = `Remove ${description} filter`;
+    removeBtn.addEventListener('click', () => {
+      this.filterManager.removeFilter(name);
+    });
+    
+    badge.appendChild(text);
+    badge.appendChild(removeBtn);
+    
+    return badge;
+  }
+}
+
+// Global filter manager instance
+let filterManager;
+let filterStatusBar;
+
 // Format date to YYYY-MM-DD format
 function formatDate(dateString) {
   if (!dateString) return '';
@@ -288,7 +404,7 @@ function processComplexData(data) {
       title: title,
       authors: authors,
       abstract: abstract,
-      published: paperData.publishedDate, // paperData.published_date ? formatDate(paperData.published_date) : '',
+      published: paperData.publishedDate,
       firstRead: formatDate(paperMeta.created_at),
       lastRead: lastReadDate ? formatDate(lastReadDate) : formatDate(paperMeta.updated_at),
       lastReadTimestamp: lastReadDate ? lastReadDate : paperMeta.updated_at,
@@ -296,8 +412,7 @@ function processComplexData(data) {
       interactionDays: uniqueInteractionDays,
       tags: tags,
       url: paperData.url,
-      rawInteractionData: interactionData ? interactionData.interactions : [],
-      hasBeenRead: lastReadDate !== null
+      rawInteractionData: interactionData ? interactionData.interactions : []
     });
   }
   
@@ -311,18 +426,14 @@ function initTable(data) {
   if (interactionDays.length > 0) {
     const max_id = d3.max(interactionDays);
     interactionDaysColorScale = d3.scaleSequential(d3.interpolateBlues)
-      .domain([1, max_id])
-      //.range([0.1, 0.7])
-      ;
+      .domain([1, max_id]);
   }
 
   const readingTimes = data.map(d => d.readingTimeSeconds).filter(t => t > 0);
   if (readingTimes.length > 0) {
     const p75 = d3.quantile(readingTimes.sort(d3.ascending), 0.75);
     readingTimeColorScale = d3.scaleSequential(d3.interpolateBlues)
-      .domain([1, p75])
-      //.range([0.1, 0.7])
-      ;
+      .domain([1, p75]);
   }
   
   console.log("Reading time color scale domain:", readingTimeColorScale ? readingTimeColorScale.domain() : "No scale");
@@ -337,7 +448,7 @@ function initTable(data) {
     movableColumns: true,
     groupBy: "lastRead",
     initialSort: [
-      {column: "lastReadTimestamp", dir: "desc"}, // field needs to be present in table to be sortable?
+      {column: "lastReadTimestamp", dir: "desc"},
       {column: "lastRead", dir: "desc"}
     ],
     columns: [
@@ -367,11 +478,6 @@ function initTable(data) {
         field: "source", 
         widthGrow: 1
       },
-      // {
-      //   title: "Authors", 
-      //   field: "authors", 
-      //   widthGrow: 2
-      // },
       {
         title: "Published", 
         field: "published", 
@@ -383,37 +489,29 @@ function initTable(data) {
         widthGrow: 1,
         formatter: formatTags
       },
-      // {
-      //   title: "First Read", 
-      //   field: "firstRead", 
-      //   widthGrow: 1
-      // },
-      
-      // fields need to be present in table to be sortable
       {
         title: "Last Read Date", 
         field: "lastRead", 
         widthGrow: 1
-        //,formatter: formatDate
       },
       {
         title: "Last Read time", 
         field: "lastReadTimestamp", 
         widthGrow: 1
-        //,formatter: formatDate
       }
-
     ],
     rowFormatter: function(row) {
-      
       // Add paper ID as data attribute
       const rowElement = row.getElement();
       const paper_Id = row.getData().paperKey;
-      //const paper_Id = row.getData("id");
       console.log("formatter detected paperId:", paper_Id);
       rowElement.setAttribute("data-paper-id", paper_Id);
     }
   });
+  
+  // Initialize filter manager and status bar
+  filterManager = new FilterManager(table);
+  filterStatusBar = new FilterStatusBar(filterManager);
   
   // Remove loading message
   document.querySelector(".loading").style.display = "none";
@@ -432,22 +530,83 @@ function initTable(data) {
   });
 }
 
+// Helper functions for filters
+function createSearchFilter(searchTerm) {
+  const term = searchTerm.toLowerCase().trim();
+  return function(data) {
+    if (!term) return true;
+    
+    const searchableText = [
+      data.title,
+      data.authors,
+      data.abstract,
+      ...(data.tags || [])
+    ].join(' ').toLowerCase();
+    
+    return searchableText.includes(term);
+  };
+}
+
+function createDateRangeFilter(fromDate, toDate) {
+  return function(data) {
+    if (!fromDate && !toDate) return true;
+    if (!data.published) return false;
+    
+    const publishedDate = data.published;
+    
+    if (fromDate && toDate) {
+      return publishedDate >= fromDate && publishedDate <= toDate;
+    }
+    
+    if (fromDate) {
+      return publishedDate >= fromDate;
+    }
+    
+    if (toDate) {
+      return publishedDate <= toDate;
+    }
+    
+    return true;
+  };
+}
+
+function createReadingTimeFilter(minMinutes) {
+  const minSeconds = minMinutes * 60;
+  return function(data) {
+    return data.readingTimeSeconds >= minSeconds;
+  };
+}
+
+function createInteractionDaysFilter(minDays) {
+  return function(data) {
+    return data.interactionDays >= minDays;
+  };
+}
+
 // Setup event listeners for filters and search
 function setupEventListeners() {
-// Global search
+  // Global search with debouncing
+  let searchTimeout;
   document.getElementById("search-input").addEventListener("input", function(e) {
-    table.setFilter(function(data) {
-      const searchTerm = e.target.value.toLowerCase().trim();
-      if (!searchTerm) return true;
-      
-      // Search in title, authors, abstract, and tags
-      return (
-        data.title.toLowerCase().includes(searchTerm) ||
-        data.authors.toLowerCase().includes(searchTerm) ||
-        data.abstract.toLowerCase().includes(searchTerm) ||
-        data.tags.some(tag => tag.toLowerCase().includes(searchTerm))
-      );
-    });
+    const searchTerm = e.target.value.trim();
+    
+    // Clear previous timeout
+    clearTimeout(searchTimeout);
+    
+    // Debounce search input
+    searchTimeout = setTimeout(() => {
+      if (searchTerm) {
+        filterManager.setFilter('search', createSearchFilter(searchTerm), `Search: "${searchTerm}"`);
+      } else {
+        filterManager.removeFilter('search');
+      }
+    }, 300);
+  });
+  
+  // Clear search button
+  document.getElementById("clear-search").addEventListener("click", function() {
+    document.getElementById("search-input").value = "";
+    filterManager.removeFilter('search');
   });
   
   // Toggle filter sidebar
@@ -474,95 +633,64 @@ function setupEventListeners() {
     }
   });
   
+  // Date range filters
   document.getElementById("apply-date-filter").addEventListener("click", function() {
     const fromDate = document.getElementById("date-filter-from").value;
     const toDate = document.getElementById("date-filter-to").value;
     
-    table.setFilter(function(data) {
-      if (!fromDate && !toDate) return true;
-      if (!data.published) return false;
-      
-      if (fromDate && toDate) {
-        return data.published >= fromDate && data.published <= toDate;
-      }
-      
-      if (fromDate) {
-        return data.published >= fromDate;
-      }
-      
-      if (toDate) {
-        return data.published <= toDate;
-      }
-      
-      return true;
-    });
+    if (fromDate || toDate) {
+      const description = formatDateRangeDescription(fromDate, toDate);
+      filterManager.setFilter('dateRange', createDateRangeFilter(fromDate, toDate), description);
+    } else {
+      filterManager.removeFilter('dateRange');
+    }
   });
   
   document.getElementById("clear-date-filter").addEventListener("click", function() {
     document.getElementById("date-filter-from").value = "";
     document.getElementById("date-filter-to").value = "";
-    table.clearFilter();
+    filterManager.removeFilter('dateRange');
   });
-  
-  function updateReadFilter() {
-    const showRead = document.getElementById("filter-read").checked;
-    const showUnread = document.getElementById("filter-unread").checked;
-    
-    if (showRead && showUnread) {
-      table.removeFilter("hasBeenRead");
-      return;
-    }
-    
-    if (showRead) {
-      table.setFilter("hasBeenRead", "=", true);
-      return;
-    }
-    
-    if (showUnread) {
-      table.setFilter("hasBeenRead", "=", false);
-      return;
-    }
-    
-    // If neither is checked, show nothing
-    table.setFilter(function() { return false; });
-  }
-  
-  document.getElementById("filter-read").addEventListener("change", updateReadFilter);
-  document.getElementById("filter-unread").addEventListener("change", updateReadFilter);
   
   // Reading time filter
   document.getElementById("apply-reading-filter").addEventListener("click", function() {
     const minReading = document.getElementById("min-reading-time").value;
     
-    if (!minReading) {
-      table.removeFilter("readingTimeSeconds");
-      return;
+    if (minReading && minReading > 0) {
+      filterManager.setFilter(
+        'readingTime', 
+        createReadingTimeFilter(parseInt(minReading)), 
+        `Reading time: ≥${minReading} min`
+      );
+    } else {
+      filterManager.removeFilter('readingTime');
     }
-    
-    const minSeconds = parseInt(minReading) * 60;
-    table.setFilter("readingTimeSeconds", ">=", minSeconds);
   });
   
   document.getElementById("clear-reading-filter").addEventListener("click", function() {
     document.getElementById("min-reading-time").value = "";
-    table.removeFilter("readingTimeSeconds");
+    filterManager.removeFilter('readingTime');
   });
   
   // Interaction days filter
   document.getElementById("apply-days-filter").addEventListener("click", function() {
     const minDays = document.getElementById("min-interaction-days").value;
     
-    if (!minDays) {
-      table.removeFilter("interactionDays");
-      return;
+    if (minDays && minDays > 0) {
+      const days = parseInt(minDays);
+      filterManager.setFilter(
+        'interactionDays', 
+        createInteractionDaysFilter(days), 
+        `Interaction days: ≥${days}`
+      );
+    } else {
+      filterManager.removeFilter('interactionDays');
     }
-    
-    table.setFilter("interactionDays", ">=", parseInt(minDays));
   });
   
   document.getElementById("clear-days-filter").addEventListener("click", function() {
     document.getElementById("min-interaction-days").value = "";
-    table.removeFilter("interactionDays");
+    filterManager.removeFilter('interactionDays');
   });
   
   // Reset all filters
@@ -574,13 +702,21 @@ function setupEventListeners() {
     document.getElementById("min-reading-time").value = "";
     document.getElementById("min-interaction-days").value = "";
     
-    // Reset checkboxes
-    document.getElementById("filter-read").checked = true;
-    document.getElementById("filter-unread").checked = true;
-    
-    // Clear all table filters
-    table.clearFilter();
+    // Clear all filters through filter manager
+    filterManager.clearAll();
   });
+}
+
+// Helper function to format date range descriptions
+function formatDateRangeDescription(fromDate, toDate) {
+  if (fromDate && toDate) {
+    return `Date: ${fromDate} to ${toDate}`;
+  } else if (fromDate) {
+    return `Date: from ${fromDate}`;
+  } else if (toDate) {
+    return `Date: until ${toDate}`;
+  }
+  return 'Date range';
 }
 
 // Load and initialize
