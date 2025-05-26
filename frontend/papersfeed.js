@@ -94,7 +94,6 @@ function formatInteractions(interactions) {
 function displayPaperDetails(paperId) {
   console.log("Displaying details for paper ID:", paperId);
   
-  // Find the paper data
   const paper = allData.find(p => p.paperKey === paperId);
   if (!paper) {
     console.error('Paper not found:', paperId);
@@ -105,12 +104,11 @@ function displayPaperDetails(paperId) {
   
   const detailsSidebar = document.getElementById('details-sidebar');
   const detailsContent = document.getElementById('details-content');
+  
+  // Content no longer includes close button - it's now fixed in HTML
   detailsContent.innerHTML = `
     <div class="details-header">
       <h2>${paper.title}</h2>
-      <button id="close-details" class="close-button">
-        <i class="fas fa-times"></i>
-      </button>
     </div>
     
     <div class="detail-section">
@@ -166,21 +164,18 @@ function displayPaperDetails(paperId) {
   
   // Show the sidebar
   detailsSidebar.classList.add('active');
-  
-  // Set up close button
-  const closeButton = document.getElementById('close-details');
-  if (closeButton) {
-    closeButton.addEventListener('click', function() {
-      detailsSidebar.classList.remove('active');
-    });
-  }
+}
+
+function hideDetails() {
+  const detailsSidebar = document.getElementById('details-sidebar');
+  detailsSidebar.classList.remove('active');
 }
 
 function removePrefix(string, prefix, sep = ':') {
   if (string.startsWith(prefix + sep)) {
     return string.slice(prefix.length + sep.length);
   }
-  return null; // Return null to indicate no match
+  return null;
 }
 
 function extractObjectId(string, prefix) {
