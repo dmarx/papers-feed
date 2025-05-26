@@ -100,6 +100,11 @@ class FilterStatusBar {
     const badge = document.createElement('div');
     badge.className = 'filter-badge';
     
+    // Add preview styling for search preview
+    if (name === 'search-preview') {
+      badge.classList.add('preview');
+    }
+    
     const text = document.createElement('span');
     text.textContent = description;
     
@@ -109,6 +114,12 @@ class FilterStatusBar {
     removeBtn.title = `Remove ${description} filter`;
     removeBtn.addEventListener('click', () => {
       this.filterManager.removeFilter(name);
+      
+      // If removing search preview, also clear the input
+      if (name === 'search-preview') {
+        document.getElementById("search-input").value = "";
+        currentPreviewSearchTerm = null;
+      }
     });
     
     badge.appendChild(text);
@@ -547,6 +558,24 @@ function createSearchFilter(searchTerm) {
   };
 }
 
+function createMultiSearchFilter(searchTerms) {
+  // OR logic: papers must contain ANY of the search terms
+  return function(data) {
+    if (!searchTerms || searchTerms.length === 0) return true;
+    
+    const searchableText = [
+      data.title,
+      data.authors,
+      data.abstract,
+      ...(data.tags || [])
+    ].join(' ').toLowerCase();
+    
+    return searchTerms.some(term => 
+      searchableText.includes(term.toLowerCase().trim())
+    );
+  };
+}
+
 function createDateRangeFilter(fromDate, toDate) {
   return function(data) {
     if (!fromDate && !toDate) return true;
@@ -583,30 +612,62 @@ function createInteractionDaysFilter(minDays) {
   };
 }
 
+// Multi-search state management
+let searchTermCounter = 0;
+let currentPreviewSearchTerm = null;
+
 // Setup event listeners for filters and search
 function setupEventListeners() {
-  // Global search with debouncing
+  const searchInput = document.getElementById("search-input");
+  
+  // Global search with debouncing for preview
   let searchTimeout;
-  document.getElementById("search-input").addEventListener("input", function(e) {
+  searchInput.addEventListener("input", function(e) {
     const searchTerm = e.target.value.trim();
     
     // Clear previous timeout
     clearTimeout(searchTimeout);
     
-    // Debounce search input
+    // Debounce search input for preview
     searchTimeout = setTimeout(() => {
       if (searchTerm) {
-        filterManager.setFilter('search', createSearchFilter(searchTerm), `Search: "${searchTerm}"`);
+        // Show preview of current search term
+        currentPreviewSearchTerm = searchTerm;
+        filterManager.setFilter('search-preview', createSearchFilter(searchTerm), `Search: "${searchTerm}"`);
       } else {
-        filterManager.removeFilter('search');
+        // Clear preview when input is empty
+        currentPreviewSearchTerm = null;
+        filterManager.removeFilter('search-preview');
       }
     }, 300);
   });
   
-  // Clear search button
+  // Handle Enter key to commit search term
+  searchInput.addEventListener("keydown", function(e) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      const searchTerm = e.target.value.trim();
+      
+      if (searchTerm) {
+        // Remove the preview filter
+        filterManager.removeFilter('search-preview');
+        currentPreviewSearchTerm = null;
+        
+        // Add committed search term with unique ID
+        const searchId = `search-${++searchTermCounter}`;
+        filterManager.setFilter(searchId, createSearchFilter(searchTerm), `Search: "${searchTerm}"`);
+        
+        // Clear the input for next search term
+        e.target.value = "";
+      }
+    }
+  });
+  
+  // Clear search button - clears current input and preview
   document.getElementById("clear-search").addEventListener("click", function() {
     document.getElementById("search-input").value = "";
-    filterManager.removeFilter('search');
+    filterManager.removeFilter('search-preview');
+    currentPreviewSearchTerm = null;
   });
   
   // Toggle filter sidebar
@@ -701,6 +762,10 @@ function setupEventListeners() {
     document.getElementById("date-filter-to").value = "";
     document.getElementById("min-reading-time").value = "";
     document.getElementById("min-interaction-days").value = "";
+    
+    // Reset search counter and preview state
+    searchTermCounter = 0;
+    currentPreviewSearchTerm = null;
     
     // Clear all filters through filter manager
     filterManager.clearAll();
