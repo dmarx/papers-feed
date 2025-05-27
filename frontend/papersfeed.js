@@ -6,6 +6,7 @@ let currentDetailsPaper = null;
 let readingTimeColorScale = null;
 let interactionDaysColorScale = null;
 let readingActivityData = [];
+let currentHeatmapMetric = 'papers';
 
 // Filter Manager for unified filter state
 class FilterManager {
@@ -50,7 +51,7 @@ class FilterManager {
   updateHeatmap() {
     // If viewing paper details, show only that paper's activity
     if (currentDetailsPaper) {
-      const singlePaperActivity = extractReadingActivityData([currentDetailsPaper]);
+      const singlePaperActivity = extractReadingActivityData([currentDetailsPaper], currentHeatmapMetric);
       createReadingHeatmap(singlePaperActivity);
       return;
     }
@@ -60,7 +61,7 @@ class FilterManager {
     console.log("Updating heatmap with", filteredData.length, "filtered papers");
     
     // Extract reading activity from filtered data
-    const filteredActivityData = extractReadingActivityData(filteredData);
+    const filteredActivityData = extractReadingActivityData(filteredData, currentHeatmapMetric);
     
     // Recreate the heatmap with filtered data
     createReadingHeatmap(filteredActivityData);
@@ -156,7 +157,7 @@ let filterManager;
 let filterStatusBar;
 
 // Extract reading activity data from interaction data
-function extractReadingActivityData(data) {
+function extractReadingActivityData(data, metric = 'papers') {
   const dailyActivity = new Map();
   
   data.forEach(paper => {
@@ -167,35 +168,70 @@ function extractReadingActivityData(data) {
           const dateStr = d3.timeFormat("%Y-%m-%d")(date);
           
           if (!dailyActivity.has(dateStr)) {
-            dailyActivity.set(dateStr, new Set());
+            dailyActivity.set(dateStr, {
+              papers: new Set(),
+              totalTime: 0,
+              sessions: 0,
+              discoveries: new Set()
+            });
           }
-          dailyActivity.get(dateStr).add(paper.paperKey);
+          
+          const dayData = dailyActivity.get(dateStr);
+          dayData.papers.add(paper.paperKey);
+          dayData.totalTime += interaction.data.duration_seconds || 0;
+          dayData.sessions += 1;
         }
       });
     }
+    
+    // Track paper discoveries (first read date)
+    if (paper.firstRead) {
+      const firstReadStr = paper.firstRead;
+      if (!dailyActivity.has(firstReadStr)) {
+        dailyActivity.set(firstReadStr, {
+          papers: new Set(),
+          totalTime: 0,
+          sessions: 0,
+          discoveries: new Set()
+        });
+      }
+      dailyActivity.get(firstReadStr).discoveries.add(paper.paperKey);
+    }
   });
   
-  // Convert to array format with unique paper counts
-  const result = Array.from(dailyActivity.entries()).map(([dateStr, paperSet]) => ({
-    date: new Date(dateStr),
-    count: paperSet.size
-  }));
+  // Convert to array format based on selected metric
+  const result = Array.from(dailyActivity.entries()).map(([dateStr, dayData]) => {
+    let count;
+    switch (metric) {
+      case 'papers':
+        count = dayData.papers.size;
+        break;
+      case 'time':
+        count = Math.round(dayData.totalTime / 60); // Convert to minutes
+        break;
+      case 'sessions':
+        count = dayData.sessions;
+        break;
+      case 'discoveries':
+        count = dayData.discoveries.size;
+        break;
+      default:
+        count = dayData.papers.size;
+    }
+    
+    return {
+      date: new Date(dateStr),
+      count: count
+    };
+  });
   
-  return result.sort((a, b) => a.date - b.date);
+  return result.filter(d => d.count > 0).sort((a, b) => a.date - b.date);
 }
 
 // Create reading activity heatmap
 function createReadingHeatmap(data) {
   const container = d3.select("#reading-heatmap");
   container.selectAll("*").remove(); // Clear existing content
-  
-  // Update heatmap title based on context
-  const titleElement = document.querySelector('.heatmap-title');
-  if (currentDetailsPaper) {
-    titleElement.textContent = `Reading Activity: ${currentDetailsPaper.title.substring(0, 50)}${currentDetailsPaper.title.length > 50 ? '...' : ''}`;
-  } else {
-    titleElement.textContent = "Reading Activity (Papers per day)";
-  }
   
   if (!data || data.length === 0) {
     container.append("div")
@@ -291,10 +327,28 @@ function createReadingHeatmap(data) {
         .duration(200)
         .style("opacity", .9);
       
-      // Adjust tooltip text based on context
-      const paperText = currentDetailsPaper 
-        ? (count > 0 ? "Read this paper" : "No activity") 
-        : `${count} paper${count !== 1 ? 's' : ''} read`;
+      // Adjust tooltip text based on context and metric
+      let paperText;
+      if (currentDetailsPaper) {
+        paperText = count > 0 ? "Read this paper" : "No activity";
+      } else {
+        switch (currentHeatmapMetric) {
+          case 'papers':
+            paperText = `${count} paper${count !== 1 ? 's' : ''} read`;
+            break;
+          case 'time':
+            paperText = `${count} minute${count !== 1 ? 's' : ''} reading`;
+            break;
+          case 'sessions':
+            paperText = `${count} session${count !== 1 ? 's' : ''}`;
+            break;
+          case 'discoveries':
+            paperText = `${count} paper${count !== 1 ? 's' : ''} discovered`;
+            break;
+          default:
+            paperText = `${count} paper${count !== 1 ? 's' : ''} read`;
+        }
+      }
       
       tooltip.html(`
         <div><strong>${formatDate(d)}</strong></div>
@@ -462,7 +516,7 @@ function displayPaperDetails(paperId) {
   currentDetailsPaper = paper;
   
   // Update heatmap to show only this paper's activity
-  const singlePaperActivity = extractReadingActivityData([paper]);
+  const singlePaperActivity = extractReadingActivityData([paper], currentHeatmapMetric);
   createReadingHeatmap(singlePaperActivity);
   
   const detailsSidebar = document.getElementById('details-sidebar');
@@ -540,7 +594,8 @@ function hideDetails() {
     filterManager.updateHeatmap();
   } else {
     // If no filters, show all data
-    createReadingHeatmap(readingActivityData);
+    const activityData = extractReadingActivityData(allData, currentHeatmapMetric);
+    createReadingHeatmap(activityData);
   }
 }
 
@@ -866,6 +921,23 @@ let currentPreviewSearchTerm = null;
 function setupEventListeners() {
   const searchInput = document.getElementById("search-input");
   
+  // Heatmap metric selector
+  document.getElementById("heatmap-metric-selector").addEventListener("change", function(e) {
+    currentHeatmapMetric = e.target.value;
+    console.log("Heatmap metric changed to:", currentHeatmapMetric);
+    
+    // Update heatmap based on current state
+    if (currentDetailsPaper) {
+      const singlePaperActivity = extractReadingActivityData([currentDetailsPaper], currentHeatmapMetric);
+      createReadingHeatmap(singlePaperActivity);
+    } else if (filterManager && filterManager.filters.size > 0) {
+      filterManager.updateHeatmap();
+    } else {
+      const activityData = extractReadingActivityData(allData, currentHeatmapMetric);
+      createReadingHeatmap(activityData);
+    }
+  });
+  
   // Global search with debouncing for preview
   let searchTimeout;
   searchInput.addEventListener("input", function(e) {
@@ -1043,13 +1115,13 @@ document.addEventListener("DOMContentLoaded", function() {
     .then(data => {
       allData = processComplexData(data);
       
-      // Extract reading activity data for heatmap
-      readingActivityData = extractReadingActivityData(allData);
-      console.log("Reading activity data:", readingActivityData.length, "days");
-      
       // Initialize table and heatmap
       initTable(allData);
-      createReadingHeatmap(readingActivityData);
+      
+      // Create initial heatmap with default metric
+      const activityData = extractReadingActivityData(allData, currentHeatmapMetric);
+      createReadingHeatmap(activityData);
+      
       setupEventListeners();
     })
     .catch(error => {
