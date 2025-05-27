@@ -271,6 +271,12 @@ function createReadingHeatmap(data) {
     .attr("width", width)
     .attr("height", height);
   
+  // Set the header width to match the heatmap width
+  const headerElement = document.querySelector('.heatmap-title');
+  if (headerElement) {
+    headerElement.style.width = width + 'px';
+  }
+  
   // Create tooltip
   let tooltip = d3.select("body").select(".heatmap-tooltip");
   if (tooltip.empty()) {
