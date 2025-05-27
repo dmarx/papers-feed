@@ -5,6 +5,7 @@ let allData = [];
 let currentDetailsPaper = null;
 let readingTimeColorScale = null;
 let interactionDaysColorScale = null;
+let readingActivityData = [];
 
 // Filter Manager for unified filter state
 class FilterManager {
@@ -35,13 +36,27 @@ class FilterManager {
   applyFilters() {
     if (this.filters.size === 0) {
       this.table.clearFilter();
-      return;
+    } else {
+      this.table.setFilter((data) => {
+        return Array.from(this.filters.values())
+          .every(filter => filter.fn(data));
+      });
     }
     
-    this.table.setFilter((data) => {
-      return Array.from(this.filters.values())
-        .every(filter => filter.fn(data));
-    });
+    // Update heatmap with filtered data
+    this.updateHeatmap();
+  }
+  
+  updateHeatmap() {
+    // Get currently filtered data from the table
+    const filteredData = this.table.getData("active");
+    console.log("Updating heatmap with", filteredData.length, "filtered papers");
+    
+    // Extract reading activity from filtered data
+    const filteredActivityData = extractReadingActivityData(filteredData);
+    
+    // Recreate the heatmap with filtered data
+    createReadingHeatmap(filteredActivityData);
   }
   
   getActiveFilters() {
@@ -132,6 +147,198 @@ class FilterStatusBar {
 // Global filter manager instance
 let filterManager;
 let filterStatusBar;
+
+// Extract reading activity data from interaction data
+function extractReadingActivityData(data) {
+  const dailyActivity = new Map();
+  
+  data.forEach(paper => {
+    if (paper.rawInteractionData && paper.rawInteractionData.length > 0) {
+      paper.rawInteractionData.forEach(interaction => {
+        if (interaction.type === "reading_session" && interaction.timestamp) {
+          const date = new Date(interaction.timestamp);
+          const dateStr = d3.timeFormat("%Y-%m-%d")(date);
+          
+          if (!dailyActivity.has(dateStr)) {
+            dailyActivity.set(dateStr, new Set());
+          }
+          dailyActivity.get(dateStr).add(paper.paperKey);
+        }
+      });
+    }
+  });
+  
+  // Convert to array format with unique paper counts
+  const result = Array.from(dailyActivity.entries()).map(([dateStr, paperSet]) => ({
+    date: new Date(dateStr),
+    count: paperSet.size
+  }));
+  
+  return result.sort((a, b) => a.date - b.date);
+}
+
+// Create reading activity heatmap
+function createReadingHeatmap(data) {
+  const container = d3.select("#reading-heatmap");
+  container.selectAll("*").remove(); // Clear existing content
+  
+  if (!data || data.length === 0) {
+    container.append("div")
+      .style("text-align", "center")
+      .style("color", "#666")
+      .style("font-size", "12px")
+      .style("padding", "20px")
+      .text("No reading activity data available");
+    return;
+  }
+  
+  // Calculate date range - 8 months back, ending today
+  const endDateTime = new Date();
+  endDateTime.setHours(23, 59, 59, 999); // End of today
+  
+  const startDateTime = new Date(endDateTime);
+  startDateTime.setMonth(startDateTime.getMonth() - 8);
+  startDateTime.setHours(0, 0, 0, 0); // Start of day 8 months ago
+  
+  // Calculate the Sunday of the week containing endDateTime (for right alignment)
+  const endSunday = new Date(endDateTime);
+  endSunday.setDate(endDateTime.getDate() - endDateTime.getDay());
+  endSunday.setHours(0, 0, 0, 0);
+  
+  // Calculate how many weeks we need to show
+  const totalWeeks = Math.ceil(d3.timeWeek.count(startDateTime, endSunday)) + 1;
+  
+  // Dimensions
+  const cellSize = 11;
+  const cellGap = 2;
+  const width = totalWeeks * (cellSize + cellGap);
+  const height = 7 * (cellSize + cellGap) + 20; // 7 days + month labels
+  
+  // Create SVG
+  const svg = container
+    .append("svg")
+    .attr("width", width)
+    .attr("height", height);
+  
+  // Create tooltip
+  let tooltip = d3.select("body").select(".heatmap-tooltip");
+  if (tooltip.empty()) {
+    tooltip = d3.select("body")
+      .append("div")
+      .attr("class", "heatmap-tooltip")
+      .style("opacity", 0);
+  }
+  
+  // Process data into a map for quick lookup
+  const dataMap = new Map();
+  data.forEach(d => {
+    const dateStr = d3.timeFormat("%Y-%m-%d")(d.date);
+    dataMap.set(dateStr, d.count);
+  });
+  
+  // Create color scale - GitHub style
+  const maxCount = d3.max(data, d => d.count) || 1;
+  const colorScale = d3.scaleThreshold()
+    .domain([1, Math.ceil(maxCount * 0.25), Math.ceil(maxCount * 0.5), Math.ceil(maxCount * 0.75)])
+    .range(["#ebedf0", "#c6e48b", "#7bc96f", "#239a3b", "#196127"]);
+  
+  // Generate all dates in our range
+  const allDates = d3.timeDays(startDateTime, new Date(endDateTime.getTime() + 24 * 60 * 60 * 1000));
+  
+  // Create cells
+  const cells = svg.selectAll(".heatmap-cell")
+    .data(allDates)
+    .enter()
+    .append("rect")
+    .attr("class", "heatmap-cell")
+    .attr("width", cellSize)
+    .attr("height", cellSize)
+    .attr("x", d => {
+      // Calculate week position relative to the end date (right-aligned)
+      const weeksSinceStart = d3.timeWeek.count(startDateTime, d);
+      return weeksSinceStart * (cellSize + cellGap);
+    })
+    .attr("y", d => {
+      const dayOfWeek = d.getDay();
+      return dayOfWeek * (cellSize + cellGap) + 20; // Offset for month labels
+    })
+    .attr("fill", d => {
+      const dateStr = d3.timeFormat("%Y-%m-%d")(d);
+      const count = dataMap.get(dateStr) || 0;
+      return colorScale(count);
+    })
+    .on("mouseover", function(event, d) {
+      const dateStr = d3.timeFormat("%Y-%m-%d")(d);
+      const count = dataMap.get(dateStr) || 0;
+      const formatDate = d3.timeFormat("%B %d, %Y");
+      
+      tooltip.transition()
+        .duration(200)
+        .style("opacity", .9);
+      
+      tooltip.html(`
+        <div><strong>${formatDate(d)}</strong></div>
+        <div>${count} paper${count !== 1 ? 's' : ''} read</div>
+      `)
+        .style("left", (event.pageX + 10) + "px")
+        .style("top", (event.pageY - 28) + "px");
+    })
+    .on("mouseout", function(d) {
+      tooltip.transition()
+        .duration(500)
+        .style("opacity", 0);
+    })
+    .on("click", function(event, d) {
+      // Filter table to show papers read on this date
+      const dateStr = d3.timeFormat("%Y-%m-%d")(d);
+      const count = dataMap.get(dateStr) || 0;
+      
+      if (count > 0) {
+        const formatDate = d3.timeFormat("%B %d, %Y");
+        const dateFilter = function(data) {
+          if (!data.rawInteractionData || data.rawInteractionData.length === 0) return false;
+          
+          return data.rawInteractionData.some(interaction => {
+            if (interaction.type === "reading_session" && interaction.timestamp) {
+              const interactionDateStr = d3.timeFormat("%Y-%m-%d")(new Date(interaction.timestamp));
+              return interactionDateStr === dateStr;
+            }
+            return false;
+          });
+        };
+        
+        // Remove any existing heatmap-date filter and add new one
+        filterManager.removeFilter('heatmap-date');
+        filterManager.setFilter('heatmap-date', dateFilter, `Read on ${formatDate(d)}`);
+      }
+    });
+  
+  // Add month labels - only show months that have visible weeks
+  const monthsInRange = d3.timeMonths(startDateTime, endDateTime);
+  svg.selectAll(".month-label")
+    .data(monthsInRange)
+    .enter()
+    .append("text")
+    .attr("class", "month-label")
+    .attr("x", d => {
+      const weeksSinceStart = d3.timeWeek.count(startDateTime, d);
+      return weeksSinceStart * (cellSize + cellGap);
+    })
+    .attr("y", 12)
+    .text(d => d3.timeFormat("%b")(d));
+  
+  // Add day labels (M, W, F)
+  const dayLabels = ["M", "", "W", "", "F", "", ""];
+  svg.selectAll(".day-label")
+    .data(dayLabels)
+    .enter()
+    .append("text")
+    .attr("class", "day-label")
+    .attr("x", -8)
+    .attr("y", (d, i) => i * (cellSize + cellGap) + 20 + cellSize/2 + 3)
+    .attr("text-anchor", "end")
+    .text(d => d);
+}
 
 // Format date to YYYY-MM-DD format
 function formatDate(dateString) {
@@ -796,7 +1003,14 @@ document.addEventListener("DOMContentLoaded", function() {
     })
     .then(data => {
       allData = processComplexData(data);
+      
+      // Extract reading activity data for heatmap
+      readingActivityData = extractReadingActivityData(allData);
+      console.log("Reading activity data:", readingActivityData.length, "days");
+      
+      // Initialize table and heatmap
       initTable(allData);
+      createReadingHeatmap(readingActivityData);
       setupEventListeners();
     })
     .catch(error => {
