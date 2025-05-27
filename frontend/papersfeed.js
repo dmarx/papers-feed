@@ -48,7 +48,14 @@ class FilterManager {
   }
   
   updateHeatmap() {
-    // Get currently filtered data from the table
+    // If viewing paper details, show only that paper's activity
+    if (currentDetailsPaper) {
+      const singlePaperActivity = extractReadingActivityData([currentDetailsPaper]);
+      createReadingHeatmap(singlePaperActivity);
+      return;
+    }
+    
+    // Otherwise, get currently filtered data from the table
     const filteredData = this.table.getData("active");
     console.log("Updating heatmap with", filteredData.length, "filtered papers");
     
@@ -436,6 +443,10 @@ function displayPaperDetails(paperId) {
   
   currentDetailsPaper = paper;
   
+  // Update heatmap to show only this paper's activity
+  const singlePaperActivity = extractReadingActivityData([paper]);
+  createReadingHeatmap(singlePaperActivity);
+  
   const detailsSidebar = document.getElementById('details-sidebar');
   const detailsContent = document.getElementById('details-content');
   
@@ -503,6 +514,16 @@ function displayPaperDetails(paperId) {
 function hideDetails() {
   const detailsSidebar = document.getElementById('details-sidebar');
   detailsSidebar.classList.remove('active');
+  currentDetailsPaper = null;
+  
+  // Restore heatmap to show filtered data or all data
+  if (filterManager && filterManager.filters.size > 0) {
+    // If filters are active, show filtered data
+    filterManager.updateHeatmap();
+  } else {
+    // If no filters, show all data
+    createReadingHeatmap(readingActivityData);
+  }
 }
 
 function removePrefix(string, prefix, sep = ':') {
