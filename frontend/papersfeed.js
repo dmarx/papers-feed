@@ -48,7 +48,14 @@ class FilterManager {
   }
   
   updateHeatmap() {
-    // Get currently filtered data from the table
+    // If viewing paper details, show only that paper's activity
+    if (currentDetailsPaper) {
+      const singlePaperActivity = extractReadingActivityData([currentDetailsPaper]);
+      createReadingHeatmap(singlePaperActivity);
+      return;
+    }
+    
+    // Otherwise, get currently filtered data from the table
     const filteredData = this.table.getData("active");
     console.log("Updating heatmap with", filteredData.length, "filtered papers");
     
@@ -182,13 +189,21 @@ function createReadingHeatmap(data) {
   const container = d3.select("#reading-heatmap");
   container.selectAll("*").remove(); // Clear existing content
   
+  // Update heatmap title based on context
+  const titleElement = document.querySelector('.heatmap-title');
+  if (currentDetailsPaper) {
+    titleElement.textContent = `Reading Activity: ${currentDetailsPaper.title.substring(0, 50)}${currentDetailsPaper.title.length > 50 ? '...' : ''}`;
+  } else {
+    titleElement.textContent = "Reading Activity (Papers per day)";
+  }
+  
   if (!data || data.length === 0) {
     container.append("div")
       .style("text-align", "center")
       .style("color", "#666")
       .style("font-size", "12px")
       .style("padding", "20px")
-      .text("No reading activity data available");
+      .text(currentDetailsPaper ? "No reading sessions for this paper" : "No reading activity data available");
     return;
   }
   
@@ -276,9 +291,14 @@ function createReadingHeatmap(data) {
         .duration(200)
         .style("opacity", .9);
       
+      // Adjust tooltip text based on context
+      const paperText = currentDetailsPaper 
+        ? (count > 0 ? "Read this paper" : "No activity") 
+        : `${count} paper${count !== 1 ? 's' : ''} read`;
+      
       tooltip.html(`
         <div><strong>${formatDate(d)}</strong></div>
-        <div>${count} paper${count !== 1 ? 's' : ''} read</div>
+        <div>${paperText}</div>
       `)
         .style("left", (event.pageX + 10) + "px")
         .style("top", (event.pageY - 28) + "px");
@@ -289,6 +309,11 @@ function createReadingHeatmap(data) {
         .style("opacity", 0);
     })
     .on("click", function(event, d) {
+      // Only allow filtering when not viewing paper details
+      if (currentDetailsPaper) {
+        return; // Disable click filtering when viewing single paper
+      }
+      
       // Filter table to show papers read on this date
       const dateStr = d3.timeFormat("%Y-%m-%d")(d);
       const count = dataMap.get(dateStr) || 0;
@@ -436,6 +461,10 @@ function displayPaperDetails(paperId) {
   
   currentDetailsPaper = paper;
   
+  // Update heatmap to show only this paper's activity
+  const singlePaperActivity = extractReadingActivityData([paper]);
+  createReadingHeatmap(singlePaperActivity);
+  
   const detailsSidebar = document.getElementById('details-sidebar');
   const detailsContent = document.getElementById('details-content');
   
@@ -503,6 +532,16 @@ function displayPaperDetails(paperId) {
 function hideDetails() {
   const detailsSidebar = document.getElementById('details-sidebar');
   detailsSidebar.classList.remove('active');
+  currentDetailsPaper = null;
+  
+  // Restore heatmap to show filtered data or all data
+  if (filterManager && filterManager.filters.size > 0) {
+    // If filters are active, show filtered data
+    filterManager.updateHeatmap();
+  } else {
+    // If no filters, show all data
+    createReadingHeatmap(readingActivityData);
+  }
 }
 
 function removePrefix(string, prefix, sep = ':') {
