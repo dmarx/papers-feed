@@ -293,11 +293,13 @@ function createReadingHeatmap(data) {
     dataMap.set(dateStr, d.count);
   });
   
-  // Create color scale - GitHub style
+  // Create color scale - let D3 handle everything
   const maxCount = d3.max(data, d => d.count) || 1;
-  const colorScale = d3.scaleThreshold()
-    .domain([1, Math.ceil(maxCount * 0.25), Math.ceil(maxCount * 0.5), Math.ceil(maxCount * 0.75)])
-    .range(["#ebedf0", "#c6e48b", "#7bc96f", "#239a3b", "#196127"]);
+
+  const paletteHeatmap = d3.interpolateGreens; //d3.interpolateYlGn; //d3.interpolateBlues;
+  const colorScale = maxCount > 10 
+    ? d3.scaleSequentialLog(paletteHeatmap).domain([1, maxCount])
+    : d3.scaleSequential(paletteHeatmap).domain([0, maxCount]);
   
   // Generate all dates in our range
   const allDates = d3.timeDays(startDateTime, new Date(endDateTime.getTime() + 24 * 60 * 60 * 1000));
