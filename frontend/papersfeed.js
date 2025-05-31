@@ -731,7 +731,10 @@ function formatPublishedWithColor(cell) {
       cellElement.style.backgroundColor = 'white';
     } else {
       // 0-90 days: use D3 color scale
-      cellElement.style.backgroundColor = publishedColorScale(daysAgo);
+      const backgroundColor = publishedColorScale(daysAgo);
+      const textColor = getContrastColor(backgroundColor);
+      cellElement.style.backgroundColor = backgroundColor;
+      element.style.color = textColor;
     }
     
     return publishedDate;
