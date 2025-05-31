@@ -709,6 +709,9 @@ function extractDomain(url) {
 }
 
 // Simple color formatter for published dates
+const publishedColorScale = d3.scaleSequential(d3.interpolateGreens)
+  .domain([90, 0]); // 90 days ago = white, 0 days ago = green
+
 function formatPublishedWithColor(cell) {
   const publishedDate = cell.getValue();
   const cellElement = cell.getElement();
@@ -723,14 +726,12 @@ function formatPublishedWithColor(cell) {
     const today = new Date();
     const daysAgo = Math.floor((today - pubDate) / (1000 * 60 * 60 * 24));
     
-    if (daysAgo < 0 || daysAgo > 365) {
-      // More than a year old or future date - white
+    if (daysAgo < 0 || daysAgo > 90) {
+      // More than 3 months old or future date - white
       cellElement.style.backgroundColor = 'white';
     } else {
-      // 0-365 days: green fading to white
-      const intensity = 1 - (daysAgo / 365); // 1 = recent, 0 = old
-      const green = Math.floor(255 - (100 * intensity)); // 155-255
-      cellElement.style.backgroundColor = `rgb(${green}, 255, ${green})`;
+      // 0-90 days: use D3 color scale
+      cellElement.style.backgroundColor = publishedColorScale(daysAgo);
     }
     
     return publishedDate;
