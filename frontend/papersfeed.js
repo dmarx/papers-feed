@@ -745,6 +745,12 @@ function processComplexData(data) {
     const title = paperData.title || '';
     const abstract = paperData.abstract || '';
     const tags = paperData.tags || paperData.arxiv_tags || [];
+
+    let freshness = -1;
+    if (lastReadDate && paperData.publishedDate) {
+      publ = new Date(paperData.publishedDate);
+      freshness = (lastReadDate - publ) / 1000 / 86400;
+    }
     
     // Create the row data
     result.push({
@@ -754,6 +760,7 @@ function processComplexData(data) {
       title: title,
       authors: authors,
       abstract: abstract,
+      paperFreshness: freshness,
       published: normalizeDate(paperData.publishedDate),
       firstRead: formatDate(paperMeta.created_at),
       lastRead: lastReadDate ? formatDate(lastReadDate) : formatDate(paperMeta.updated_at),
@@ -831,7 +838,12 @@ function initTable(data) {
       {
         title: "Published", 
         field: "published", 
-        widthGrow: 1
+        widthGrow: 1,
+        formatter: function(cell) {
+          const cellElement = cell.getElement();
+          const freshness = cell.getData().freshness;
+          cellElement.setAttribute("data-paper-freshness", freshness);
+        }
       },
       {
         title: "Tags", 
