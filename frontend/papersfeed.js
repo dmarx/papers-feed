@@ -708,6 +708,38 @@ function extractDomain(url) {
   }
 }
 
+// Simple color formatter for published dates
+function formatPublishedWithColor(cell) {
+  const publishedDate = cell.getValue();
+  const cellElement = cell.getElement();
+  
+  if (!publishedDate || publishedDate === 'N/A') {
+    cellElement.style.backgroundColor = 'white';
+    return publishedDate || '';
+  }
+  
+  try {
+    const pubDate = new Date(publishedDate);
+    const today = new Date();
+    const daysAgo = Math.floor((today - pubDate) / (1000 * 60 * 60 * 24));
+    
+    if (daysAgo < 0 || daysAgo > 365) {
+      // More than a year old or future date - white
+      cellElement.style.backgroundColor = 'white';
+    } else {
+      // 0-365 days: green fading to white
+      const intensity = 1 - (daysAgo / 365); // 1 = recent, 0 = old
+      const green = Math.floor(255 - (100 * intensity)); // 155-255
+      cellElement.style.backgroundColor = `rgb(${green}, 255, ${green})`;
+    }
+    
+    return publishedDate;
+  } catch (error) {
+    cellElement.style.backgroundColor = 'white';
+    return publishedDate;
+  }
+}
+
 // read and reshape gh-store scnapshot
 function processComplexData(data) {
   const result = [];
@@ -858,12 +890,13 @@ function initTable(data) {
         title: "Published", 
         field: "published", 
         widthGrow: 1,
-        formatter: function(cell) {
-          const cellElement = cell.getElement();
-          const freshness = cell.getData().paperFreshness;
-          cellElement.setAttribute("data-paper-freshness", freshness);
-          return cell.getData().published;
-        }
+        formetter: formatPublishedWithColor
+        // formatter: function(cell) {
+        //   const cellElement = cell.getElement();
+        //   const freshness = cell.getData().paperFreshness;
+        //   cellElement.setAttribute("data-paper-freshness", freshness);
+        //   return cell.getData().published;
+        // }
       },
       {
         title: "Tags", 
