@@ -8,6 +8,36 @@ let interactionDaysColorScale = null;
 let readingActivityData = [];
 let currentHeatmapMetric = 'papers';
 
+// Utility function to normalize dates using Chrono
+function normalizeDate(dateString) {
+  if (!dateString) return null;
+  
+  try {
+    // Try to parse with Chrono
+    const parsedDate = chrono.parseDate(dateString);
+    
+    if (parsedDate) {
+      // Return in YYYY-MM-DD format for consistency
+      return parsedDate.toISOString().split('T')[0];
+    }
+    
+    // Fallback to native Date parsing if Chrono fails
+    const fallbackDate = new Date(dateString);
+    if (!isNaN(fallbackDate.getTime())) {
+      return fallbackDate.toISOString().split('T')[0];
+    }
+    
+    // If all parsing fails, return original string
+    console.warn(`Could not parse date: ${dateString}`);
+    return dateString;
+    
+  } catch (error) {
+    console.warn(`Date parsing error for "${dateString}":`, error);
+    return dateString;
+  }
+}
+
+
 // Filter Manager for unified filter state
 class FilterManager {
   constructor(table) {
@@ -724,7 +754,7 @@ function processComplexData(data) {
       title: title,
       authors: authors,
       abstract: abstract,
-      published: paperData.publishedDate,
+      published: normalizeDate(paperData.publishedDate),
       firstRead: formatDate(paperMeta.created_at),
       lastRead: lastReadDate ? formatDate(lastReadDate) : formatDate(paperMeta.updated_at),
       lastReadTimestamp: lastReadDate ? lastReadDate : paperMeta.updated_at,
