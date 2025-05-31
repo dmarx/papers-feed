@@ -37,6 +37,24 @@ function normalizeDate(dateString) {
   }
 }
 
+/**
+ * Calculate the number of days between two dates
+ * @param {string} startDate - Date in 'YYYY-MM-DD' format
+ * @param {string} endDate - Date in 'YYYY-MM-DD' format
+ * @returns {number} Number of days between the dates (positive if endDate is after startDate)
+ */
+function daysBetween(startDate, endDate) {
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  
+  // Calculate the difference in milliseconds
+  const diffTime = end - start;
+  
+  // Convert to days (1 day = 24 * 60 * 60 * 1000 milliseconds)
+  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  
+  return diffDays;
+}
 
 // Filter Manager for unified filter state
 class FilterManager {
@@ -745,11 +763,12 @@ function processComplexData(data) {
     const title = paperData.title || '';
     const abstract = paperData.abstract || '';
     const tags = paperData.tags || paperData.arxiv_tags || [];
-
+    
     let freshness = -1;
     if (lastReadDate && paperData.publishedDate) {
-      publ = new Date(paperData.publishedDate);
-      freshness = (lastReadDate - publ) / 1000 / 86400;
+      const lastReadStr = lastReadDate.toISOString().split('T')[0];  // Convert to YYYY-MM-DD
+      const publishedStr = normalizeDate(paperData.publishedDate);  // Normalize first
+      freshness = daysBetween(publishedStr, lastReadStr);
     }
     
     // Create the row data
