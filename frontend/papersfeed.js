@@ -890,7 +890,7 @@ function initTable(data) {
         title: "Published", 
         field: "published", 
         widthGrow: 1,
-        formetter: formatPublishedWithColor
+        formatter: formatPublishedWithColor
         // formatter: function(cell) {
         //   const cellElement = cell.getElement();
         //   const freshness = cell.getData().paperFreshness;
