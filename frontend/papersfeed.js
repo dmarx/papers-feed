@@ -860,8 +860,9 @@ function initTable(data) {
         widthGrow: 1,
         formatter: function(cell) {
           const cellElement = cell.getElement();
-          const freshness = cell.getData().freshness;
+          const freshness = cell.getData().paperFreshness;
           cellElement.setAttribute("data-paper-freshness", freshness);
+          return cell.getData().published;
         }
       },
       {
