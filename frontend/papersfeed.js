@@ -734,7 +734,7 @@ function formatPublishedWithColor(cell) {
       const backgroundColor = publishedColorScale(daysAgo);
       const textColor = getContrastColor(backgroundColor);
       cellElement.style.backgroundColor = backgroundColor;
-      element.style.color = textColor;
+      cellElement.style.color = textColor;
     }
     
     return publishedDate;
