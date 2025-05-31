@@ -8,6 +8,54 @@ let interactionDaysColorScale = null;
 let readingActivityData = [];
 let currentHeatmapMetric = 'papers';
 
+// Utility function to normalize dates using Chrono
+function normalizeDate(dateString) {
+  if (!dateString) return null;
+  
+  try {
+    // Try to parse with Chrono
+    const parsedDate = chrono.parseDate(dateString);
+    
+    if (parsedDate) {
+      // Return in YYYY-MM-DD format for consistency
+      return parsedDate.toISOString().split('T')[0];
+    }
+    
+    // Fallback to native Date parsing if Chrono fails
+    const fallbackDate = new Date(dateString);
+    if (!isNaN(fallbackDate.getTime())) {
+      return fallbackDate.toISOString().split('T')[0];
+    }
+    
+    // If all parsing fails, return original string
+    console.warn(`Could not parse date: ${dateString}`);
+    return dateString;
+    
+  } catch (error) {
+    console.warn(`Date parsing error for "${dateString}":`, error);
+    return dateString;
+  }
+}
+
+/**
+ * Calculate the number of days between two dates
+ * @param {string} startDate - Date in 'YYYY-MM-DD' format
+ * @param {string} endDate - Date in 'YYYY-MM-DD' format
+ * @returns {number} Number of days between the dates (positive if endDate is after startDate)
+ */
+function daysBetween(startDate, endDate) {
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  
+  // Calculate the difference in milliseconds
+  const diffTime = end - start;
+  
+  // Convert to days (1 day = 24 * 60 * 60 * 1000 milliseconds)
+  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  
+  return diffDays;
+}
+
 // Filter Manager for unified filter state
 class FilterManager {
   constructor(table) {
@@ -660,6 +708,42 @@ function extractDomain(url) {
   }
 }
 
+// Simple color formatter for published dates
+const publishedColorScale = d3.scaleSequential(d3.interpolateGreens)
+  .domain([90, 0]); // 90 days ago = white, 0 days ago = green
+
+function formatPublishedWithColor(cell) {
+  const publishedDate = cell.getValue();
+  const cellElement = cell.getElement();
+  
+  if (!publishedDate || publishedDate === 'N/A') {
+    cellElement.style.backgroundColor = 'white';
+    return publishedDate || '';
+  }
+  
+  try {
+    const pubDate = new Date(publishedDate);
+    const today = new Date();
+    const daysAgo = Math.floor((today - pubDate) / (1000 * 60 * 60 * 24));
+    
+    if (daysAgo < 0 || daysAgo > 90) {
+      // More than 3 months old or future date - white
+      cellElement.style.backgroundColor = 'white';
+    } else {
+      // 0-90 days: use D3 color scale
+      const backgroundColor = publishedColorScale(daysAgo);
+      const textColor = getContrastColor(backgroundColor);
+      cellElement.style.backgroundColor = backgroundColor;
+      cellElement.style.color = textColor;
+    }
+    
+    return publishedDate;
+  } catch (error) {
+    cellElement.style.backgroundColor = 'white';
+    return publishedDate;
+  }
+}
+
 // read and reshape gh-store scnapshot
 function processComplexData(data) {
   const result = [];
@@ -716,6 +800,13 @@ function processComplexData(data) {
     const abstract = paperData.abstract || '';
     const tags = paperData.tags || paperData.arxiv_tags || [];
     
+    let freshness = -1;
+    if (lastReadDate && paperData.publishedDate) {
+      const lastReadStr = lastReadDate.toISOString().split('T')[0];  // Convert to YYYY-MM-DD
+      const publishedStr = normalizeDate(paperData.publishedDate);  // Normalize first
+      freshness = daysBetween(publishedStr, lastReadStr);
+    }
+    
     // Create the row data
     result.push({
       paperKey: paperKey,
@@ -724,7 +815,8 @@ function processComplexData(data) {
       title: title,
       authors: authors,
       abstract: abstract,
-      published: paperData.publishedDate,
+      paperFreshness: freshness,
+      published: normalizeDate(paperData.publishedDate),
       firstRead: formatDate(paperMeta.created_at),
       lastRead: lastReadDate ? formatDate(lastReadDate) : formatDate(paperMeta.updated_at),
       lastReadTimestamp: lastReadDate ? lastReadDate : paperMeta.updated_at,
@@ -801,7 +893,14 @@ function initTable(data) {
       {
         title: "Published", 
         field: "published", 
-        widthGrow: 1
+        widthGrow: 1,
+        formatter: formatPublishedWithColor
+        // formatter: function(cell) {
+        //   const cellElement = cell.getElement();
+        //   const freshness = cell.getData().paperFreshness;
+        //   cellElement.setAttribute("data-paper-freshness", freshness);
+        //   return cell.getData().published;
+        // }
       },
       {
         title: "Tags", 
