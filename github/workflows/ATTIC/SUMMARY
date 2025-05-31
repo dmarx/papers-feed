@@ -1,0 +1,1032 @@
+---
+File: .github/workflows/ATTIC/1_store-sync.yml
+---
+name: Store Sync
+
+on:
+  workflow_dispatch:
+  # issues:
+  #   types: [reopened]
+  # schedule:
+  #   - cron: '0 0 * * *'
+
+jobs:
+  process-updates:
+    runs-on: ubuntu-latest
+    if: contains(github.event.issue.labels.*.name, 'stored-object')
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          
+      - name: Install dependencies
+        run: pip install gh-store
+          
+      - name: Process Updates
+        run: |
+          python -m gh_store process-updates \
+            --issue ${{ github.event.issue.number }} \
+            --token ${{ secrets.GITHUB_TOKEN }} \
+            --repo ${{ github.repository }}
+
+  notify-deploy:
+    needs: process-updates
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger frontend deploy
+        run: |
+          curl -L \
+            -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/${{ github.repository }}/actions/workflows/2_deploy-frontend.yml/dispatches \
+            -d "{\"ref\":\"${{ github.ref }}\"}"
+
+
+
+---
+File: .github/workflows/ATTIC/DEPRECATED_pandoc_convert-markdown.yml
+---
+# .github/workflows/convert-markdown.yml
+name: Convert Papers to Markdown
+
+on:
+  # schedule:
+  #   - cron: '0 */12 * * *'  # Run every 12 hours
+  workflow_dispatch:
+  
+concurrency:
+  group: ${{ github.repository }}-event-processing
+  cancel-in-progress: false
+  
+jobs:
+
+  convert-markdown:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pandoc texlive-base
+          pandoc --version  # Verify installation
+      
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install papers_feed
+      
+      - name: Convert to markdown
+        run: |
+          python -m papers_feed.asset_manager convert-markdown
+          python -m papers_feed.asset_manager retry-failures
+      
+      - name: Commit changes
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore: Convert papers to markdown"
+          file_pattern: |
+            data/papers/**
+
+
+
+---
+File: .github/workflows/ATTIC/arxiv-metadata-hydration-ts.yml
+---
+name: Fetch arXiv Metadata
+
+on:
+  issues:
+    types: [opened, reopened]
+
+jobs:
+  fetch-arxiv-metadata:
+    runs-on: ubuntu-latest
+    if: contains(github.event.issue.labels.*.name, 'stored-object')
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          
+      - name: Install gh-store-client
+        run: npm install gh-store-client
+        
+      - name: Fetch and post arXiv metadata
+        uses: actions/github-script@v7
+        with:
+          script: |
+            
+            function findObjectId(labels) {
+              if (!labels || !Array.isArray(labels)) {
+                return null;
+              }
+              
+              for (const label of labels) {
+                if (label.name && label.name.startsWith('UID:')) {
+                  return label.name.substring(4).trim();
+                }
+              }
+              
+              return null;
+            }
+            
+            function removePrefix(string, prefix, sep = ':') {
+              if (string.startsWith(prefix + sep)) {
+                return string.slice(prefix.length + sep.length);
+              }
+              return null; // Return null to indicate no match
+            }
+            
+            function extractPaperId(string, prefix) {
+              // Case 1: Format is "prefix:id"
+              let result = removePrefix(string, prefix, ':');
+              if (result !== null) return result;
+              
+              // Case 2: Format is "prefix.id"
+              result = removePrefix(string, prefix, '.');
+              if (result !== null) return result;
+              
+              // Case 3: Format is "prefix:prefix:id"
+              result = removePrefix(string, prefix + ':' + prefix, ':');
+              if (result !== null) return result;
+              
+              // Case 3 alternate: Format is "prefix.prefix.id"
+              result = removePrefix(string, prefix + '.' + prefix, '.');
+              if (result !== null) return result;
+              
+              // Case 4: If none of the above, return the original string
+              return string;
+            }
+
+            ///////////////////////////////////////////////////////////
+
+            const issue = context.payload.issue;
+            const issueNumber = issue.number;
+            const issueBody = issue.body.trim();            
+            console.log(`Processing issue #${issueNumber} with body: ${issueBody}`);
+
+            const objectId = findObjectId(issue.labels);            
+            if (!objectId) {
+              throw new Error(`Unable to identify a gh-store UID among labels: ${issue.labels}`);
+            }
+            console.log(`Found objectId: ${objectId}`);
+
+            if (!objectId.startsWith('paper:')) {
+              throw new Error(`Exiting: ${objectId} is not a paper.`);
+            }
+            const paperId = objectId.slice(6);
+            const arxivId = extractPaperId(paperId, 'arxiv');
+
+            // Validate arXiv ID format (basic validation)
+            const arxivIdRegex = /\d{4}\.\d{4,5}(v\d+)?|\w+\/\d{7}(v\d+)?/;
+            if (!arxivIdRegex.test(arxivId)) {
+              throw new Error(`Invalid arXiv ID format: ${arxivId}`);
+            }
+            
+            //let store = GitHubStoreClient(token=${{ secrets.GITHUB_TOKEN }}, repo=${{ github.repository }});
+            const { GitHubStoreClient } = require('gh-store-client');
+            const store = new GitHubStoreClient(
+              process.env.GITHUB_TOKEN,
+              `${context.repo.owner}/${context.repo.repo}`
+            );
+            let obj = store.getObject(objectId);
+            console.log("Got stored object:", obj);
+            
+            console.log(`Fetching metadata for arXiv ID: ${arxivId}`);
+            
+            try {
+              // Fetch metadata from arXiv API using native fetch
+              const response = await fetch(`http://export.arxiv.org/api/query?id_list=${arxivId}`);
+              
+              if (!response.ok) {
+                throw new Error(`arXiv API responded with status: ${response.status}`);
+              }
+              
+              const xmlData = await response.text();
+              
+              // Parse XML response using DOMParser
+              const parseXML = (xmlString) => {
+                // Simple XML parser for arXiv API response
+                // This extracts specific elements we need
+                const getTagContent = (tag, xml) => {
+                  const regex = new RegExp(`<${tag}[^>]*>(.*?)</${tag}>`, 'gs');
+                  const matches = [...xml.matchAll(regex)];
+                  return matches.map(m => m[1].trim());
+                };
+                
+                const getAttributes = (tag, xml) => {
+                  const regex = new RegExp(`<${tag}([^>]*)>`, 'g');
+                  const matches = [...xml.matchAll(regex)];
+                  return matches.map(m => {
+                    const attrs = {};
+                    const attrMatches = [...m[1].matchAll(/(\w+)="([^"]*)"/g)];
+                    attrMatches.forEach(attr => {
+                      attrs[attr[1]] = attr[2];
+                    });
+                    return attrs;
+                  });
+                };
+                
+                const authors = getTagContent('author', xmlString).map(author => {
+                  const name = getTagContent('name', author)[0];
+                  return name;
+                });
+                
+                const categories = getAttributes('category', xmlString).map(attr => attr.term);
+                
+                const links = getAttributes('link', xmlString).map(attr => ({
+                  rel: attr.rel,
+                  href: attr.href,
+                  type: attr.type
+                }));
+                
+                return {
+                  id: getTagContent('id', xmlString)[0],
+                  title: getTagContent('title', xmlString)[0],
+                  authors: authors,
+                  published: getTagContent('published', xmlString)[0],
+                  updated: getTagContent('updated', xmlString)[0],
+                  summary: getTagContent('summary', xmlString)[0],
+                  categories: categories,
+                  links: links
+                };
+              };
+              
+              // Extract relevant metadata
+              const metadata = parseXML(xmlData);
+              
+              if (!metadata.id) {
+                throw new Error(`No metadata found for arXiv ID: ${arxivId}`);
+              }
+              
+              console.log(`Successfully fetched metadata for arXiv ID: ${arxivId}`);
+              
+              // Post metadata as comment
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                body: `\`\`\`json\n${JSON.stringify(metadata, null, 2)}\n\`\`\``
+              });
+              
+              console.log('Posted metadata comment to issue');
+              
+            } catch (error) {
+              console.error(`Error: ${error.message}`);
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                body: `Error fetching arXiv metadata: ${error.message}`
+              });
+            }
+
+
+
+---
+File: .github/workflows/ATTIC/convert-markdown.yaml
+---
+name: Generate Missing Markdown Conversions (grobid)
+
+on:
+  schedule:
+    - cron: '0 */12 * * *'  # Run every 12 hours
+  workflow_dispatch:
+  
+concurrency:
+  group: ${{ github.repository }}-event-processing
+  cancel-in-progress: false
+
+jobs:
+  convert:
+    runs-on: ubuntu-latest
+    services:
+      grobid:
+        image: lfoppiano/grobid:latest-crf
+        ports:
+          - 8070:8070
+        env:
+          JAVA_OPTS: "-Xmx4g"
+        volumes:
+          - ${{ github.workspace }}:/opt/grobid/input
+        options: "--init"
+        
+    steps:
+      - uses: actions/checkout@v4
+    
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+    
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install llamero lxml requests
+    
+      - name: Process PDF
+        env:
+          GROBID_HOST: localhost  # Use localhost since the service is mapped to that port
+        run: |
+          # Wait until Grobid is ready
+          for i in {1..30}; do
+            if curl -sSf http://localhost:8070/api/isalive > /dev/null; then
+              echo "Grobid is ready!"
+              break
+            fi
+            echo "Attempt $i: Service not ready yet, waiting..."
+            sleep 10
+          done
+          python scripts/process_pdf.py generate_missing_conversions
+
+      # Commit and push the generated output back to the repository.
+      - name: Commit and Push Remaining Outputs (xml)
+        uses: EndBug/add-and-commit@v9
+        with:
+          # The 'add' value here could be the folder or file pattern where the output is created.
+          # For example, if the PDF is in a subdirectory, you might want to commit changes in that folder.
+          add: '.'
+          message: "Add tei xml's"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+
+
+---
+File: .github/workflows/ATTIC/deploy_frontend.yaml
+---
+name: Deploy Paper Feed to GitHub Pages
+
+on:
+  push:
+    paths:
+      - 'data/papers/gh-store-snapshot.json'
+      - '.github/workflows/deploy_frontend.yaml'
+      - 'frontend/scripts/convert_store.py'
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * *'  # Run daily at midnight UTC
+
+concurrency:
+  group: ${{ github.repository }}-event-processing
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install fire loguru
+
+      - name: Prepare web directory
+        run: |
+          mkdir -p web/{styles,js,data}
+          cp frontend/src/styles/*.css web/styles/
+          cp frontend/src/js/*.js web/js/
+          cp frontend/src/templates/index.html web/index.html
+          
+      - name: Convert data
+        run: |
+          python frontend/scripts/convert_store.py \
+            --snapshot_path data/papers/gh-store-snapshot.json \
+            --output_path web/data/papers.json
+
+      - name: Ensure presence of .nojekyll file
+        run: touch web/.nojekyll
+
+      - name: Get git info
+        id: git-info
+        run: |
+          echo "branch=${GITHUB_REF#refs/heads/}" >> $GITHUB_OUTPUT
+          echo "commit=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "repo=${GITHUB_REPOSITORY}" >> $GITHUB_OUTPUT
+
+      - name: Create git info JSON
+        run: |
+          echo "{\"branch\": \"${{ steps.git-info.outputs.branch }}\", \"commit\": \"${{ steps.git-info.outputs.commit }}\", \"repo\": \"${{ steps.git-info.outputs.repo }}\"}" > web/data/git-info.json
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+  
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./web
+          force_orphan: true
+
+
+
+---
+File: .github/workflows/ATTIC/download-papers.yml
+---
+# .github/workflows/download-papers.yml
+name: Download Paper Files
+
+on:
+  # schedule:
+  #   - cron: '0 */6 * * *'  # Run every 6 hours
+  workflow_dispatch:
+  
+concurrency:
+  group: ${{ github.repository }}-event-processing
+  cancel-in-progress: false
+  
+jobs:
+  download-files:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install papers_feed
+      
+      - name: Download PDFs (uncomment to download source)
+        run: |
+          python -m papers_feed.asset_manager download-pdfs
+          #python -m papers_feed.asset_manager download-source
+      
+      - name: Commit changes
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore: Download paper files"
+          file_pattern: |
+            data/papers/**
+
+
+
+---
+File: .github/workflows/ATTIC/gh-store-snapshot.yml
+---
+# gh-store-snapshot.yml
+name: Gh-Store Snapshot Management
+
+on:
+  issues:
+    types: [reopened]
+  # schedule:
+  #   # Run daily at midnight UTC
+  #   - cron: '0 0 * * *'
+  workflow_dispatch:
+    # Allow manual triggering
+    inputs:
+      force_new:
+        description: 'Force creation of new snapshot'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  SNAPSHOT_PATH: data/papers/gh-store-snapshot.json
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  process-updates:
+    if: contains(github.event.issue.labels.*.name, 'stored-object')
+    uses: "dmarx/papers-feed/.github/workflows/ghstore-process-updates.yml@673d20a8da9003fa5f437ac66f613a2b869badc4"
+  snapshot:
+    needs: process-updates
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # Needed for pushing snapshot changes
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install gh-store
+
+      - name: Check for existing snapshot
+        id: check_snapshot
+        run: |
+          if [ -f "${{ env.SNAPSHOT_PATH }}" ] && [ "${{ github.event.inputs.force_new }}" != "true" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create new snapshot
+        if: steps.check_snapshot.outputs.exists == 'false'
+        run: |
+          # Ensure directory exists
+          mkdir -p $(dirname ${{ env.SNAPSHOT_PATH }})
+          
+          # Create snapshot using CLI
+          python -m gh_store snapshot \
+            --token ${{ secrets.GITHUB_TOKEN }} \
+            --repo ${{ github.repository }} \
+            --output ${{ env.SNAPSHOT_PATH }}
+
+      - name: Update existing snapshot
+        if: steps.check_snapshot.outputs.exists == 'true'
+        run: |
+          python -m gh_store update-snapshot \
+            --token ${{ secrets.GITHUB_TOKEN }} \
+            --repo ${{ github.repository }} \
+            --snapshot-path ${{ env.SNAPSHOT_PATH }}
+            
+      - name: Commit changes
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "${{ steps.check_snapshot.outputs.exists == 'true' && 'chore: Update data store snapshot' || 'chore: Create initial data store snapshot' }}"
+          file_pattern: "${{ env.SNAPSHOT_PATH }}"
+
+
+
+---
+File: .github/workflows/ATTIC/ghstore-process-updates.yml
+---
+# .github/workflows/ghstore-process-updates.yml
+
+name: Process Object Updates
+
+on:
+  #issues:
+  #  types: [reopened]
+  workflow_call:
+
+jobs:
+  process-updates:
+    runs-on: ubuntu-latest
+    if: contains(github.event.issue.labels.*.name, 'stored-object')
+    permissions:
+      issues: write 
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install gh-store
+          
+      - name: Process Updates
+        run: |
+          python -m gh_store process-updates \
+            --issue ${{ github.event.issue.number }} \
+            --token ${{ secrets.GITHUB_TOKEN }} \
+            --repo ${{ github.repository }}
+
+
+
+---
+File: .github/workflows/ATTIC/hard-refresh.yml
+---
+# .github/workflows/hard-refresh.yml
+name: Hard Refresh
+
+on:
+  workflow_dispatch:  # Manual trigger only
+  
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+
+  refresh:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: true
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+      
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install PyGithub
+        pip install papers_feed
+    
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y pandoc texlive-base
+    
+    - name: Clear data directory and reopen issues
+      run: |
+        python - <<EOF
+        import os
+        import shutil
+        from github import Github
+        
+        # Clear data directory
+        data_dir = "data"
+        if os.path.exists(data_dir):
+            print(f"Removing {data_dir} directory...")
+            shutil.rmtree(data_dir)
+            os.makedirs(data_dir)
+        
+        # Reopen closed paper/reading issues
+        g = Github(os.environ["GITHUB_TOKEN"])
+        repo = g.get_repo(os.environ["GITHUB_REPOSITORY"])
+        
+        for issue in repo.get_issues(state="closed"):
+            labels = [label.name for label in issue.labels]
+            if "wontfix" in labels:
+                continue
+            if "paper" in labels or "reading-session" in labels:
+                print(f"Reopening issue #{issue.number}")
+                issue.edit(state="open")
+        EOF
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Process events
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: python -m papers_feed.process_events
+  
+    - name: Download PDFs and Source
+      run: |
+        python -m papers_feed.asset_manager download-pdfs
+        python -m papers_feed.asset_manager download-source
+
+    - name: Convert to markdown
+      run: |
+        python -m papers_feed.asset_manager convert-markdown
+        python -m papers_feed.asset_manager retry-failures
+    
+    - name: Commit and push if there are changes
+      uses: stefanzweifel/git-auto-commit-action@v5
+      with:
+        commit_message: "chore: Hard refresh"
+        file_pattern: |
+          data/**
+
+
+
+---
+File: .github/workflows/ATTIC/process-events.yml
+---
+# .github/workflows/process-events.yml
+name: Process Paper Events
+on:
+  push:
+    paths:
+      - ".github/workflows/process-events.yml"
+  issues:
+    types: [opened]
+    labels:
+      - 'paper'
+      - 'reading-session'
+  # schedule:
+  #   - cron: '0 * * * *'  # Run every hour
+  workflow_call:
+  workflow_dispatch:
+  
+concurrency:
+  group: ${{ github.repository }}-event-processing
+  cancel-in-progress: false
+  
+jobs:
+  process-papers:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: write
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install papers_feed
+      
+      - name: Process Events
+        id: process
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          OUTPUT=$(python -m papers_feed.process_events)
+          echo "Debug: Script output: $OUTPUT"
+          if [[ "$OUTPUT" == *"Events processed."* ]]; then
+            echo "SHOULD_TRIGGER=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "SHOULD_TRIGGER=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Conditionally trigger frontend deploy
+        if: ${{ steps.process.outputs.SHOULD_TRIGGER == 'true' }}
+        run: |
+          curl -L \
+            -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/${{ github.repository }}/actions/workflows/deploy_frontend.yaml/dispatches \
+            -d '{"ref":"${{ github.ref }}"}'
+
+
+
+---
+File: .github/workflows/ATTIC/process_enrichments.yaml
+---
+name: Process Enrichments
+
+on:
+  issues:
+    types: [opened, reopened]
+  workflow_dispatch:  # Allow manual triggering
+  schedule:
+    - cron: '0 0 * * *'  # Run daily at midnight UTC
+
+jobs:
+  process-features:
+    runs-on: ubuntu-latest
+    
+    # Only check for feature-node label if triggered by an issue event
+    if: |
+      github.event_name != 'issues' || 
+      (github.event_name == 'issues' && contains(github.event.issue.labels.*.name, 'feature-node'))
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install llamero PyGithub duckduckgo-search
+        
+    - name: Process feature requests
+      run: python scripts/process_enrichments.py
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+
+
+---
+File: .github/workflows/ATTIC/process_pdf.yml
+---
+name: Process PDF with Grobid
+
+on:
+  workflow_dispatch:
+    inputs:
+      pdf_path:
+        description: 'Path to PDF file relative to repository root'
+        required: true
+        type: string
+      output_format:
+        description: 'Output format (markdown/tei)'
+        required: true
+        type: choice
+        options:
+          - markdown
+          - tei
+        default: 'markdown'
+      tag:
+        description: 'Optional tag to append to the output filename'
+        required: false
+        default: ''
+
+jobs:
+  convert:
+    runs-on: ubuntu-latest
+    services:
+      grobid:
+        image: lfoppiano/grobid:latest-crf
+        ports:
+          - 8070:8070
+        env:
+          JAVA_OPTS: "-Xmx4g"
+        volumes:
+          - ${{ github.workspace }}:/opt/grobid/input
+        options: "--init"
+        
+    steps:
+      - uses: actions/checkout@v4
+    
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+    
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests loguru fire lxml
+    
+      - name: Process PDF
+        env:
+          GROBID_HOST: localhost  # Use localhost since the service is mapped to that port
+        run: |
+          # Wait until Grobid is ready
+          for i in {1..30}; do
+            if curl -sSf http://localhost:8070/api/isalive > /dev/null; then
+              echo "Grobid is ready!"
+              break
+            fi
+            echo "Attempt $i: Service not ready yet, waiting..."
+            sleep 10
+          done
+          python scripts/process_pdf.py ${{ github.event.inputs.pdf_path }} --format ${{ github.event.inputs.output_format }} --tag "${{ github.event.inputs.tag }}"
+    
+      # Commit and push the generated output back to the repository.
+      - name: Commit and Push Output
+        uses: EndBug/add-and-commit@v9
+        with:
+          # The 'add' value here could be the folder or file pattern where the output is created.
+          # For example, if the PDF is in a subdirectory, you might want to commit changes in that folder.
+          add: '.'
+          message: "Add processed output for ${{ github.event.inputs.pdf_path }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+
+
+---
+File: .github/workflows/ATTIC/refresh_pdfs.yaml
+---
+name: REFRESH ALL Markdown Conversions (grobid)
+
+on:
+  workflow_dispatch:
+      # tag:
+      #   description: 'Optional tag to append to the output filename'
+      #   required: false
+      #   default: ''
+
+jobs:
+  convert:
+    runs-on: ubuntu-latest
+    services:
+      grobid:
+        image: lfoppiano/grobid:latest-crf
+        ports:
+          - 8070:8070
+        env:
+          JAVA_OPTS: "-Xmx4g"
+        volumes:
+          - ${{ github.workspace }}:/opt/grobid/input
+        options: "--init"
+        
+    steps:
+      - uses: actions/checkout@v4
+    
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+    
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install llamero lxml requests
+    
+      - name: Process PDF
+        env:
+          GROBID_HOST: localhost  # Use localhost since the service is mapped to that port
+        run: |
+          # Wait until Grobid is ready
+          for i in {1..30}; do
+            if curl -sSf http://localhost:8070/api/isalive > /dev/null; then
+              echo "Grobid is ready!"
+              break
+            fi
+            echo "Attempt $i: Service not ready yet, waiting..."
+            sleep 10
+          done
+          python scripts/process_pdf.py flush_old_conversions --tag=""
+          python scripts/process_pdf.py flush_old_conversions --tag="grobid"
+          python scripts/process_pdf.py generate_missing_conversions
+    
+      # Commit and push the generated output back to the repository.
+      - name: Commit and Push Output
+        uses: EndBug/add-and-commit@v9
+        with:
+          # The 'add' value here could be the folder or file pattern where the output is created.
+          # For example, if the PDF is in a subdirectory, you might want to commit changes in that folder.
+          add: '.'
+          message: "Add processed output for ${{ github.event.inputs.pdf_path }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+
+
+---
+File: .github/workflows/ATTIC/refresh_pdfs_via_tei.yaml
+---
+name: REFRESH ALL Markdown Conversions (grobid) - WITH TEI
+
+on:
+  workflow_dispatch:
+
+jobs:
+  convert:
+    runs-on: ubuntu-latest
+        
+    steps:
+      - uses: actions/checkout@v4
+    
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+    
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install llamero lxml requests
+    
+      - name: Process PDF
+        run: |
+          python scripts/process_pdf.py flush_old_conversions --tag="grobid"
+          python scripts/process_pdf.py generate_missing_conversions --regenerate-tei=False
+    
+      # Commit and push the generated output back to the repository.
+      - name: Commit and Push Output
+        uses: EndBug/add-and-commit@v9
+        with:
+          # The 'add' value here could be the folder or file pattern where the output is created.
+          # For example, if the PDF is in a subdirectory, you might want to commit changes in that folder.
+          add: '.'
+          message: "Add processed output for ${{ github.event.inputs.pdf_path }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+
