@@ -9,8 +9,8 @@ const logger = loguru.getLogger('icon-utils');
 const ICONS = {
   default: {
     path: {
-      "16": "icons/bookmark/red/favicon-16x16.png",
-      "32": "icons/bookmark/red/favicon-32x32.png", 
+      "16": "icons/bookmark/red/apple-touch-icon.png",
+      "32": "icons/bookmark/red/apple-touch-icon.png", 
       "48": "icons/bookmark/red/apple-touch-icon.png",
       "128": "icons/bookmark/red/apple-touch-icon.png"
     },
@@ -18,8 +18,8 @@ const ICONS = {
   },
   detected: {
     path: {
-      "16": "icons/bookmark/blue/favicon-16x16.png",
-      "32": "icons/bookmark/blue/favicon-32x32.png",
+      "16": "icons/bookmark/blue/apple-touch-icon.png",
+      "32": "icons/bookmark/blue/apple-touch-icon.png",
       "48": "icons/bookmark/blue/apple-touch-icon.png", 
       "128": "icons/bookmark/blue/apple-touch-icon.png"
     },
@@ -27,10 +27,10 @@ const ICONS = {
   },
   tracked: {
     path: {
-      "16": "icons/bookmark/green/favicon-16x16.png",
-      "32": "icons/bookmark/green/favicon-32x32.png",
-      "48": "icons/bookmark/green/apple-touch-icon.png",
-      "128": "icons/bookmark/green/apple-touch-icon.png"
+      "16": "icons/bookmark/forest/apple-touch-icon.png",
+      "32": "icons/bookmark/forest/apple-touch-icon.png",
+      "48": "icons/bookmark/forest/apple-touch-icon.png",
+      "128": "icons/bookmark/forest/apple-touch-icon.png"
     },
     title: "Paper Tracked - Academic Paper Tracker"
   }
