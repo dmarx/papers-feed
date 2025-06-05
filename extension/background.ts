@@ -103,7 +103,7 @@ function setupMessageListeners() {
     const tabId = sender.tab?.id;
     
     if (message.type === 'contentScriptReady' && tabId) {
-      logger.debug('Content script ready:', sender.tab.url);
+      logger.debug('Content script ready:', sender.tab?.url);
       sendResponse({ success: true });
       return true;
     }
