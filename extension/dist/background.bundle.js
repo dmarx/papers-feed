@@ -68,12 +68,12 @@ class LoguruMock {
 // Export singleton instance
 const loguru = new LoguruMock();
 
-const logger$8 = loguru.getLogger('paper-manager');
+const logger$9 = loguru.getLogger('paper-manager');
 class PaperManager {
     constructor(client, sourceManager) {
         this.client = client;
         this.sourceManager = sourceManager;
-        logger$8.debug('Paper manager initialized');
+        logger$9.debug('Paper manager initialized');
     }
     /**
      * Get paper by source and ID
@@ -101,7 +101,7 @@ class PaperManager {
         try {
             const obj = await this.client.getObject(objectId);
             const data = obj.data;
-            logger$8.debug(`Retrieved existing paper: ${paperIdentifier}`);
+            logger$9.debug(`Retrieved existing paper: ${paperIdentifier}`);
             return data;
         }
         catch (error) {
@@ -113,7 +113,7 @@ class PaperManager {
                     rating: paperData.rating || 'novote'
                 };
                 const newobj = await this.client.createObject(objectId, defaultPaperData);
-                logger$8.debug(`Created new paper: ${paperIdentifier}`);
+                logger$9.debug(`Created new paper: ${paperIdentifier}`);
                 // reopen to trigger metadata hydration
                 await this.client.fetchFromGitHub(`/issues/${newobj.meta.issueNumber}`, {
                     method: "PATCH",
@@ -146,7 +146,7 @@ class PaperManager {
                     interactions: []
                 };
                 await this.client.createObject(objectId, newLog);
-                logger$8.debug(`Created new interaction log: ${paperIdentifier}`);
+                logger$9.debug(`Created new interaction log: ${paperIdentifier}`);
                 return newLog;
             }
             throw error;
@@ -184,7 +184,7 @@ class PaperManager {
             data: session
         });
         const paperIdentifier = this.sourceManager.formatPaperId(sourceId, paperId);
-        logger$8.info(`Logged reading session for ${paperIdentifier}`, { duration: session.duration_seconds });
+        logger$9.info(`Logged reading session for ${paperIdentifier}`, { duration: session.duration_seconds });
     }
     /**
      * Log an annotation
@@ -212,7 +212,7 @@ class PaperManager {
             data: { key, value }
         });
         const paperIdentifier = this.sourceManager.formatPaperId(sourceId, paperId);
-        logger$8.info(`Logged annotation for ${paperIdentifier}`, { key });
+        logger$9.info(`Logged annotation for ${paperIdentifier}`, { key });
     }
     /**
      * Update paper rating
@@ -244,7 +244,7 @@ class PaperManager {
             data: { rating }
         });
         const paperIdentifier = this.sourceManager.formatPaperId(sourceId, paperId);
-        logger$8.info(`Updated rating for ${paperIdentifier} to ${rating}`);
+        logger$9.info(`Updated rating for ${paperIdentifier} to ${rating}`);
     }
     /**
      * Add interaction to log
@@ -258,7 +258,7 @@ class PaperManager {
 }
 
 // session-service.ts
-const logger$7 = loguru.getLogger('session-service');
+const logger$8 = loguru.getLogger('session-service');
 /**
  * Session tracking service for paper reading sessions
  *
@@ -276,7 +276,7 @@ class SessionService {
         this.paperMetadata = new Map();
         // Configuration
         this.HEARTBEAT_TIMEOUT = 15000; // 15 seconds
-        logger$7.debug('Session service initialized');
+        logger$8.debug('Session service initialized');
     }
     /**
      * Start a new session for a paper
@@ -296,11 +296,11 @@ class SessionService {
         if (metadata) {
             const key = `${sourceId}:${paperId}`;
             this.paperMetadata.set(key, metadata);
-            logger$7.debug(`Stored metadata for ${key}`);
+            logger$8.debug(`Stored metadata for ${key}`);
         }
         // Start timeout check
         this.scheduleTimeoutCheck();
-        logger$7.info(`Started session for ${sourceId}:${paperId}`);
+        logger$8.info(`Started session for ${sourceId}:${paperId}`);
     }
     /**
      * Record a heartbeat for the current session
@@ -314,7 +314,7 @@ class SessionService {
         // Reschedule timeout
         this.scheduleTimeoutCheck();
         if (this.activeSession.heartbeatCount % 12 === 0) { // Log every minute (12 x 5sec heartbeats)
-            logger$7.debug(`Session received ${this.activeSession.heartbeatCount} heartbeats`);
+            logger$8.debug(`Session received ${this.activeSession.heartbeatCount} heartbeats`);
         }
         return true;
     }
@@ -340,7 +340,7 @@ class SessionService {
         const now = Date.now();
         const lastTime = this.activeSession.lastHeartbeatTime.getTime();
         if ((now - lastTime) > this.HEARTBEAT_TIMEOUT) {
-            logger$7.info('Session timeout detected');
+            logger$8.info('Session timeout detected');
             this.endSession();
         }
         else {
@@ -384,9 +384,9 @@ class SessionService {
         if (this.paperManager && heartbeatCount > 0) {
             const metadata = this.getPaperMetadata(sourceId, paperId);
             this.paperManager.logReadingSession(sourceId, paperId, sessionData, metadata)
-                .catch(err => logger$7.error('Failed to store session', err));
+                .catch(err => logger$8.error('Failed to store session', err));
         }
-        logger$7.info(`Ended session for ${sourceId}:${paperId}`, {
+        logger$8.info(`Ended session for ${sourceId}:${paperId}`, {
             duration,
             heartbeats: heartbeatCount
         });
@@ -459,7 +459,7 @@ class SessionService {
 }
 
 // extension/utils/popup-manager.ts
-const logger$6 = loguru.getLogger('popup-manager');
+const logger$7 = loguru.getLogger('popup-manager');
 /**
  * Manages all popup-related functionality
  */
@@ -471,7 +471,7 @@ class PopupManager {
         this.sourceManagerProvider = sourceManagerProvider;
         this.paperManagerProvider = paperManagerProvider;
         this.setupMessageListeners();
-        logger$6.debug('Popup manager initialized');
+        logger$7.debug('Popup manager initialized');
     }
     /**
      * Set up message listeners for popup-related messages
@@ -483,7 +483,7 @@ class PopupManager {
                 this.handlePopupAction(message.sourceId, message.paperId, message.action, message.data).then(() => {
                     sendResponse({ success: true });
                 }).catch(error => {
-                    logger$6.error('Error handling popup action', error);
+                    logger$7.error('Error handling popup action', error);
                     sendResponse({
                         success: false,
                         error: error instanceof Error ? error.message : 'Unknown error'
@@ -496,7 +496,7 @@ class PopupManager {
                 this.handleShowAnnotationPopup(sender.tab.id, message.sourceId, message.paperId, message.position).then(() => {
                     sendResponse({ success: true });
                 }).catch(error => {
-                    logger$6.error('Error showing popup', error);
+                    logger$7.error('Error showing popup', error);
                     sendResponse({
                         success: false,
                         error: error instanceof Error ? error.message : 'Unknown error'
@@ -511,7 +511,7 @@ class PopupManager {
      * Handle a request to show an annotation popup
      */
     async handleShowAnnotationPopup(tabId, sourceId, paperId, position) {
-        logger$6.debug(`Showing annotation popup for ${sourceId}:${paperId}`);
+        logger$7.debug(`Showing annotation popup for ${sourceId}:${paperId}`);
         // Check if we have source and paper manager
         const sourceManager = this.sourceManagerProvider();
         const paperManager = this.paperManagerProvider();
@@ -549,10 +549,10 @@ class PopupManager {
                 position
             };
             await chrome.tabs.sendMessage(tabId, message);
-            logger$6.debug(`Sent popup to content script for ${sourceId}:${paperId}`);
+            logger$7.debug(`Sent popup to content script for ${sourceId}:${paperId}`);
         }
         catch (error) {
-            logger$6.error(`Error showing popup for ${sourceId}:${paperId}`, error);
+            logger$7.error(`Error showing popup for ${sourceId}:${paperId}`, error);
             throw error;
         }
     }
@@ -564,21 +564,21 @@ class PopupManager {
         if (!paperManager) {
             throw new Error('Paper manager not initialized');
         }
-        logger$6.debug(`Handling popup action: ${action}`, { sourceId, paperId });
+        logger$7.debug(`Handling popup action: ${action}`, { sourceId, paperId });
         try {
             if (action === 'rate') {
                 await paperManager.updateRating(sourceId, paperId, data.value);
-                logger$6.info(`Updated rating for ${sourceId}:${paperId} to ${data.value}`);
+                logger$7.info(`Updated rating for ${sourceId}:${paperId} to ${data.value}`);
             }
             else if (action === 'saveNotes') {
                 if (data.value) {
                     await paperManager.logAnnotation(sourceId, paperId, 'notes', data.value);
-                    logger$6.info(`Saved notes for ${sourceId}:${paperId}`);
+                    logger$7.info(`Saved notes for ${sourceId}:${paperId}`);
                 }
             }
         }
         catch (error) {
-            logger$6.error(`Error handling action ${action} for ${sourceId}:${paperId}`, error);
+            logger$7.error(`Error handling action ${action} for ${sourceId}:${paperId}`, error);
             throw error;
         }
     }
@@ -615,24 +615,24 @@ class PopupManager {
 }
 
 // extension/source-integration/source-manager.ts
-const logger$5 = loguru.getLogger('source-manager');
+const logger$6 = loguru.getLogger('source-manager');
 /**
  * Manages source integrations
  */
 class SourceIntegrationManager {
     constructor() {
         this.sources = new Map();
-        logger$5.info('Source integration manager initialized');
+        logger$6.info('Source integration manager initialized');
     }
     /**
      * Register a source integration
      */
     registerSource(source) {
         if (this.sources.has(source.id)) {
-            logger$5.warning(`Source with ID '${source.id}' already registered, overwriting`);
+            logger$6.warning(`Source with ID '${source.id}' already registered, overwriting`);
         }
         this.sources.set(source.id, source);
-        logger$5.info(`Registered source: ${source.name} (${source.id})`);
+        logger$6.info(`Registered source: ${source.name} (${source.id})`);
     }
     /**
      * Get all registered sources
@@ -646,11 +646,11 @@ class SourceIntegrationManager {
     getSourceForUrl(url) {
         for (const source of this.sources.values()) {
             if (source.canHandleUrl(url)) {
-                logger$5.debug(`Found source for URL '${url}': ${source.id}`);
+                logger$6.debug(`Found source for URL '${url}': ${source.id}`);
                 return source;
             }
         }
-        logger$5.debug(`No source found for URL: ${url}`);
+        logger$6.debug(`No source found for URL: ${url}`);
         return null;
     }
     /**
@@ -668,12 +668,12 @@ class SourceIntegrationManager {
             if (source.canHandleUrl(url)) {
                 const paperId = source.extractPaperId(url);
                 if (paperId) {
-                    logger$5.debug(`Extracted paper ID '${paperId}' from URL using ${source.id}`);
+                    logger$6.debug(`Extracted paper ID '${paperId}' from URL using ${source.id}`);
                     return { sourceId: source.id, paperId };
                 }
             }
         }
-        logger$5.debug(`Could not extract paper ID from URL: ${url}`);
+        logger$6.debug(`Could not extract paper ID from URL: ${url}`);
         return null;
     }
     /**
@@ -685,7 +685,7 @@ class SourceIntegrationManager {
             return source.formatPaperId(paperId);
         }
         // Fallback if source not found
-        logger$5.warning(`Source '${sourceId}' not found, using default format for paper ID`);
+        logger$6.warning(`Source '${sourceId}' not found, using default format for paper ID`);
         return `${sourceId}.${paperId}`;
     }
     /**
@@ -697,7 +697,7 @@ class SourceIntegrationManager {
             return source.formatObjectId(type, paperId);
         }
         // Fallback if source not found
-        logger$5.warning(`Source '${sourceId}' not found, using default format for object ID`);
+        logger$6.warning(`Source '${sourceId}' not found, using default format for object ID`);
         return `${type}:${sourceId}.${paperId}`;
     }
     /**
@@ -709,6 +709,59 @@ class SourceIntegrationManager {
             patterns.push(...source.contentScriptMatches);
         }
         return patterns;
+    }
+}
+
+// extension/utils/icon-utils.ts
+const logger$5 = loguru.getLogger('icon-utils');
+// Icon configurations
+const ICONS = {
+    default: {
+        path: {
+            "16": "icons/bookmark/red/favicon-16x16.png",
+            "32": "icons/bookmark/red/favicon-32x32.png",
+            "48": "icons/bookmark/red/apple-touch-icon.png",
+            "128": "icons/bookmark/red/apple-touch-icon.png"
+        },
+        title: "Academic Paper Tracker"
+    },
+    detected: {
+        path: {
+            "16": "icons/bookmark/blue/favicon-16x16.png",
+            "32": "icons/bookmark/blue/favicon-32x32.png",
+            "48": "icons/bookmark/blue/apple-touch-icon.png",
+            "128": "icons/bookmark/blue/apple-touch-icon.png"
+        },
+        title: "Paper Detected - Academic Paper Tracker"
+    },
+    tracked: {
+        path: {
+            "16": "icons/bookmark/green/favicon-16x16.png",
+            "32": "icons/bookmark/green/favicon-32x32.png",
+            "48": "icons/bookmark/green/apple-touch-icon.png",
+            "128": "icons/bookmark/green/apple-touch-icon.png"
+        },
+        title: "Paper Tracked - Academic Paper Tracker"
+    }
+};
+/**
+ * Set icon for a specific tab
+ */
+async function setIcon(tabId, state) {
+    try {
+        const config = ICONS[state];
+        await chrome.action.setIcon({
+            tabId,
+            path: config.path
+        });
+        await chrome.action.setTitle({
+            tabId,
+            title: config.title
+        });
+        logger$5.debug(`Set ${state} icon for tab ${tabId}`);
+    }
+    catch (error) {
+        logger$5.error(`Failed to set ${state} icon for tab ${tabId}:`, error);
     }
 }
 
@@ -1637,6 +1690,8 @@ async function initialize() {
         logger.info('Popup manager initialized');
         // Set up message listeners
         setupMessageListeners();
+        // Set up tab listeners for icon cleanup
+        setupTabListeners();
         // Initialize debug objects
         initializeDebugObjects();
     }
@@ -1644,17 +1699,37 @@ async function initialize() {
         logger.error('Initialization error', error);
     }
 }
+// Set up tab listeners
+function setupTabListeners() {
+    // Reset icon when navigating to new URL
+    chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+        if (changeInfo.status === 'loading' && changeInfo.url) {
+            setIcon(tabId, 'default');
+        }
+    });
+}
 // Set up message listeners
 function setupMessageListeners() {
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-        if (message.type === 'contentScriptReady' && sender.tab?.id) {
-            logger.debug('Content script ready:', sender.tab.url);
+        const tabId = sender.tab?.id;
+        if (message.type === 'contentScriptReady' && tabId) {
+            logger.debug('Content script ready:', sender.tab?.url);
             sendResponse({ success: true });
             return true;
         }
-        if (message.type === 'paperMetadata' && message.metadata) {
-            // Store metadata received from content script
-            handlePaperMetadata(message.metadata);
+        if (message.type === 'paperDetected' && tabId) {
+            setIcon(tabId, 'detected');
+            sendResponse({ success: true });
+            return true;
+        }
+        if (message.type === 'noPaperDetected' && tabId) {
+            setIcon(tabId, 'default');
+            sendResponse({ success: true });
+            return true;
+        }
+        if (message.type === 'paperMetadata' && message.metadata && tabId) {
+            // Store metadata received from content script and update icon
+            handlePaperMetadata(message.metadata, tabId);
             sendResponse({ success: true });
             return true;
         }
@@ -1687,9 +1762,9 @@ function setupMessageListeners() {
             sendResponse({ success: true });
             return true;
         }
-        // New handler for manual paper logging from popup
-        if (message.type === 'manualPaperLog' && message.metadata) {
-            handleManualPaperLog(message.metadata)
+        // Manual paper logging from popup
+        if (message.type === 'manualPaperLog' && message.metadata && tabId) {
+            handleManualPaperLog(message.metadata, tabId)
                 .then(() => sendResponse({ success: true }))
                 .catch(error => {
                 logger.error('Error handling manual paper log', error);
@@ -1705,7 +1780,7 @@ function setupMessageListeners() {
     });
 }
 // Handle paper metadata from content script
-async function handlePaperMetadata(metadata) {
+async function handlePaperMetadata(metadata, tabId) {
     logger.info(`Received metadata for ${metadata.sourceId}:${metadata.paperId}`);
     try {
         // Store metadata in session service
@@ -1716,10 +1791,38 @@ async function handlePaperMetadata(metadata) {
         if (paperManager) {
             await paperManager.getOrCreatePaper(metadata);
             logger.debug('Paper metadata stored in GitHub');
+            // Update icon to tracked state
+            await setIcon(tabId, 'tracked');
+        }
+        else {
+            // No paper manager - show detected state
+            await setIcon(tabId, 'detected');
         }
     }
     catch (error) {
         logger.error('Error handling paper metadata', error);
+        // On error, show detected state instead of tracked
+        await setIcon(tabId, 'detected');
+    }
+}
+async function handleManualPaperLog(metadata, tabId) {
+    logger.info(`Received manual paper log: ${metadata.sourceId}:${metadata.paperId}`);
+    try {
+        // Store metadata in session service
+        if (sessionService) {
+            sessionService.storePaperMetadata(metadata);
+        }
+        // Store in GitHub if we have a paper manager
+        if (paperManager) {
+            await paperManager.getOrCreatePaper(metadata);
+            logger.debug('Manually logged paper stored in GitHub');
+            // Update icon to tracked state
+            await setIcon(tabId, 'tracked');
+        }
+    }
+    catch (error) {
+        logger.error('Error handling manual paper log', error);
+        throw error;
     }
 }
 // Handle rating update
@@ -1781,24 +1884,6 @@ function handleEndSession(reason) {
         sessionService.endSession();
     }
 }
-async function handleManualPaperLog(metadata) {
-    logger.info(`Received manual paper log: ${metadata.sourceId}:${metadata.paperId}`);
-    try {
-        // Store metadata in session service
-        if (sessionService) {
-            sessionService.storePaperMetadata(metadata);
-        }
-        // Store in GitHub if we have a paper manager
-        if (paperManager) {
-            await paperManager.getOrCreatePaper(metadata);
-            logger.debug('Manually logged paper stored in GitHub');
-        }
-    }
-    catch (error) {
-        logger.error('Error handling manual paper log', error);
-        throw error;
-    }
-}
 // Listen for credential changes
 chrome.storage.onChanged.addListener(async (changes) => {
     logger.debug('Storage changes detected', Object.keys(changes));
@@ -1836,7 +1921,8 @@ function initializeDebugObjects() {
         },
         getSessionStats: () => sessionService?.getSessionStats(),
         getSources: () => sourceManager?.getAllSources(),
-        forceEndSession: () => sessionService?.endSession()
+        forceEndSession: () => sessionService?.endSession(),
+        setIcon: (tabId, state) => setIcon(tabId, state)
     };
     logger.info('Debug objects registered');
 }
