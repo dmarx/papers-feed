@@ -1,17 +1,17 @@
 // background.ts
-// Background script with simplified session tracking
+// Background script with simple icon management
 
 import { GitHubStoreClient } from 'gh-store-client';
 import { PaperManager } from './papers/manager';
 import { SessionService } from './utils/session-service';
 import { PopupManager } from './utils/popup-manager';
 import { SourceIntegrationManager } from './source-integration/source-manager';
+import { setIcon } from './utils/icon-utils';
 import { loguru } from './utils/logger';
 import { PaperMetadata } from './papers/types';
 
 // Import from central registry instead of individual integrations
 import { sourceIntegrations } from './source-integration/registry';
-import { Message } from './source-integration/types';
 
 const logger = loguru.getLogger('background');
 
@@ -77,6 +77,9 @@ async function initialize() {
     // Set up message listeners
     setupMessageListeners();
     
+    // Set up tab listeners for icon cleanup
+    setupTabListeners();
+    
     // Initialize debug objects
     initializeDebugObjects();
   } catch (error) {
@@ -84,18 +87,42 @@ async function initialize() {
   }
 }
 
+// Set up tab listeners
+function setupTabListeners() {
+  // Reset icon when navigating to new URL
+  chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+    if (changeInfo.status === 'loading' && changeInfo.url) {
+      setIcon(tabId, 'default');
+    }
+  });
+}
+
 // Set up message listeners
 function setupMessageListeners() {
   chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
-    if (message.type === 'contentScriptReady' && sender.tab?.id) {
+    const tabId = sender.tab?.id;
+    
+    if (message.type === 'contentScriptReady' && tabId) {
       logger.debug('Content script ready:', sender.tab.url);
       sendResponse({ success: true });
       return true;
     }
     
-    if (message.type === 'paperMetadata' && message.metadata) {
-      // Store metadata received from content script
-      handlePaperMetadata(message.metadata);
+    if (message.type === 'paperDetected' && tabId) {
+      setIcon(tabId, 'detected');
+      sendResponse({ success: true });
+      return true;
+    }
+    
+    if (message.type === 'noPaperDetected' && tabId) {
+      setIcon(tabId, 'default');
+      sendResponse({ success: true });
+      return true;
+    }
+    
+    if (message.type === 'paperMetadata' && message.metadata && tabId) {
+      // Store metadata received from content script and update icon
+      handlePaperMetadata(message.metadata, tabId);
       sendResponse({ success: true });
       return true;
     }
@@ -135,9 +162,9 @@ function setupMessageListeners() {
       return true;
     }
 
-    // New handler for manual paper logging from popup
-    if (message.type === 'manualPaperLog' && message.metadata) {
-      handleManualPaperLog(message.metadata)
+    // Manual paper logging from popup
+    if (message.type === 'manualPaperLog' && message.metadata && tabId) {
+      handleManualPaperLog(message.metadata, tabId)
         .then(() => sendResponse({ success: true }))
         .catch(error => {
           logger.error('Error handling manual paper log', error);
@@ -150,13 +177,12 @@ function setupMessageListeners() {
     }
     
     // Other message handlers are managed by PopupManager
-    
     return false; // Not handled
   });
 }
 
 // Handle paper metadata from content script
-async function handlePaperMetadata(metadata: PaperMetadata) {
+async function handlePaperMetadata(metadata: PaperMetadata, tabId: number) {
   logger.info(`Received metadata for ${metadata.sourceId}:${metadata.paperId}`);
   
   try {
@@ -169,9 +195,40 @@ async function handlePaperMetadata(metadata: PaperMetadata) {
     if (paperManager) {
       await paperManager.getOrCreatePaper(metadata);
       logger.debug('Paper metadata stored in GitHub');
+      
+      // Update icon to tracked state
+      await setIcon(tabId, 'tracked');
+    } else {
+      // No paper manager - show detected state
+      await setIcon(tabId, 'detected');
     }
   } catch (error) {
     logger.error('Error handling paper metadata', error);
+    // On error, show detected state instead of tracked
+    await setIcon(tabId, 'detected');
+  }
+}
+
+async function handleManualPaperLog(metadata: PaperMetadata, tabId: number): Promise<void> {
+  logger.info(`Received manual paper log: ${metadata.sourceId}:${metadata.paperId}`);
+  
+  try {
+    // Store metadata in session service
+    if (sessionService) {
+      sessionService.storePaperMetadata(metadata);
+    }
+    
+    // Store in GitHub if we have a paper manager
+    if (paperManager) {
+      await paperManager.getOrCreatePaper(metadata);
+      logger.debug('Manually logged paper stored in GitHub');
+      
+      // Update icon to tracked state
+      await setIcon(tabId, 'tracked');
+    }
+  } catch (error) {
+    logger.error('Error handling manual paper log', error);
+    throw error;
   }
 }
 
@@ -251,26 +308,6 @@ function handleEndSession(reason: string) {
   }
 }
 
-async function handleManualPaperLog(metadata: PaperMetadata): Promise<void> {
-  logger.info(`Received manual paper log: ${metadata.sourceId}:${metadata.paperId}`);
-  
-  try {
-    // Store metadata in session service
-    if (sessionService) {
-      sessionService.storePaperMetadata(metadata);
-    }
-    
-    // Store in GitHub if we have a paper manager
-    if (paperManager) {
-      await paperManager.getOrCreatePaper(metadata);
-      logger.debug('Manually logged paper stored in GitHub');
-    }
-  } catch (error) {
-    logger.error('Error handling manual paper log', error);
-    throw error;
-  }
-}
-
 // Listen for credential changes
 chrome.storage.onChanged.addListener(async (changes) => {
   logger.debug('Storage changes detected', Object.keys(changes));
@@ -313,7 +350,8 @@ function initializeDebugObjects() {
     },
     getSessionStats: () => sessionService?.getSessionStats(),
     getSources: () => sourceManager?.getAllSources(),
-    forceEndSession: () => sessionService?.endSession()
+    forceEndSession: () => sessionService?.endSession(),
+    setIcon: (tabId: number, state: 'default' | 'detected' | 'tracked') => setIcon(tabId, state)
   };
 
   logger.info('Debug objects registered');
