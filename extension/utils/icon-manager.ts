@@ -15,41 +15,26 @@ export enum IconState {
 }
 
 /**
- * For each IconState, we define an inline SVG string and a tooltip title.
- * The SVGs below are embedded directly as template literals so that
- * no external file fetch is needed.
- *
- * You can replace the contents of each `svg` field with whatever SVG markup
- * you want for that state.
+ * For each IconState, we define a single-root inline SVG string and a tooltip title.
+ * Note: these SVG strings have been cleaned up to remove nested <svg> tags and <style> blocks.
  */
 const ICON_CONFIGS: {
   [K in IconState]: { svg: string; title: string };
 } = {
   [IconState.DEFAULT]: {
     svg: `
-<svg xmlns="http://www.w3.org/2000/svg" version="1.1"
-     xmlns:xlink="http://www.w3.org/1999/xlink" width="800px" height="800px">
-  <svg width="800px" height="800px" viewBox="0 0 36 36"
-       xmlns="http://www.w3.org/2000/svg"
-       xmlns:xlink="http://www.w3.org/1999/xlink"
-       aria-hidden="true" role="img" class="iconify iconify--twemoji"
-       preserveAspectRatio="xMidYMid meet">
-    <path fill="#AAB8C2" d="M35 26a4 4 0 0 1-4 4H5a4 4 0 0 1-4-4V6.313C1 4.104 6.791 0 9 0h20.625C32.719 0 35 2.312 35 5.375V26z"/>
-    <path fill="#F5F8FA" d="M33 30a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V6c0-4.119-.021-4 5-4h21a4 4 0 0 1 4 4v24z"/>
-    <path fill="#FFF" d="M31 31a3 3 0 0 1-3 3H4a3 3 0 0 1-3-3V7a3 3 0 0 1 3-3h24a3 3 0 0 1 3 3v24z"/>
-    <path fill="#AAB8C2" d="M31 32a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V10a4 4 0 0 1 4-4h21a4 4 0 0 1 4 4v22z"/>
-    <path fill="#E1E8ED" d="M29 32a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V12a4 4 0 0 1 4-4h19.335C27.544 8 29 9.456 29 11.665V32z"/>
-    <path fill="#AAB8C2" d="M6 6C4.312 6 4.269 4.078 5 3.25C5.832 2.309 7.125 2 9.438 2H11V0H8.281C4.312 0 1 2.5 1 5.375V32a4 4 0 0 0 4 4h2V6H6z"/>
-    <g fill="#DD2E44">
-      <path d="M17 4v23l4-6l4 6V4z"/>
-      <path d="M25 28a1 1 0 0 1-.832-.445L21 22.803l-3.168 4.752A.998.998 0 0 1 16 27V4a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v23a1 1 0 0 1-1 1zm-4-8c.334 0 .646.167.832.445L24 23.697V5h-6v18.697l2.168-3.252c.186-.278.498-.445.832-.445z"/>
-    </g>
-    <path fill="#F5F8FA" d="M15 2h12v2H15z"/>
-  </svg>
-  <style>
-    @media (prefers-color-scheme: light) { :root { filter: none; } }
-    @media (prefers-color-scheme: dark)  { :root { filter: none; } }
-  </style>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" width="36" height="36">
+  <path fill="#AAB8C2" d="M35 26a4 4 0 0 1-4 4H5a4 4 0 0 1-4-4V6.313C1 4.104 6.791 0 9 0h20.625C32.719 0 35 2.312 35 5.375V26z"/>
+  <path fill="#F5F8FA" d="M33 30a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V6c0-4.119-.021-4 5-4h21a4 4 0 0 1 4 4v24z"/>
+  <path fill="#FFF"     d="M31 31a3 3 0 0 1-3 3H4a3 3 0 0 1-3-3V7a3 3 0 0 1 3-3h24a3 3 0 0 1 3 3v24z"/>
+  <path fill="#AAB8C2" d="M31 32a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V10a4 4 0 0 1 4-4h21a4 4 0 0 1 4 4v22z"/>
+  <path fill="#E1E8ED" d="M29 32a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V12a4 4 0 0 1 4-4h19.335C27.544 8 29 9.456 29 11.665V32z"/>
+  <path fill="#AAB8C2" d="M6 6C4.312 6 4.269 4.078 5 3.25C5.832 2.309 7.125 2 9.438 2H11V0H8.281C4.312 0 1 2.5 1 5.375V32a4 4 0 0 0 4 4h2V6H6z"/>
+  <g fill="#DD2E44">
+    <path d="M17 4v23l4-6l4 6V4z"/>
+    <path d="M25 28a1 1 0 0 1-.832-.445L21 22.803l-3.168 4.752A.998.998 0 0 1 16 27V4a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v23a1 1 0 0 1-1 1zm-4-8c.334 0 .646.167.832.445L24 23.697V5h-6v18.697l2.168-3.252c.186-.278.498-.445.832-.445z"/>
+  </g>
+  <path fill="#F5F8FA" d="M15 2h12v2H15z"/>
 </svg>
     `.trim(),
     title: 'Academic Paper Tracker',
@@ -57,11 +42,11 @@ const ICON_CONFIGS: {
 
   [IconState.DETECTED]: {
     svg: `
-<svg xmlns="http://www.w3.org/2000/svg" width="800px" height="800px" viewBox="0 0 36 36">
-  <!-- Example “blue” bookmark SVG; replace paths as desired -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" width="36" height="36">
+  <!-- “Blue” variant -->
   <path fill="#1DA1F2" d="M35 26a4 4 0 0 1-4 4H5a4 4 0 0 1-4-4V6.313C1 4.104 6.791 0 9 0h20.625C32.719 0 35 2.312 35 5.375V26z"/>
   <path fill="#E8F5FE" d="M33 30a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V6c0-4.119-.021-4 5-4h21a4 4 0 0 1 4 4v24z"/>
-  <path fill="#FFF" d="M31 31a3 3 0 0 1-3 3H4a3 3 0 0 1-3-3V7a3 3 0 0 1 3-3h24a3 3 0 0 1 3 3v24z"/>
+  <path fill="#FFF"     d="M31 31a3 3 0 0 1-3 3H4a3 3 0 0 1-3-3V7a3 3 0 0 1 3-3h24a3 3 0 0 1 3 3v24z"/>
   <path fill="#1DA1F2" d="M31 32a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V10a4 4 0 0 1 4-4h21a4 4 0 0 1 4 4v22z"/>
   <path fill="#E8F5FE" d="M29 32a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V12a4 4 0 0 1 4-4h19.335C27.544 8 29 9.456 29 11.665V32z"/>
   <path fill="#1DA1F2" d="M6 6C4.312 6 4.269 4.078 5 3.25C5.832 2.309 7.125 2 9.438 2H11V0H8.281C4.312 0 1 2.5 1 5.375V32a4 4 0 0 0 4 4h2V6H6z"/>
@@ -77,11 +62,11 @@ const ICON_CONFIGS: {
 
   [IconState.TRACKED]: {
     svg: `
-<svg xmlns="http://www.w3.org/2000/svg" width="800px" height="800px" viewBox="0 0 36 36">
-  <!-- Example “forest” bookmark SVG; replace paths as desired -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" width="36" height="36">
+  <!-- “Forest” variant -->
   <path fill="#228B22" d="M35 26a4 4 0 0 1-4 4H5a4 4 0 0 1-4-4V6.313C1 4.104 6.791 0 9 0h20.625C32.719 0 35 2.312 35 5.375V26z"/>
   <path fill="#E8F5EE" d="M33 30a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V6c0-4.119-.021-4 5-4h21a4 4 0 0 1 4 4v24z"/>
-  <path fill="#FFF" d="M31 31a3 3 0 0 1-3 3H4a3 3 0 0 1-3-3V7a3 3 0 0 1 3-3h24a3 3 0 0 1 3 3v24z"/>
+  <path fill="#FFF"     d="M31 31a3 3 0 0 1-3 3H4a3 3 0 0 1-3-3V7a3 3 0 0 1 3-3h24a3 3 0 0 1 3 3v24z"/>
   <path fill="#228B22" d="M31 32a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V10a4 4 0 0 1 4-4h21a4 4 0 0 1 4 4v22z"/>
   <path fill="#E8F5EE" d="M29 32a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V12a4 4 0 0 1 4-4h19.335C27.544 8 29 9.456 29 11.665V32z"/>
   <path fill="#228B22" d="M6 6C4.312 6 4.269 4.078 5 3.25C5.832 2.309 7.125 2 9.438 2H11V0H8.281C4.312 0 1 2.5 1 5.375V32a4 4 0 0 0 4 4h2V6H6z"/>
@@ -113,11 +98,6 @@ export class IconManager {
     logger.debug('Icon manager initialized');
   }
 
-  /**
-   * Set up listeners for tab events:
-   *  - Clean up when a tab closes.
-   *  - Reset icon to DEFAULT when navigation starts.
-   */
   private setupTabListeners(): void {
     // Clean up icon state when tabs are closed
     chrome.tabs.onRemoved.addListener((tabId) => {
@@ -126,7 +106,7 @@ export class IconManager {
     });
 
     // Reset icon when navigating to a new URL
-    chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+    chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
       if (changeInfo.status === 'loading' && changeInfo.url) {
         this.setIconState(tabId, IconState.DEFAULT);
         logger.debug(`Reset icon for tab ${tabId} navigating to ${changeInfo.url}`);
@@ -135,21 +115,16 @@ export class IconManager {
   }
 
   /**
-   * Set icon state for a specific tab.
-   *
-   * Instead of pointing at static PNGs, we now:
-   *  1. Read the inline SVG string from ICON_CONFIGS.
-   *  2. Rasterize it at each size in ICON_SIZES via OffscreenCanvas.
-   *  3. Build an object { [size]: ImageData }.
-   *  4. Call chrome.action.setIcon({ tabId, imageData }).
-   *
-   * Then update the tab title as before.
+   * Set icon state for a specific tab by:
+   * 1. Taking the inline SVG string.
+   * 2. Rasterizing to each size in ICON_SIZES via OffscreenCanvas.
+   * 3. Passing imageDataMap to chrome.action.setIcon().
    */
   async setIconState(tabId: number, state: IconState): Promise<void> {
     const config = ICON_CONFIGS[state];
 
     try {
-      // 1. Get the inline SVG text
+      // 1. Read the inline SVG text
       const svgText = config.svg;
 
       // 2. Rasterize SVG at each desired size
@@ -182,11 +157,6 @@ export class IconManager {
   /**
    * Rasterize a string of SVG markup into an ImageData blob
    * at the specified pixel width/height.
-   *
-   * @param svgText - Full SVG source as a string
-   * @param widthPx - target raster width in px
-   * @param heightPx - target raster height in px
-   * @returns ImageData for the rasterized SVG
    */
   private async rasterizeSvgToImageData(
     svgText: string,
@@ -216,37 +186,22 @@ export class IconManager {
     return ctx.getImageData(0, 0, widthPx, heightPx);
   }
 
-  /**
-   * Get current icon state for a tab (defaults to DEFAULT).
-   */
   getIconState(tabId: number): IconState {
     return this.tabStates.get(tabId) || IconState.DEFAULT;
   }
 
-  /**
-   * Convenience: Set icon to DETECTED state (paper found but not tracked).
-   */
   async setPaperDetected(tabId: number): Promise<void> {
     await this.setIconState(tabId, IconState.DETECTED);
   }
 
-  /**
-   * Convenience: Set icon to TRACKED state (paper is being tracked/stored).
-   */
   async setPaperTracked(tabId: number): Promise<void> {
     await this.setIconState(tabId, IconState.TRACKED);
   }
 
-  /**
-   * Convenience: Reset icon to DEFAULT state.
-   */
   async resetIcon(tabId: number): Promise<void> {
     await this.setIconState(tabId, IconState.DEFAULT);
   }
 
-  /**
-   * Set badge text (optional visual indicator).
-   */
   async setBadgeText(tabId: number, text: string, color?: string): Promise<void> {
     try {
       await chrome.action.setBadgeText({ tabId, text });
@@ -259,9 +214,6 @@ export class IconManager {
     }
   }
 
-  /**
-   * Clear badge text.
-   */
   async clearBadge(tabId: number): Promise<void> {
     await this.setBadgeText(tabId, '');
   }
