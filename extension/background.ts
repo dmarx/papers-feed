@@ -1,11 +1,12 @@
 // background.ts
-// Background script with simplified session tracking
+// Background script with icon management integration
 
 import { GitHubStoreClient } from 'gh-store-client';
 import { PaperManager } from './papers/manager';
 import { SessionService } from './utils/session-service';
 import { PopupManager } from './utils/popup-manager';
 import { SourceIntegrationManager } from './source-integration/source-manager';
+import { IconManager, IconState } from './utils/icon-manager';
 import { loguru } from './utils/logger';
 import { PaperMetadata } from './papers/types';
 
@@ -22,6 +23,7 @@ let paperManager: PaperManager | null = null;
 let sessionService: SessionService | null = null;
 let popupManager: PopupManager | null = null;
 let sourceManager: SourceIntegrationManager | null = null;
+let iconManager: IconManager | null = null;
 
 // Initialize sources
 function initializeSources() {
@@ -43,6 +45,10 @@ async function initialize() {
   try {
     // Initialize sources first
     initializeSources();
+    
+    // Initialize icon manager
+    iconManager = new IconManager();
+    logger.info('Icon manager initialized');
     
     // Load GitHub credentials
     const items = await chrome.storage.sync.get(['githubToken', 'githubRepo']);
@@ -93,9 +99,23 @@ function setupMessageListeners() {
       return true;
     }
     
-    if (message.type === 'paperMetadata' && message.metadata) {
-      // Store metadata received from content script
-      handlePaperMetadata(message.metadata);
+    if (message.type === 'paperMetadata' && message.metadata && sender.tab?.id) {
+      // Store metadata received from content script and update icon
+      handlePaperMetadata(message.metadata, sender.tab.id);
+      sendResponse({ success: true });
+      return true;
+    }
+    
+    if (message.type === 'paperDetected' && sender.tab?.id) {
+      // Paper detected but not yet stored - show detected state
+      handlePaperDetected(sender.tab.id, message.sourceId, message.paperId);
+      sendResponse({ success: true });
+      return true;
+    }
+    
+    if (message.type === 'noPaperDetected' && sender.tab?.id) {
+      // No paper detected - reset to default icon
+      handleNoPaperDetected(sender.tab.id);
       sendResponse({ success: true });
       return true;
     }
@@ -136,8 +156,8 @@ function setupMessageListeners() {
     }
 
     // New handler for manual paper logging from popup
-    if (message.type === 'manualPaperLog' && message.metadata) {
-      handleManualPaperLog(message.metadata)
+    if (message.type === 'manualPaperLog' && message.metadata && sender.tab?.id) {
+      handleManualPaperLog(message.metadata, sender.tab.id)
         .then(() => sendResponse({ success: true }))
         .catch(error => {
           logger.error('Error handling manual paper log', error);
@@ -155,8 +175,32 @@ function setupMessageListeners() {
   });
 }
 
+// Handle paper detected (before storage)
+async function handlePaperDetected(tabId: number, sourceId: string, paperId: string) {
+  if (!iconManager) return;
+  
+  try {
+    await iconManager.setPaperDetected(tabId);
+    logger.debug(`Set detected icon for ${sourceId}:${paperId} in tab ${tabId}`);
+  } catch (error) {
+    logger.error('Error setting detected icon', error);
+  }
+}
+
+// Handle no paper detected
+async function handleNoPaperDetected(tabId: number) {
+  if (!iconManager) return;
+  
+  try {
+    await iconManager.resetIcon(tabId);
+    logger.debug(`Reset icon for tab ${tabId}`);
+  } catch (error) {
+    logger.error('Error resetting icon', error);
+  }
+}
+
 // Handle paper metadata from content script
-async function handlePaperMetadata(metadata: PaperMetadata) {
+async function handlePaperMetadata(metadata: PaperMetadata, tabId: number) {
   logger.info(`Received metadata for ${metadata.sourceId}:${metadata.paperId}`);
   
   try {
@@ -169,9 +213,25 @@ async function handlePaperMetadata(metadata: PaperMetadata) {
     if (paperManager) {
       await paperManager.getOrCreatePaper(metadata);
       logger.debug('Paper metadata stored in GitHub');
+      
+      // Update icon to tracked state
+      if (iconManager) {
+        await iconManager.setPaperTracked(tabId);
+        logger.debug(`Set tracked icon for ${metadata.sourceId}:${metadata.paperId} in tab ${tabId}`);
+      }
+    } else {
+      // No paper manager - just show detected state
+      if (iconManager) {
+        await iconManager.setPaperDetected(tabId);
+      }
     }
   } catch (error) {
     logger.error('Error handling paper metadata', error);
+    
+    // On error, show detected state instead of tracked
+    if (iconManager) {
+      await iconManager.setPaperDetected(tabId);
+    }
   }
 }
 
@@ -251,7 +311,7 @@ function handleEndSession(reason: string) {
   }
 }
 
-async function handleManualPaperLog(metadata: PaperMetadata): Promise<void> {
+async function handleManualPaperLog(metadata: PaperMetadata, tabId: number): Promise<void> {
   logger.info(`Received manual paper log: ${metadata.sourceId}:${metadata.paperId}`);
   
   try {
@@ -264,6 +324,12 @@ async function handleManualPaperLog(metadata: PaperMetadata): Promise<void> {
     if (paperManager) {
       await paperManager.getOrCreatePaper(metadata);
       logger.debug('Manually logged paper stored in GitHub');
+      
+      // Update icon to tracked state
+      if (iconManager) {
+        await iconManager.setPaperTracked(tabId);
+        logger.debug(`Set tracked icon for manually logged paper in tab ${tabId}`);
+      }
     }
   } catch (error) {
     logger.error('Error handling manual paper log', error);
@@ -306,6 +372,7 @@ function initializeDebugObjects() {
     get sessionService() { return sessionService; },
     get popupManager() { return popupManager; },
     get sourceManager() { return sourceManager; },
+    get iconManager() { return iconManager; },
     getGithubClient: () => paperManager ? paperManager.getClient() : null,
     getCurrentPaper: () => {
       const session = sessionService?.getCurrentSession();
@@ -313,7 +380,8 @@ function initializeDebugObjects() {
     },
     getSessionStats: () => sessionService?.getSessionStats(),
     getSources: () => sourceManager?.getAllSources(),
-    forceEndSession: () => sessionService?.endSession()
+    forceEndSession: () => sessionService?.endSession(),
+    setIconState: (tabId: number, state: IconState) => iconManager?.setIconState(tabId, state)
   };
 
   logger.info('Debug objects registered');
