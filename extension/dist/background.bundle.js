@@ -68,12 +68,12 @@ class LoguruMock {
 // Export singleton instance
 const loguru = new LoguruMock();
 
-const logger$8 = loguru.getLogger('paper-manager');
+const logger$9 = loguru.getLogger('paper-manager');
 class PaperManager {
     constructor(client, sourceManager) {
         this.client = client;
         this.sourceManager = sourceManager;
-        logger$8.debug('Paper manager initialized');
+        logger$9.debug('Paper manager initialized');
     }
     /**
      * Get paper by source and ID
@@ -101,7 +101,7 @@ class PaperManager {
         try {
             const obj = await this.client.getObject(objectId);
             const data = obj.data;
-            logger$8.debug(`Retrieved existing paper: ${paperIdentifier}`);
+            logger$9.debug(`Retrieved existing paper: ${paperIdentifier}`);
             return data;
         }
         catch (error) {
@@ -113,7 +113,7 @@ class PaperManager {
                     rating: paperData.rating || 'novote'
                 };
                 const newobj = await this.client.createObject(objectId, defaultPaperData);
-                logger$8.debug(`Created new paper: ${paperIdentifier}`);
+                logger$9.debug(`Created new paper: ${paperIdentifier}`);
                 // reopen to trigger metadata hydration
                 await this.client.fetchFromGitHub(`/issues/${newobj.meta.issueNumber}`, {
                     method: "PATCH",
@@ -146,7 +146,7 @@ class PaperManager {
                     interactions: []
                 };
                 await this.client.createObject(objectId, newLog);
-                logger$8.debug(`Created new interaction log: ${paperIdentifier}`);
+                logger$9.debug(`Created new interaction log: ${paperIdentifier}`);
                 return newLog;
             }
             throw error;
@@ -184,7 +184,7 @@ class PaperManager {
             data: session
         });
         const paperIdentifier = this.sourceManager.formatPaperId(sourceId, paperId);
-        logger$8.info(`Logged reading session for ${paperIdentifier}`, { duration: session.duration_seconds });
+        logger$9.info(`Logged reading session for ${paperIdentifier}`, { duration: session.duration_seconds });
     }
     /**
      * Log an annotation
@@ -212,7 +212,7 @@ class PaperManager {
             data: { key, value }
         });
         const paperIdentifier = this.sourceManager.formatPaperId(sourceId, paperId);
-        logger$8.info(`Logged annotation for ${paperIdentifier}`, { key });
+        logger$9.info(`Logged annotation for ${paperIdentifier}`, { key });
     }
     /**
      * Update paper rating
@@ -244,7 +244,7 @@ class PaperManager {
             data: { rating }
         });
         const paperIdentifier = this.sourceManager.formatPaperId(sourceId, paperId);
-        logger$8.info(`Updated rating for ${paperIdentifier} to ${rating}`);
+        logger$9.info(`Updated rating for ${paperIdentifier} to ${rating}`);
     }
     /**
      * Add interaction to log
@@ -258,7 +258,7 @@ class PaperManager {
 }
 
 // session-service.ts
-const logger$7 = loguru.getLogger('session-service');
+const logger$8 = loguru.getLogger('session-service');
 /**
  * Session tracking service for paper reading sessions
  *
@@ -276,7 +276,7 @@ class SessionService {
         this.paperMetadata = new Map();
         // Configuration
         this.HEARTBEAT_TIMEOUT = 15000; // 15 seconds
-        logger$7.debug('Session service initialized');
+        logger$8.debug('Session service initialized');
     }
     /**
      * Start a new session for a paper
@@ -296,11 +296,11 @@ class SessionService {
         if (metadata) {
             const key = `${sourceId}:${paperId}`;
             this.paperMetadata.set(key, metadata);
-            logger$7.debug(`Stored metadata for ${key}`);
+            logger$8.debug(`Stored metadata for ${key}`);
         }
         // Start timeout check
         this.scheduleTimeoutCheck();
-        logger$7.info(`Started session for ${sourceId}:${paperId}`);
+        logger$8.info(`Started session for ${sourceId}:${paperId}`);
     }
     /**
      * Record a heartbeat for the current session
@@ -314,7 +314,7 @@ class SessionService {
         // Reschedule timeout
         this.scheduleTimeoutCheck();
         if (this.activeSession.heartbeatCount % 12 === 0) { // Log every minute (12 x 5sec heartbeats)
-            logger$7.debug(`Session received ${this.activeSession.heartbeatCount} heartbeats`);
+            logger$8.debug(`Session received ${this.activeSession.heartbeatCount} heartbeats`);
         }
         return true;
     }
@@ -340,7 +340,7 @@ class SessionService {
         const now = Date.now();
         const lastTime = this.activeSession.lastHeartbeatTime.getTime();
         if ((now - lastTime) > this.HEARTBEAT_TIMEOUT) {
-            logger$7.info('Session timeout detected');
+            logger$8.info('Session timeout detected');
             this.endSession();
         }
         else {
@@ -384,9 +384,9 @@ class SessionService {
         if (this.paperManager && heartbeatCount > 0) {
             const metadata = this.getPaperMetadata(sourceId, paperId);
             this.paperManager.logReadingSession(sourceId, paperId, sessionData, metadata)
-                .catch(err => logger$7.error('Failed to store session', err));
+                .catch(err => logger$8.error('Failed to store session', err));
         }
-        logger$7.info(`Ended session for ${sourceId}:${paperId}`, {
+        logger$8.info(`Ended session for ${sourceId}:${paperId}`, {
             duration,
             heartbeats: heartbeatCount
         });
@@ -459,7 +459,7 @@ class SessionService {
 }
 
 // extension/utils/popup-manager.ts
-const logger$6 = loguru.getLogger('popup-manager');
+const logger$7 = loguru.getLogger('popup-manager');
 /**
  * Manages all popup-related functionality
  */
@@ -471,7 +471,7 @@ class PopupManager {
         this.sourceManagerProvider = sourceManagerProvider;
         this.paperManagerProvider = paperManagerProvider;
         this.setupMessageListeners();
-        logger$6.debug('Popup manager initialized');
+        logger$7.debug('Popup manager initialized');
     }
     /**
      * Set up message listeners for popup-related messages
@@ -483,7 +483,7 @@ class PopupManager {
                 this.handlePopupAction(message.sourceId, message.paperId, message.action, message.data).then(() => {
                     sendResponse({ success: true });
                 }).catch(error => {
-                    logger$6.error('Error handling popup action', error);
+                    logger$7.error('Error handling popup action', error);
                     sendResponse({
                         success: false,
                         error: error instanceof Error ? error.message : 'Unknown error'
@@ -496,7 +496,7 @@ class PopupManager {
                 this.handleShowAnnotationPopup(sender.tab.id, message.sourceId, message.paperId, message.position).then(() => {
                     sendResponse({ success: true });
                 }).catch(error => {
-                    logger$6.error('Error showing popup', error);
+                    logger$7.error('Error showing popup', error);
                     sendResponse({
                         success: false,
                         error: error instanceof Error ? error.message : 'Unknown error'
@@ -511,7 +511,7 @@ class PopupManager {
      * Handle a request to show an annotation popup
      */
     async handleShowAnnotationPopup(tabId, sourceId, paperId, position) {
-        logger$6.debug(`Showing annotation popup for ${sourceId}:${paperId}`);
+        logger$7.debug(`Showing annotation popup for ${sourceId}:${paperId}`);
         // Check if we have source and paper manager
         const sourceManager = this.sourceManagerProvider();
         const paperManager = this.paperManagerProvider();
@@ -549,10 +549,10 @@ class PopupManager {
                 position
             };
             await chrome.tabs.sendMessage(tabId, message);
-            logger$6.debug(`Sent popup to content script for ${sourceId}:${paperId}`);
+            logger$7.debug(`Sent popup to content script for ${sourceId}:${paperId}`);
         }
         catch (error) {
-            logger$6.error(`Error showing popup for ${sourceId}:${paperId}`, error);
+            logger$7.error(`Error showing popup for ${sourceId}:${paperId}`, error);
             throw error;
         }
     }
@@ -564,21 +564,21 @@ class PopupManager {
         if (!paperManager) {
             throw new Error('Paper manager not initialized');
         }
-        logger$6.debug(`Handling popup action: ${action}`, { sourceId, paperId });
+        logger$7.debug(`Handling popup action: ${action}`, { sourceId, paperId });
         try {
             if (action === 'rate') {
                 await paperManager.updateRating(sourceId, paperId, data.value);
-                logger$6.info(`Updated rating for ${sourceId}:${paperId} to ${data.value}`);
+                logger$7.info(`Updated rating for ${sourceId}:${paperId} to ${data.value}`);
             }
             else if (action === 'saveNotes') {
                 if (data.value) {
                     await paperManager.logAnnotation(sourceId, paperId, 'notes', data.value);
-                    logger$6.info(`Saved notes for ${sourceId}:${paperId}`);
+                    logger$7.info(`Saved notes for ${sourceId}:${paperId}`);
                 }
             }
         }
         catch (error) {
-            logger$6.error(`Error handling action ${action} for ${sourceId}:${paperId}`, error);
+            logger$7.error(`Error handling action ${action} for ${sourceId}:${paperId}`, error);
             throw error;
         }
     }
@@ -615,24 +615,24 @@ class PopupManager {
 }
 
 // extension/source-integration/source-manager.ts
-const logger$5 = loguru.getLogger('source-manager');
+const logger$6 = loguru.getLogger('source-manager');
 /**
  * Manages source integrations
  */
 class SourceIntegrationManager {
     constructor() {
         this.sources = new Map();
-        logger$5.info('Source integration manager initialized');
+        logger$6.info('Source integration manager initialized');
     }
     /**
      * Register a source integration
      */
     registerSource(source) {
         if (this.sources.has(source.id)) {
-            logger$5.warning(`Source with ID '${source.id}' already registered, overwriting`);
+            logger$6.warning(`Source with ID '${source.id}' already registered, overwriting`);
         }
         this.sources.set(source.id, source);
-        logger$5.info(`Registered source: ${source.name} (${source.id})`);
+        logger$6.info(`Registered source: ${source.name} (${source.id})`);
     }
     /**
      * Get all registered sources
@@ -646,11 +646,11 @@ class SourceIntegrationManager {
     getSourceForUrl(url) {
         for (const source of this.sources.values()) {
             if (source.canHandleUrl(url)) {
-                logger$5.debug(`Found source for URL '${url}': ${source.id}`);
+                logger$6.debug(`Found source for URL '${url}': ${source.id}`);
                 return source;
             }
         }
-        logger$5.debug(`No source found for URL: ${url}`);
+        logger$6.debug(`No source found for URL: ${url}`);
         return null;
     }
     /**
@@ -668,12 +668,12 @@ class SourceIntegrationManager {
             if (source.canHandleUrl(url)) {
                 const paperId = source.extractPaperId(url);
                 if (paperId) {
-                    logger$5.debug(`Extracted paper ID '${paperId}' from URL using ${source.id}`);
+                    logger$6.debug(`Extracted paper ID '${paperId}' from URL using ${source.id}`);
                     return { sourceId: source.id, paperId };
                 }
             }
         }
-        logger$5.debug(`Could not extract paper ID from URL: ${url}`);
+        logger$6.debug(`Could not extract paper ID from URL: ${url}`);
         return null;
     }
     /**
@@ -685,7 +685,7 @@ class SourceIntegrationManager {
             return source.formatPaperId(paperId);
         }
         // Fallback if source not found
-        logger$5.warning(`Source '${sourceId}' not found, using default format for paper ID`);
+        logger$6.warning(`Source '${sourceId}' not found, using default format for paper ID`);
         return `${sourceId}.${paperId}`;
     }
     /**
@@ -697,7 +697,7 @@ class SourceIntegrationManager {
             return source.formatObjectId(type, paperId);
         }
         // Fallback if source not found
-        logger$5.warning(`Source '${sourceId}' not found, using default format for object ID`);
+        logger$6.warning(`Source '${sourceId}' not found, using default format for object ID`);
         return `${type}:${sourceId}.${paperId}`;
     }
     /**
@@ -709,6 +709,149 @@ class SourceIntegrationManager {
             patterns.push(...source.contentScriptMatches);
         }
         return patterns;
+    }
+}
+
+// extension/utils/icon-manager.ts
+const logger$5 = loguru.getLogger('icon-manager');
+/**
+ * Icon states for different paper detection statuses
+ */
+var IconState;
+(function (IconState) {
+    IconState["DEFAULT"] = "default";
+    IconState["DETECTED"] = "detected";
+    IconState["TRACKED"] = "tracked";
+})(IconState || (IconState = {}));
+/**
+ * Icon configuration mapping states to icon paths
+ */
+const ICON_CONFIGS = {
+    [IconState.DEFAULT]: {
+        path: {
+            "16": "icons/bookmark/red/apple-touch-icon.png",
+            "32": "icons/bookmark/red/apple-touch-icon.png",
+            "48": "icons/bookmark/red/apple-touch-icon.png",
+            "128": "icons/bookmark/red/apple-touch-icon.png"
+        },
+        title: "Academic Paper Tracker"
+    },
+    [IconState.DETECTED]: {
+        path: {
+            "16": "icons/bookmark/blue/apple-touch-icon.png",
+            "32": "icons/bookmark/blue/apple-touch-icon.png",
+            "48": "icons/bookmark/blue/apple-touch-icon.png",
+            "128": "icons/bookmark/blue/apple-touch-icon.png"
+        },
+        title: "Paper Detected - Academic Paper Tracker"
+    },
+    [IconState.TRACKED]: {
+        path: {
+            "16": "icons/bookmark/forest/apple-touch-icon.png",
+            "32": "icons/bookmark/forest/apple-touch-icon.png",
+            "48": "icons/bookmark/forest/apple-touch-icon.png",
+            "128": "icons/bookmark/forest/apple-touch-icon.png"
+        },
+        title: "Paper Tracked - Academic Paper Tracker"
+    }
+};
+/**
+ * Manages dynamic icon changes based on paper detection status
+ */
+class IconManager {
+    constructor() {
+        this.tabStates = new Map();
+        this.setupTabListeners();
+        logger$5.debug('Icon manager initialized');
+    }
+    /**
+     * Set up listeners for tab events
+     */
+    setupTabListeners() {
+        // Clean up icon state when tabs are closed
+        chrome.tabs.onRemoved.addListener((tabId) => {
+            this.tabStates.delete(tabId);
+            logger$5.debug(`Cleaned up icon state for closed tab ${tabId}`);
+        });
+        // Reset icon when navigating to new URL
+        chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+            if (changeInfo.status === 'loading' && changeInfo.url) {
+                this.setIconState(tabId, IconState.DEFAULT);
+                logger$5.debug(`Reset icon for tab ${tabId} navigating to ${changeInfo.url}`);
+            }
+        });
+    }
+    /**
+     * Set icon state for a specific tab
+     */
+    async setIconState(tabId, state) {
+        try {
+            const config = ICON_CONFIGS[state];
+            await chrome.action.setIcon({
+                tabId,
+                path: config.path
+            });
+            await chrome.action.setTitle({
+                tabId,
+                title: config.title
+            });
+            this.tabStates.set(tabId, state);
+            logger$5.debug(`Set icon state to ${state} for tab ${tabId}`);
+        }
+        catch (error) {
+            logger$5.error(`Failed to set icon state for tab ${tabId}:`, error);
+        }
+    }
+    /**
+     * Get current icon state for a tab
+     */
+    getIconState(tabId) {
+        return this.tabStates.get(tabId) || IconState.DEFAULT;
+    }
+    /**
+     * Set icon to detected state (paper found but not yet tracked)
+     */
+    async setPaperDetected(tabId) {
+        await this.setIconState(tabId, IconState.DETECTED);
+    }
+    /**
+     * Set icon to tracked state (paper is being tracked/stored)
+     */
+    async setPaperTracked(tabId) {
+        await this.setIconState(tabId, IconState.TRACKED);
+    }
+    /**
+     * Reset icon to default state
+     */
+    async resetIcon(tabId) {
+        await this.setIconState(tabId, IconState.DEFAULT);
+    }
+    /**
+     * Set badge text (optional visual indicator)
+     */
+    async setBadgeText(tabId, text, color) {
+        try {
+            await chrome.action.setBadgeText({
+                tabId,
+                text
+            });
+            if (color) {
+                await chrome.action.setBadgeBackgroundColor({
+                    tabId,
+                    color
+                });
+            }
+            logger$5.debug(`Set badge text "${text}" for tab ${tabId}`);
+        }
+        catch (error) {
+            logger$5.error(`Failed to set badge text for tab ${tabId}:`, error);
+        }
+    }
+    /**
+     * Clear badge text
+     */
+    async clearBadge(tabId) {
+        await this.setBadgeText(tabId, '');
     }
 }
 
@@ -1598,6 +1741,7 @@ let paperManager = null;
 let sessionService = null;
 let popupManager = null;
 let sourceManager = null;
+let iconManager = null;
 // Initialize sources
 function initializeSources() {
     sourceManager = new SourceIntegrationManager();
@@ -1613,6 +1757,9 @@ async function initialize() {
     try {
         // Initialize sources first
         initializeSources();
+        // Initialize icon manager
+        iconManager = new IconManager();
+        logger.info('Icon manager initialized');
         // Load GitHub credentials
         const items = await chrome.storage.sync.get(['githubToken', 'githubRepo']);
         githubToken = items.githubToken || '';
@@ -1652,9 +1799,21 @@ function setupMessageListeners() {
             sendResponse({ success: true });
             return true;
         }
-        if (message.type === 'paperMetadata' && message.metadata) {
-            // Store metadata received from content script
-            handlePaperMetadata(message.metadata);
+        if (message.type === 'paperMetadata' && message.metadata && sender.tab?.id) {
+            // Store metadata received from content script and update icon
+            handlePaperMetadata(message.metadata, sender.tab.id);
+            sendResponse({ success: true });
+            return true;
+        }
+        if (message.type === 'paperDetected' && sender.tab?.id) {
+            // Paper detected but not yet stored - show detected state
+            handlePaperDetected(sender.tab.id, message.sourceId, message.paperId);
+            sendResponse({ success: true });
+            return true;
+        }
+        if (message.type === 'noPaperDetected' && sender.tab?.id) {
+            // No paper detected - reset to default icon
+            handleNoPaperDetected(sender.tab.id);
             sendResponse({ success: true });
             return true;
         }
@@ -1688,8 +1847,8 @@ function setupMessageListeners() {
             return true;
         }
         // New handler for manual paper logging from popup
-        if (message.type === 'manualPaperLog' && message.metadata) {
-            handleManualPaperLog(message.metadata)
+        if (message.type === 'manualPaperLog' && message.metadata && sender.tab?.id) {
+            handleManualPaperLog(message.metadata, sender.tab.id)
                 .then(() => sendResponse({ success: true }))
                 .catch(error => {
                 logger.error('Error handling manual paper log', error);
@@ -1704,8 +1863,32 @@ function setupMessageListeners() {
         return false; // Not handled
     });
 }
+// Handle paper detected (before storage)
+async function handlePaperDetected(tabId, sourceId, paperId) {
+    if (!iconManager)
+        return;
+    try {
+        await iconManager.setPaperDetected(tabId);
+        logger.debug(`Set detected icon for ${sourceId}:${paperId} in tab ${tabId}`);
+    }
+    catch (error) {
+        logger.error('Error setting detected icon', error);
+    }
+}
+// Handle no paper detected
+async function handleNoPaperDetected(tabId) {
+    if (!iconManager)
+        return;
+    try {
+        await iconManager.resetIcon(tabId);
+        logger.debug(`Reset icon for tab ${tabId}`);
+    }
+    catch (error) {
+        logger.error('Error resetting icon', error);
+    }
+}
 // Handle paper metadata from content script
-async function handlePaperMetadata(metadata) {
+async function handlePaperMetadata(metadata, tabId) {
     logger.info(`Received metadata for ${metadata.sourceId}:${metadata.paperId}`);
     try {
         // Store metadata in session service
@@ -1716,10 +1899,25 @@ async function handlePaperMetadata(metadata) {
         if (paperManager) {
             await paperManager.getOrCreatePaper(metadata);
             logger.debug('Paper metadata stored in GitHub');
+            // Update icon to tracked state
+            if (iconManager) {
+                await iconManager.setPaperTracked(tabId);
+                logger.debug(`Set tracked icon for ${metadata.sourceId}:${metadata.paperId} in tab ${tabId}`);
+            }
+        }
+        else {
+            // No paper manager - just show detected state
+            if (iconManager) {
+                await iconManager.setPaperDetected(tabId);
+            }
         }
     }
     catch (error) {
         logger.error('Error handling paper metadata', error);
+        // On error, show detected state instead of tracked
+        if (iconManager) {
+            await iconManager.setPaperDetected(tabId);
+        }
     }
 }
 // Handle rating update
@@ -1781,7 +1979,7 @@ function handleEndSession(reason) {
         sessionService.endSession();
     }
 }
-async function handleManualPaperLog(metadata) {
+async function handleManualPaperLog(metadata, tabId) {
     logger.info(`Received manual paper log: ${metadata.sourceId}:${metadata.paperId}`);
     try {
         // Store metadata in session service
@@ -1792,6 +1990,11 @@ async function handleManualPaperLog(metadata) {
         if (paperManager) {
             await paperManager.getOrCreatePaper(metadata);
             logger.debug('Manually logged paper stored in GitHub');
+            // Update icon to tracked state
+            if (iconManager) {
+                await iconManager.setPaperTracked(tabId);
+                logger.debug(`Set tracked icon for manually logged paper in tab ${tabId}`);
+            }
         }
     }
     catch (error) {
@@ -1829,6 +2032,7 @@ function initializeDebugObjects() {
         get sessionService() { return sessionService; },
         get popupManager() { return popupManager; },
         get sourceManager() { return sourceManager; },
+        get iconManager() { return iconManager; },
         getGithubClient: () => paperManager ? paperManager.getClient() : null,
         getCurrentPaper: () => {
             const session = sessionService?.getCurrentSession();
@@ -1836,7 +2040,8 @@ function initializeDebugObjects() {
         },
         getSessionStats: () => sessionService?.getSessionStats(),
         getSources: () => sourceManager?.getAllSources(),
-        forceEndSession: () => sessionService?.endSession()
+        forceEndSession: () => sessionService?.endSession(),
+        setIconState: (tabId, state) => iconManager?.setIconState(tabId, state)
     };
     logger.info('Debug objects registered');
 }
