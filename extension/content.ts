@@ -1,5 +1,5 @@
 // content.ts
-// Content script with simplified session tracking
+// Content script with icon state management
 
 import { LinkProcessor } from './source-integration/link-processor';
 import { SourceIntegration, Message } from './source-integration/types';
@@ -30,6 +30,9 @@ let isTabVisible = true;
 
 // Track current session
 let currentSession: { sourceId: string; paperId: string } | null = null;
+
+// Track current paper detection state
+let currentPaperState: 'none' | 'detected' | 'tracked' = 'none';
 
 // Create link processor
 const linkProcessor = new LinkProcessor((sourceId, paperId, link) => {
@@ -227,6 +230,31 @@ function getSourceForUrl(url: string): SourceIntegration | null {
   return null;
 }
 
+// Send icon state update to background
+function updateIconState(state: 'none' | 'detected' | 'tracked', sourceId?: string, paperId?: string) {
+  if (state === currentPaperState) return; // No change needed
+  
+  currentPaperState = state;
+  
+  switch (state) {
+    case 'none':
+      chrome.runtime.sendMessage({ type: 'noPaperDetected' });
+      break;
+    case 'detected':
+      chrome.runtime.sendMessage({ 
+        type: 'paperDetected', 
+        sourceId, 
+        paperId 
+      });
+      break;
+    case 'tracked':
+      // Icon will be updated when metadata is sent
+      break;
+  }
+  
+  logger.debug(`Updated icon state to: ${state}`, { sourceId, paperId });
+}
+
 // Set up click-outside handler for popups
 document.addEventListener('click', (e) => {
   if (activePopup && 
@@ -335,9 +363,10 @@ async function processCurrentPage(force: boolean = false): Promise<PaperMetadata
     source = baseSource;
   }
 
-  // If we still don't have a source, return null
+  // If we still don't have a source, mark as no paper detected
   if (!source) {
     logger.debug(`No source found for URL: ${url}`);
+    updateIconState('none');
     return null;
   }
 
@@ -345,21 +374,28 @@ async function processCurrentPage(force: boolean = false): Promise<PaperMetadata
   const paperId = source.extractPaperId(url);
   if (!paperId) {
     logger.info(`Unable to determine a paperId for url: ${url}`);
+    updateIconState('none');
     return null;
   }
+  
+  // Update icon to detected state
+  updateIconState('detected', source.id, paperId);
   
   try {
     // Use source-specific extraction
     const metadata = await source.extractMetadata(document, paperId);
     
     if (metadata) {
-      // Send metadata to background script
+      // Send metadata to background script (this will trigger tracked state)
       chrome.runtime.sendMessage({
         type: 'paperMetadata',
         metadata
       });
       
       logger.debug(`Sent extracted metadata to background script for ${metadata.sourceId}:${metadata.paperId}`);
+      
+      // Update to tracked state
+      updateIconState('tracked', metadata.sourceId, metadata.paperId);
       
       // Start session tracking if tab is visible
       if (isTabVisible) {
@@ -370,6 +406,7 @@ async function processCurrentPage(force: boolean = false): Promise<PaperMetadata
     }
   } catch (error) {
     logger.error(`Error extracting metadata for ${source.id}:${paperId}`, error);
+    // Keep detected state even on error
   }
   
   return null;
@@ -568,6 +605,9 @@ new MutationObserver(() => {
     if (currentSession) {
       endCurrentSession('url_change');
     }
+    
+    // Reset icon state
+    updateIconState('none');
     
     // Update URL and process new page
     lastUrl = url;
