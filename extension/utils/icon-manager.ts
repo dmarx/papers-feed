@@ -1,23 +1,17 @@
 // extension/utils/icon-manager.ts
-// Icon management utility for dynamic tab icons (SVGs defined inline)
+// Icon management utility with inline SVGs and enhanced features
 
 import { loguru } from './logger';
 
 const logger = loguru.getLogger('icon-manager');
 
-/**
- * Icon states for different paper detection statuses
- */
 export enum IconState {
   DEFAULT = 'default',
   DETECTED = 'detected',
   TRACKED = 'tracked',
 }
 
-/**
- * For each IconState, we define a single-root inline SVG string and a tooltip title.
- * Note: these SVG strings have been cleaned up to remove nested <svg> tags and <style> blocks.
- */
+// Your excellent SVG definitions (keeping them as-is)
 const ICON_CONFIGS: {
   [K in IconState]: { svg: string; title: string };
 } = {
@@ -43,7 +37,6 @@ const ICON_CONFIGS: {
   [IconState.DETECTED]: {
     svg: `
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" width="36" height="36">
-  <!-- “Blue” variant -->
   <path fill="#1DA1F2" d="M35 26a4 4 0 0 1-4 4H5a4 4 0 0 1-4-4V6.313C1 4.104 6.791 0 9 0h20.625C32.719 0 35 2.312 35 5.375V26z"/>
   <path fill="#E8F5FE" d="M33 30a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V6c0-4.119-.021-4 5-4h21a4 4 0 0 1 4 4v24z"/>
   <path fill="#FFF"     d="M31 31a3 3 0 0 1-3 3H4a3 3 0 0 1-3-3V7a3 3 0 0 1 3-3h24a3 3 0 0 1 3 3v24z"/>
@@ -63,7 +56,6 @@ const ICON_CONFIGS: {
   [IconState.TRACKED]: {
     svg: `
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" width="36" height="36">
-  <!-- “Forest” variant -->
   <path fill="#228B22" d="M35 26a4 4 0 0 1-4 4H5a4 4 0 0 1-4-4V6.313C1 4.104 6.791 0 9 0h20.625C32.719 0 35 2.312 35 5.375V26z"/>
   <path fill="#E8F5EE" d="M33 30a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V6c0-4.119-.021-4 5-4h21a4 4 0 0 1 4 4v24z"/>
   <path fill="#FFF"     d="M31 31a3 3 0 0 1-3 3H4a3 3 0 0 1-3-3V7a3 3 0 0 1 3-3h24a3 3 0 0 1 3 3v24z"/>
@@ -81,31 +73,26 @@ const ICON_CONFIGS: {
   },
 };
 
-/**
- * Sizes (in pixels) at which we want to rasterize each SVG.
- * Chrome typically expects icons at these four resolutions.
- */
 const ICON_SIZES = [16, 32, 48, 128];
 
-/**
- * Manages dynamic icon changes based on paper detection status.
- */
 export class IconManager {
   private tabStates: Map<number, IconState> = new Map();
+  private pendingUpdates: Map<number, Promise<void>> = new Map(); // NEW: Prevent race conditions
+  private iconCache: Map<string, Record<string, ImageData>> = new Map(); // NEW: Cache rasterized icons
 
   constructor() {
     this.setupTabListeners();
+    this.preloadIcons(); // NEW: Pre-rasterize all icons at startup
     logger.debug('Icon manager initialized');
   }
 
   private setupTabListeners(): void {
-    // Clean up icon state when tabs are closed
     chrome.tabs.onRemoved.addListener((tabId) => {
       this.tabStates.delete(tabId);
+      this.pendingUpdates.delete(tabId);
       logger.debug(`Cleaned up icon state for closed tab ${tabId}`);
     });
 
-    // Reset icon when navigating to a new URL
     chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
       if (changeInfo.status === 'loading' && changeInfo.url) {
         this.setIconState(tabId, IconState.DEFAULT);
@@ -114,76 +101,133 @@ export class IconManager {
     });
   }
 
-  /**
-   * Set icon state for a specific tab by:
-   * 1. Taking the inline SVG string.
-   * 2. Rasterizing to each size in ICON_SIZES via OffscreenCanvas.
-   * 3. Passing imageDataMap to chrome.action.setIcon().
-   */
+  // NEW: Pre-rasterize all icons for better performance
+  private async preloadIcons(): Promise<void> {
+    try {
+      for (const state of Object.values(IconState)) {
+        const config = ICON_CONFIGS[state];
+        const imageDataMap: Record<string, ImageData> = {};
+        
+        for (const px of ICON_SIZES) {
+          const imgData = await this.rasterizeSvgToImageData(config.svg, px, px);
+          imageDataMap[px.toString()] = imgData;
+        }
+        
+        this.iconCache.set(state, imageDataMap);
+      }
+      logger.debug('Pre-loaded all icon states');
+    } catch (error) {
+      logger.error('Failed to preload icons:', error);
+    }
+  }
+
   async setIconState(tabId: number, state: IconState): Promise<void> {
-    const config = ICON_CONFIGS[state];
+    // NEW: Check if already in this state (deduplication)
+    const currentState = this.tabStates.get(tabId);
+    if (currentState === state) {
+      logger.debug(`Icon already in ${state} state for tab ${tabId}, skipping`);
+      return;
+    }
+
+    // NEW: Wait for any pending updates to avoid race conditions
+    const pending = this.pendingUpdates.get(tabId);
+    if (pending) {
+      try {
+        await pending;
+      } catch (error) {
+        logger.warn(`Previous icon update failed for tab ${tabId}:`, error);
+      }
+    }
+
+    // Create update promise
+    const updatePromise = this.performIconUpdate(tabId, state);
+    this.pendingUpdates.set(tabId, updatePromise);
 
     try {
-      // 1. Read the inline SVG text
-      const svgText = config.svg;
+      await updatePromise;
+      this.tabStates.set(tabId, state);
+      logger.debug(`Set icon state to ${state} for tab ${tabId}`);
+    } catch (error) {
+      logger.error(`Failed to set icon state for tab ${tabId}:`, error);
+      throw error;
+    } finally {
+      this.pendingUpdates.delete(tabId);
+    }
+  }
 
-      // 2. Rasterize SVG at each desired size
-      const imageDataMap: Record<string, ImageData> = {};
-      for (const px of ICON_SIZES) {
-        const imgData = await this.rasterizeSvgToImageData(svgText, px, px);
-        imageDataMap[px.toString()] = imgData;
+  private async performIconUpdate(tabId: number, state: IconState): Promise<void> {
+    const config = ICON_CONFIGS[state];
+
+    // Check if tab still exists
+    try {
+      await chrome.tabs.get(tabId);
+    } catch (error) {
+      logger.debug(`Tab ${tabId} no longer exists, skipping icon update`);
+      return;
+    }
+
+    try {
+      // NEW: Use cached icons if available, otherwise rasterize on demand
+      let imageDataMap = this.iconCache.get(state);
+      
+      if (!imageDataMap) {
+        logger.debug(`Cache miss for ${state}, rasterizing on demand`);
+        imageDataMap = {};
+        for (const px of ICON_SIZES) {
+          const imgData = await this.rasterizeSvgToImageData(config.svg, px, px);
+          imageDataMap[px.toString()] = imgData;
+        }
+        this.iconCache.set(state, imageDataMap);
       }
 
-      // 3. Swap in the new icon for this tab
       await chrome.action.setIcon({
         tabId,
         imageData: imageDataMap,
       });
 
-      // 4. Update the tooltip/title
       await chrome.action.setTitle({
         tabId,
         title: config.title,
       });
 
-      // 5. Track state internally
-      this.tabStates.set(tabId, state);
-      logger.debug(`Set icon state to ${state} for tab ${tabId}`);
     } catch (error) {
-      logger.error(`Failed to set icon state for tab ${tabId}:`, error);
+      // Handle specific Chrome API errors gracefully
+      if (error.message?.includes('No tab with id') || 
+          error.message?.includes('Cannot access')) {
+        logger.debug(`Cannot update icon for tab ${tabId}: ${error.message}`);
+        return;
+      }
+      throw error;
     }
   }
 
-  /**
-   * Rasterize a string of SVG markup into an ImageData blob
-   * at the specified pixel width/height.
-   */
   private async rasterizeSvgToImageData(
     svgText: string,
     widthPx: number,
     heightPx: number
   ): Promise<ImageData> {
-    // Create a Blob for the SVG text
-    const svgBlob = new Blob([svgText], { type: 'image/svg+xml' });
+    try {
+      const svgBlob = new Blob([svgText], { type: 'image/svg+xml' });
+      const bitmap = await createImageBitmap(svgBlob, {
+        resizeWidth: widthPx,
+        resizeHeight: heightPx,
+        resizeQuality: 'high',
+      });
 
-    // Decode the SVG into an ImageBitmap, resizing it to (widthPx × heightPx)
-    const bitmap = await createImageBitmap(svgBlob, {
-      resizeWidth: widthPx,
-      resizeHeight: heightPx,
-      resizeQuality: 'high',
-    });
+      const offscreen = new OffscreenCanvas(widthPx, heightPx);
+      const ctx = offscreen.getContext('2d');
+      if (!ctx) {
+        throw new Error('Failed to get 2D context from OffscreenCanvas');
+      }
 
-    // Draw the ImageBitmap onto an OffscreenCanvas
-    const offscreen = new OffscreenCanvas(widthPx, heightPx);
-    const ctx = offscreen.getContext('2d');
-    if (!ctx) {
-      throw new Error('Failed to get 2D context from OffscreenCanvas');
+      ctx.clearRect(0, 0, widthPx, heightPx);
+      ctx.drawImage(bitmap, 0, 0, widthPx, heightPx);
+
+      return ctx.getImageData(0, 0, widthPx, heightPx);
+    } catch (error) {
+      logger.error(`Failed to rasterize SVG at ${widthPx}x${heightPx}:`, error);
+      throw error;
     }
-    ctx.clearRect(0, 0, widthPx, heightPx);
-    ctx.drawImage(bitmap, 0, 0, widthPx, heightPx);
-
-    // Extract the rasterized pixel data
-    return ctx.getImageData(0, 0, widthPx, heightPx);
   }
 
   getIconState(tabId: number): IconState {
@@ -216,5 +260,41 @@ export class IconManager {
 
   async clearBadge(tabId: number): Promise<void> {
     await this.setBadgeText(tabId, '');
+  }
+
+  // NEW: Utility method to add dynamic badges/indicators
+  async setPaperCount(tabId: number, count: number): Promise<void> {
+    if (count > 0) {
+      await this.setBadgeText(tabId, count.toString(), '#FF4444');
+    } else {
+      await this.clearBadge(tabId);
+    }
+  }
+
+  // NEW: Reset all tabs to default (useful for extension restart)
+  async resetAllIcons(): Promise<void> {
+    try {
+      const tabs = await chrome.tabs.query({});
+      await Promise.allSettled(
+        tabs.map(tab => tab.id ? this.resetIcon(tab.id) : Promise.resolve())
+      );
+      logger.info('Reset all tab icons');
+    } catch (error) {
+      logger.error('Failed to reset all icons:', error);
+    }
+  }
+
+  // NEW: Get cache statistics for debugging
+  getCacheStats(): { states: number; totalSize: number } {
+    let totalSize = 0;
+    for (const imageDataMap of this.iconCache.values()) {
+      for (const imageData of Object.values(imageDataMap)) {
+        totalSize += imageData.data.length;
+      }
+    }
+    return {
+      states: this.iconCache.size,
+      totalSize
+    };
   }
 }
