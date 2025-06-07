@@ -192,9 +192,10 @@ export class IconManager {
 
     } catch (error) {
       // Handle specific Chrome API errors gracefully
-      if (error.message?.includes('No tab with id') || 
-          error.message?.includes('Cannot access')) {
-        logger.debug(`Cannot update icon for tab ${tabId}: ${error.message}`);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (errorMessage.includes('No tab with id') || 
+          errorMessage.includes('Cannot access')) {
+        logger.debug(`Cannot update icon for tab ${tabId}: ${errorMessage}`);
         return;
       }
       throw error;
@@ -225,7 +226,8 @@ export class IconManager {
 
       return ctx.getImageData(0, 0, widthPx, heightPx);
     } catch (error) {
-      logger.error(`Failed to rasterize SVG at ${widthPx}x${heightPx}:`, error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(`Failed to rasterize SVG at ${widthPx}x${heightPx}:`, errorMessage);
       throw error;
     }
   }
