@@ -721,17 +721,35 @@ var IconState;
     IconState["TRACKED"] = "tracked";
 })(IconState || (IconState = {}));
 // Your excellent SVG definitions (keeping them as-is)
+// Icon color schemes for each state
+const ICON_COLORS = {
+    [IconState.DEFAULT]: {
+        background: '#f8f9fa',
+        paper: '#e9ecef',
+        bookmark: '#dc3545',
+    },
+    [IconState.DETECTED]: {
+        background: '#e3f2fd',
+        paper: '#bbdefb',
+        bookmark: '#2196f3',
+    },
+    [IconState.TRACKED]: {
+        background: '#e8f5e8',
+        paper: '#c8e6c9',
+        bookmark: '#4caf50',
+    },
+};
 const ICON_CONFIGS = {
     [IconState.DEFAULT]: {
-        svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36"><rect width="36" height="36" fill="#f8f9fa"/><rect x="6" y="6" width="24" height="24" rx="2" fill="#e9ecef"/><path fill="#dc3545" d="M18 8v16l4-3 4 3V8z"/></svg>`,
+        colors: ICON_COLORS[IconState.DEFAULT],
         title: 'Academic Paper Tracker',
     },
     [IconState.DETECTED]: {
-        svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36"><rect width="36" height="36" fill="#e3f2fd"/><rect x="6" y="6" width="24" height="24" rx="2" fill="#bbdefb"/><path fill="#2196f3" d="M18 8v16l4-3 4 3V8z"/></svg>`,
+        colors: ICON_COLORS[IconState.DETECTED],
         title: 'Paper Detected - Academic Paper Tracker',
     },
     [IconState.TRACKED]: {
-        svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36"><rect width="36" height="36" fill="#e8f5e8"/><rect x="6" y="6" width="24" height="24" rx="2" fill="#c8e6c9"/><path fill="#4caf50" d="M18 8v16l4-3 4 3V8z"/></svg>`,
+        colors: ICON_COLORS[IconState.TRACKED],
         title: 'Paper Tracked - Academic Paper Tracker',
     },
 };
@@ -758,14 +776,14 @@ class IconManager {
             }
         });
     }
-    // NEW: Pre-rasterize all icons for better performance
+    // NEW: Pre-generate all icons for better performance
     async preloadIcons() {
         try {
             for (const state of Object.values(IconState)) {
                 const config = ICON_CONFIGS[state];
                 const imageDataMap = {};
                 for (const px of ICON_SIZES) {
-                    const imgData = await this.rasterizeSvgToImageData(config.svg, px, px);
+                    const imgData = this.createCanvasIcon(config.colors, px, px);
                     imageDataMap[px.toString()] = imgData;
                 }
                 this.iconCache.set(state, imageDataMap);
@@ -820,13 +838,13 @@ class IconManager {
             return;
         }
         try {
-            // NEW: Use cached icons if available, otherwise rasterize on demand
+            // NEW: Use cached icons if available, otherwise generate on demand
             let imageDataMap = this.iconCache.get(state);
             if (!imageDataMap) {
-                logger$5.debug(`Cache miss for ${state}, rasterizing on demand`);
+                logger$5.debug(`Cache miss for ${state}, generating on demand`);
                 imageDataMap = {};
                 for (const px of ICON_SIZES) {
-                    const imgData = await this.rasterizeSvgToImageData(config.svg, px, px);
+                    const imgData = this.createCanvasIcon(config.colors, px, px);
                     imageDataMap[px.toString()] = imgData;
                 }
                 this.iconCache.set(state, imageDataMap);
@@ -851,61 +869,56 @@ class IconManager {
             throw error;
         }
     }
-    async rasterizeSvgToImageData(svgText, widthPx, heightPx) {
-        try {
-            // Clean up SVG text and ensure it's valid
-            const cleanSvg = svgText.trim();
-            // Create blob with proper MIME type
-            const svgBlob = new Blob([cleanSvg], { type: 'image/svg+xml;charset=utf-8' });
-            // Create object URL for the blob
-            const svgUrl = URL.createObjectURL(svgBlob);
-            try {
-                // Create an image element and load the SVG
-                const img = new Image();
-                // Wait for image to load
-                await new Promise((resolve, reject) => {
-                    img.onload = () => resolve();
-                    img.onerror = () => reject(new Error('Failed to load SVG image'));
-                    img.src = svgUrl;
-                });
-                // Create canvas and draw image
-                const offscreen = new OffscreenCanvas(widthPx, heightPx);
-                const ctx = offscreen.getContext('2d');
-                if (!ctx) {
-                    throw new Error('Failed to get 2D context from OffscreenCanvas');
-                }
-                // Clear canvas and draw image
-                ctx.clearRect(0, 0, widthPx, heightPx);
-                ctx.drawImage(img, 0, 0, widthPx, heightPx);
-                return ctx.getImageData(0, 0, widthPx, heightPx);
-            }
-            finally {
-                // Clean up object URL
-                URL.revokeObjectURL(svgUrl);
-            }
-        }
-        catch (error) {
-            const errorMessage = error instanceof Error ? error.message : String(error);
-            logger$5.warn(`SVG rasterization failed, creating fallback icon: ${errorMessage}`);
-            // Create a simple fallback icon
-            return this.createFallbackIcon(widthPx, heightPx);
-        }
-    }
-    // NEW: Create a simple fallback icon when SVG fails
-    createFallbackIcon(widthPx, heightPx) {
+    // NEW: Create icon using pure Canvas drawing (no SVG dependency)
+    createCanvasIcon(colors, widthPx, heightPx) {
         const offscreen = new OffscreenCanvas(widthPx, heightPx);
         const ctx = offscreen.getContext('2d');
         if (!ctx) {
-            throw new Error('Failed to get 2D context for fallback icon');
+            throw new Error('Failed to get 2D context from OffscreenCanvas');
         }
-        // Draw a simple colored rectangle as fallback
-        ctx.fillStyle = '#dc3545'; // Bootstrap red
+        // Calculate dimensions based on icon size
+        const padding = Math.max(1, Math.floor(widthPx * 0.1));
+        const paperWidth = widthPx - (padding * 2);
+        const paperHeight = heightPx - (padding * 2);
+        const cornerRadius = Math.max(1, Math.floor(widthPx * 0.05));
+        // Draw background
+        ctx.fillStyle = colors.background;
         ctx.fillRect(0, 0, widthPx, heightPx);
-        // Add a simple bookmark shape
-        ctx.fillStyle = '#fff';
-        const padding = Math.max(2, widthPx * 0.1);
-        ctx.fillRect(padding, padding, widthPx - padding * 2, heightPx - padding * 2);
+        // Draw paper with rounded corners
+        ctx.fillStyle = colors.paper;
+        this.drawRoundedRect(ctx, padding, padding, paperWidth, paperHeight, cornerRadius);
+        // Draw bookmark ribbon
+        const bookmarkWidth = Math.max(4, Math.floor(widthPx * 0.2));
+        const bookmarkHeight = Math.max(8, Math.floor(heightPx * 0.6));
+        const bookmarkX = widthPx - padding - bookmarkWidth;
+        const bookmarkY = padding + Math.floor(paperHeight * 0.1);
+        ctx.fillStyle = colors.bookmark;
+        ctx.fillRect(bookmarkX, bookmarkY, bookmarkWidth, bookmarkHeight);
+        // Draw bookmark notch (triangle cutout at bottom)
+        const notchSize = Math.max(2, Math.floor(bookmarkWidth * 0.4));
+        ctx.fillStyle = colors.paper;
+        ctx.beginPath();
+        ctx.moveTo(bookmarkX, bookmarkY + bookmarkHeight);
+        ctx.lineTo(bookmarkX + bookmarkWidth, bookmarkY + bookmarkHeight);
+        ctx.lineTo(bookmarkX + bookmarkWidth / 2, bookmarkY + bookmarkHeight - notchSize);
+        ctx.closePath();
+        ctx.fill();
         return ctx.getImageData(0, 0, widthPx, heightPx);
+    }
+    // Helper function to draw rounded rectangle
+    drawRoundedRect(ctx, x, y, width, height, radius) {
+        ctx.beginPath();
+        ctx.moveTo(x + radius, y);
+        ctx.lineTo(x + width - radius, y);
+        ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+        ctx.lineTo(x + width, y + height - radius);
+        ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+        ctx.lineTo(x + radius, y + height);
+        ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+        ctx.lineTo(x, y + radius);
+        ctx.quadraticCurveTo(x, y, x + radius, y);
+        ctx.closePath();
+        ctx.fill();
     }
     getIconState(tabId) {
         return this.tabStates.get(tabId) || IconState.DEFAULT;
