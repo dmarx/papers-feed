@@ -721,22 +721,22 @@ var IconState;
     IconState["TRACKED"] = "tracked";
 })(IconState || (IconState = {}));
 // Your excellent SVG definitions (keeping them as-is)
-// Icon color schemes for each state
+// Accessible color schemes for each state
 const ICON_COLORS = {
     [IconState.DEFAULT]: {
-        background: '#f8f9fa',
-        paper: '#e9ecef',
-        bookmark: '#dc3545',
+        background: '#fef2f2',
+        paper: '#fecaca',
+        bookmark: '#dc2626',
     },
     [IconState.DETECTED]: {
-        background: '#e3f2fd',
-        paper: '#bbdefb',
-        bookmark: '#2196f3',
+        background: '#eff6ff',
+        paper: '#93c5fd',
+        bookmark: '#2563eb',
     },
     [IconState.TRACKED]: {
-        background: '#e8f5e8',
-        paper: '#c8e6c9',
-        bookmark: '#4caf50',
+        background: '#ecfdf5',
+        paper: '#86efac',
+        bookmark: '#059669',
     },
 };
 const ICON_CONFIGS = {
@@ -869,33 +869,31 @@ class IconManager {
             throw error;
         }
     }
-    // NEW: Create icon using pure Canvas drawing (no SVG dependency)
+    // NEW: Create icon using improved Canvas drawing (no borders, larger bookmark)
     createCanvasIcon(colors, widthPx, heightPx) {
         const offscreen = new OffscreenCanvas(widthPx, heightPx);
         const ctx = offscreen.getContext('2d');
         if (!ctx) {
             throw new Error('Failed to get 2D context from OffscreenCanvas');
         }
-        // Calculate dimensions based on icon size
-        const padding = Math.max(1, Math.floor(widthPx * 0.1));
-        const paperWidth = widthPx - (padding * 2);
-        const paperHeight = heightPx - (padding * 2);
-        const cornerRadius = Math.max(1, Math.floor(widthPx * 0.05));
-        // Draw background
+        // Use full canvas - no padding for maximum space utilization
+        const paperWidth = widthPx;
+        const paperHeight = heightPx;
+        // Draw background (full canvas)
         ctx.fillStyle = colors.background;
         ctx.fillRect(0, 0, widthPx, heightPx);
-        // Draw paper with rounded corners
+        // Draw paper (no rounded corners for cleaner look at small sizes)
         ctx.fillStyle = colors.paper;
-        this.drawRoundedRect(ctx, padding, padding, paperWidth, paperHeight, cornerRadius);
-        // Draw bookmark ribbon
-        const bookmarkWidth = Math.max(4, Math.floor(widthPx * 0.2));
-        const bookmarkHeight = Math.max(8, Math.floor(heightPx * 0.6));
-        const bookmarkX = widthPx - padding - bookmarkWidth;
-        const bookmarkY = padding + Math.floor(paperHeight * 0.1);
+        ctx.fillRect(0, 0, paperWidth, paperHeight);
+        // Draw larger, more prominent bookmark (35% of width)
+        const bookmarkWidth = Math.floor(widthPx * 0.35);
+        const bookmarkHeight = Math.floor(heightPx * 0.8);
+        const bookmarkX = widthPx - bookmarkWidth;
+        const bookmarkY = 0;
         ctx.fillStyle = colors.bookmark;
         ctx.fillRect(bookmarkX, bookmarkY, bookmarkWidth, bookmarkHeight);
-        // Draw bookmark notch (triangle cutout at bottom)
-        const notchSize = Math.max(2, Math.floor(bookmarkWidth * 0.4));
+        // Draw prominent notch (60% of bookmark width for better visibility)
+        const notchSize = Math.floor(bookmarkWidth * 0.6);
         ctx.fillStyle = colors.paper;
         ctx.beginPath();
         ctx.moveTo(bookmarkX, bookmarkY + bookmarkHeight);
@@ -904,21 +902,6 @@ class IconManager {
         ctx.closePath();
         ctx.fill();
         return ctx.getImageData(0, 0, widthPx, heightPx);
-    }
-    // Helper function to draw rounded rectangle
-    drawRoundedRect(ctx, x, y, width, height, radius) {
-        ctx.beginPath();
-        ctx.moveTo(x + radius, y);
-        ctx.lineTo(x + width - radius, y);
-        ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
-        ctx.lineTo(x + width, y + height - radius);
-        ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
-        ctx.lineTo(x + radius, y + height);
-        ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
-        ctx.lineTo(x, y + radius);
-        ctx.quadraticCurveTo(x, y, x + radius, y);
-        ctx.closePath();
-        ctx.fill();
     }
     getIconState(tabId) {
         return this.tabStates.get(tabId) || IconState.DEFAULT;
