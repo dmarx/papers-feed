@@ -1,0 +1,1322 @@
+---
+File: scripts/github_repo_mirror.py
+---
+#!/usr/bin/env python3
+# github_repo_mirror.py
+
+"""
+Utility to copy issues, comments, labels and reactions from one GitHub repository to another,
+or to clean labels from all issues in a repository.
+"""
+
+import os
+import sys
+from typing import Dict, List, Optional
+
+import fire
+from github import Github, GithubException
+from github.Issue import Issue
+from github.Label import Label
+from github.Repository import Repository
+from loguru import logger
+
+# Set up logging
+logger.remove()
+logger.add(sys.stderr, format="{time} {level} {message}", level="INFO")
+
+
+class GitHubRepoMirror:
+    """Class to mirror issues and related data between GitHub repositories."""
+    
+    def __init__(
+        self, 
+        token: str,
+        source_repo: str = "dmarx/papers-feed",
+        target_repo: str = "dmarx/papers-feed-dev",
+    ):
+        """
+        Initialize with GitHub credentials and repository info.
+        
+        Args:
+            token: GitHub personal access token
+            source_repo: Source repository in format "owner/repo"
+            target_repo: Target repository in format "owner/repo"
+        """
+        self.source_repo_name = source_repo
+        self.target_repo_name = target_repo
+        
+        # Initialize GitHub client
+        self.github = Github(
+            token, 
+            per_page=100,
+            retry=3
+        )
+        
+        # Get repository objects
+        self.source_repo = self.github.get_repo(source_repo)
+        self.target_repo = self.github.get_repo(target_repo)
+        
+        # Label cache to avoid creating duplicate labels
+        self.label_cache: Dict[str, Label] = {}
+
+    def _create_label_if_not_exists(self, label_name: str, label_color: str, 
+                                    label_description: str = "") -> Label:
+        """
+        Create a label in the target repo if it doesn't already exist.
+        
+        Args:
+            label_name: Name of the label
+            label_color: Color of the label (hex code without #)
+            label_description: Description of the label
+            
+        Returns:
+            The label object
+        """
+        # Check cache first
+        if label_name in self.label_cache:
+            return self.label_cache[label_name]
+        
+        # Try to get existing label
+        try:
+            label = self.target_repo.get_label(label_name)
+            self.label_cache[label_name] = label
+            return label
+        except GithubException:
+            # Label doesn't exist, create it
+            logger.info(f"Creating label '{label_name}' in target repository")
+            label = self.target_repo.create_label(
+                name=label_name,
+                color=label_color,
+                description=label_description
+            )
+            self.label_cache[label_name] = label
+            return label
+
+    def _copy_reactions(self, source_obj, target_obj):
+        """
+        Copy reactions from source to target object.
+        
+        Args:
+            source_obj: Source object with reactions (Issue or IssueComment)
+            target_obj: Target object to add reactions to
+        """
+        # Get all reactions from source
+        try:
+            reactions = source_obj.get_reactions()
+            
+            # Add each reaction type to target
+            reaction_counts = {}
+            for reaction in reactions:
+                reaction_type = reaction.content
+                reaction_counts[reaction_type] = reaction_counts.get(reaction_type, 0) + 1
+            
+            # Create reactions on target
+            for reaction_type, count in reaction_counts.items():
+                logger.debug(f"Adding {count} '{reaction_type}' reactions")
+                for _ in range(count):
+                    try:
+                        target_obj.create_reaction(reaction_type)
+                    except GithubException as e:
+                        # Creating the same reaction twice will fail
+                        if e.status == 422:
+                            logger.debug(f"Duplicate reaction '{reaction_type}' - skipping")
+                        else:
+                            raise
+        except GithubException as e:
+            logger.warning(f"Could not copy reactions: {str(e)}")
+
+    def clear_all_issue_labels(self, repo_name: str = None):
+        """
+        Remove all labels from all issues in a repository.
+        
+        Args:
+            repo_name: Repository to clean (defaults to target repo)
+        """
+        repo = self.target_repo
+        if repo_name:
+            repo = self.github.get_repo(repo_name)
+            
+        logger.info(f"Removing all labels from all issues in {repo.full_name}")
+        
+        # Get all issues (open and closed)
+        issues = repo.get_issues(state="all")
+        
+        # Track progress
+        count = 0
+        processed = 0
+        
+        # Process each issue
+        for issue in issues:
+            processed += 1
+            
+            # Skip issues with no labels
+            if not list(issue.labels):
+                continue
+            
+            logger.info(f"Clearing labels from issue #{issue.number}: {issue.title}")
+            
+            # Remove all labels
+            issue.set_labels()  # Empty list clears all labels
+            count += 1
+            
+            # Log progress occasionally
+            if processed % 10 == 0:
+                logger.info(f"Processed {processed} issues so far")
+        
+        logger.info(f"Completed! Removed labels from {count} issues out of {processed} total issues.")
+        return count
+
+    def copy_labels(self) -> int:
+        """
+        Copy all labels from source repository to target repository.
+        
+        Returns:
+            Number of labels created
+        """
+        logger.info(f"Copying labels from {self.source_repo_name} to {self.target_repo_name}")
+        
+        created = 0
+        
+        # Get existing target labels
+        target_labels = {label.name: label for label in self.target_repo.get_labels()}
+        
+        # Copy labels from source to target
+        for source_label in self.source_repo.get_labels():
+            if source_label.name in target_labels:
+                logger.debug(f"Label already exists: {source_label.name}")
+                # Cache the label for later use
+                self.label_cache[source_label.name] = target_labels[source_label.name]
+            else:
+                # Create new label
+                logger.info(f"Creating new label: {source_label.name}")
+                new_label = self.target_repo.create_label(
+                    name=source_label.name,
+                    color=source_label.color,
+                    description=source_label.description or ""
+                )
+                # Cache the label for later use
+                self.label_cache[source_label.name] = new_label
+                created += 1
+        
+        logger.info(f"Label copy completed: {created} created")
+        return created
+
+    def copy_issue(self, issue_number: int) -> Issue:
+        """
+        Copy a single issue and all its comments from source to target repository.
+        
+        Args:
+            issue_number: The issue number in the source repository
+            
+        Returns:
+            The newly created issue in the target repository
+        """
+        logger.info(f"Copying issue #{issue_number} from {self.source_repo_name}")
+        
+        # Get source issue
+        source_issue = self.source_repo.get_issue(issue_number)
+        
+        # Create issue in target repo - exact copy of title and body
+        target_issue = self.target_repo.create_issue(
+            title=source_issue.title,
+            body=source_issue.body
+        )
+        logger.info(f"Created issue #{target_issue.number} at target from source #{source_issue.number}")
+        
+        # Copy labels
+        for label in source_issue.labels:
+            target_label = self._create_label_if_not_exists(
+                label_name=label.name,
+                label_color=label.color,
+                label_description=label.description or ""
+            )
+            target_issue.add_to_labels(target_label)
+            
+        # Copy state (open/closed)
+        if source_issue.state == "closed":
+            target_issue.edit(state="closed")
+            
+        # Copy comments - exact copies without modifications
+        for comment in source_issue.get_comments():
+            target_comment = target_issue.create_comment(comment.body)
+            
+            # Copy reactions from comment
+            self._copy_reactions(comment, target_comment)
+            
+        # Copy reactions to the issue itself
+        self._copy_reactions(source_issue, target_issue)
+        
+        return target_issue
+
+    def copy_all_issues(self, issue_range_start: int = None, issue_range_end: int = None) -> List[Issue]:
+        """
+        Copy all issues from source to target repository, optionally within a specific issue number range.
+        
+        Args:
+            issue_range_start: Optional starting issue number to copy (inclusive)
+            issue_range_end: Optional ending issue number to copy (inclusive)
+            
+        Returns:
+            List of created issues in the target repository
+        """
+        created_issues = []
+        
+        # First, make sure all labels exist in the target repo
+        self.copy_labels()
+        
+        # Get all issues from source repo with filters, sorted by creation date ascending
+        source_issues = self.source_repo.get_issues(state="all", sort="created", direction="asc")
+        logger.info(f"Fetching issues from source repository (sorted by creation date)...")
+        
+        # Process each issue
+        for source_issue in source_issues:
+            # Skip issues outside the specified range if ranges are provided
+            if issue_range_start is not None and source_issue.number < issue_range_start:
+                logger.debug(f"Skipping issue #{source_issue.number}: Below range start.")
+                continue
+                
+            if issue_range_end is not None and source_issue.number > issue_range_end:
+                logger.info(f"Reached end of specified issue range (#{issue_range_end}), exiting.")
+                break
+                
+            if source_issue.pull_request is not None:
+                logger.info(f"Skipping issue #{source_issue.number}: PR.")
+                continue
+                
+            if not source_issue.body:
+                logger.info(f"Skipping issue #{source_issue.number}: empty issue body.")
+                continue
+                
+            created_issue = self.copy_issue(source_issue.number)
+            created_issues.append(created_issue)
+            
+            # Log progress occasionally
+            if len(created_issues) % 5 == 0:
+                logger.info(f"Copied {len(created_issues)} issues so far")
+                    
+        logger.info(f"Created {len(created_issues)} issues in the target repository")
+        return created_issues
+
+
+def mirror_repository(
+    clear_target_labels: bool = False,
+    token: str = None,
+    source_repo: str = "dmarx/papers-feed",
+    target_repo: str = "dmarx/papers-feed-dev",
+    issue_range_start: int = None,
+    issue_range_end: int = None,
+):
+    """
+    Mirror issues, comments, labels and reactions from source to target repository.
+    Can also clear all labels from issues in the target repository.
+    
+    Args:
+        clear_target_labels: If True, remove all labels from all issues in target repository first
+        token: GitHub token (or use DEV_REPO_TOKEN environment variable)
+        source_repo: Source repository in format "owner/repo"
+        target_repo: Target repository in format "owner/repo"
+        issue_range_start: Optional starting issue number to copy (inclusive)
+        issue_range_end: Optional ending issue number to copy (inclusive)
+    """
+    # Use provided token or get from environment
+    token = token or os.environ.get("DEV_REPO_TOKEN")
+    
+    if not token:
+        logger.error("GitHub token not provided. Use --token or set DEV_REPO_TOKEN environment variable.")
+        sys.exit(1)
+        
+    if source_repo == target_repo:
+        logger.error("Source and target repositories must be different.")
+        sys.exit(1)
+        
+    # Create and run the mirroring tool
+    mirror = GitHubRepoMirror(
+        token=token,
+        source_repo=source_repo,
+        target_repo=target_repo
+    )
+    
+    # Clear all labels from issues in target repo if requested
+    if clear_target_labels:
+        logger.info("Clearing all labels from issues in target repository")
+        mirror.clear_all_issue_labels()
+    
+    # Copy all issues from source to target, with optional range limits
+    range_info = ""
+    if issue_range_start is not None or issue_range_end is not None:
+        range_info = f" (issues {issue_range_start or 'start'} to {issue_range_end or 'end'})"
+    
+    logger.info(f"Mirroring from {source_repo} to {target_repo}{range_info}")
+    mirror.copy_all_issues(issue_range_start, issue_range_end)
+    logger.info("Repository mirroring completed.")
+
+
+def clear_issue_labels(
+    token: str = None,
+    repo_name: str = "dmarx/papers-feed-dev"
+):
+    """
+    Simple function to clear all labels from all issues in a repository.
+    
+    Args:
+        token: GitHub token (or use DEV_REPO_TOKEN environment variable)
+        repo_name: Repository in format "owner/repo"
+    """
+    # Use provided token or get from environment
+    token = token or os.environ.get("DEV_REPO_TOKEN")
+    
+    if not token:
+        logger.error("GitHub token not provided. Use --token or set DEV_REPO_TOKEN environment variable.")
+        sys.exit(1)
+        
+    # Create the tool and clear labels
+    mirror = GitHubRepoMirror(token=token)
+    mirror.clear_all_issue_labels(repo_name)
+
+
+if __name__ == "__main__":
+    fire.Fire({
+        'mirror': mirror_repository,
+        'clear_labels': clear_issue_labels
+    })
+
+
+
+---
+File: scripts/hydrate_metadata.py
+---
+# this could probably be rolled into enrichment processing
+#!/usr/bin/env python
+# fetch_arxiv_metadata.py
+"""
+Fetches metadata for arXiv papers identified by issue labels and stores it using gh-store.
+"""
+
+import json
+import sys
+import os
+import re
+from typing import Dict, List, Optional, Any
+import fire
+from loguru import logger
+import arxiv
+import requests
+
+from gh_store.core.store import GitHubStore
+from gh_store.tools.canonicalize import CanonicalStore
+#from gh_store.tools.canonicalize import CanonicalStore as GitHubStore
+from gh_store.core.constants import LabelNames
+from gh_store.core.types import get_object_id_from_labels, StoredObject
+from gh_store.core.exceptions import DuplicateUIDError, ConcurrentUpdateError
+
+def is_metadata_satisfied(data: dict) -> bool:
+    return data and data.get('title') and not (data.get('id') in data.get('title'))
+
+def is_valid_arxiv_id(arxiv_id: str) -> bool:
+    """Validate arXiv ID format."""
+    return bool(re.match(r'\d{4}\.\d{4,5}(v\d+)?|\w+\/\d{7}(v\d+)?', arxiv_id))
+
+def extract_arxiv_id_from_object_id(object_id: str) -> str:
+    """Extract the arXiv ID from a paper ID with various prefixing schemes."""
+    prefix = 'arxiv'
+    
+    # Case 1: Format is "prefix:id"
+    if object_id.startswith(f"{prefix}:"):
+        return object_id[len(prefix)+1:]
+    
+    # Case 2: Format is "prefix.id"
+    if object_id.startswith(f"{prefix}."):
+        return object_id[len(prefix)+1:]
+    
+    # Case 3: Format is "prefix:prefix:id"
+    if object_id.startswith(f"{prefix}:{prefix}:"):
+        return object_id[len(prefix)*2+2:]
+    
+    # Case 4: Format is "prefix.prefix.id"
+    if object_id.startswith(f"{prefix}.{prefix}."):
+        return object_id[len(prefix)*2+2:]
+    
+    # Case 5: If none of the above, return the original ID
+    return object_id
+
+def fetch_arxiv_metadata(arxiv_id: str) -> Dict[str, Any]:
+    """Fetch metadata from arXiv API for a given ID using the arxiv client."""
+    logger.info(f"Fetching metadata for arXiv ID: {arxiv_id}")
+    
+    client = arxiv.Client()
+    search = arxiv.Search(id_list=[arxiv_id])
+    paper = next(client.results(search))
+    if not paper:
+        raise ValueError(f"No paper found with arXiv ID: {arxiv_id}")
+    
+    metadata = {
+        #'id': paper.entry_id,
+        'title': paper.title,
+        'authors': [author.name for author in paper.authors],
+        'publishedDate': paper.published.isoformat() if paper.published else None,
+        #'updated': paper.updated.isoformat() if paper.updated else None,
+        'doi': paper.doi,
+        'tags': paper.categories,
+        'abstract': paper.summary,
+        #'links': [{'href': link.href, 'type': link.type} for link in paper.links],
+        #'comment': paper.comment,
+        #'journal_ref': paper.journal_ref,
+        #'primary_category': paper.primary_category,
+        #'pdf_url': paper.pdf_url,
+    }
+    
+    logger.info(f"Successfully fetched metadata for arXiv ID: {arxiv_id}")
+    logger.info(metadata)
+    return metadata
+    
+
+def hydrate_issue_metadata(issue: int, token:str, repo:str):
+    #store = GitHubStore(token=token, repo=repo, config_path=None)
+    store = CanonicalStore(token=token, repo=repo, config_path=None)
+    
+    obj = store.issue_handler.get_object_by_number(issue)
+    object_id = obj.meta.object_id
+    #object_id = get_object_id_from_labels(issue)
+    if not object_id.startswith("paper:"):
+        logger.info("Not a paper object, exiting.")
+        sys.exit(0)
+    if 'arxiv' != obj.data.get('sourceId'): #'url' in object_id:
+        logger.info("Metadata hydration is currently only supported for the arxiv source type.")
+        store.process_updates(issue) # ...why is this a separate second step? sheesh, I reaaly did rube goldberg the shit out of this thing
+        return
+        
+    
+    paper_id = object_id[len('paper:'):]
+    if paper_id.startswith('arxiv'):
+        arxiv_id = extract_arxiv_id_from_object_id(paper_id)
+    elif is_valid_arxiv_id(paper_id):
+        arxiv_id = paper_id
+    else:
+        raise TypeError(f"Unable to identify arxiv_id from object_id: {object_id}")
+
+    updates = {}
+    arxiv_meta = fetch_arxiv_metadata(arxiv_id)
+    for k, v_new in arxiv_meta.items():
+        #v_old = getattr(obj.data, k)
+        v_old = obj.data.get(k)
+        if not v_old:
+            updates[k] = v_new
+
+    metadata_satisfied = False
+    if updates:
+        # Issue is open because we are processing it right now, which acts as an implicit lock on updates.
+        # so we close it before pushing the new update
+        #store.repo.get_issue(issue).edit(state='closed') # ...this is awkward af. in fact, I think I should just eliminate that whole ConcurrentUpdateError
+        # finally: what we came here for
+        store.update(object_id=object_id, changes=updates)
+        store.process_updates(issue) # ...why is this a separate second step? sheesh, I reaaly did rube goldberg the shit out of this thing
+        metadata_satisfied = True
+    else:
+        metadata_satisfied = is_metadata_satisfied(obj.data)
+
+    if metadata_satisfied:
+        store.repo.get_issue(issue).remove_from_labels("TODO:hydrate-metadata")    
+
+# TODO: upstream this to gh-store utilities
+def get_open_issues(token:str, repo:str, extra_labels: list|None = None):
+    store = GitHubStore(token=token, repo=repo, config_path=None)
+    #store = CanonicalStore(token=token, repo=repo, config_path=None)
+    
+    query_labels = [LabelNames.GH_STORE, LabelNames.STORED_OBJECT]
+    if extra_labels: # 
+        query_labels += extra_labels
+    return store.repo.get_issues(
+            labels=query_labels,
+            state="open"
+        )
+
+def hydrate_all_open_issues(token:str, repo:str):
+    store = CanonicalStore(token=token, repo=repo, config_path=None)
+    for issue in get_open_issues(token=token, repo=repo, extra_labels=["TODO:hydrate-metadata"]):
+        try:
+            hydrate_issue_metadata(issue=issue.number, token=token, repo=repo)
+        except TypeError:
+            logger.info("unsupported source for issue %s", issue.number)
+        except DuplicateUIDError:
+            #logger.info("Issue %s has dupes, skipping for now. Run deduplification." % issue.number)
+            logger.info("Issue %s has dupes. Running deduplification." % issue.number)
+            #object_id = StoredObject.from_issue(issue).object_id
+            object_id = get_object_id_from_labels(issue)
+            dedupe_status = store.deduplicate_object(object_id)
+            hydrate_issue_metadata(issue=dedupe_status.get('canonical_issue'), token=token, repo=repo)
+        except ConcurrentUpdateError:
+            logger.info("Issue %s has too many unprocessed concurrent updates. Either adjust this threshold, or reconcile the updates manually.", issue.number)
+
+# class Main:
+#     def hydrate_issue_metadata(self, issue: int, token:str, repo:str):
+#         hydrate_issue_metadata(issue=issue, token=token, repo=repo)
+
+#     def hydrate_all_open_issues(self, token:str, repo:str):
+#         hydrate_all_open_issues(token=token, repo=repo)
+
+
+if __name__ == "__main__":
+    #fire.Fire(Main)
+    fire.Fire(
+        { "hydrate_issue_metadata":hydrate_issue_metadata, "hydrate_all_open_issues":hydrate_all_open_issues }
+    )
+
+
+
+---
+File: scripts/process_enrichments.py
+---
+# scripts/process_enrichments.py
+"""
+Creates new paper features based on GitHub issue specifications.
+"""
+import ast
+from dataclasses import dataclass
+import json
+import os
+from pathlib import Path
+from typing import Iterator
+
+from github import Github
+from loguru import logger
+from duckduckgo_search import DDGS
+from llamero.utils import commit_and_push
+
+@dataclass
+class Paper:
+    """
+    Represents an arXiv paper with its associated features.
+    
+    Args:
+        arxiv_id: The arXiv ID of the paper
+        data_dir: Root directory containing paper data (default: data/papers)
+    """
+    arxiv_id: str
+    data_dir: Path = Path("data/papers")
+    
+    def __post_init__(self):
+        self.paper_dir = self.data_dir / self.arxiv_id
+        self.features_dir = self.paper_dir / "features"
+        
+    @property
+    def pdf_path(self) -> Path:
+        """Path to the paper's PDF file."""
+        return self.paper_dir / f"{self.arxiv_id}.pdf"
+    
+    @property
+    def available_features(self) -> set[str]:
+        """Returns set of available feature types for this paper."""
+        if not self.features_dir.exists():
+            return set()
+            
+        return {
+            d.name for d in self.features_dir.iterdir() 
+            if d.is_dir() and any(d.iterdir())
+        }
+        
+    def has_feature(self, feature_name: str) -> bool:
+        """Check if a specific feature is available."""
+        return feature_name in self.available_features
+        
+    def feature_path(self, feature_type: str) -> Path | None:
+        """
+        Get path to a specific feature file if it exists.
+        
+        Args:
+            feature_type: Name of the feature directory (e.g., 'markdown-grobid')
+            
+        Returns:
+            Path to the feature file, or None if not found
+        """
+        feature_dir = self.features_dir / feature_type
+        if not feature_dir.exists():
+            return None
+            
+        # Look for any file with matching arxiv_id prefix
+        for file in feature_dir.iterdir():
+            if file.stem == self.arxiv_id:
+                return file
+                
+        return None
+        
+    def __str__(self) -> str:
+        features = ", ".join(sorted(self.available_features)) or "none"
+        return f"Paper({self.arxiv_id}, features: {features})"
+        
+    @classmethod
+    def iter_papers(cls, data_dir: Path | str = "data/papers") -> Iterator["Paper"]:
+        """
+        Yields Paper objects for all papers in the project.
+        
+        Args:
+            data_dir: Root directory containing paper data
+        """
+        data_dir = Path(data_dir)
+        if not data_dir.exists():
+            return
+            
+        for paper_dir in data_dir.iterdir():
+            if paper_dir.is_dir():
+                yield cls(arxiv_id=paper_dir.name, data_dir=data_dir)
+
+
+@dataclass
+class FeatureRequest:
+    """Represents a request to create a new feature."""
+    name: str
+    inputs: dict[str, str]
+    prompt: str
+    max_len: int = 20000
+    commit_cadence: int = 5
+    
+    def __post_init__(self):
+        if '/' in self.name:
+            raise ValueError("Feature name cannot contain '/'")
+        if not all(isinstance(v, str) for v in self.inputs.values()):
+            raise ValueError("All input mappings must be strings")
+    
+    @classmethod
+    def from_issue(cls, issue_body: str) -> 'FeatureRequest':
+        """Creates a FeatureRequest from a GitHub issue body."""
+        try:
+            # First try standard JSON parsing
+            # try:
+            #     data = json.loads(issue_body)
+            # except json.JSONDecodeError:
+            #     # If that fails, try replacing single quotes with double quotes
+            #     # but only for the outermost quotes and dict keys
+            #     fixed_body = (
+            #         issue_body
+            #         .replace("{'", '{"')
+            #         .replace("'}", '"}')
+            #         .replace("':", '":')
+            #         .replace("',", '",')
+            #     )
+            #     data = json.loads(fixed_body)
+            data = ast.literal_eval(issue_body)
+            
+            return cls(
+                name=data['name'],
+                inputs=data['inputs'],
+                prompt=data['prompt'],
+                max_len=data.get('max_len', 20000),
+                commit_cadence=data.get('commit_cadence', 10),
+            )
+        except (json.JSONDecodeError, KeyError) as e:
+            raise ValueError(f"Invalid feature request format: {e}")
+
+
+def get_github_context() -> tuple[str, str, str]:
+    """
+    Gets GitHub repository context from Actions environment.
+    
+    Returns:
+        Tuple of (owner, repo, token)
+    """
+    repo = os.getenv("GITHUB_REPOSITORY")
+    if not repo:
+        raise RuntimeError("Must be run in GitHub Actions environment")
+    
+    token = os.getenv("GITHUB_TOKEN")
+    if not token:
+        raise RuntimeError("GitHub token not available")
+        
+    owner, repo = repo.split("/")
+    return owner, repo, token
+
+
+def get_feature_requests(
+    owner: str,
+    repo: str,
+    label: str = "feature-node",
+    feature_name: str | None = None,
+    token: str | None = None
+) -> Iterator[tuple[FeatureRequest, "Issue"]]:
+    """
+    Yields FeatureRequest objects from labeled GitHub issues.
+    
+    Args:
+        owner: Repository owner
+        repo: Repository name
+        label: Base label to filter issues
+        feature_name: If provided, also filter by feature:<name> label
+        token: GitHub token
+    """
+    g = Github(token) if token else Github()
+    repository = g.get_repo(f"{owner}/{repo}")
+    
+    labels = [label]
+    if feature_name:
+        labels.append(f"feature:{feature_name}")
+    
+    for issue in repository.get_issues(labels=labels, state="all"):
+        try:
+            yield FeatureRequest.from_issue(issue.body), issue
+        except ValueError as e:
+            logger.warning(f"Skipping issue {issue.number}: {e}")
+            continue
+
+
+def handle_missing_features(
+    owner: str,
+    repo: str,
+    missing_features: set[str],
+    token: str | None = None
+) -> None:
+    """
+    Reopens feature creation issues for missing features.
+    
+    Args:
+        owner: Repository owner
+        repo: Repository name
+        missing_features: Set of feature names that need to be created
+        token: GitHub token
+    """
+    g = Github(token) if token else Github()
+    repository = g.get_repo(f"{owner}/{repo}")
+    
+    # Track which features we've handled to avoid duplicate reopens
+    handled_features = set()
+    
+    for feature in missing_features:
+        if feature in handled_features:
+            continue
+            
+        # Find the feature creation issue
+        for request, issue in get_feature_requests(
+            owner, repo, feature_name=feature, token=token
+        ):
+            if issue.state == "closed":
+                logger.info(f"Reopening issue for feature: {feature}")
+                issue.edit(state="open")
+                handled_features.add(feature)
+                break
+        else:
+            logger.warning(f"No creation issue found for feature: {feature}")
+
+
+def create_feature(
+    paper: Paper,
+    request: FeatureRequest,
+    owner: str,
+    repo: str,
+    token: str | None = None,
+    reopen_dependencies: bool = True
+) -> bool:
+    """
+    Creates a new feature for a paper based on the feature request.
+    
+    Args:
+        paper: Paper object to create feature for
+        request: Feature request specification
+        owner: Repository owner (for dependency reopening)
+        repo: Repository name (for dependency reopening)
+        token: GitHub token (for dependency reopening)
+        reopen_dependencies: Whether to reopen issues for missing dependencies
+        
+    Returns:
+        True if feature was created successfully
+    """
+    missing_features = set()
+    
+    # Check if all required input features exist
+    for feature_path in request.inputs:
+        feature_type = feature_path.split('/')[1]
+        if not paper.has_feature(feature_type):
+            missing_features.add(feature_type)
+            
+    if missing_features and reopen_dependencies:
+        handle_missing_features(owner, repo, missing_features, token)
+        return 
+    elif missing_features:
+        logger.warning(
+            f"Paper {paper.arxiv_id} missing required features: {missing_features}"
+        )
+        return 
+            
+    # Create feature directory
+    feature_dir = paper.features_dir / request.name
+    feature_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Read input features and format prompt
+    input_contents = {}
+    for feature_path, var_name in request.inputs.items():
+        feature_type = feature_path.split('/')[1]
+        path = paper.feature_path(feature_type)
+        if path and path.exists():
+            content = path.read_text()
+            # Truncate content if needed
+            if request.max_len > 0:
+                available_len = request.max_len - len(request.prompt)
+                if len(content) > available_len:
+                    logger.warning(
+                        f"Truncating content for {paper.arxiv_id} "
+                        f"from {len(content)} to {available_len} chars"
+                    )
+                content = content[:available_len]
+            input_contents[var_name] = content
+    
+    # Format prompt with input contents
+    formatted_prompt = request.prompt.format(**input_contents)
+    
+    # Send to DuckDuckGo chat
+    ddg = DDGS()
+    try:
+        response = ddg.chat(formatted_prompt)
+        output_path = feature_dir / f"{paper.arxiv_id}.md"
+        output_path.write_text(response)
+        logger.info(f"Created {request.name} feature for {paper.arxiv_id}")
+        return str(output_path.absolute())
+    except Exception as e:
+        logger.error(f"Chat API error for {paper.arxiv_id}: {e}")
+        return 
+
+
+def process_feature_requests(
+    data_dir: Path | str = "data/papers"
+) -> None:
+    """
+    Process all open feature requests for all papers.
+    """
+    owner, repo, token = get_github_context()
+    requests = []
+    for request, _ in get_feature_requests(owner, repo, token=token):
+        requests.append(request)
+    logger.info(f"Found {len(requests)} feature requests")
+
+    to_commit=[]
+    for i, paper in enumerate(Paper.iter_papers(data_dir)):
+        for request in requests:
+            if paper.has_feature(request.name):
+                logger.debug(f"{request.name} feature for paper {paper.arxiv_id} already previously generated. Skipping.")
+                continue        
+
+            output_path = create_feature(paper, request, owner, repo, token)
+            if output_path:
+                to_commit.append(output_path)
+        #if i % request.commit_cadence == 0: # per-request commit cadences though... hmmm
+        if to_commit and ((len(to_commit) % request.commit_cadence) == 0):
+            commit_and_push(to_commit)
+            to_commit=[]
+    if to_commit:
+        commit_and_push(to_commit)
+
+
+if __name__ == "__main__":
+    from fire import Fire
+    
+    def main(data_dir: str = "data/papers"):
+        """CLI entry point to process feature requests."""
+        process_feature_requests(data_dir)
+        
+    Fire(main)
+
+
+
+---
+File: scripts/process_pdf.py
+---
+# .github/scripts/process_pdf.py
+
+import os
+from pathlib import Path
+from typing import Literal
+
+import fire
+import requests
+from loguru import logger
+from lxml import etree
+from llamero.utils import commit_and_push
+
+OutputFormat = Literal['markdown', 'tei']
+
+def remove_extra_whitespace(text: str)->str:
+    while '\n\n\n' in text:
+        text = text.replace('\n\n\n', '\n\n')
+    return text
+
+def remove_gibberish(
+    text: str,
+    cutoff=2000
+)->str:
+    good_lines = []
+    for line in text.split('\n'):
+        _line = line[:]
+        if _line.startswith("$"):
+            _line = _line[1:-1]
+        n_tok = len(_line)
+        n_space = _line.count(" ")
+        # I think this might remove some formulas if we use cutoff=0
+        token_sparsity=1
+        if n_tok:
+            token_sparsity = n_space/n_tok
+        
+        _line = line[:]
+        _line = _line.replace(" ","")
+
+        skip=False
+        if (abs(token_sparsity - .5) < .01) and (len(line) > cutoff):
+            skip=True
+        if "texitsha1_base64" in _line:
+            skip=True
+        if "texit>" in _line:
+            skip=True
+        if skip:
+            logger.info(f"removing gibberish")
+            logger.info(line)
+            continue
+        good_lines.append(line)
+    return '\n'.join(good_lines)
+
+def sanitize_markdown(text: str)->str:
+    text=remove_extra_whitespace(text)
+    text=remove_gibberish(text)
+    return text
+
+def get_feature_path(base_path: Path, feature_type: str, paper_id: str, ext: str) -> Path:
+    """Create feature directory if it doesn't exist and return the full path."""
+    feature_dir = base_path / 'features' / feature_type
+    feature_dir.mkdir(parents=True, exist_ok=True)
+    return feature_dir / f"{paper_id}{ext}"
+
+def process_pdf_grobid(
+    pdf_path: str, 
+    format: OutputFormat = 'markdown', 
+    tag: str = "grobid",
+    output_path: str | None = None,
+    regenerate_tei: bool = True,
+) -> None:
+    """
+    Process a PDF file using Grobid and convert to the specified format.
+    
+    Output files will be saved in feature-specific directories:
+    - TEI XML files go to features/tei-xml-grobid/
+    - Markdown files go to features/markdown-grobid/
+    
+    Args:
+        pdf_path: Path to the PDF file relative to the repository root.
+        format: Output format, either 'markdown' or 'tei'.
+        tag: Optional tag to append to the output filename (default: "grobid").
+        output_path: Optional path where the output file should be saved. If provided,
+            this overrides the default feature directory behavior.
+        regenerate_tei: Whether to regenerate TEI XML even if it exists.
+    """
+    pdf_path = Path(pdf_path)
+    if not pdf_path.exists():
+        raise FileNotFoundError(f"PDF file not found: {pdf_path}")
+
+    # Get paper directory
+    paper_dir = pdf_path.parent
+
+    # Generate paper ID from PDF filename
+    paper_id = pdf_path.stem
+
+    # Determine output paths
+    if output_path:
+        output_path = Path(output_path)
+        tei_path = output_path.with_suffix('.tei.xml')
+        md_path = output_path.with_suffix('.md')
+    else:
+        # Use feature directory structure
+        tei_path = get_feature_path(paper_dir, f'tei-xml-{tag}', paper_id, '.xml')
+        md_path = get_feature_path(paper_dir, f'markdown-{tag}', paper_id, '.md')
+    
+    logger.info(f"Processing {pdf_path}")
+    logger.info(f"TEI output will go to {tei_path}")
+    logger.info(f"Markdown output will go to {md_path}")
+
+    if regenerate_tei or (not tei_path.exists()):
+        grobid_host = os.environ.get('GROBID_HOST', 'localhost')
+        base_url = f"http://{grobid_host}:8070"
+        
+        # Call Grobid to process the PDF into TEI XML
+        with open(pdf_path, 'rb') as f:
+            files = {'input': (pdf_path.name, f, 'application/pdf')}
+            resp = requests.post(
+                f"{base_url}/api/processFulltextDocument",
+                files=files,
+                headers={'Accept': 'application/xml'},
+                timeout=300  # 5 minute timeout
+            )
+        
+        if resp.status_code != 200:
+            raise RuntimeError(f"Grobid processing failed: {resp.status_code}")
+        
+        # Ensure the feature directory exists and save the TEI output
+        tei_path.parent.mkdir(parents=True, exist_ok=True)
+        tei_path.write_text(resp.text)
+        logger.info(f"Saved TEI XML to {tei_path}")
+    
+    if format == 'markdown':
+        # Convert TEI to Markdown using XSLT
+        xslt_path = Path(__file__).parent / 'tei2md.xslt'
+        if not xslt_path.exists():
+            raise FileNotFoundError(f"XSLT stylesheet not found: {xslt_path}")
+        
+        xslt = etree.parse(str(xslt_path))
+        transform = etree.XSLT(xslt)
+        
+        tei_doc = etree.parse(str(tei_path))
+        markdown = str(transform(tei_doc))
+        markdown = sanitize_markdown(markdown)
+        
+        # Ensure the feature directory exists and save Markdown output
+        md_path.parent.mkdir(parents=True, exist_ok=True)
+        md_path.write_text(markdown)
+        logger.info(f"Saved Markdown to {md_path}")
+    else:
+        logger.info(f"Output TEI XML saved at {tei_path}")
+
+process_pdf = process_pdf_grobid
+
+# Files to ignore during operations
+ignore_files = [
+    "gh-store-snapshot.json",
+    "papers-archive.json",
+    "papers.json",
+    "papers.yaml"
+]
+
+# def flush_old_conversions(data_path: str = "data/papers", tag: str = "grobid"):
+#     """
+#     Remove all previous conversions with the specified tag from feature directories.
+#     """
+#     base_path = Path(data_path).parent
+#     tei_dir = base_path / 'features' / f'tei-xml-{tag}'
+#     md_dir = base_path / 'features' / f'markdown-{tag}'
+    
+#     if tei_dir.exists():
+#         for fpath in tei_dir.glob("*.xml"):
+#             fpath.unlink()
+#         tei_dir.rmdir()
+    
+#     if md_dir.exists():
+#         for fpath in md_dir.glob("*.md"):
+#             fpath.unlink()
+#         md_dir.rmdir()
+
+def generate_missing_conversions(
+    data_path: str = "data/papers",
+    tag: str = "grobid",
+    checkpoint_cadence=5,
+    regenerate_tei: bool = True,
+):
+    """
+    Generate missing conversions for PDFs, saving outputs to feature directories.
+    """
+    data_path = Path(data_path)
+    modified_files = []
+    
+    for i, pdf_fpath in enumerate(data_path.rglob("*.pdf")):
+        # Skip PDFs in source directories
+        if "source" in str(pdf_fpath):
+            continue
+            
+        # Determine feature paths
+        #base_dir = pdf_fpath.parent.parent
+        paper_dir = pdf_fpath.parent
+        paper_id = pdf_fpath.stem
+        md_path = get_feature_path(paper_dir, f'markdown-{tag}', paper_id, '.md')
+        
+        if not md_path.exists():
+            process_pdf_grobid(pdf_fpath, regenerate_tei=regenerate_tei)
+            # Add both markdown and TEI paths
+            tei_path = get_feature_path(paper_dir, f'tei-xml-{tag}', paper_id, '.xml')
+            modified_files.extend([md_path, tei_path])
+            logger.info(f"Generated conversions for {pdf_fpath.name}")
+            
+        if (i % checkpoint_cadence) == 0 and modified_files:
+            msg = "Persisting feature conversions"
+            commit_and_push(files_to_commit=modified_files, message=msg)
+            modified_files = []
+            
+    if modified_files:
+        commit_and_push(files_to_commit=modified_files, message="Persisting remaining feature conversions")
+
+if __name__ == '__main__':
+    fire.Fire({
+        "process_pdf": process_pdf,
+        "generate_missing_conversions": generate_missing_conversions,
+        #"flush_old_conversions": flush_old_conversions,
+    })
+
+
+
+---
+File: scripts/process_task.py
+---
+# scripts/process_task.py
+from dataclasses import dataclass
+import json
+from pathlib import Path
+
+from duckduckgo_search import DDGS
+import fire
+#from gh_store.core.access import AccessControl
+from loguru import logger
+
+ddg = DDGS()
+
+#access_control = AccessControl(self.repo)
+
+# #TODO: access validation as gh-store CLI capability
+# issue = self.repo.get_issue(issue_number)
+# if not self.access_control.validate_issue_creator(issue):
+
+def with_prompt(
+  target: str|Path,
+  prompt: str="summarize the following:\n\n {content}",
+  max_len: int=1024,
+):
+  with Path(target).open() as f:
+    content = f.read()
+  if max_len > 0:
+    content=content[:(max_len-len(prompt))]
+  msg = prompt.format(content=content) # should probably chunk somehow and iterate over chunks
+  logger.info(msg)
+  response = ddg.chat(msg)
+  return response
+  
+
+# ... should just use locals...
+OPERATORS={
+    "ddg.chat": ddg.chat,
+    "with_prompt": with_prompt,
+}
+
+@dataclass
+class TaskConfig:
+    operator: str
+    kwargs: dict
+
+
+def main(config: dict):
+    logger.info(config)
+    if not isinstance(config, dict):
+      config = json.loads(config)
+    config = TaskConfig(**config)
+    logger.info(config)
+    op = OPERATORS[config.operator]
+    result = op(**config.kwargs)
+    logger.info(result)
+    return result
+
+fire.Fire(main)
+
+
+
+---
+File: scripts/toggle_issues.py
+---
+# scripts/toggle_issues.py
+import os
+import requests
+from github import Github
+from loguru import logger
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeRemainingColumn
+
+logger.info("Starting issue toggle process")
+
+# Initialize GitHub client
+g = Github(os.environ["GITHUB_TOKEN"])
+repo = g.get_repo(os.environ["REPO"])
+label = os.environ["LABEL"]
+perform_close = os.environ["PERFORM_CLOSE"].lower() == "true"
+perform_reopen = os.environ["PERFORM_REOPEN"].lower() == "true"
+reopen_all_matching = os.environ["REOPEN_ALL_MATCHING"].lower() == "true"
+
+# Setup for direct API calls that will trigger webhooks
+api_headers = {
+    "Accept": "application/vnd.github.v3+json",
+    "Authorization": f"token {os.environ['GITHUB_TOKEN']}",
+    # This header is crucial - it tells GitHub to trigger webhooks
+    "X-GitHub-Api-Version": "2022-11-28"
+}
+api_base_url = f"https://api.github.com/repos/{os.environ['REPO']}/issues"
+
+def reopen_issue_with_webhook(issue_number: int) -> None:
+    """Reopen an issue using the REST API to ensure webhook triggering."""
+    response = requests.patch(
+        f"{api_base_url}/{issue_number}",
+        headers=api_headers,
+        json={"state": "open"}
+    )
+    response.raise_for_status()
+
+# Track which issues we close for potential reopening
+closed_issue_numbers = []
+
+# Create a progress instance with custom columns
+progress = Progress(
+    SpinnerColumn(),
+    TextColumn("[bold blue]{task.description}"),
+    BarColumn(),
+    TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+    TimeRemainingColumn(),
+    expand=True
+)
+
+with progress:
+    if perform_close:
+        # Get all open issues with the specified label
+        logger.info(f"Finding open issues with label: {label}")
+        open_issues = list(repo.get_issues(state="open", labels=[label]))
+
+        if not open_issues:
+            logger.warning("No open issues found with specified label")
+        else:
+            # Close all matching issues while recording their numbers
+            logger.info(f"Found {len(open_issues)} issues to close")
+            close_task = progress.add_task(
+                "[red]Closing issues...", 
+                total=len(open_issues)
+            )
+            
+            for issue in open_issues:
+                logger.info(f"Closing issue #{issue.number}")
+                issue.edit(state="closed")
+                closed_issue_numbers.append(issue.number)
+                progress.update(close_task, advance=1)
+    else:
+        logger.info("Skipping close step")
+
+    if perform_reopen:
+        if reopen_all_matching:
+            # Get all closed issues with the specified label
+            logger.info(f"Finding all closed issues with label: {label}")
+            closed_issues = list(repo.get_issues(state="closed", labels=[label]))
+            
+            if not closed_issues:
+                logger.warning("No closed issues found with specified label")
+            else:
+                logger.info(f"Found {len(closed_issues)} issues to reopen")
+                reopen_task = progress.add_task(
+                    "[green]Reopening all matching issues...", 
+                    total=len(closed_issues)
+                )
+                
+                for issue in closed_issues:
+                    logger.info(f"Reopening issue #{issue.number}")
+                    reopen_issue_with_webhook(issue.number)
+                    progress.update(reopen_task, advance=1)
+        
+        elif closed_issue_numbers:
+            # Reopen only issues we just closed
+            logger.info("Reopening previously closed issues")
+            reopen_task = progress.add_task(
+                "[green]Reopening issues from this run...", 
+                total=len(closed_issue_numbers)
+            )
+            
+            for number in closed_issue_numbers:
+                logger.info(f"Reopening issue #{number}")
+                reopen_issue_with_webhook(number)
+                progress.update(reopen_task, advance=1)
+        else:
+            logger.info("No issues to reopen")
+    else:
+        logger.info("Skipping reopen step")
+
+logger.info("Issue toggle process completed")
+
+
