@@ -723,57 +723,15 @@ var IconState;
 // Your excellent SVG definitions (keeping them as-is)
 const ICON_CONFIGS = {
     [IconState.DEFAULT]: {
-        svg: `
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" width="36" height="36">
-  <path fill="#AAB8C2" d="M35 26a4 4 0 0 1-4 4H5a4 4 0 0 1-4-4V6.313C1 4.104 6.791 0 9 0h20.625C32.719 0 35 2.312 35 5.375V26z"/>
-  <path fill="#F5F8FA" d="M33 30a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V6c0-4.119-.021-4 5-4h21a4 4 0 0 1 4 4v24z"/>
-  <path fill="#FFF"     d="M31 31a3 3 0 0 1-3 3H4a3 3 0 0 1-3-3V7a3 3 0 0 1 3-3h24a3 3 0 0 1 3 3v24z"/>
-  <path fill="#AAB8C2" d="M31 32a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V10a4 4 0 0 1 4-4h21a4 4 0 0 1 4 4v22z"/>
-  <path fill="#E1E8ED" d="M29 32a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V12a4 4 0 0 1 4-4h19.335C27.544 8 29 9.456 29 11.665V32z"/>
-  <path fill="#AAB8C2" d="M6 6C4.312 6 4.269 4.078 5 3.25C5.832 2.309 7.125 2 9.438 2H11V0H8.281C4.312 0 1 2.5 1 5.375V32a4 4 0 0 0 4 4h2V6H6z"/>
-  <g fill="#DD2E44">
-    <path d="M17 4v23l4-6l4 6V4z"/>
-    <path d="M25 28a1 1 0 0 1-.832-.445L21 22.803l-3.168 4.752A.998.998 0 0 1 16 27V4a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v23a1 1 0 0 1-1 1zm-4-8c.334 0 .646.167.832.445L24 23.697V5h-6v18.697l2.168-3.252c.186-.278.498-.445.832-.445z"/>
-  </g>
-  <path fill="#F5F8FA" d="M15 2h12v2H15z"/>
-</svg>
-    `.trim(),
+        svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36"><rect width="36" height="36" fill="#f8f9fa"/><rect x="6" y="6" width="24" height="24" rx="2" fill="#e9ecef"/><path fill="#dc3545" d="M18 8v16l4-3 4 3V8z"/></svg>`,
         title: 'Academic Paper Tracker',
     },
     [IconState.DETECTED]: {
-        svg: `
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" width="36" height="36">
-  <path fill="#1DA1F2" d="M35 26a4 4 0 0 1-4 4H5a4 4 0 0 1-4-4V6.313C1 4.104 6.791 0 9 0h20.625C32.719 0 35 2.312 35 5.375V26z"/>
-  <path fill="#E8F5FE" d="M33 30a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V6c0-4.119-.021-4 5-4h21a4 4 0 0 1 4 4v24z"/>
-  <path fill="#FFF"     d="M31 31a3 3 0 0 1-3 3H4a3 3 0 0 1-3-3V7a3 3 0 0 1 3-3h24a3 3 0 0 1 3 3v24z"/>
-  <path fill="#1DA1F2" d="M31 32a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V10a4 4 0 0 1 4-4h21a4 4 0 0 1 4 4v22z"/>
-  <path fill="#E8F5FE" d="M29 32a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V12a4 4 0 0 1 4-4h19.335C27.544 8 29 9.456 29 11.665V32z"/>
-  <path fill="#1DA1F2" d="M6 6C4.312 6 4.269 4.078 5 3.25C5.832 2.309 7.125 2 9.438 2H11V0H8.281C4.312 0 1 2.5 1 5.375V32a4 4 0 0 0 4 4h2V6H6z"/>
-  <g fill="#0A84FF">
-    <path d="M17 4v23l4-6l4 6V4z"/>
-    <path d="M25 28a1 1 0 0 1-.832-.445L21 22.803l-3.168 4.752A.998.998 0 0 1 16 27V4a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v23a1 1 0 0 1-1 1zm-4-8c.334 0 .646.167.832.445L24 23.697V5h-6v18.697l2.168-3.252c.186-.278.498-.445.832-.445z"/>
-  </g>
-  <path fill="#E8F5FE" d="M15 2h12v2H15z"/>
-</svg>
-    `.trim(),
+        svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36"><rect width="36" height="36" fill="#e3f2fd"/><rect x="6" y="6" width="24" height="24" rx="2" fill="#bbdefb"/><path fill="#2196f3" d="M18 8v16l4-3 4 3V8z"/></svg>`,
         title: 'Paper Detected - Academic Paper Tracker',
     },
     [IconState.TRACKED]: {
-        svg: `
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" width="36" height="36">
-  <path fill="#228B22" d="M35 26a4 4 0 0 1-4 4H5a4 4 0 0 1-4-4V6.313C1 4.104 6.791 0 9 0h20.625C32.719 0 35 2.312 35 5.375V26z"/>
-  <path fill="#E8F5EE" d="M33 30a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V6c0-4.119-.021-4 5-4h21a4 4 0 0 1 4 4v24z"/>
-  <path fill="#FFF"     d="M31 31a3 3 0 0 1-3 3H4a3 3 0 0 1-3-3V7a3 3 0 0 1 3-3h24a3 3 0 0 1 3 3v24z"/>
-  <path fill="#228B22" d="M31 32a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V10a4 4 0 0 1 4-4h21a4 4 0 0 1 4 4v22z"/>
-  <path fill="#E8F5EE" d="M29 32a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V12a4 4 0 0 1 4-4h19.335C27.544 8 29 9.456 29 11.665V32z"/>
-  <path fill="#228B22" d="M6 6C4.312 6 4.269 4.078 5 3.25C5.832 2.309 7.125 2 9.438 2H11V0H8.281C4.312 0 1 2.5 1 5.375V32a4 4 0 0 0 4 4h2V6H6z"/>
-  <g fill="#006400">
-    <path d="M17 4v23l4-6l4 6V4z"/>
-    <path d="M25 28a1 1 0 0 1-.832-.445L21 22.803l-3.168 4.752A.998.998 0 0 1 16 27V4a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v23a1 1 0 0 1-1 1zm-4-8c.334 0 .646.167.832.445L24 23.697V5h-6v18.697l2.168-3.252c.186-.278.498-.445.832-.445z"/>
-  </g>
-  <path fill="#E8F5EE" d="M15 2h12v2H15z"/>
-</svg>
-    `.trim(),
+        svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36"><rect width="36" height="36" fill="#e8f5e8"/><rect x="6" y="6" width="24" height="24" rx="2" fill="#c8e6c9"/><path fill="#4caf50" d="M18 8v16l4-3 4 3V8z"/></svg>`,
         title: 'Paper Tracked - Academic Paper Tracker',
     },
 };
@@ -895,26 +853,59 @@ class IconManager {
     }
     async rasterizeSvgToImageData(svgText, widthPx, heightPx) {
         try {
-            const svgBlob = new Blob([svgText], { type: 'image/svg+xml' });
-            const bitmap = await createImageBitmap(svgBlob, {
-                resizeWidth: widthPx,
-                resizeHeight: heightPx,
-                resizeQuality: 'high',
-            });
-            const offscreen = new OffscreenCanvas(widthPx, heightPx);
-            const ctx = offscreen.getContext('2d');
-            if (!ctx) {
-                throw new Error('Failed to get 2D context from OffscreenCanvas');
+            // Clean up SVG text and ensure it's valid
+            const cleanSvg = svgText.trim();
+            // Create blob with proper MIME type
+            const svgBlob = new Blob([cleanSvg], { type: 'image/svg+xml;charset=utf-8' });
+            // Create object URL for the blob
+            const svgUrl = URL.createObjectURL(svgBlob);
+            try {
+                // Create an image element and load the SVG
+                const img = new Image();
+                // Wait for image to load
+                await new Promise((resolve, reject) => {
+                    img.onload = () => resolve();
+                    img.onerror = () => reject(new Error('Failed to load SVG image'));
+                    img.src = svgUrl;
+                });
+                // Create canvas and draw image
+                const offscreen = new OffscreenCanvas(widthPx, heightPx);
+                const ctx = offscreen.getContext('2d');
+                if (!ctx) {
+                    throw new Error('Failed to get 2D context from OffscreenCanvas');
+                }
+                // Clear canvas and draw image
+                ctx.clearRect(0, 0, widthPx, heightPx);
+                ctx.drawImage(img, 0, 0, widthPx, heightPx);
+                return ctx.getImageData(0, 0, widthPx, heightPx);
             }
-            ctx.clearRect(0, 0, widthPx, heightPx);
-            ctx.drawImage(bitmap, 0, 0, widthPx, heightPx);
-            return ctx.getImageData(0, 0, widthPx, heightPx);
+            finally {
+                // Clean up object URL
+                URL.revokeObjectURL(svgUrl);
+            }
         }
         catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
-            logger$5.error(`Failed to rasterize SVG at ${widthPx}x${heightPx}:`, errorMessage);
-            throw error;
+            logger$5.warn(`SVG rasterization failed, creating fallback icon: ${errorMessage}`);
+            // Create a simple fallback icon
+            return this.createFallbackIcon(widthPx, heightPx);
         }
+    }
+    // NEW: Create a simple fallback icon when SVG fails
+    createFallbackIcon(widthPx, heightPx) {
+        const offscreen = new OffscreenCanvas(widthPx, heightPx);
+        const ctx = offscreen.getContext('2d');
+        if (!ctx) {
+            throw new Error('Failed to get 2D context for fallback icon');
+        }
+        // Draw a simple colored rectangle as fallback
+        ctx.fillStyle = '#dc3545'; // Bootstrap red
+        ctx.fillRect(0, 0, widthPx, heightPx);
+        // Add a simple bookmark shape
+        ctx.fillStyle = '#fff';
+        const padding = Math.max(2, widthPx * 0.1);
+        ctx.fillRect(padding, padding, widthPx - padding * 2, heightPx - padding * 2);
+        return ctx.getImageData(0, 0, widthPx, heightPx);
     }
     getIconState(tabId) {
         return this.tabStates.get(tabId) || IconState.DEFAULT;
