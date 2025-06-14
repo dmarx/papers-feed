@@ -1,0 +1,20 @@
+- Definition of random eigenvalues in the context of graph theory
+- Choice of hexagonal and triangular lattices for analysis
+- Methodology for calculating closed paths on lattices
+- Use of moment sequences in probability theory
+- Approximation techniques for probability distributions
+- Integral identities involving modified Bessel functions
+- Justification for using empirical spectral distribution (ESD)
+- Assumptions regarding convergence of random fullerenes to hexagonal lattice
+- Representation of spectral density through moments
+- Computational methods for simulating random eigenvalues
+- Theoretical implications of local weak convergence
+- Framework for analyzing spectral properties of infinite graphs
+- Decision to focus on combinatorial properties of lattices
+- Use of Python for supporting computational results
+- Structure and organization of the paper's sections
+- Selection of key results to highlight in the discussion section
+- Approach to proving conjectures related to spectral density
+- Consideration of physical implications of mathematical findings
+- Documentation of assumptions made during analysis
+- Strategies for future research directions based on findings
