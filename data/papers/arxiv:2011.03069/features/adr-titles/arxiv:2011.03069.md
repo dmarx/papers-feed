@@ -1,0 +1,20 @@
+- Decision on the scope of the project: Focus on trans-Planckian issues in cosmology.
+- Choice of Effective Field Theory (EFT) as the primary framework for analysis.
+- Assumption regarding the validity of decoupling in low-energy predictions.
+- Decision to use simple non-gravitational examples for illustration.
+- Choice to revisit historical arguments related to trans-Planckian problems.
+- Decision to analyze the implications of the Trans-Planckian Censorship Conjecture (TCC).
+- Assumption about the behavior of modes during cosmic expansion.
+- Decision to compare findings with existing conjectures in the swampland program.
+- Choice of specific inflationary models for analysis.
+- Decision to focus on the robustness of late-time cosmological predictions.
+- Assumption regarding the relevance of UV physics to low-energy EFTs.
+- Decision to emphasize the role of time-dependent background fields in EFTs.
+- Choice to explore the implications of non-adiabatic evolution in cosmology.
+- Decision to assess the impact of trans-Planckian modes on CMB predictions.
+- Assumption about the relationship between high-energy physics and observable phenomena.
+- Decision to evaluate the evidence for and against the TCC.
+- Choice to draw parallels between cosmological EFTs and other fields of physics.
+- Decision to highlight the limitations of current models in addressing trans-Planckian issues.
+- Assumption regarding the continuity of physical laws across energy scales.
+- Decision to document the implications of findings for future research directions.
