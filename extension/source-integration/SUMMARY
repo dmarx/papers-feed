@@ -1,0 +1,1600 @@
+---
+File: extension/source-integration/arxiv/index.ts
+---
+// extension/source-integration/arxiv/index.ts
+// ArXiv integration with custom metadata extractor
+
+import { BaseSourceIntegration } from '../base-source';
+import { PaperMetadata } from '../../papers/types';
+import { MetadataExtractor, ExtractedMetadata } from '../metadata-extractor';
+import { loguru } from '../../utils/logger';
+
+const logger = loguru.getLogger('arxiv-integration');
+
+/**
+ * Custom metadata extractor for arXiv pages
+ */
+class ArxivMetadataExtractor extends MetadataExtractor {
+  private apiMetadata?: Partial<ExtractedMetadata>;
+  
+  constructor(document: Document, apiMetadata?: Partial<ExtractedMetadata>) {
+    super(document);
+    this.apiMetadata = apiMetadata;
+  }
+  
+  /**
+   * Override title extraction to use API data if available
+   */
+  protected extractTitle(): string {
+    if (this.apiMetadata?.title) {
+      return this.apiMetadata.title;
+    }
+    
+    // arXiv-specific selectors
+    //const arxivTitle = this.document.querySelector('.title.mathjax')?.textContent?.trim();
+    
+    //return arxivTitle || super.extractTitle();
+    return super.extractTitle();
+  }
+  
+  /**
+   * Override authors extraction to use API data if available
+   */
+  protected extractAuthors(): string {
+    if (this.apiMetadata?.authors) {
+      return this.apiMetadata.authors;
+    }
+    
+    // arXiv-specific selectors
+    const authorLinks = this.document.querySelectorAll('.authors a');
+    if (authorLinks.length > 0) {
+      return Array.from(authorLinks)
+        .map(link => link.textContent?.trim())
+        .filter(Boolean)
+        .join(', ');
+    }
+    
+    return super.extractAuthors();
+  }
+  
+  /**
+   * Override description extraction to use API data if available
+   */
+  protected extractDescription(): string {
+    if (this.apiMetadata?.description) {
+      return this.apiMetadata.description;
+    }
+    
+    // arXiv-specific selectors
+    const abstract = this.document.querySelector('.abstract')?.textContent?.trim();
+    if (abstract) {
+      // Remove "Abstract:" prefix if present
+      return abstract.replace(/^Abstract:\s*/i, '');
+    }
+    
+    return super.extractDescription();
+  }
+  
+  /**
+   * Override published date extraction to use API data if available
+   */
+  protected extractPublishedDate(): string {
+    if (this.apiMetadata?.publishedDate) {
+      return this.apiMetadata.publishedDate;
+    }
+    
+    // arXiv-specific date extraction
+    const datelineElement = this.document.querySelector('.dateline');
+    if (datelineElement) {
+      const dateText = datelineElement.textContent;
+      const dateMatch = dateText?.match(/\(Submitted on ([^)]+)\)/);
+      if (dateMatch) {
+        return dateMatch[1];
+      }
+    }
+    
+    return super.extractPublishedDate();
+  }
+  
+  /**
+   * Override DOI extraction to use API data if available
+   */
+  protected extractDoi(): string {
+    return this.apiMetadata?.doi || super.extractDoi();
+  }
+  
+  /**
+   * Override journal extraction to use API data if available
+   */
+  protected extractJournalName(): string {
+    return this.apiMetadata?.journalName || super.extractJournalName();
+  }
+  
+  /**
+   * Override tags extraction to use API data if available
+   */
+  protected extractTags(): string[] {
+    if (this.apiMetadata?.tags) {
+      return this.apiMetadata.tags;
+    }
+    
+    // arXiv-specific category extraction
+    const subjects = this.document.querySelector('.subjects')?.textContent?.trim();
+    if (subjects) {
+      return subjects.split(/[;,]/).map(tag => tag.trim()).filter(Boolean);
+    }
+    
+    return super.extractTags();
+  }
+}
+
+/**
+ * ArXiv integration with custom metadata extraction
+ */
+export class ArXivIntegration extends BaseSourceIntegration {
+  readonly id = 'arxiv';
+  readonly name = 'arXiv.org';
+  
+  // URL patterns for papers
+  readonly urlPatterns = [
+    /arxiv\.org\/(abs|pdf|html)\/([0-9.]+)/,
+    /arxiv\.org\/\w+\/([0-9.]+)/
+  ];
+  
+  // Content script matches
+  // readonly contentScriptMatches = [
+  //   "*://*.arxiv.org/*"
+  // ];
+
+  // ArXiv API endpoint
+  private readonly API_BASE_URL = 'https://export.arxiv.org/api/query';
+
+  /**
+   * Extract paper ID from URL
+   */
+  extractPaperId(url: string): string | null {
+    for (const pattern of this.urlPatterns) {
+      const match = url.match(pattern);
+      if (match) {
+        return match[2] || match[1]; // The capture group with the paper ID
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Create a custom metadata extractor for arXiv
+   */
+  protected createMetadataExtractor(document: Document): MetadataExtractor {
+    return new ArxivMetadataExtractor(document);
+  }
+
+  /**
+   * Fetch metadata from ArXiv API
+   */
+  private async fetchFromApi(paperId: string): Promise<Partial<ExtractedMetadata> | null> {
+    try {
+      const apiUrl = `${this.API_BASE_URL}?id_list=${paperId}`;
+      logger.debug(`Fetching from ArXiv API: ${apiUrl}`);
+      
+      const response = await fetch(apiUrl);
+      if (!response.ok) {
+        logger.error(`ArXiv API request failed with status: ${response.status}`);
+        return null;
+      }
+      
+      const xmlText = await response.text();
+      
+      // Parse XML to JSON
+      const parser = new DOMParser();
+      const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
+      
+      // Convert XML to a more manageable format
+      const entry = xmlDoc.querySelector('entry');
+      if (!entry) {
+        logger.warn('No entry found in ArXiv API response');
+        return null;
+      }
+      
+      // Extract metadata from XML
+      const title = entry.querySelector('title')?.textContent?.trim() || '';
+      const summary = entry.querySelector('summary')?.textContent?.trim() || '';
+      const published = entry.querySelector('published')?.textContent?.trim() || '';
+      
+      // Extract authors
+      const authorElements = entry.querySelectorAll('author name');
+      const authors = Array.from(authorElements)
+        .map(el => el.textContent?.trim())
+        .filter(Boolean)
+        .join(', ');
+      
+      // Extract DOI if available
+      const doi = entry.querySelector('arxiv\\:doi, doi')?.textContent?.trim();
+      
+      // Extract journal reference if available
+      const journalRef = entry.querySelector('arxiv\\:journal_ref, journal_ref')?.textContent?.trim();
+      
+      // Extract categories
+      const categoryElements = entry.querySelectorAll('category');
+      const categories = Array.from(categoryElements)
+        .map(el => el.getAttribute('term'))
+        .filter(Boolean) as string[];
+      
+      return {
+        title,
+        authors,
+        description: summary,
+        publishedDate: published,
+        doi,
+        journalName: journalRef,
+        tags: categories
+      };
+      
+    } catch (error) {
+      logger.error('Error fetching from ArXiv API', error);
+      return null;
+    }
+  }
+
+  /**
+   * Extract metadata from page or fetch from API
+   * Override parent method to handle the API fallback
+   */
+  async extractMetadata(document: Document, paperId: string): Promise<PaperMetadata | null> {
+    try {
+      logger.info(`Extracting metadata for arXiv ID: ${paperId}`);
+      
+      // Try to extract from page first
+      const extractor = this.createMetadataExtractor(document);
+      const pageMetadata = extractor.extract();
+      
+      // Check if we have the essential fields
+      const hasTitle = pageMetadata.title && pageMetadata.title !== document.title;
+      const hasAuthors = pageMetadata.authors && pageMetadata.authors.length > 0;
+      const hasAbstract = pageMetadata.description && pageMetadata.description.length > 0;
+      
+      if (hasTitle && hasAuthors && hasAbstract) {
+        logger.debug('Successfully extracted complete metadata from page');
+        return this.convertToPageMetadata(pageMetadata, paperId, extractor.getSourceType());
+      }
+      
+      // If page extraction is incomplete, fetch from API
+      logger.info('Page metadata incomplete, fetching from ArXiv API');
+      const apiMetadata = await this.fetchFromApi(paperId);
+      
+      if (!apiMetadata) {
+        logger.warn('Failed to fetch metadata from ArXiv API, using partial page data');
+        return this.convertToPageMetadata(pageMetadata, paperId, extractor.getSourceType());
+      }
+      
+      // Create a new extractor with API data
+      const enhancedExtractor = new ArxivMetadataExtractor(document, apiMetadata);
+      const mergedMetadata = enhancedExtractor.extract();
+      
+      logger.debug('Merged metadata from page and API', mergedMetadata);
+      return this.convertToPageMetadata(mergedMetadata, paperId, enhancedExtractor.getSourceType());
+      
+    } catch (error) {
+      logger.error('Error extracting metadata for arXiv', error);
+      return null;
+    }
+  }
+
+  /**
+   * Convert ExtractedMetadata to PaperMetadata
+   */
+  private convertToPageMetadata(extracted: ExtractedMetadata, paperId: string, sourceType: string): PaperMetadata {
+    return {
+      sourceId: this.id,
+      paperId: paperId,
+      url: extracted.url || '',
+      title: extracted.title,
+      authors: extracted.authors,
+      abstract: extracted.description,
+      timestamp: new Date().toISOString(),
+      rating: 'novote',
+      publishedDate: extracted.publishedDate,
+      tags: extracted.tags || [],
+      doi: extracted.doi,
+      journalName: extracted.journalName,
+      sourceType: sourceType
+    };
+  }
+}
+
+// Export a singleton instance that can be used by both background and content scripts
+export const arxivIntegration = new ArXivIntegration();
+
+
+
+---
+File: extension/source-integration/base-source.ts
+---
+// extension/source-integration/base-source.ts
+// Base class for source integrations with default identifier formatting
+// and metadata extraction capability
+
+import { SourceIntegration } from './types';
+import { PaperMetadata } from '../papers/types';
+import { loguru } from '../utils/logger';
+import { 
+  MetadataExtractor, 
+  createMetadataExtractor,
+  generatePaperIdFromUrl
+} from './metadata-extractor';
+
+const logger = loguru.getLogger('base-source');
+
+/**
+ * Base class for source integrations
+ * Provides default implementations for all methods
+ * Specific sources can override as needed
+ */
+export class BaseSourceIntegration implements SourceIntegration {
+  // Default properties - set for generic web pages
+  readonly id: string = 'url';
+  readonly name: string = 'Web Page';
+  readonly urlPatterns: RegExp[] = [
+    /^https?:\/\/(?!.*\.pdf($|\?|#)).*$/i  // Match HTTP/HTTPS URLs that aren't PDFs
+  ];
+  readonly contentScriptMatches: string[] = [];
+
+  /**
+   * Check if this integration can handle the given URL
+   * Default implementation checks against urlPatterns
+   */
+  canHandleUrl(url: string): boolean {
+    return this.urlPatterns.some(pattern => pattern.test(url));
+  }
+
+  /**
+   * Extract paper ID from URL
+   * Default implementation creates a hash from the URL
+   */
+  extractPaperId(url: string): string | null {
+    return generatePaperIdFromUrl(url);
+  }
+  
+  /**
+   * Create a metadata extractor for the given document
+   * Override this method to provide a custom extractor for your source
+   */
+  protected createMetadataExtractor(document: Document): MetadataExtractor {
+    return createMetadataExtractor(document);
+  }
+  
+  /**
+   * Extract metadata from a page
+   * Default implementation uses common metadata extraction
+   */
+  async extractMetadata(document: Document, paperId: string): Promise<PaperMetadata | null> {
+    try {
+      logger.debug(`Extracting metadata using base extractor for ID: ${paperId}`);
+      
+      // Create a metadata extractor for this document
+      const extractor = this.createMetadataExtractor(document);
+      
+      // Extract metadata
+      const extracted = extractor.extract();
+      const url = document.location.href;
+      
+      // Determine source type (PDF or URL)
+      const sourceType = extractor.getSourceType();
+      
+      // Create PaperMetadata object
+      return {
+        sourceId: this.id,
+        //paperId: this.formatPaperId(paperId),
+        paperId: paperId,
+        url: url,
+        title: extracted.title || document.title || paperId,
+        authors: extracted.authors || '',
+        abstract: extracted.description || '',
+        timestamp: new Date().toISOString(),
+        rating: 'novote',
+        publishedDate: extracted.publishedDate || '',
+        tags: extracted.tags || [],
+        doi: extracted.doi,
+        journalName: extracted.journalName,
+        sourceType: sourceType // Store the source type for reference
+      };
+    } catch (error) {
+      logger.error('Error extracting metadata with base extractor', error);
+      return null;
+    }
+  }
+  
+  /**
+   * Format a paper identifier for this source
+   * Default implementation uses the format: sourceId.paperId
+   */
+  formatPaperId(paperId: string): string {
+    return `${this.id}.${paperId}`;
+  }
+  
+  /**
+   * Parse a paper identifier specific to this source
+   * Default implementation handles source.paperId format and extracts paperId
+   */
+  parsePaperId(identifier: string): string | null {
+    const prefix = `${this.id}.`;
+    
+    if (identifier.startsWith(prefix)) {
+      return identifier.substring(prefix.length);
+    }
+    
+    // Try legacy format (sourceId:paperId)
+    const legacyPrefix = `${this.id}:`;
+    if (identifier.startsWith(legacyPrefix)) {
+      logger.debug(`Parsed legacy format identifier: ${identifier}`);
+      return identifier.substring(legacyPrefix.length);
+    }
+    
+    return null;
+  }
+  
+  /**
+   * Format a storage object ID for this source
+   * Default implementation uses the format: type:sourceId.paperId
+   */
+  formatObjectId(type: string, paperId: string): string {
+    return `${type}:${this.formatPaperId(paperId)}`;
+  }
+}
+
+
+
+---
+File: extension/source-integration/index.ts
+---
+// extension/source-integration/index.ts
+// Export the central registry
+export * from './registry';
+
+// Export individual integrations for direct access
+// export { arxivIntegration } from './arxiv';
+// export { openReviewIntegration } from './openreview';
+// export { natureIntegration } from './nature';
+//import { pnasIntegration } from './pnas';
+
+
+
+---
+File: extension/source-integration/link-processor.ts
+---
+// extension/source-integration/link-processor.ts
+// Generic link detection and processing module
+
+import { loguru } from '../utils/logger';
+
+const logger = loguru.getLogger('link-processor');
+
+interface LinkPattern {
+  // Source integration ID
+  sourceId: string;
+  
+  // Regular expression to match URLs
+  pattern: RegExp;
+  
+  // Function to extract paper ID from URL
+  extractPaperId: (url: string) => string | null;
+}
+
+export class LinkProcessor {
+  private patterns: LinkPattern[] = [];
+  private observer: MutationObserver | null = null;
+  private processedLinks = new Set<string>();
+  private onLinkFound: (sourceId: string, paperId: string, link: HTMLAnchorElement) => void;
+  
+  constructor(onLinkFound: (sourceId: string, paperId: string, link: HTMLAnchorElement) => void) {
+    this.onLinkFound = onLinkFound;
+    logger.debug('Link processor initialized');
+  }
+  
+  /**
+   * Register a new link pattern
+   */
+  registerPattern(pattern: LinkPattern): void {
+    this.patterns.push(pattern);
+    logger.debug(`Registered pattern for ${pattern.sourceId}`);
+  }
+  
+  /**
+   * Process all links in the document
+   */
+  processLinks(document: Document): void {
+    // Process all links in the document
+    const links = document.querySelectorAll<HTMLAnchorElement>('a[href]');
+    
+    links.forEach(link => {
+      // Use a unique identifier for this link
+      const linkId = this.getLinkId(link);
+      
+      // Skip if already processed
+      if (this.processedLinks.has(linkId)) {
+        return;
+      }
+      
+      this.processedLinks.add(linkId);
+      
+      // Check each pattern
+      for (const pattern of this.patterns) {
+        if (pattern.pattern.test(link.href)) {
+          const paperId = pattern.extractPaperId(link.href);
+          
+          if (paperId) {
+            // Call the callback
+            this.onLinkFound(pattern.sourceId, paperId, link);
+            break; // Stop after first match
+          }
+        }
+      }
+    });
+  }
+  
+  /**
+   * Start observing for DOM changes
+   */
+  startObserving(document: Document): void {
+    if (this.observer) {
+      this.observer.disconnect();
+    }
+    
+    this.observer = new MutationObserver((mutations) => {
+      let newLinks = false;
+      
+      mutations.forEach(mutation => {
+        mutation.addedNodes.forEach(node => {
+          if (node.nodeType === Node.ELEMENT_NODE) {
+            // If this is an anchor tag, check it
+            if ((node as Element).tagName === 'A') {
+              newLinks = true;
+            }
+            
+            // Check for any anchor tags within this element
+            const links = (node as Element).querySelectorAll('a[href]');
+            if (links.length > 0) {
+              newLinks = true;
+            }
+          }
+        });
+      });
+      
+      if (newLinks) {
+        this.processLinks(document);
+      }
+    });
+    
+    this.observer.observe(document.body, {
+      childList: true,
+      subtree: true
+    });
+    
+    logger.debug('Started observing for DOM changes');
+  }
+  
+  /**
+   * Create a unique ID for a link
+   */
+  private getLinkId(link: HTMLAnchorElement): string {
+    // Use href and position in document to create a unique ID
+    const path = this.getElementPath(link);
+    return `${link.href}|${path}`;
+  }
+  
+  /**
+   * Get element path in DOM for identification
+   */
+  private getElementPath(element: Element): string {
+    const path: string[] = [];
+    let current: Element | null = element;
+    
+    while (current && current !== document.body) {
+      let selector = current.tagName.toLowerCase();
+      
+      if (current.id) {
+        selector += `#${current.id}`;
+      } else {
+        const siblings = Array.from(current.parentElement?.children || []);
+        const index = siblings.indexOf(current) + 1;
+        if (siblings.length > 1) {
+          selector += `:nth-child(${index})`;
+        }
+      }
+      
+      path.unshift(selector);
+      current = current.parentElement;
+    }
+    
+    return path.join(' > ');
+  }
+  
+  /**
+   * Stop observing DOM changes
+   */
+  stopObserving(): void {
+    if (this.observer) {
+      this.observer.disconnect();
+      this.observer = null;
+      logger.debug('Stopped observing DOM changes');
+    }
+  }
+}
+
+
+
+---
+File: extension/source-integration/metadata-extractor.ts
+---
+// extension/source-integration/metadata-extractor.ts
+// Object-oriented metadata extraction system with customizable extraction methods
+
+import { loguru } from '../utils/logger';
+
+const logger = loguru.getLogger('metadata-extractor');
+
+export interface ExtractedMetadata {
+  title: string;
+  authors: string;
+  description: string;
+  publishedDate: string;
+  doi?: string;
+  journalName?: string;
+  tags?: string[];
+  url?: string;
+}
+
+// Constants for standard source types
+export const SOURCE_TYPES = {
+  PDF: 'pdf',
+  URL: 'url',
+} as const;
+
+export type SourceType = typeof SOURCE_TYPES[keyof typeof SOURCE_TYPES];
+
+/**
+ * Base class for metadata extraction with customizable extraction methods
+ * Each method can be overridden to provide source-specific extraction
+ */
+export class MetadataExtractor {
+  protected document: Document;
+  protected url: string;
+  
+  /**
+   * Create a new metadata extractor for a document
+   */
+  constructor(document: Document) {
+    this.document = document;
+    this.url = document.location.href;
+    logger.debug('Initialized metadata extractor for:', this.url);
+  }
+  
+  /**
+   * Helper method to get content from meta tags
+   */
+  protected getMetaContent(selector: string): string {
+    const element = this.document.querySelector(selector);
+    return element ? element.getAttribute('content') || '' : '';
+  }
+  
+  /**
+   * Extract and return all metadata fields
+   */
+  public extract(): ExtractedMetadata {
+    logger.debug('Extracting metadata from page:', this.url);
+    
+    const metadata: ExtractedMetadata = {
+      title: this.extractTitle(),
+      authors: this.extractAuthors(),
+      description: this.extractDescription(),
+      publishedDate: this.extractPublishedDate(),
+      doi: this.extractDoi(),
+      journalName: this.extractJournalName(),
+      tags: this.extractTags(),
+      url: this.url
+    };
+    
+    logger.debug('Metadata extraction complete:', metadata);
+    return metadata;
+  }
+  
+  /**
+   * Extract title from document
+   * Considers multiple metadata standards with priority order
+   */
+  protected extractTitle(): string {
+    // Title extraction - priority order
+    return (
+      // Dublin Core
+      this.getMetaContent('meta[name="DC.Title"]') || this.getMetaContent('meta[name="dc.title"]') || 
+      // Citation
+      this.getMetaContent('meta[name="citation_title"]') ||
+      // Open Graph
+      this.getMetaContent('meta[property="og:title"]') ||
+      // Standard meta
+      this.getMetaContent('meta[name="title"]') ||
+      // Fallback to document title
+      this.document.title
+    );
+  }
+  
+  /**
+   * Extract authors from document
+   * Handles multiple author formats and sources
+   */
+  protected extractAuthors(): string {
+    // Get all citation authors (some pages have multiple citation_author tags)
+    const citationAuthors: string[] = [];
+    this.document.querySelectorAll('meta[name="citation_author"]').forEach(el => {
+      const content = el.getAttribute('content');
+      if (content) citationAuthors.push(content);
+    });
+    
+    // Get all DC creators
+    const dcCreators: string[] = [];
+    this.document.querySelectorAll('meta[name="DC.Creator.PersonalName"]').forEach(el => {
+      const content = el.getAttribute('content');
+      if (content) dcCreators.push(content);
+    });
+    
+    // Individual author elements
+    const dcCreator = this.getMetaContent('meta[name="DC.Creator.PersonalName"]') || this.getMetaContent('meta[name="dc.creator.personalname"]') ;
+    const citationAuthor = this.getMetaContent('meta[name="citation_author"]');
+    const ogAuthor = this.getMetaContent('meta[property="og:article:author"]') ||
+                    this.getMetaContent('meta[name="author"]');
+    
+    // Set authors with priority
+    if (dcCreators.length > 0) {
+      return dcCreators.join(', ');
+    } else if (citationAuthors.length > 0) {
+      return citationAuthors.join(', ');
+    } else if (dcCreator) {
+      return dcCreator;
+    } else if (citationAuthor) {
+      return citationAuthor;
+    } else if (ogAuthor) {
+      return ogAuthor;
+    }
+    
+    return '';
+  }
+  
+  /**
+   * Extract description/abstract from document
+   */
+  protected extractDescription(): string {
+    return (
+      this.getMetaContent('meta[name="DC.Description"]') || this.getMetaContent('meta[name="dc.description"]') ||
+      this.getMetaContent('meta[name="citation_abstract"]') ||
+      this.getMetaContent('meta[property="og:description"]') ||
+      this.getMetaContent('meta[name="description"]')
+    );
+  }
+  
+  /**
+   * Extract publication date from document
+   */
+  protected extractPublishedDate(): string {
+    return (
+      this.getMetaContent('meta[name="DC.Date.issued"]') || this.getMetaContent('meta[name="dc.date.issued"]') || this.getMetaContent('meta[name="dc.date"]') || this.getMetaContent('meta[name="dc.Date"]') || this.getMetaContent('meta[name="DC.Date"]') || 
+      this.getMetaContent('meta[name="citation_date"]') ||
+      this.getMetaContent('meta[property="article:published_time"]')
+    );
+  }
+  
+  /**
+   * Extract DOI (Digital Object Identifier) from document
+   */
+  protected extractDoi(): string {
+    return (
+      this.getMetaContent('meta[name="DC.Identifier.DOI"]') || this.getMetaContent('meta[name="dc.identifier.doi"]') ||
+      this.getMetaContent('meta[name="citation_doi"]')
+    );
+  }
+  
+  /**
+   * Extract journal name from document
+   */
+  protected extractJournalName(): string {
+    return (
+      this.getMetaContent('meta[name="DC.Source"]') || this.getMetaContent('meta[name="dc.source"]') ||
+      this.getMetaContent('meta[name="citation_journal_title"]')
+    );
+  }
+  
+  /**
+   * Extract keywords/tags from document
+   */
+  protected extractTags(): string[] {
+    const keywords = this.getMetaContent('meta[name="keywords"]') ||
+                    this.getMetaContent('meta[name="DC.Subject"]') || this.getMetaContent('meta[name="dc.subject"]');
+    
+    if (keywords) {
+      return keywords.split(',').map(tag => tag.trim());
+    }
+    
+    return [];
+  }
+  
+  /**
+   * Determine if the current URL is a PDF
+   */
+  public isPdf(): boolean {
+    return isPdfUrl(this.url);
+  }
+  
+  /**
+   * Get the source type (PDF or URL)
+   */
+  public getSourceType(): SourceType {
+    return this.isPdf() ? SOURCE_TYPES.PDF : SOURCE_TYPES.URL;
+  }
+  
+  /**
+   * Generate a paper ID for the current URL
+   */
+  public generatePaperId(): string {
+    return generatePaperIdFromUrl(this.url);
+  }
+}
+
+/**
+ * Create a common metadata extractor for a document
+ * Factory function for creating the default extractor
+ */
+export function createMetadataExtractor(document: Document): MetadataExtractor {
+  return new MetadataExtractor(document);
+}
+
+/**
+ * Extract common metadata from a document
+ * Convenience function for quick extraction
+ */
+export function extractCommonMetadata(document: Document): ExtractedMetadata {
+  return createMetadataExtractor(document).extract();
+}
+
+/**
+ * Generate a paper ID from a URL
+ * Creates a consistent hash-based identifier
+ */
+export function generatePaperIdFromUrl(url: string): string {
+  // Use a basic hash function to create an ID from the URL
+  let hash = 0;
+  for (let i = 0; i < url.length; i++) {
+    const char = url.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash; // Convert to 32bit integer
+  }
+  
+  // Create a positive hexadecimal string
+  const positiveHash = Math.abs(hash).toString(16).toUpperCase();
+  
+  // Use the first 8 characters as the ID
+  return positiveHash.substring(0, 8);
+}
+
+/**
+ * Determine if a URL is a PDF
+ */
+export function isPdfUrl(url: string): boolean {
+  return url.toLowerCase().endsWith('.pdf');
+}
+
+
+
+---
+File: extension/source-integration/misc/index.ts
+---
+// extension/source-integration/misc/index.ts
+/*
+ * Catch-all for registering with URL pattern only
+ */
+import { BaseSourceIntegration } from '../base-source';
+
+export class MiscIntegration extends BaseSourceIntegration {
+  readonly id = 'url-misc';
+  readonly name = 'misc tracked url';
+
+  readonly urlPatterns = []; // set this empty to disable attaching the content injection icon thing
+    
+  // add URLs here to track
+  readonly contentScriptMatches = [
+    "sciencedirect.com/science/article/",
+    "philpapers.org/rec/",
+    "proceedings.neurips.cc/paper_files/paper/",
+    "journals.sagepub.com/doi/",
+    "link.springer.com/article/",
+    ".science.org/doi/",
+    "journals.aps.org/prx/abstract/",
+    "onlinelibrary.wiley.com/doi/",
+    "cell.com/trends/cognitive-sciences/fulltext/",
+    "researchgate.net/publication/",
+    "psycnet.apa.org/record/",
+    "biorxiv.org/content/",
+    "osf.io/preprints/",
+    "frontiersin.org/journals/",
+    "jstor.org/",
+    "proceedings.mlr.press/",
+    "journals.plos.org/plosone/article",
+    "ieeexplore.ieee.org/document/",
+    "royalsocietypublishing.org/doi/",
+    "papers.nips.cc/paper_files/paper/",
+    "philarchive.org/archive/",
+    "tandfonline.com/doi/",
+    "iopscience.iop.org/article/",
+    "academic.oup.com/brain/article/",
+    "elifesciences.org/articles/",
+    "escholarship.org/content/",
+    "pmc.ncbi.nlm.nih.gov/articles/",
+    "pubmed.ncbi.nlm.nih.gov/",
+    "openaccess.thecvf.com/content/",
+    "zenodo.org/records/",
+    "journals.asm.org/doi/full/",
+    "physoc.onlinelibrary.wiley.com/doi/full/",
+    "storage.courtlistener.com/recap/",
+    "bmj.com/content/",
+    "ntsb.gov/investigations/pages",
+    "ntsb.gov/investigations/AccidentReports",
+    "aclanthology.org/",
+    "journals.ametsoc.org/view/journals/",
+    
+    "substack.com/p/",
+    "citeseerx.",
+    "/doi/",
+    "/pdf/",
+
+  ];
+
+  canHandleUrl(url: string): boolean {
+    return this.contentScriptMatches.some(pattern => url.includes(pattern));
+  }
+}
+
+export const miscIntegration = new MiscIntegration();
+
+
+
+---
+File: extension/source-integration/nature/index.ts
+---
+// extension/source-integration/nature/index.ts
+// Nature.com integration with custom metadata extractor
+
+import { BaseSourceIntegration } from '../base-source';
+import { PaperMetadata } from '../../papers/types';
+import { MetadataExtractor, ExtractedMetadata } from '../metadata-extractor';
+import { loguru } from '../../utils/logger';
+
+const logger = loguru.getLogger('nature-integration');
+
+/**
+ * Custom metadata extractor for Nature.com pages
+ */
+class NatureMetadataExtractor extends MetadataExtractor {
+  /**
+   * Override title extraction to use meta tag first
+   */
+  protected extractTitle(): string {
+    const metaTitle = this.getMetaContent('meta[name="citation_title"]') || 
+                      this.getMetaContent('meta[property="og:title"]');
+    return metaTitle || super.extractTitle();
+  }
+  
+  /**
+   * Override authors extraction to use meta tag first
+   */
+  protected extractAuthors(): string {
+    const metaAuthors = this.getMetaContent('meta[name="citation_author"]');
+    if (metaAuthors) {
+      return metaAuthors;
+    }
+    // Fallback to HTML extraction
+    const authorElements = this.document.querySelectorAll('.c-article-author-list__item');
+    if (authorElements.length > 0) {
+      return Array.from(authorElements)
+        .map(el => el.textContent?.trim())
+        .filter(Boolean)
+        .join(', ');
+    }
+    return super.extractAuthors();
+  }
+  
+  /**
+   * Extract keywords/tags from document
+   */
+  protected extractTags(): string[] {
+    const keywords = this.getMetaContent('meta[name="dc.subject"]');
+    
+    if (keywords) {
+      return keywords.split(',').map(tag => tag.trim());
+    }
+    
+    return [];
+  }
+  
+
+  /**
+   * Override description extraction to use meta tag first
+   */
+  protected extractDescription(): string {
+    const metaDescription = this.getMetaContent('meta[name="description"]') ||
+                            this.getMetaContent('meta[property="og:description"]');
+    return metaDescription || super.extractDescription();
+  }
+
+  /**
+   * Override published date extraction to use meta tag
+   */
+  protected extractPublishedDate(): string {
+    return this.getMetaContent('meta[name="citation_publication_date"]') || super.extractPublishedDate();
+  }
+
+  /**
+   * Override DOI extraction to use meta tag
+   */
+  protected extractDoi(): string {
+    return this.getMetaContent('meta[name="citation_doi"]') || super.extractDoi();
+  }
+}
+
+/**
+ * Nature.com integration with custom metadata extraction
+ */
+export class NatureIntegration extends BaseSourceIntegration {
+  readonly id = 'nature';
+  readonly name = 'Nature'; 
+
+  // URL pattern for Nature articles with capture group for ID
+  readonly urlPatterns = [
+    /nature\.com\/articles\/([^?]+)/,
+  ];
+
+  // Content script matches  
+  // readonly contentScriptMatches = [
+  //   "*://*.nature.com/articles/*"
+  // ];
+
+  /**
+   * Extract paper ID from URL
+   */
+  extractPaperId(url: string): string | null {
+    const match = url.match(this.urlPatterns[0]);
+    return match ? match[1] : null;
+  }
+
+  /**
+   * Create a custom metadata extractor for Nature.com
+   */
+  protected createMetadataExtractor(document: Document): MetadataExtractor {
+    return new NatureMetadataExtractor(document);
+  }
+}
+
+// Export a singleton instance 
+export const natureIntegration = new NatureIntegration();
+
+
+
+---
+File: extension/source-integration/openreview/index.ts
+---
+// extension/source-integration/openreview/index.ts
+// OpenReview integration with custom metadata extractor
+
+import { BaseSourceIntegration } from '../base-source';
+import { PaperMetadata } from '../../papers/types';
+import { MetadataExtractor, createMetadataExtractor, ExtractedMetadata } from '..//metadata-extractor';
+import { loguru } from '../../utils/logger';
+
+const logger = loguru.getLogger('openreview-integration');
+
+/**
+ * Custom metadata extractor for OpenReview pages
+ */
+class OpenReviewMetadataExtractor extends MetadataExtractor {
+  /**
+   * Extract metadata from OpenReview pages
+   */
+  public extract(): ExtractedMetadata {
+    // First try to extract using standard methods
+    const baseMetadata = super.extract();
+    
+    try {
+      // Get title from OpenReview-specific elements
+      const title = this.document.querySelector('.citation_title')?.textContent || 
+                   this.document.querySelector('.forum-title h2')?.textContent;
+      
+      // Get authors
+      const authorElements = Array.from(this.document.querySelectorAll('.forum-authors a'));
+      const authors = authorElements
+        .map(el => el.textContent)
+        .filter(Boolean)
+        .join(', ');
+      
+      // Get abstract
+      const abstract = this.document.querySelector('meta[name="citation_abstract"]')?.getAttribute('content') ||
+                     Array.from(this.document.querySelectorAll('.note-content-field'))
+                       .find(el => el.textContent?.includes('Abstract'))
+                       ?.nextElementSibling?.textContent;
+      
+      // Get publication date
+      const dateText = this.document.querySelector('.date.item')?.textContent;
+      let publishedDate = '';
+      if (dateText) {
+        const dateMatch = dateText.match(/Published: ([^,]+)/);
+        if (dateMatch) {
+          publishedDate = dateMatch[1];
+        }
+      }
+      
+      // Get DOI if available
+      const doi = this.document.querySelector('meta[name="citation_doi"]')?.getAttribute('content') || '';
+      
+      // Get conference/journal name
+      const venueElements = this.document.querySelectorAll('.forum-meta .item');
+      let venue = '';
+      for (let i = 0; i < venueElements.length; i++) {
+        const el = venueElements[i];
+        if (el.querySelector('.glyphicon-folder-open')) {
+          venue = el.textContent?.trim() || '';
+          break;
+        }
+      }
+      
+      // Get tags/keywords
+      const keywordsElement = Array.from(this.document.querySelectorAll('.note-content-field'))
+        .find(el => el.textContent?.includes('Keywords'));
+      let tags: string[] = [];
+      if (keywordsElement) {
+        const keywordsValue = keywordsElement.nextElementSibling?.textContent;
+        if (keywordsValue) {
+          tags = keywordsValue.split(',').map(tag => tag.trim());
+        }
+      }
+      
+      return {
+        title: title || baseMetadata.title,
+        authors: authors || baseMetadata.authors,
+        description: abstract || baseMetadata.description,
+        publishedDate: publishedDate || baseMetadata.publishedDate,
+        doi: doi || baseMetadata.doi,
+        journalName: venue || baseMetadata.journalName,
+        tags: tags.length ? tags : baseMetadata.tags,
+        url: this.url
+      };
+    } catch (error) {
+      logger.error('Error during OpenReview-specific extraction', error);
+      return baseMetadata;
+    }
+  }
+}
+
+/**
+ * OpenReview integration with custom metadata extraction
+ */
+export class OpenReviewIntegration extends BaseSourceIntegration {
+  readonly id = 'openreview';
+  readonly name = 'OpenReview';
+  
+  // URL patterns for papers
+  readonly urlPatterns = [
+    /openreview\.net\/forum\?id=([a-zA-Z0-9]+)/,
+    /openreview\.net\/pdf\?id=([a-zA-Z0-9]+)/
+  ];
+  
+  // Content script matches
+  // readonly contentScriptMatches = [
+  //   "*://*.openreview.net/*"
+  // ];
+
+  /**
+   * Extract paper ID from URL
+   */
+  extractPaperId(url: string): string | null {
+    for (const pattern of this.urlPatterns) {
+      const match = url.match(pattern);
+      if (match) {
+        return match[1]; // The capture group with the paper ID
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Create a custom metadata extractor for OpenReview
+   */
+  protected createMetadataExtractor(document: Document): MetadataExtractor {
+    return new OpenReviewMetadataExtractor(document);
+  }
+
+  /**
+   * Extract metadata from page
+   * Override parent method to handle OpenReview-specific extraction
+   */
+  async extractMetadata(document: Document, paperId: string): Promise<PaperMetadata | null> {
+    logger.info(`Extracting metadata for OpenReview ID: ${paperId}`);
+    
+    // Extract metadata using our custom extractor
+    const metadata = await super.extractMetadata(document, paperId);
+    
+    if (metadata) {
+      // Add any OpenReview-specific metadata processing here
+      logger.debug('Extracted metadata from OpenReview page');
+      
+      // Check if we're on a PDF page and adjust metadata accordingly
+      if (document.location.href.includes('/pdf?id=')) {
+        metadata.sourceType = 'pdf';
+      }
+    }
+    
+    return metadata;
+  }
+}
+
+// Export a singleton instance that can be used by both background and content scripts
+export const openReviewIntegration = new OpenReviewIntegration();
+
+
+
+---
+File: extension/source-integration/pnas/index.ts
+---
+// extension/source-integration/pnas/index.ts
+import { BaseSourceIntegration } from '../base-source';
+
+export class PnasIntegration extends BaseSourceIntegration {
+  readonly id = 'pnas';
+  readonly name = 'PNAS'; 
+
+  readonly urlPatterns = [
+    /pnas\.org\/doi\/10\.1073\/pnas\.([0-9]+)/
+  ];
+
+  // readonly contentScriptMatches = [
+  //   "*://*.pnas.org/doi/*"
+  // ];
+
+  // upstream BaseSourceIntegration.extractPaperId should default to this behavior when able
+  extractPaperId(url: string): string | null {
+    const match = url.match(this.urlPatterns[0]);
+    return match ? match[1] : null;
+  }
+}
+
+export const pnasIntegration = new PnasIntegration();
+
+
+
+---
+File: extension/source-integration/registry.ts
+---
+// extension/source-integration/registry.ts
+// Central registry for all source integrations
+
+import { SourceIntegration } from './types';
+import { arxivIntegration } from './arxiv';
+import { openReviewIntegration } from './openreview';
+import { natureIntegration } from './nature';
+import { pnasIntegration } from './pnas';
+import { miscIntegration } from './misc';
+
+export const sourceIntegrations: SourceIntegration[] = [
+  arxivIntegration,
+  openReviewIntegration,
+  natureIntegration,
+  pnasIntegration,
+  miscIntegration,
+];
+
+/*     *     *     *     */
+
+export function getAllIntegrations(): SourceIntegration[] {
+  return sourceIntegrations;
+}
+
+export function getIntegrationById(id: string): SourceIntegration | undefined {
+  return sourceIntegrations.find(integration => integration.id === id);
+}
+
+export function getAllContentScriptMatches(): string[] {
+  return sourceIntegrations.flatMap(integration => integration.contentScriptMatches);
+}
+
+
+
+---
+File: extension/source-integration/source-manager.ts
+---
+// extension/source-integration/source-manager.ts
+// Updated SourceIntegrationManager to use source-specific identifier formatting
+
+import { SourceIntegration, SourceManager } from './types';
+import { loguru } from '../utils/logger';
+
+const logger = loguru.getLogger('source-manager');
+
+/**
+ * Manages source integrations
+ */
+export class SourceIntegrationManager implements SourceManager {
+  private sources: Map<string, SourceIntegration> = new Map();
+  
+  constructor() {
+    logger.info('Source integration manager initialized');
+  }
+  
+  /**
+   * Register a source integration
+   */
+  registerSource(source: SourceIntegration): void {
+    if (this.sources.has(source.id)) {
+      logger.warning(`Source with ID '${source.id}' already registered, overwriting`);
+    }
+    
+    this.sources.set(source.id, source);
+    logger.info(`Registered source: ${source.name} (${source.id})`);
+  }
+  
+  /**
+   * Get all registered sources
+   */
+  getAllSources(): SourceIntegration[] {
+    return Array.from(this.sources.values());
+  }
+  
+  /**
+   * Get source that can handle a URL
+   */
+  getSourceForUrl(url: string): SourceIntegration | null {
+    for (const source of this.sources.values()) {
+      if (source.canHandleUrl(url)) {
+        logger.debug(`Found source for URL '${url}': ${source.id}`);
+        return source;
+      }
+    }
+    
+    logger.debug(`No source found for URL: ${url}`);
+    return null;
+  }
+  
+  /**
+   * Get source by ID
+   */
+  getSourceById(sourceId: string): SourceIntegration | null {
+    const source = this.sources.get(sourceId);
+    return source || null;
+  }
+  
+  /**
+   * Extract paper ID from URL using appropriate source
+   */
+  extractPaperId(url: string): { sourceId: string, paperId: string } | null {
+    for (const source of this.sources.values()) {
+      if (source.canHandleUrl(url)) {
+        const paperId = source.extractPaperId(url);
+        if (paperId) {
+          logger.debug(`Extracted paper ID '${paperId}' from URL using ${source.id}`);
+          return { sourceId: source.id, paperId };
+        }
+      }
+    }
+    
+    logger.debug(`Could not extract paper ID from URL: ${url}`);
+    return null;
+  }
+  
+  /**
+   * Format a paper identifier using the appropriate source
+   */
+  formatPaperId(sourceId: string, paperId: string): string {
+    const source = this.sources.get(sourceId);
+    
+    if (source) {
+      return source.formatPaperId(paperId);
+    }
+    
+    // Fallback if source not found
+    logger.warning(`Source '${sourceId}' not found, using default format for paper ID`);
+    return `${sourceId}.${paperId}`;
+  }
+  
+  /**
+   * Format an object ID using the appropriate source
+   */
+  formatObjectId(type: string, sourceId: string, paperId: string): string {
+    const source = this.sources.get(sourceId);
+    
+    if (source) {
+      return source.formatObjectId(type, paperId);
+    }
+    
+    // Fallback if source not found
+    logger.warning(`Source '${sourceId}' not found, using default format for object ID`);
+    return `${type}:${sourceId}.${paperId}`;
+  }
+  
+  /**
+   * Get all content script match patterns
+   */
+  getAllContentScriptMatches(): string[] {
+    const patterns: string[] = [];
+    
+    for (const source of this.sources.values()) {
+      patterns.push(...source.contentScriptMatches);
+    }
+    
+    return patterns;
+  }
+}
+
+
+
+---
+File: extension/source-integration/types.ts
+---
+// extension/source-integration/types.ts
+// Updated SourceIntegration interface with identifier formatting methods
+
+import type { Json } from 'gh-store-client';
+import type { PaperMetadata } from '../papers/types';
+
+/**
+ * Source integration interface
+ * Implementations should be importable by both background and content scripts
+ */
+export interface SourceIntegration {
+  // Unique identifier
+  readonly id: string;
+  
+  // Human-readable name
+  readonly name: string;
+  
+  // URL patterns for matching papers from this source (as RegExp patterns)
+  readonly urlPatterns: RegExp[];
+  
+  // Domain match patterns for content script registration
+  readonly contentScriptMatches: string[];
+  
+  // Check if URL is from this source
+  canHandleUrl(url: string): boolean;
+  
+  // Extract paper ID from URL
+  extractPaperId(url: string): string | null;
+  
+  // Extract metadata from page or API
+  extractMetadata(document: Document, paperId: string): Promise<PaperMetadata | null>;
+  
+  // Format a paper identifier (sourceId + paperId) for this source
+  formatPaperId(paperId: string): string;
+  
+  // Parse a paper identifier specific to this source
+  parsePaperId(identifier: string): string | null;
+  
+  // Format a storage object ID for this source
+  formatObjectId(type: string, paperId: string): string;
+}
+
+/**
+ * Manager interface for source integrations
+ */
+export interface SourceManager {
+  // Register a source integration
+  registerSource(source: SourceIntegration): void;
+  
+  // Get all registered sources
+  getAllSources(): SourceIntegration[];
+  
+  // Get source for a given URL
+  getSourceForUrl(url: string): SourceIntegration | null;
+  
+  // Extract paper ID from URL using appropriate source
+  extractPaperId(url: string): { sourceId: string, paperId: string } | null;
+  
+  // Format a paper identifier using the appropriate source
+  formatPaperId(sourceId: string, paperId: string): string;
+  
+  // Format an object ID using the appropriate source
+  formatObjectId(type: string, sourceId: string, paperId: string): string;
+}
+
+// Other existing types...
+// Message types for communication between background and content scripts
+
+// Content script ready notification
+export interface ContentScriptReadyMessage {
+  type: 'contentScriptReady';
+  url: string;
+}
+
+// Paper metadata message
+export interface PaperMetadataMessage {
+  type: 'paperMetadata';
+  metadata: PaperMetadata;
+}
+
+// Start session message (new)
+export interface StartSessionMessage {
+  type: 'startSession';
+  sourceId: string;
+  paperId: string;
+}
+
+// Session heartbeat message (new)
+export interface SessionHeartbeatMessage {
+  type: 'sessionHeartbeat';
+  sourceId: string;
+  paperId: string;
+  timestamp: number;
+}
+
+// End session message (new)
+export interface EndSessionMessage {
+  type: 'endSession';
+  sourceId: string;
+  paperId: string;
+  reason?: string;
+}
+
+// Show annotation popup request
+export interface ShowAnnotationPopupMessage {
+  type: 'showAnnotationPopup';
+  sourceId: string;
+  paperId: string;
+  position: { x: number, y: number };
+}
+
+// Popup action message
+export interface PopupActionMessage {
+  type: 'popupAction';
+  action: string;
+  sourceId: string;
+  paperId: string;
+  data: any;
+}
+
+// Show popup message
+export interface ShowPopupMessage {
+  type: 'showPopup';
+  sourceId: string;
+  paperId: string;
+  html: string;
+  handlers: Array<{
+    selector: string;
+    event: string;
+    action: string;
+  }>;
+  position?: { x: number, y: number };
+}
+
+// Process page message
+export interface ProcessPageMessage {
+  type: 'processPage';
+}
+
+// Get current paper message
+export interface GetCurrentPaperMessage {
+  type: 'getCurrentPaper';
+}
+
+// Update rating message
+export interface UpdateRatingMessage {
+  type: 'updateRating';
+  rating: string;
+}
+
+// Union type for all message types
+export type Message = 
+  | ContentScriptReadyMessage
+  | PaperMetadataMessage
+  | StartSessionMessage
+  | SessionHeartbeatMessage
+  | EndSessionMessage
+  | ShowAnnotationPopupMessage
+  | PopupActionMessage
+  | ShowPopupMessage
+  | ProcessPageMessage
+  | GetCurrentPaperMessage
+  | UpdateRatingMessage;
+
+
