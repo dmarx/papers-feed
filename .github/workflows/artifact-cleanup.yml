@@ -1,0 +1,84 @@
+name: Artifact cleanup
+
+# Every live artifact in this repo is `papers-json`, and it is a handoff
+# INSIDE one run: 2_deploy-frontend.yml's `deploy` job declares
+# `needs: update-snapshot` and downloads it by name with no run-id, so it
+# only ever reads its own run's copy. The same snapshot is committed to the
+# repo by the step right after the upload, so the data lives in git too.
+# Old copies therefore have no readers at all — they were pure accumulation
+# at the 90-day default retention: 360 of them, 1.04 GB.
+#
+# `retention-days: 1` on that upload stops the bleeding, but it only governs
+# artifacts uploaded after it lands. The backlog keeps whatever retention it
+# was born with, so clearing it needs an actual delete.
+#
+# Artifact storage is billed ACCOUNT-wide and shared with Packages, so this
+# repo's backlog was spending a quota that other repos were failing uploads
+# against.
+
+on:
+  schedule:
+    # Daily, 04:07 UTC — off the hour, and clear of this repo's own pipelines.
+    - cron: '7 4 * * *'
+  workflow_dispatch:
+    inputs:
+      keep_days:
+        description: 'Delete artifacts older than this many days (0 = delete all)'
+        required: false
+        default: '7'
+      dry_run:
+        description: 'List what would be deleted without deleting it'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  actions: write        # deleting an artifact is an Actions write
+
+concurrency:
+  group: artifact-cleanup
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete aged artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          KEEP_DAYS: ${{ inputs.keep_days || '7' }}
+          DRY_RUN: ${{ inputs.dry_run == true }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          cutoff=$(date -u -d "$KEEP_DAYS days ago" +%s)
+          echo "cutoff: $(date -u -d "@$cutoff" '+%Y-%m-%dT%H:%M:%SZ') (keep_days=$KEEP_DAYS, dry_run=$DRY_RUN)"
+
+          # `expired` artifacts already cost nothing; skip them so the log
+          # reads as work actually done. This repo has ~5k expired records
+          # against a few hundred live ones, so the filter matters.
+          gh api --paginate "/repos/$REPO/actions/artifacts?per_page=100" \
+            --jq '.artifacts[] | select(.expired == false)
+                  | [.id, .name, .size_in_bytes, .created_at] | @tsv' > /tmp/artifacts.tsv || true
+
+          total=0; freed=0; kept=0
+          while IFS=$'\t' read -r id name size created; do
+            [ -z "${id:-}" ] && continue
+            total=$((total + 1))
+            age=$(date -u -d "$created" +%s)
+            if [ "$age" -ge "$cutoff" ]; then
+              kept=$((kept + 1))
+              continue
+            fi
+            mb=$((size / 1048576))
+            if [ "$DRY_RUN" = "true" ]; then
+              echo "[dry-run] would delete #$id $name (${mb}MB, $created)"
+            else
+              echo "deleting #$id $name (${mb}MB, $created)"
+              gh api -X DELETE "/repos/$REPO/actions/artifacts/$id"
+            fi
+            freed=$((freed + size))
+          done < /tmp/artifacts.tsv
+
+          echo "---"
+          echo "live artifacts: $total | kept: $kept | $([ "$DRY_RUN" = "true" ] && echo 'would free' || echo 'freed'): $((freed / 1048576)) MB"
