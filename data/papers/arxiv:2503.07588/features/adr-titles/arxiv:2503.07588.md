@@ -1,0 +1,21 @@
+- Decision on the architecture of the Region Focus Module (RFM)
+- Choice of Dynamic Image Pyramid (DIP) integration
+- Selection of text-guided token pruning strategy
+- Method for constructing the LRS-VQA benchmark
+- Approach to handling high-resolution remote sensing images
+- Decision on the balance between resolution and computational efficiency
+- Choice of training and inference strategies for the LVLM
+- Selection of evaluation metrics for model performance
+- Decision on the dataset used for training and validation
+- Choice of image tile size for processing
+- Decision on the number of layers in the Dynamic Image Pyramid
+- Approach to attention score extraction in the RFM
+- Decision on the distillation process for the RFM
+- Choice of loss function for training the RFM
+- Decision on the integration of the RFM during supervised fine-tuning
+- Approach to handling question diversity in the LRS-VQA benchmark
+- Decision on the pre-defined minimum length for image processing
+- Choice of scaling factors for image resizing
+- Decision on the handling of non-overlapping tiles in the DIP
+- Approach to multi-scale inference during model evaluation
+- Decision on the selection of student-teacher pairs for layer-wise distillation
