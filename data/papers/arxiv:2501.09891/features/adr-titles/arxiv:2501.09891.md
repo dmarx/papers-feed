@@ -1,0 +1,20 @@
+- Decision to use an evolutionary search strategy for LLMs
+- Choice of genetic algorithm principles for solution generation
+- Selection of natural language as the representation for candidate solutions
+- Implementation of the Mind Evolution framework
+- Design of the fitness evaluation function
+- Use of a global solution evaluator instead of stepwise evaluation
+- Decision to incorporate an island model for population diversity
+- Choice of prompts for initialization, recombination, and refinement
+- Strategy for population initialization and candidate generation
+- Approach to critical conversation for solution refinement
+- Decision to avoid formal problem representation
+- Selection of benchmarks (TravelPlanner, Natural Plan, StegPoet) for evaluation
+- Use of off-the-shelf LLMs without fine-tuning
+- Decision to control for inference time compute in experiments
+- Approach to parallelization of the evolutionary process
+- Strategy for handling unsolved problem instances with a two-stage approach
+- Decision to focus on natural language planning tasks
+- Choice of feedback mechanisms from evaluators
+- Decision to explore beyond formalized problem spaces
+- Strategy for managing migration and island reset events in the island model
