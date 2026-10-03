@@ -1,0 +1,19 @@
+- Decision to adopt an information-theoretic approach for comparing representation spaces
+- Choice of probabilistic representation spaces as the focus of the study
+- Selection of variational autoencoders (VAEs) as the primary model for experimentation
+- Generalization of measures for comparing hard clustering assignments to probabilistic spaces
+- Use of mutual information as a key metric for comparison
+- Decision to focus on soft clustering assignments in the analysis
+- Choice of lightweight estimation method based on fingerprinting representation spaces
+- Selection of case studies to demonstrate the utility of the proposed measures
+- Decision to analyze the effects of training data, network architecture, and loss function on information content
+- Choice to leverage differentiability of measures for model fusion
+- Decision to assess the impact of ensemble learning on representation space comparison
+- Selection of existing methods (e.g., CKA, RSA) as benchmarks for comparison
+- Decision to explore the relationship between information content and unsupervised disentanglement
+- Choice to evaluate the consensus among models as a measure of disentanglement effectiveness
+- Decision to incorporate weak supervision and inductive biases in the analysis of disentanglement
+- Selection of specific datasets (e.g., CIFAR-10) for empirical validation of methods
+- Decision to focus on the relational structure between data points in representation spaces
+- Choice to analyze variability in information content across different training runs and datasets
+- Decision to emphasize the importance of capturing the probabilistic structure of representations in evaluations
