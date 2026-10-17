@@ -1,0 +1,16 @@
+- Decision to use pure reinforcement learning (RL) without supervised fine-tuning (SFT) for initial model training.
+- Choice of Group Relative Policy Optimization (GRPO) as the RL framework.
+- Implementation of a rule-based reward system for training DeepSeek-R1-Zero.
+- Decision to incorporate cold-start data in the training pipeline for DeepSeek-R1.
+- Adoption of a multi-stage training pipeline for DeepSeek-R1.
+- Strategy for distilling reasoning capabilities from larger models to smaller models.
+- Selection of specific benchmarks (AIME 2024, MATH-500, etc.) for evaluating model performance.
+- Decision to open-source DeepSeek-R1-Zero and its distilled models.
+- Choice of templates for guiding the model's reasoning process during training.
+- Decision to avoid using neural reward models due to concerns about reward hacking.
+- Approach to handling language mixing and readability issues in DeepSeek-R1.
+- Decision to use majority voting to enhance performance metrics.
+- Strategy for combining supervised data with RL-generated data for fine-tuning.
+- Decision to evaluate model performance against OpenAI's o1 series models.
+- Choice of hyper-parameters for the GRPO algorithm.
+- Decision to focus on reasoning capabilities as a primary objective of the project.
