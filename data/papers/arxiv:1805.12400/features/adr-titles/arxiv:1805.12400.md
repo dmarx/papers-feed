@@ -1,0 +1,20 @@
+- Decision to use tropical geometry for modeling phylogenetic tree space
+- Choice of generalized Hilbert projective metric for tropical tree space
+- Adoption of palm tree space terminology
+- Selection of statistical techniques (PCA and LDA) for analysis
+- Decision to focus on both descriptive and inferential statistics
+- Use of simulated vs. real-world data for validation
+- Choice of metrics for comparison with BHV space
+- Decision to explore computational efficiency improvements
+- Assumptions regarding the properties of tropical metrics
+- Choice of software/tools for numerical experiments
+- Decision to include theoretical background in the introduction
+- Selection of specific phylogenetic tree representations (e.g., distance matrices)
+- Decision to address challenges of non-Euclidean tree space
+- Choice of examples to illustrate statistical feasibility
+- Decision to structure the paper with clear sections for background, methods, and results
+- Assumptions about the applicability of tropical geometry in statistical contexts
+- Decision to highlight the limitations of existing metrics in phylogenetic analysis
+- Choice of audience and level of technical detail in the paper
+- Decision to include a discussion on future research directions
+- Selection of references to support theoretical claims and methodologies

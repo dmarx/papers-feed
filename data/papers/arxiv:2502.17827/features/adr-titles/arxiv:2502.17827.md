@@ -1,0 +1,20 @@
+- Choice of a semiparametric Bayesian framework for the GLM
+- Decision to use a varying weight dependent Dirichlet process (DDP) model
+- Selection of inhomogeneous normalized random measures (NRM) for marginal distribution
+- Use of exponential tilting for the baseline distribution
+- Choice of gamma completely random measure (CRM) as prior for the baseline density
+- Decision to include a normal prior on regression coefficients
+- Implementation of posterior simulation methods for the proposed model
+- Validation approach through simulation studies
+- Application of the model to speech intelligibility data
+- Consideration of identifiability issues in model parameters
+- Choice of auxiliary variables for data augmentation in posterior characterization
+- Decision to use a convolution with a continuous kernel for sampling model
+- Rationale for using nonparametric Bayesian models over parametric alternatives
+- Choice of prior specifications for random measures
+- Decision to maintain independence across certain model components
+- Consideration of alternative priors for flexibility in modeling random partitions
+- Use of specific Lévy intensity for characterizing the NRM
+- Decision to focus on posterior inference for application-driven functionals
+- Choice of simulation study design for model validation
+- Decision to extend existing SPGLM literature with new methodologies
