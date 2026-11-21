@@ -1,0 +1,20 @@
+- Decision to integrate detection and segmentation in a single model
+- Choice of YOLO architecture as the foundation
+- Adoption of Re-parameterizable Region-Text Alignment (RepRTA) for text prompts
+- Implementation of Semantic-Activated Visual Prompt Encoder (SAVPE) for visual prompts
+- Development of Lazy Region-Prompt Contrast (LRPC) for prompt-free scenarios
+- Decision to use a lightweight auxiliary network for textual embeddings
+- Strategy for zero inference and transferring overhead
+- Design choice for decoupled semantic and activation branches in SAVPE
+- Selection of a built-in large vocabulary for prompt-free object identification
+- Trade-off considerations between performance and efficiency
+- Decision to focus on real-time performance and low training costs
+- Choice of extensive experiments for validation of model performance
+- Decision to provide code and models publicly for community use
+- Assumptions regarding the adaptability of the model to various open prompt mechanisms
+- Decision to prioritize inference efficiency on edge devices
+- Choice of evaluation metrics for performance comparison (e.g., AP, FPS)
+- Decision to leverage existing advancements in open-vocabulary detection and segmentation
+- Assumptions about the limitations of traditional closed-set models
+- Decision to explore the integration of multiple prompt types within a unified architecture
+- Consideration of deployment complexity in model design decisions
