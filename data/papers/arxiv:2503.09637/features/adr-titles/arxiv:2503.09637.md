@@ -1,0 +1,16 @@
+- Decision to focus on generative AI's impact on the U.S. federal workforce
+- Choice of a multi-stage Retrieval-Augmented Generation (RAG) system for predictive modeling
+- Selection of competency-based analysis over job title-based analysis
+- Integration of data from centralized and decentralized human resource sources
+- Emphasis on ethical considerations in AI deployment within the federal workforce
+- Adoption of natural language processing techniques for competency modeling
+- Decision to use contextualized embeddings for job description analysis
+- Framework for assessing the impact of AI on specific work competencies
+- Choice of the U.S. federal government as a prototype for analysis
+- Development of policy recommendations based on findings
+- Approach to workforce planning that avoids generic strategies
+- Decision to highlight the importance of continuous learning and adaptability
+- Emphasis on the role of AI literacy and collaboration in future competencies
+- Selection of specific frameworks for assessing automation potential
+- Decision to align AI applications with existing competency frameworks
+- Approach to studying the ethical implications of AI in public service

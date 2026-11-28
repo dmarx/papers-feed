@@ -1,0 +1,16 @@
+- Decision to use Generative Flow Networks (GFlowNets) for fine-tuning Vision-Language Models (VLMs)
+- Choice of non-Markovian decision process to capture long-term dependencies
+- Adoption of Chain-of-Thought (CoT) reasoning for action selection
+- Selection of task-based rewards for fine-tuning
+- Design of the input format for observations and task descriptions
+- Modification of prompt templates to include historical context
+- Decision to compare GFlowVLM against Supervised Fine-Tuning (SFT) and Proximal Policy Optimization (PPO)
+- Choice of empirical tasks for evaluation (e.g., card games, embodied planning tasks)
+- Decision to leverage off-policy training data for improved sample efficiency
+- Selection of evaluation metrics (e.g., success rate, solution diversity)
+- Decision to initialize policy with a pretrained VLM
+- Choice of architecture for the VLM (e.g., LLaVA)
+- Decision to model reasoning as a tree structure for enhanced learning
+- Choice of temperature parameters for stochastic performance evaluation
+- Decision to incorporate multimodal capabilities for embodied AI tasks
+- Selection of empirical results to demonstrate effectiveness over existing methods

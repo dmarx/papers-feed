@@ -1,0 +1,16 @@
+- Decision on the choice of diffusion process for data transformation
+- Decision to use a Markov chain for defining the generative model
+- Decision to implement a reverse diffusion process for generative modeling
+- Decision to utilize non-equilibrium statistical physics principles
+- Decision on the model architecture (e.g., number of layers, type of neural networks)
+- Decision to release an open-source reference implementation
+- Decision on the evaluation metrics for model performance
+- Decision to use specific datasets for experimentation (e.g., MNIST, CIFAR-10)
+- Decision on the training objective and optimization strategy
+- Decision to incorporate entropy bounds in the model
+- Decision on the functional form of the forward and reverse processes
+- Decision to restrict the forward process to a simple functional form
+- Decision on the computational methods for evaluating probabilities
+- Decision to compare against existing generative modeling techniques (e.g., GANs, VAEs)
+- Decision on the handling of conditional probabilities in the model
+- Decision to use specific regression or function fitting techniques for model training
